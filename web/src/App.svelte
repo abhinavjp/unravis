@@ -110,6 +110,8 @@
 <svelte:window onkeydown={onWindowKey} />
 
 <div class="app-shell">
+  <!-- The page heading comes first in the document (before the header and the filter panel), so the outline starts at h1 and a screen reader meets the page name first. It is hidden, so nothing moves. -->
+  <h1 class="visually-hidden">{pageHeading}</h1>
   <AppHeader />
   <UpdateBanner />
 
@@ -134,7 +136,6 @@
 
     <main id="main-content" tabindex="-1" class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
       <div class="stage-inner">
-        <h1 class="visually-hidden">{pageHeading}</h1>
         {#if !app.initError && (!info || app.screen === 'loading')}
           <Landing mode="loading" />
         {:else if app.screen === 'unlock'}

@@ -135,6 +135,12 @@ func TestMaskFlagsReviewFindings(t *testing.T) {
 		{"cmd caret continuation", "sqlcmd -S x ^\r\n  -P hunter2", "sqlcmd -S x ^\r\n  -P [hidden]"},
 		{"comma-wrapped short option", "sqlcmd -P,\n-P hunter2", "sqlcmd -P,\n-P [hidden]"},
 		{"comma-wrapped short option with space", "sqlcmd -P, \r\n  -P hunter2", "sqlcmd -P, \r\n  -P [hidden]"},
+		// Wrapped lists where a value or a quoted item stands before the comma: the tool must stay in force (review of #271).
+		{"comma after a value", "sqlcmd -S host,\n-P hunter2", "sqlcmd -S host,\n-P [hidden]"},
+		{"comma after a value, CRLF", "sqlcmd -S host,\r\n-P hunter2", "sqlcmd -S host,\r\n-P [hidden]"},
+		{"comma after an earlier password", "sqlcmd -P x,\n-P hunter2", "sqlcmd -P [hidden]\n-P [hidden]"},
+		{"quoted array wrapped after a comma", "[\"sqlcmd\",\"-S\",\"db\",\n \"-P\",\"hunter2\"]", "[\"sqlcmd\",\"-S\",\"db\",\n \"-P\",\"[hidden]\"]"},
+		{"YAML flow list wrapped after a comma", "command: [sqlcmd, -S, db,\n  -P, hunter2]", "command: [sqlcmd, -S, db,\n  -P, [hidden]]"},
 		{"value on the line after a backslash", "app --password \\\n  hunter2 --x", "app --password \\\n  [hidden] --x"},
 		{"tool in markdown code", "run `sqlcmd -S x -P hunter2` now", "run `sqlcmd -S x -P [hidden]` now"},
 		{"tool in a subshell", `x=$(mysql -phunter2 -e q)`, `x=$(mysql -p[hidden] -e q)`},

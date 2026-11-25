@@ -9,7 +9,8 @@ async function openTimeline(page: Page): Promise<void> {
   await page.clock.setFixedTime(new Date(process.env.UNRAVIS_DEMO_NOW ?? '2026-10-20T09:00:00Z'));
   await page.goto(process.env.UNRAVIS_BASE_URL! + '/#t=' + process.env.UNRAVIS_TOKEN);
   await page.locator('role=button[name="Where is it?"s]').click();
-  await page.locator('role=heading[name="Where is it?"]').waitFor();
+  // The page's own hidden h1 has this name too, so the screen's heading is found by its id.
+  await page.locator('#where-title').waitFor();
   await page.locator('summary:has-text("API groups")').click();
 }
 

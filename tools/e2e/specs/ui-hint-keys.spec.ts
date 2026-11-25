@@ -92,7 +92,9 @@ test('SETUP-A11Y-15: the screen has one page heading, the brand is not a heading
   await page.getByRole('button', { name: 'Preview export', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'What is hidden' })).toBeVisible();
   expect(await nestedHints(), 'export hint buttons nested in headings').toEqual([]);
-  await expect(page.locator('main h1')).toHaveCount(1);
-  await expect(page.locator('main h1')).toHaveText('Evidence');
+  await expect(page.locator('h1')).toHaveCount(1);
+  await expect(page.locator('h1')).toHaveText('Evidence');
+  // the h1 is the first heading of the document, ahead of the filter panel's h2 and h3 headings
+  expect(await page.locator('h1, h2, h3, h4, h5, h6').first().evaluate((el) => el.tagName)).toBe('H1');
   await expect(page.locator('.brand-lockup h1')).toHaveCount(0);
 });

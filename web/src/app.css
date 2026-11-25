@@ -124,7 +124,7 @@ input, textarea { caret-color: var(--accent); }
 /* ---------- Stage and depth views ---------- */
 /* A new case-home row must not shift the page sideways when it makes the stage scroll. */
 .stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 22px 24px 48px; scroll-padding-bottom: 80px; }
-.stage:has(.case-home) { scrollbar-gutter: stable; }
+.stage:has(.case-home.home) { scrollbar-gutter: stable; }
 .stage:focus { outline: none; }
 /* The wizard's Back/Next bar is pinned to the bottom edge of the scroller, so the stage keeps no padding under it (CASES-01): text no longer shows through a strip below the bar. */
 .stage:has(.wizard .bar) { padding-bottom: 0; }
