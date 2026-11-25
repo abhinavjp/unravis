@@ -1,6 +1,7 @@
 package crashlog
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,7 +13,8 @@ import (
 )
 
 const (
-	envChildDir = "CRASHLOG_TEST_CHILD_DIR"
+	envChildDir  = "CRASHLOG_TEST_CHILD_DIR"
+	envChildMode = "CRASHLOG_TEST_CHILD_MODE" // "deferred": the panic unwinds through a deferred close, as in the real main
 	// plantedSecret is the shape the log sanitizer masks (a keyed value). The child puts it in its panic message.
 	plantedSecret = "hunter2-Planted-Secret-9f3a"
 )
@@ -33,9 +35,16 @@ func TestMain(m *testing.M) {
 }
 
 func crashChild(dir string) {
-	if _, err := Start(Options{Dir: dir, Grace: -1}); err != nil {
+	c, err := Start(Options{Dir: dir, Grace: -1})
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "start:", err)
 		os.Exit(3)
+	}
+	switch os.Getenv(envChildMode) {
+	case "deferred":
+		defer c.CloseUnlessPanic()
+	case "plain":
+		defer c.Close()
 	}
 	go crashChildBlocked(make(chan struct{}))
 	time.Sleep(50 * time.Millisecond) // let the goroutine park
@@ -119,6 +128,62 @@ func TestAPanicLeavesASanitisedTraceFile(t *testing.T) {
 	}
 	if !strings.Contains(text, "crashChildBlocked") {
 		t.Errorf("the parked goroutine is missing, so the traceback level is not \"all\":\n%s", text)
+	}
+}
+
+// runChild runs the crashing child in the given mode and returns the pending file it left (empty if none) and its output.
+func runChild(t *testing.T, dir, mode string) (string, []byte) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe) //nolint:gosec // re-runs this test binary
+	cmd.Env = append(os.Environ(), envChildDir+"="+dir, envChildMode+"="+mode, "GOTRACEBACK=single")
+	out, err := cmd.CombinedOutput()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 2 {
+		t.Fatalf("child should die of a panic (exit 2), got %v\n%s", err, out)
+	}
+	for _, n := range names(t, dir) {
+		if strings.HasSuffix(n, ".pending") {
+			return filepath.Join(dir, n), out
+		}
+	}
+	return "", out
+}
+
+// The real main closes the capture in a defer. A panic on that goroutine must still get its dump, which a plain deferred Close loses
+// (the runtime prints the panic after the defers ran). CloseUnlessPanic is the fix; the plain case pins why it exists.
+func TestAPanicUnwindingThroughTheDeferredCloseStillLeavesItsDump(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "crashes")
+	pending, out := runChild(t, dir, "deferred")
+	if pending == "" {
+		t.Fatalf("no pending crash file: %v\n%s", names(t, dir), out)
+	}
+	if err := Sweep(Options{Dir: dir, Grace: -1}); err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	for _, n := range names(t, dir) {
+		if strings.HasPrefix(n, "crash-") && strings.HasSuffix(n, "-go.txt") {
+			text = read(t, filepath.Join(dir, n))
+		}
+	}
+	if !strings.Contains(text, "panic:") || !strings.Contains(text, "goroutine ") || !strings.Contains(text, "crashChild") {
+		t.Fatalf("no panic line, goroutine trace or the panicking function in:\n%s", text)
+	}
+	if strings.Contains(text, plantedSecret) {
+		t.Errorf("the finished crash file still holds the secret:\n%s", text)
+	}
+}
+
+func TestAPlainDeferredCloseLosesTheDump(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "crashes")
+	if pending, out := runChild(t, dir, "plain"); pending != "" {
+		t.Fatalf("a plain deferred Close left %s; if the runtime now keeps the dump, CloseUnlessPanic is no longer needed:\n%s", pending, out)
 	}
 }
 

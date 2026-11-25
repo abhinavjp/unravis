@@ -189,6 +189,16 @@ func (c *Capture) Close() {
 	c.path = ""
 }
 
+// CloseUnlessPanic is Close for a defer in the program's top function: while a panic is unwinding it leaves the capture open, so the
+// runtime can still write the dump to the pending file when it prints the panic. It must be the deferred call itself (recover only works
+// there); the panic is raised again unchanged, so the original stack is in the trace.
+func (c *Capture) CloseUnlessPanic() {
+	if r := recover(); r != nil {
+		panic(r)
+	}
+	c.Close()
+}
+
 // Path is the pending file this run writes (empty after Close); tests and the log line use it.
 func (c *Capture) Path() string {
 	if c == nil {

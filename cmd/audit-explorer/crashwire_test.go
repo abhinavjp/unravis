@@ -20,9 +20,15 @@ func readSource(t *testing.T, name string) string {
 // build has no console), and no other test notices.
 func TestMainStartsTheCrashCapture(t *testing.T) {
 	src := readSource(t, "main.go")
-	const call = "defer startCrashCapture(getenv).Close()"
-	if n := strings.Count(src, call); n != 1 {
-		t.Fatalf("want exactly one %q in main.go, found %d", call, n)
+	const start, call = "crash := startCrashCapture(getenv)", "defer crash.CloseUnlessPanic()"
+	for _, want := range []string{start, call} {
+		if n := strings.Count(src, want); n != 1 {
+			t.Fatalf("want exactly one %q in main.go, found %d", want, n)
+		}
+	}
+	// A plain deferred Close would release the capture before the runtime prints a panic on this goroutine, and the dump would be lost.
+	if strings.Contains(src, "crash.Close()") {
+		t.Error("main.go must close the capture with CloseUnlessPanic, not Close")
 	}
 	at := strings.Index(src, call)
 	// It runs for every real run, so before the first mode that can serve or attach (--mcp) and before the data is opened.
