@@ -14,7 +14,11 @@ import (
 // The PATH of this PC, read and written in the registry. NOT RUN: needs a clean VM (installer-and-releases.md section 8 lists the
 // proofs).
 
-type osEnv struct{}
+// osEnv reads and writes the PATH in the registry. where is the one seam for tests: nil means the real hive and key; a test points it at a
+// scratch key, so the code is run for real without touching the PATH of the PC.
+type osEnv struct {
+	where func(root Root) (registry.Key, string)
+}
 
 func envRootKey(root Root) registry.Key {
 	if root == HKLM {
@@ -43,11 +47,15 @@ func (osEnv) readPath(k registry.Key) (string, uint32, error) {
 }
 
 func (e osEnv) open(root Root, access uint32, create bool) (registry.Key, error) {
+	hive, path := envRootKey(root), envKeyFor(root)
+	if e.where != nil {
+		hive, path = e.where(root)
+	}
 	if create {
-		k, _, err := registry.CreateKey(envRootKey(root), envKeyFor(root), access)
+		k, _, err := registry.CreateKey(hive, path, access)
 		return k, err
 	}
-	return registry.OpenKey(envRootKey(root), envKeyFor(root), access)
+	return registry.OpenKey(hive, path, access)
 }
 
 func (e osEnv) HasPathEntry(root Root, entry string) (bool, error) {

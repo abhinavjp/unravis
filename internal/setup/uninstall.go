@@ -211,8 +211,13 @@ func (p *Plan) cliPresent() bool {
 	return err != nil || has // a PATH that cannot be read is tried again by the step, which lists what it could not do
 }
 
-// removeCLIPath takes only our entry off the PATH; every other entry stays.
+// removeCLIPath takes only our entry off the PATH; every other entry stays. An entry that was on the PATH before setup (the state says
+// this install did not add it) is left alone.
 func (p *Plan) removeCLIPath(ctx context.Context, t *Txn) error {
+	if p.Old != nil && p.Old.State.PathAdded != nil && !*p.Old.State.PathAdded {
+		p.un().kept = append(p.un().kept, "The PATH entry "+p.Layout.CLIDir+" (it was there before Unravis)")
+		return nil
+	}
 	if _, err := p.r.Sys.Env.RemovePathEntry(p.cliRoot(), p.Layout.CLIDir); err != nil {
 		p.leftf("PATH entry %s (%v)", p.Layout.CLIDir, err)
 		return nil

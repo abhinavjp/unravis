@@ -39,6 +39,8 @@ type Plan struct {
 	// svcWasRunning: the services that ran when an upgrade or repair began, so they are started again at the end.
 	svcWasRunning map[string]bool
 	unState       *uninstallState
+	// pathAdded is what cliPath found: see State.PathAdded.
+	pathAdded *bool
 }
 
 func (p *Plan) backupDir() string {
@@ -516,6 +518,7 @@ func (p *Plan) cliPath(ctx context.Context, t *Txn) error {
 	if p.Opts.Scope == ScopeMachine {
 		root = HKLM
 	}
+	p.notePathAdded(root)
 	if err := t.AddPathEntry(root, p.Layout.CLIDir); err != nil {
 		if errors.Is(err, ErrPathTooLong) {
 			return &StepError{Msg: "The PATH of this PC is too long to add the unravis command.",
@@ -952,6 +955,10 @@ func (p *Plan) saveState(ctx context.Context, t *Txn) error {
 	if p.Opts.Firewall != nil && p.Opts.Blackbox != nil {
 		s.FirewallRule = FirewallRuleName(p.Opts.Blackbox.Port)
 	}
+	s.PathAdded = p.pathAdded
+	if s.PathAdded == nil && p.Old != nil {
+		s.PathAdded = p.Old.State.PathAdded
+	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
@@ -1083,4 +1090,20 @@ func checkNoOthersWrite(name string, fs datadir.FolderSecurity) error {
 		}
 	}
 	return nil
+}
+
+// notePathAdded works out, once, whether this install is the one that puts the bin folder on the PATH. A repair or upgrade keeps what
+// the first install found; a first install checks the PATH before it adds the entry. A PATH that cannot be read leaves it unknown (nil),
+// which uninstall treats as "ours" (the old behaviour).
+func (p *Plan) notePathAdded(root Root) {
+	if p.Old != nil {
+		p.pathAdded = p.Old.State.PathAdded
+		return
+	}
+	has, err := p.r.Sys.Env.HasPathEntry(root, p.Layout.CLIDir)
+	if err != nil {
+		return
+	}
+	added := !has
+	p.pathAdded = &added
 }

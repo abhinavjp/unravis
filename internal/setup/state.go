@@ -38,7 +38,10 @@ type State struct {
 	Firewall      *FirewallOptions `json:"firewall,omitempty"`
 	FirewallRule  string           `json:"firewallRule,omitempty"`
 	SharedRoot    string           `json:"sharedRoot,omitempty"`
-	Installed     time.Time        `json:"installed"`
+	// PathAdded says whether this install put the bin folder on the PATH (true) or found it there already (false). Nil: the state is from
+	// before this was kept, so uninstall takes the entry off as it always did.
+	PathAdded *bool     `json:"pathAdded,omitempty"`
+	Installed time.Time `json:"installed"`
 }
 
 // Options returns the choices of the install the state describes (for an upgrade or a repair, which keep them).

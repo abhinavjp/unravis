@@ -2,6 +2,7 @@ package setup
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -351,5 +352,89 @@ func TestUndoPathEntryReportsWhatIsLeft(t *testing.T) {
 	}
 	if left = Rollback(e.sys, []Undo{u}, nil); len(left) != 0 || e.f.Env.Get(HKCU) != `C:\A` {
 		t.Fatalf("left %v, PATH %q", left, e.f.Env.Get(HKCU))
+	}
+}
+
+func readState(t *testing.T, e *testEnv, o Options) State {
+	t.Helper()
+	data, err := os.ReadFile(NewLayout(o, e.dirs).StateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s State
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestStateRecordsWhoAddedThePathEntry(t *testing.T) {
+	e := newCLIEnv(t)
+	o := e.userOpts()
+	e.mustRun(OpInstall, o, UninstallOptions{})
+	if s := readState(t, e, o); s.PathAdded == nil || !*s.PathAdded {
+		t.Fatalf("setup added the entry but the state says %v", s.PathAdded)
+	}
+	// A repair finds the entry (its own) and must not turn the answer into "was there before".
+	e.mustRun(OpRepair, o, UninstallOptions{})
+	if s := readState(t, e, o); s.PathAdded == nil || !*s.PathAdded {
+		t.Fatalf("a repair lost the answer: %v", s.PathAdded)
+	}
+
+	e2 := newCLIEnv(t)
+	o2 := e2.userOpts()
+	e2.f.Env.Set(HKCU, `C:\Tools;`+NewLayout(o2, e2.dirs).CLIDir)
+	e2.mustRun(OpInstall, o2, UninstallOptions{})
+	if s := readState(t, e2, o2); s.PathAdded == nil || *s.PathAdded {
+		t.Fatalf("the entry was there before, but the state says %v", s.PathAdded)
+	}
+	e2.mustRun(OpRepair, o2, UninstallOptions{})
+	if s := readState(t, e2, o2); s.PathAdded == nil || *s.PathAdded {
+		t.Fatalf("a repair turned a pre-existing entry into ours: %v", s.PathAdded)
+	}
+}
+
+func TestUninstallLeavesAPathEntryThatWasThereBefore(t *testing.T) {
+	e := newCLIEnv(t)
+	o := e.userOpts()
+	l := NewLayout(o, e.dirs)
+	have := `C:\Tools;` + l.CLIDir + `;C:\More`
+	e.f.Env.Set(HKCU, have)
+	e.mustRun(OpInstall, o, UninstallOptions{})
+	res := e.run(OpUninstall, Options{}, UninstallOptions{})
+	if res.Outcome != OutcomeDone {
+		t.Fatalf("%+v", res)
+	}
+	if got := e.f.Env.Get(HKCU); got != have {
+		t.Fatalf("an entry that was there before setup was changed: %q", got)
+	}
+	said := false
+	for _, k := range res.Kept {
+		if strings.Contains(k, l.CLIDir) && strings.Contains(k, "PATH") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("the kept list does not say the PATH entry stayed: %v", res.Kept)
+	}
+}
+
+func TestUninstallOfAnOlderStateStillRemovesTheEntry(t *testing.T) {
+	e := newCLIEnv(t)
+	o := e.userOpts()
+	e.mustRun(OpInstall, o, UninstallOptions{})
+	// setup-state.json from before PathAdded existed has no such field.
+	s := readState(t, e, o)
+	s.PathAdded = nil
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, NewLayout(o, e.dirs).StateFile, string(data))
+	if res := e.run(OpUninstall, Options{}, UninstallOptions{}); res.Outcome != OutcomeDone {
+		t.Fatalf("%+v", res)
+	}
+	if got := e.f.Env.Get(HKCU); got != "" {
+		t.Fatalf("the entry stayed for a state that does not say: %q", got)
 	}
 }
