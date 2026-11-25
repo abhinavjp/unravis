@@ -400,6 +400,7 @@ func (r *Recorder) Tick(now time.Time) {
 	// The sample is durably accepted: only now may the event read cursor
 	// advance. A failure anywhere above leaves the batch pending (W6-06).
 	s.Events.Ack()
+	s.SQLLog.Ack()
 	r.mu.Lock()
 	r.writeOK = true
 	r.resumedFlag = false

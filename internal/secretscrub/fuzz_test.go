@@ -29,6 +29,11 @@ var canaries = []string{
 	"map[name:DB_PASSWORD value:CANARYo4]\n",
 	`{"msg": "{Name:\"DB_PASSWORD\", Value:\"CANARYp5\"}"}` + "\n",
 	"[name:DB_PASSWORD value:ab,CANARYq6]\n",
+	"sqlcmd -P,\n-P CANARYr7\n",
+	"sqlcmd -S host,\n-P CANARYs8\n",
+	"[\"sqlcmd\",\"-S\",\"db\",\n \"-P\",\"CANARYt9\"]\n",
+	"command: [sqlcmd, -S, db,\n  -P, CANARYu10]\n",
+	"sqlcmd -P x,\n-P CANARYv11\n",
 }
 
 // FuzzMaskCanary puts a planted secret after any text, on its own line: whatever came before (an open quote, a half tag, a comment, a
@@ -38,6 +43,7 @@ func FuzzMaskCanary(f *testing.F) {
 	f.Add("{", uint8(2))
 	f.Add("<A!=\"", uint8(7))
 	f.Add("-pW,", uint8(5))
+	f.Add("", uint8(17)) // canaries[17]: the comma-wrapped -P
 	f.Fuzz(func(t *testing.T, s string, k uint8) {
 		in := s + "\n\n" + canaries[int(k)%len(canaries)]
 		// The fuzzer may write the word into the text itself: count it, so only a planted one that survives fails.

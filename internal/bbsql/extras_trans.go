@@ -41,7 +41,7 @@ func (transSampler) Kind() string            { return "trans" }
 func (transSampler) Interval() time.Duration { return DemotedInterval }
 
 func (transSampler) Decode(rows []Row) (any, bool, error) {
-	return extraOneRow[Trans](rows, CapTrans)
+	return extraSingleRow[Trans](rows, CapTrans)
 }
 
 func init() {

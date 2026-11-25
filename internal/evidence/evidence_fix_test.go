@@ -275,10 +275,20 @@ func TestLedgerOnlyRelatedHypotheses(t *testing.T) {
 	}
 	found := false
 	for _, s := range e.Manifest.Masking.Statements {
-		found = found || strings.HasPrefix(s, "Only hypotheses that reference a finding in this export are included")
+		found = found || strings.HasPrefix(s, "Only theories that reference a finding in this export are included")
 	}
 	if !found {
 		t.Errorf("statements = %q", e.Manifest.Masking.Statements)
+	}
+	if bytes.Contains(bytes.ToLower(raw), []byte("hypothes")) {
+		t.Errorf("a current export still uses hypothesis wording: %s", raw)
+	}
+}
+
+func TestExportWithoutLedgerUsesTheoryWording(t *testing.T) {
+	_, raw := mustBuild(t, baseInput())
+	if !bytes.Contains(raw, []byte("The theory ledger is not included.")) || bytes.Contains(bytes.ToLower(raw), []byte("hypothes")) {
+		t.Errorf("masking wording = %s", raw)
 	}
 }
 

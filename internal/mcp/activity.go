@@ -11,12 +11,34 @@ func (b *Bridge) activity(ctx context.Context, raw json.RawMessage) (any, error)
 	if err := strictArgs(raw, &input); err != nil {
 		return nil, err
 	}
+	if len(input.SourceIDs) > 0 { // before validation, as in audit_compare
+		if err := b.checkScope(input); err != nil {
+			return nil, err
+		}
+	}
 	input.Limit = defaultLimit(raw, input.Limit, 20)
+	if input.UserID != nil && !b.identifiersAllowed() {
+		// The user filter is an identifier filter like the ones of audit_compare: with identifiers hidden, repeated filtered pages would
+		// reveal which user ids exist. (The input type accepts it although the published schema does not list it.)
+		return nil, codedWire(CodeInvalidArguments, WirePermissionRequired, "The userId filter is not available: "+b.noIdentifiers()+" User ids are hidden, and filtering on them would reveal them")
+	}
 	if _, err := audit.ActivityQuery(input); err != nil {
 		return nil, err
 	}
+	// What the cursor pages through is the window and sources, not the page size or the cursor itself.
+	paging := input
+	paging.Cursor, paging.Limit = "", 0
+	fp := fingerprint("audit_get_activity", paging)
+	pos, err := b.openCursor("audit_get_activity", fp, input.Cursor)
+	if err != nil {
+		return nil, err
+	}
+	input.Cursor = pos
 	var page audit.Page
 	if err := b.request(ctx, "/api/activity", input, &page); err != nil {
+		return nil, err
+	}
+	if page.NextCursor, err = b.sealCursor("audit_get_activity", fp, page.NextCursor); err != nil {
 		return nil, err
 	}
 	rows := make([]map[string]any, 0, len(page.Rows))

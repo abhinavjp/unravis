@@ -268,6 +268,7 @@ func (h *handler) reopenCase(w http.ResponseWriter, r *http.Request, raw string)
 		return
 	}
 	defer c.Close()
+	h.caseOpened(r.Context(), id, c)
 	writeJSON(w, http.StatusOK, h.viewOf(r.Context(), c), maxResponseBytes)
 }
 

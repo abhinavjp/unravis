@@ -134,6 +134,11 @@ func TestHandlerNeedsCodeLoopbackAndReadOnly(t *testing.T) {
 	}
 	if w := do("GET", "127.0.0.1:80", "/api/snapshot", "tok"); w.Code != 200 || !strings.Contains(w.Body.String(), `"releases"`) {
 		t.Fatal(w.Code, w.Body.String())
+	} else {
+		wantCSP := "default-src 'none'; img-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		if got := w.Header().Get("Content-Security-Policy"); got != wantCSP {
+			t.Fatalf("CSP = %q, want %q", got, wantCSP)
+		}
 	}
 }
 

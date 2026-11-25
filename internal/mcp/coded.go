@@ -28,11 +28,17 @@ const (
 type CodedError struct {
 	Code string
 	Msg  string
+	// Wire, when set, is the code a client of the MCP server sees instead of the one mapped from Code (see wireCode). Code stays what the
+	// command line reads, so a refusal can be permission_required on the wire and invalid_arguments there.
+	Wire string
 }
 
 func (e *CodedError) Error() string { return e.Msg }
 
 func coded(code, msg string) error { return &CodedError{Code: code, Msg: msg} }
+
+// codedWire is coded with a different code on the MCP wire.
+func codedWire(code, wire, msg string) error { return &CodedError{Code: code, Msg: msg, Wire: wire} }
 
 // Code returns the code of a tool-call error. An error without one is an argument problem (every other failure of a call is coded where
 // it is made), and a context error is a cancel or a deadline.

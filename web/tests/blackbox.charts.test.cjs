@@ -45,7 +45,7 @@ test('names follow the key shape the server writes: host fields, named things, t
 test('every field the recorder writes as a number has a plain name', () => {
   const src = ['groups_types.go', 'sample.go'].map((f) => fs.readFileSync(path.join(__dirname, '..', '..', 'internal', 'blackbox', f), 'utf8')).join('\n');
   const numeric = [...src.matchAll(/^\s*\w+\s+\*?(?:float64|uint64|uint32|int)\s+`json:"(\w+)/gm)].map((m) => m[1]);
-  const skip = new Set(['v', 'seq', 'pid', 'startTicks', 'start', 'channel', 'eventId', 'level', 'count', 'state', 'size', 'seconds', 'cpuSec', 'ws', 'priv', 'handles', 'netIn', 'netOut', 'unreadable', 'outboundQueueInterfaces', 'discardedInterfaces', 'outErrorsInterfaces']);
+  const skip = new Set(['v', 'seq', 'pid', 'startTicks', 'start', 'channel', 'eventId', 'level', 'count', 'state', 'size', 'seconds', 'number', 'database', 'maxMs', 'cpuSec', 'ws', 'priv', 'handles', 'netIn', 'netOut', 'unreadable', 'outboundQueueInterfaces', 'discardedInterfaces', 'outErrorsInterfaces']);
   const missing = [...new Set(numeric)].filter((f) => !skip.has(f)).filter((f) => s.seriesName('g.x.' + f).name === f);
   assert.deepEqual(missing, []);
 });

@@ -181,7 +181,7 @@ test('every drawer in the page state reaches the history through the one module'
 
 test('D-A-07: popstate steps screens through go() and key screens get no history entry', () => {
   const state = read('src/lib/appState.svelte.ts');
-  assert.match(state, /followHistoryMark\(viewHistory\?\.inherited && parseScreenMark\(mark\)\.screen !== 'case' \? '' : mark\);\s*void applyView\(target\);/);
+  assert.match(state, /followHistoryMark\(viewHistory\?\.inherited && parseScreenMark\(mark\)\.screen !== 'case' && !leavesGuide \? '' : mark\);\s*void applyView\(target\);/, 'an older mark is ignored, except Back in the create guide a reload brought back (BL-495h)');
   assert.match(state, /const mark = viewHistory\?\.screen \?\? '';/, 'an older start, create or analysis mark is not followed (BL-027)');
   assert.match(state, /if \(!poppingScreen\) noteScreenHistory\(from, move\.screen\);/);
   const step = state.slice(state.indexOf('function stepScreenFromHistory'), state.indexOf('// Reads the key state once the app info is in'));
@@ -258,7 +258,7 @@ test('the shell shows Retry only when retrying can help', () => {
 const { SCREENS: SCREEN_LIST, canGo, go: moveScreen, initialScreen, afterUnlock, createRoute, leavesCaseWork, WIZARD_READY } = loadTypeScript('src/lib/screenFlow.ts');
 
 const LEGAL_MOVES = {
-  loading: ['unlock', 'start', 'running', 'case'],
+  loading: ['unlock', 'start', 'running', 'case', 'create'],
   unlock: ['start', 'running', 'create', 'case'],
   setup: ['start', 'unlock', 'case'],
   start: ['setup', 'create', 'running', 'unlock', 'case'],
@@ -308,6 +308,7 @@ test('the first screen: demo runs, a locked key unlocks, a link or remembered ta
   assert.equal(initialScreen(facts()), 'start');
   assert.equal(initialScreen(facts({ caseView: true })), 'case', 'a reload on a case page goes back to it');
   assert.equal(moveScreen('loading', 'case').ok, true, 'the first screen may be the case page');
+  assert.equal(moveScreen('loading', 'create').ok, true, 'the first screen may be the create guide (a reload with a kept draft, BL-495h)');
 });
 
 test('after unlock the person returns to the work that was interrupted, else the start screen', () => {

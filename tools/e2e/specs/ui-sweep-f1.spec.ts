@@ -199,6 +199,8 @@ test('SWEEP-F1-12 one button size on the case home: the sources buttons are as t
 test('SWEEP-F1-11 secondary buttons and chips have a border that is at least 3:1 against the page', async ({ page }) => {
   for (const scheme of ['dark', 'light'] as const) {
     await page.emulateMedia({ colorScheme: scheme });
+    // The chips are drawn after the first read; do not look for one before they are there.
+    await expect(page.locator('.quick-ranges .chip[aria-pressed="false"]').first()).toBeVisible();
     const facts = await page.evaluate(() => {
       const chip = document.querySelector<HTMLElement>('.quick-ranges .chip[aria-pressed="false"]')!;
       const cs = getComputedStyle(chip);

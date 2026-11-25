@@ -46,7 +46,7 @@ func (connsSampler) Kind() string            { return "conns" }
 func (connsSampler) Interval() time.Duration { return DemotedInterval }
 
 func (connsSampler) Decode(rows []Row) (any, bool, error) {
-	return extraOneRow[Conns](rows, CapConns)
+	return extraSingleRow[Conns](rows, CapConns)
 }
 
 func init() {

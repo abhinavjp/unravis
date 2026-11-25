@@ -1,6 +1,8 @@
 // Runs the steps of one screen (the same small language as tools/screens/screens.json, see tools/screens/capture.spec.ts).
 import type { Page } from '@playwright/test';
 import { makeUploads } from './fixtures';
+import { createCase, ensureHost, importFile, makeApi, HOST } from '../../e2e/support/api';
+import { perfmonCsv } from '../../e2e/support/perfmon';
 
 export type Step = (
   | { goto: string }
@@ -15,6 +17,10 @@ export type Step = (
   | { aside: Step[] }
   /** Hands made-up fixture files (lib/fixtures.ts, by key) to a file input: [selector of the input, [fixture keys]]. */
   | { upload: [string, string[]] }
+  /** Makes a case with this title that holds a made-up Windows counters file (real API, real importer): the resource counters panel has something to draw. The screen must say `restoreHosts` and end with `dropCase`. */
+  | { seedCounters: string }
+  /** Erases the case that `seedCounters` made with this title (closed first), and its tombstone, so later screens see the demo as it was. */
+  | { dropCase: string }
   /** Steps listed once under `macros` in extra-screens.json (see expandMacros). */
   | { macro: string }
 ) & { when?: 'narrow' | 'wide' };
@@ -62,6 +68,9 @@ export interface Env {
 
 /** The header folds into a More menu below this width (same rule as screens.json). */
 export const NARROW_BELOW = 1100;
+
+/** The cases `seedCounters` made, by title, until `dropCase` erases them. */
+const seeded = new Map<string, string>();
 
 export async function runSteps(page: Page, steps: Step[], env: Env, app?: AppName): Promise<void> {
   const narrow = (page.viewportSize()?.width ?? 1440) < NARROW_BELOW;
@@ -126,6 +135,21 @@ async function runStep(page: Page, step: Step, env: Env, app?: AppName): Promise
   } else if ('upload' in step) {
     // The real file input of the screen (a visually hidden <input type=file>): the page takes the files as if they were chosen in the dialog.
     await page.locator(step.upload[0]).first().setInputFiles(makeUploads(step.upload[1]));
+  } else if ('seedCounters' in step) {
+    const api = makeApi(env.base, env.token);
+    await ensureHost(api);
+    const id = await createCase(api, step.seedCounters);
+    seeded.set(step.seedCounters, id);
+    const result = await importFile(api, id, perfmonCsv(), { name: 'perf.csv', importer: 'win-counters', host: HOST });
+    if (result.status >= 300) throw new Error('seedCounters: the import was refused: ' + result.status + ' ' + result.text.slice(0, 200));
+  } else if ('dropCase' in step) {
+    const id = seeded.get(step.dropCase);
+    if (!id) return;
+    seeded.delete(step.dropCase);
+    const api = makeApi(env.base, env.token);
+    await api('POST', '/api/cases/' + id + '/close', undefined, 'open');
+    await api('DELETE', '/api/cases/' + id, { confirm: id.slice(0, 8) }, 'closed');
+    await api('DELETE', '/api/cases/erased/' + id);
   } else if ('theme' in step) {
     await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), step.theme);
   } else {

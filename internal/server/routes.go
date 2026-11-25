@@ -104,6 +104,10 @@ var routes = []route{
 	{pattern: launchPath, match: exactPath(launchPath), public: true, methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveLaunch(w, r) },
 	}},
+	{pattern: launchStylePath, match: exactPath(launchStylePath), public: true, methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveLaunchStyle(w, r) },
+		http.MethodHead: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveLaunchStyle(w, r) },
+	}},
 	{pattern: sessionproof.Path, match: exactPath(sessionproof.Path), public: true, methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.sessionProof(w, r) },
 	}},
@@ -205,6 +209,9 @@ var routes = []route{
 	}},
 	{pattern: "/api/sources/{id}", match: prefixPath("/api/sources/"), methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.deleteSource(w, r, id) },
+	}},
+	{pattern: "/api/mcp/evidence/{alias}", match: prefixPath("/api/mcp/evidence/"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, alias string) { h.mcpEvidence(w, r, alias) },
 	}},
 	{pattern: "/api/analyze", match: exactPath("/api/analyze"), methods: post((*handler).analyze)},
 	{pattern: "/api/requests", match: exactPath("/api/requests"), methods: post((*handler).requests)},
@@ -409,6 +416,17 @@ var routes = []route{
 		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.putHosts(w, r) },
 	}},
 	{pattern: "/api/importers", match: exactPath("/api/importers"), methods: get((*handler).listImporters)},
+	{pattern: mcpProfilesPath, match: exactPath(mcpProfilesPath), methods: get((*handler).serveMCP)},
+	{pattern: "/api/mcp/profiles/{id}/{action}", match: mcpActionPath, methods: post((*handler).serveMCP)},
+	{pattern: mcpStopPath, match: exactPath(mcpStopPath), methods: post((*handler).serveMCP)},
+	{pattern: mcpResumePath, match: exactPath(mcpResumePath), methods: post((*handler).serveMCP)},
+	{pattern: codeTypesPath, match: exactPath(codeTypesPath), methods: get((*handler).serveCode)},
+	{pattern: codeSettingsPath, match: exactPath(codeSettingsPath), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveCode(w, r) },
+		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveCode(w, r) },
+	}},
+	{pattern: codeRunPath, match: exactPath(codeRunPath), methods: post((*handler).serveCode)},
+	{pattern: "/api/code/runs/{id}/cancel", match: codeCancelPath, methods: post((*handler).serveCode)},
 }
 
 // lookup returns the first route that owns path.
