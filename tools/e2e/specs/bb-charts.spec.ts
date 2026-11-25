@@ -95,15 +95,18 @@ test('Blackbox charts: visible width uses binary M4, JSON draws the same pixels,
   expect(body.points).toBeGreaterThan(0);
   expect(body.points).toBeLessThanOrEqual(body.width);
   const frame = await binary.body();
-  const headBytes = frame.readUInt32LE(0);
+  // The frame starts with the magic "UBB1" and a u16 version, then the u32 header length (10 bytes in all).
+  expect(frame.subarray(0, 4).toString('latin1')).toBe('UBB1');
+  expect(frame.readUInt16LE(4)).toBe(1);
+  const headBytes = frame.readUInt32LE(6);
   expect(headBytes).toBeGreaterThan(1);
-  expect(4 + headBytes).toBeLessThanOrEqual(frame.length);
-  const header = JSON.parse(frame.subarray(4, 4 + headBytes).toString('utf8'));
+  expect(10 + headBytes).toBeLessThanOrEqual(frame.length);
+  const header = JSON.parse(frame.subarray(10, 10 + headBytes).toString('utf8'));
   const pointCount = [
     ...header.lines.map((line: { points: { n: number } }) => line.points.n),
     ...header.processes.flatMap((proc: { cpu: { n: number }; workingSet: { n: number }; privateBytes: { n: number } }) => [proc.cpu.n, proc.workingSet.n, proc.privateBytes.n])
   ].reduce((sum: number, n: number) => sum + n, 0);
-  expect(frame.length).toBe(4 + headBytes + pointCount * 48);
+  expect(frame.length).toBe(10 + headBytes + pointCount * 48);
   await expect.poll(() => page.evaluate(() => (window as any).__unravisPerf?.some((sample: { kind: string }) => sample.kind === 'blackbox-paint') ?? false)).toBe(true);
   await page.waitForTimeout(300);
   const binaryPixels = await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL());
