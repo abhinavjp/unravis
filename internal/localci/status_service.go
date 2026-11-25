@@ -490,6 +490,19 @@ func (s *StatusService) Finished(r Request, since time.Time, runErr error, done 
 	}
 }
 
+// MirrorDone is for a request this PC did not run because another PC did: it posts the result of that run on the
+// gate, so a "queued" this PC posted earlier cannot stay on top of the other PC's result. The other PC posts the
+// same state, so the two never disagree.
+func (s *StatusService) MirrorDone(r Request, conclusion string) {
+	s.Forget(r)
+	switch conclusion {
+	case "success":
+		s.gate(r, StatusSuccess, "passed, run on another PC")
+	case "failure":
+		s.gate(r, StatusFailure, "failed, run on another PC")
+	}
+}
+
 // WorkflowStem is the workflow file name without folder and extension.
 func WorkflowStem(file string) string {
 	return strings.TrimSuffix(strings.TrimSuffix(path.Base(file), ".yml"), ".yaml")

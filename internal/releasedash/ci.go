@@ -1037,6 +1037,8 @@ type CIOverview struct {
 	Agents   []CIAgent  `json:"agents"`
 	Posted   []CIPosted `json:"posted"`
 	Shadow   CIShadow   `json:"shadow"`
+	// Machines says whether the Machines tab is shown (see CIMachines.Show).
+	Machines bool `json:"machines"`
 }
 
 const (
@@ -1049,6 +1051,7 @@ const (
 func (v *ciView) Overview() CIOverview {
 	o := CIOverview{CIFound: v.found, Now: tstr(v.now), Branches: []CIBranch{}, Pulls: []CIRun{}, Running: []CIRun{}, Waiting: []CIRun{}, Agents: []CIAgent{}, Posted: []CIPosted{},
 		Shadow: CIShadow{Disagreeing: []string{}, Warnings: []string{}, Gate: v.p.ShadowGate}}
+	o.Machines = v.Machines().Show
 	if !v.found {
 		return o
 	}
@@ -1143,13 +1146,14 @@ type CIProject struct {
 	Steps      []string `json:"steps"`
 	Branches   []string `json:"branches"`
 	ShadowGate int      `json:"shadowGate"`
+	Machines   bool     `json:"machines"` // the project record asks for the Machines tab
 }
 
 // Projects lists the project records. A store folder's path is not sent: it can hold a user name.
 func (d *Dash) Projects2() []CIProject {
 	var out []CIProject
 	for _, p := range d.projects() {
-		cp := CIProject{ID: p.ID, Name: p.Name, Repo: p.Repo, HasCI: p.CIStore != "", Releases: p.HasReleases(), Channels: p.Channels, Steps: p.Steps, Branches: p.Branches, ShadowGate: p.ShadowGate}
+		cp := CIProject{ID: p.ID, Name: p.Name, Repo: p.Repo, HasCI: p.CIStore != "", Releases: p.HasReleases(), Channels: p.Channels, Steps: p.Steps, Branches: p.Branches, ShadowGate: p.ShadowGate, Machines: p.Machines}
 		if p.CIStore != "" {
 			if st, err := os.Stat(p.CIStore); err == nil && st.IsDir() {
 				cp.CIFound = true

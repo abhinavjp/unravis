@@ -135,21 +135,10 @@ func cmdCompare(ctx context.Context, args []string, stdout, stderr io.Writer, en
 		_, _ = fmt.Fprintf(stderr, "compare: the CI store folder %s does not exist (check --state); nothing to compare\n", dir)
 		return exitUsage
 	}
-	entries, err := (&localci.Store{Dir: dir}).ReadIndex()
+	rep, err := compareReport(ctx, *repo, dir, naming, *limit, *save, environ)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "compare:", err)
 		return exitUsage
-	}
-	rep, err := localci.Compare(ctx, localci.CompareOptions{Repo: *repo, Index: entries, Source: newCompareSource(environ), Naming: naming, Limit: *limit})
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "compare:", err)
-		return exitUsage
-	}
-	if *save {
-		if err := localci.SaveCompare(dir, rep); err != nil {
-			_, _ = fmt.Fprintln(stderr, "compare: the report could not be saved:", err)
-			return exitUsage
-		}
 	}
 	if *asJSON {
 		if err := rep.WriteJSON(stdout); err != nil {
@@ -160,6 +149,48 @@ func cmdCompare(ctx context.Context, args []string, stdout, stderr io.Writer, en
 	}
 	rep.WriteTable(stdout)
 	return exitOK
+}
+
+// compareReport compares this PC's local runs with what GitHub says and, when save is set, keeps the report in the
+// store folder where the Releases app's Overview reads it. `compare --save` and the timer of `serve` both use it.
+func compareReport(ctx context.Context, repo, dir string, naming localci.StatusNaming, limit int, save bool, environ []string) (*localci.CompareReport, error) {
+	entries, err := (&localci.Store{Dir: dir}).ReadIndex()
+	if err != nil {
+		return nil, err
+	}
+	rep, err := localci.Compare(ctx, localci.CompareOptions{Repo: repo, Index: entries, Source: newCompareSource(environ), Naming: naming, Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	if save {
+		if err := localci.SaveCompare(dir, rep); err != nil {
+			return nil, fmt.Errorf("the report could not be saved: %w", err)
+		}
+	}
+	return rep, nil
+}
+
+// compareTimer saves the comparison every `every` until ctx ends, so the Overview headline stays fresh while the
+// agent runs. A failure (GitHub unreachable, rate limit) is logged once per streak and the timer keeps going.
+func compareTimer(ctx context.Context, every time.Duration, repo, dir string, naming localci.StatusNaming, limit int, environ []string, log func(string)) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	failed := false
+	for {
+		if _, err := compareReport(ctx, repo, dir, naming, limit, true, environ); err != nil {
+			if !failed && ctx.Err() == nil {
+				log("compare: could not refresh the comparison, trying again in " + every.String() + ": " + err.Error())
+			}
+			failed = true
+		} else {
+			failed = false
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // namingFromFlags is the naming the serve, compare and fallback commands share.

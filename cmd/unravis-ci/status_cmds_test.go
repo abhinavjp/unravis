@@ -21,6 +21,7 @@ type statusFakes struct {
 	reporter *localci.FakeReporter
 	source   *localci.FakeCompareSource
 	disp     *localci.FakeDispatcher
+	claims   *localci.MemClaimHost
 }
 
 var hookMu sync.Mutex
@@ -28,16 +29,17 @@ var hookMu sync.Mutex
 // withStatusFakes swaps the three hooks for fakes and puts the old ones back at the end of the test.
 func withStatusFakes(t *testing.T) *statusFakes {
 	t.Helper()
-	f := &statusFakes{reporter: &localci.FakeReporter{}, source: &localci.FakeCompareSource{}, disp: &localci.FakeDispatcher{}}
+	f := &statusFakes{reporter: &localci.FakeReporter{}, source: &localci.FakeCompareSource{}, disp: &localci.FakeDispatcher{}, claims: &localci.MemClaimHost{}}
 	hookMu.Lock()
-	oldR, oldS, oldD := newReporter, newCompareSource, newDispatcher
+	oldR, oldS, oldD, oldC := newReporter, newCompareSource, newDispatcher, newClaimHost
 	newReporter = func([]string, func(string) string) localci.StatusReporter { return f.reporter }
 	newCompareSource = func([]string) localci.CompareSource { return f.source }
 	newDispatcher = func([]string) localci.Dispatcher { return f.disp }
+	newClaimHost = func([]string) localci.ClaimHost { return f.claims }
 	hookMu.Unlock()
 	t.Cleanup(func() {
 		hookMu.Lock()
-		newReporter, newCompareSource, newDispatcher = oldR, oldS, oldD
+		newReporter, newCompareSource, newDispatcher, newClaimHost = oldR, oldS, oldD, oldC
 		hookMu.Unlock()
 	})
 	return f
@@ -48,6 +50,7 @@ func installStatusFakes() {
 	newReporter = func([]string, func(string) string) localci.StatusReporter { return &localci.FakeReporter{} }
 	newCompareSource = func([]string) localci.CompareSource { return &localci.FakeCompareSource{} }
 	newDispatcher = func([]string) localci.Dispatcher { return &localci.FakeDispatcher{} }
+	newClaimHost = func([]string) localci.ClaimHost { return &localci.MemClaimHost{} }
 }
 
 // ---------------------------------------------------------------- naming and the banner

@@ -68,6 +68,8 @@ func realMain(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return cmdDrain(args[1:], stdout, stderr, environ)
 	case "compare":
 		return cmdCompare(ctx, args[1:], stdout, stderr, environ)
+	case "claims":
+		return cmdClaims(ctx, args[1:], stdout, stderr, environ)
 	case "fallback":
 		return cmdFallback(ctx, args[1:], stdout, stderr, environ)
 	case "help", "-h", "--help":
@@ -93,12 +95,14 @@ func usage(w io.Writer) {
         [--pause-file FILE] [--release-dir DIR] [--no-release-pause] [--no-push] [--job-slots N] [--grace 30s] [--keep]
         [--protect PATH]... [--trusted-base B]... [--allow-env NAME]... [--var k=v]...
         [--no-status] [--post-required] [--context file.yml=name]...
+        [--no-claims] [--claim-ttl 5m] [--compare-every 10m]
   unravis-ci run-item <id> [--state DIR] [--child] [--origin URL] [--job-slots N] [--protect PATH]... [--trusted-base B]... [--allow-env NAME]...
   unravis-ci status [--state DIR] [--recent N]
   unravis-ci cancel <id|pr> [--state DIR] [--reason TEXT]
   unravis-ci rerun <runid|pr> [--state DIR] [--repo owner/name]
   unravis-ci drain [--state DIR] [--name N]
   unravis-ci compare [--repo owner/name] [--state DIR] [--limit N] [--json] [--workflow-for base=file.yml]... [--context file.yml=name]...
+  unravis-ci claims [--repo owner/name] [--clean]
   unravis-ci fallback <pr> [--repo owner/name] [--dry-run] [--workflow-for base=file.yml]...
   unravis-ci version
 exit codes: 0 pass, 1 workflow failed, 2 usage or I/O error, 3 unsupported

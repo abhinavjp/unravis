@@ -116,3 +116,117 @@ test('errors: a lost connection is said in plain words, a program message is kep
   assert.match(t.plainErr(new Error('')), /^Could not reach/);
   assert.equal(t.plainErr(new Error('That run is not in this CI store.')), 'That run is not in this CI store.');
 });
+
+// ---- the Machines tab and the unknown project message, drawn into a small fake page ----
+
+function fakeNode(tag) {
+  const n = {
+    tag, className: '', textContent: '', children: [], dataset: {}, attrs: {}, hidden: false, title: '', href: '',
+    classList: { add() {}, remove() {}, toggle() {} },
+    append(...c) { for (const x of c) n.children.push(typeof x === 'string' ? { tag: '#text', textContent: x, children: [] } : x); },
+    replaceChildren(...c) { n.children = []; n.append(...c); },
+    setAttribute(k, v) { n.attrs[k] = v; }, removeAttribute(k) { delete n.attrs[k]; },
+    addEventListener() {}, querySelector: () => null, focus() {},
+  };
+  return n;
+}
+const textOf = (n) => (n.textContent || '') + n.children.map(textOf).join(' ');
+const find = (n, f, out = []) => { if (f(n)) out.push(n); for (const c of n.children) find(c, f, out); return out; };
+
+function loadDom(hash, projects) {
+  const nodes = {};
+  const node = (id) => nodes[id] || (nodes[id] = fakeNode('#' + id));
+  const sandbox = {
+    console, URLSearchParams, Date, JSON, Math, Set, Map, Promise, encodeURIComponent, decodeURIComponent, setTimeout, clearTimeout,
+    location: { hash: hash || '' }, history: { replaceState() {} },
+    document: { hidden: false, addEventListener() {}, querySelector: () => fakeNode('q'), getElementById: node, createElement: fakeNode },
+    window: { addEventListener() {} },
+    $: node,
+    el: (tag, cls, text) => { const e = fakeNode(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; },
+    when: (s) => 'when:' + s, ago: (s) => 'ago:' + s, dur: (n) => n + 's', clock: (s) => 'clock:' + s,
+    getJSON: () => Promise.reject(new Error('no program')),
+    viewer() {}, mountViewer() {}, STEPS: ['A'], CHANNELS: ['rc'], snap: null, section: 'overview', NEXT: 'next', ui: {}, selected: '', render() {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(ui('ci.js') + '\n;globalThis.__t = { ci, route, drawMachines, machinesShown, setMachinesShown, CI_TABS, CI_MACHINE };', sandbox, { filename: 'ci.js' });
+  const t = sandbox.__t;
+  t.ci.projects = projects || [{ id: 'a', name: 'Alpha', releases: true, ciFound: true }, { id: 'b', name: 'Beta' }];
+  t.ci.ready = true; t.ci.pid = 'a';
+  t.nodes = nodes;
+  return t;
+}
+
+const machine = (o) => Object.assign({ id: 'm-0000aaaa', self: false, labels: [], state: 'Idle', jobs: [], lastHeard: '2025-11-01T12:00:00Z' }, o);
+
+test('machines: the tab is listed, and is shown only when the project asks or more than one PC was seen', () => {
+  const t = loadDom();
+  assert.ok(t.CI_TABS.some((x) => x[0] === 'machines' && x[2].length > 20), 'the tab has a tooltip');
+  assert.equal(t.machinesShown({ id: 'a' }), false);
+  assert.equal(t.machinesShown({ id: 'a', machines: true }), true);
+  t.setMachinesShown('a', true);
+  assert.equal(t.machinesShown({ id: 'a' }), true);
+  assert.equal(t.machinesShown({ id: 'b' }), false);
+  assert.deepEqual(Array.from(Object.keys(t.CI_MACHINE)), ['Running', 'Idle', 'Quiet', 'Stopped']);
+  for (const k of Object.keys(t.CI_MACHINE)) assert.ok(t.CI_MACHINE[k][2].length > 10, k);
+});
+
+test('machines: one row for each PC with agent, labels, state word, current run and last heard; other PCs by id only', () => {
+  const t = loadDom('#/machines');
+  t.ci.pid = 'a';
+  t.drawMachines({
+    ciFound: true, show: true, seen: true, now: 'n', machines: [
+      machine({ id: 'm-11111111', self: true, labels: ['gpu'], state: 'Running', jobs: [{ label: 'pr 7 into develop', since: '2025-11-01T11:59:00Z' }], slots: 2 }),
+      machine({ id: 'm-22222222', state: 'Quiet', note: 'Not heard from for 9m.', silent: '9m' }),
+    ],
+  }, t.ci.projects[0]);
+  const main = t.nodes['ci-main'];
+  const rows = find(main, (n) => n.tag === 'tr' && /mrow/.test(n.className));
+  assert.equal(rows.length, 2);
+  const txt = rows.map(textOf);
+  assert.match(txt[0], /m-11111111/); assert.match(txt[0], /this PC/); assert.match(txt[0], /gpu/); assert.match(txt[0], /Running/); assert.match(txt[0], /pr 7 into develop/); assert.match(txt[0], /ago:/);
+  assert.match(txt[1], /Quiet/); assert.match(txt[1], /Nothing right now/); assert.match(txt[1], /Not heard from for 9m/);
+  assert.doesNotMatch(txt[1], /this PC/);
+  const heads = find(main, (n) => n.tag === 'th').map((n) => n.textContent);
+  assert.deepEqual(heads, ['Machine', 'Labels', 'State', 'Current run', 'Last heard']);
+  assert.ok(find(main, (n) => n.tag === 'td').every((n) => n.dataset.label), 'every cell names itself for the narrow layout');
+});
+
+test('machines: empty states say what to do', () => {
+  const none = loadDom('#/machines');
+  none.drawMachines({ ciFound: true, show: true, seen: false, machines: [] }, none.ci.projects[0]);
+  assert.match(textOf(none.nodes['ci-main']), /No list of PCs has been saved yet[\s\S]*unravis-ci serve/);
+  const one = loadDom('#/machines');
+  one.drawMachines({ ciFound: true, show: true, seen: true, machines: [machine({ self: true })] }, one.ci.projects[0]);
+  assert.match(textOf(one.nodes['ci-main']), /Only this PC has been seen so far/);
+  const old = loadDom('#/machines');
+  old.drawMachines({ ciFound: true, show: true, seen: true, stale: '20m', machines: [machine({ self: true })] }, old.ci.projects[0]);
+  assert.match(textOf(old.nodes['ci-main']), /last saved 20m ago/);
+});
+
+test('machines: text from other PCs is shown as text, never as HTML', () => {
+  const t = loadDom('#/machines');
+  t.drawMachines({ ciFound: true, show: true, seen: true, machines: [machine({ id: '<img src=x onerror=alert(1)>', labels: ['<b>x</b>'] })] }, t.ci.projects[0]);
+  const all = find(t.nodes['ci-main'], () => true);
+  assert.ok(all.some((n) => n.textContent === '<img src=x onerror=alert(1)>'));
+  assert.ok(all.every((n) => n.tag !== 'img' && n.tag !== 'b'));
+});
+
+test('an unknown project in the address says so, names the known projects and links to them', () => {
+  const t = loadDom('#/runs?project=nope');
+  t.route(true);
+  const main = t.nodes['ci-main'];
+  assert.match(textOf(main), /There is no project called "nope"/);
+  const links = find(main, (n) => n.tag === 'a');
+  assert.deepEqual(links.map((n) => n.textContent), ['Alpha', 'Beta']);
+  assert.equal(links[0].href, '#/runs');
+  assert.equal(links[1].href, '#/runs?project=b');
+  assert.equal(t.ci.pid, 'a', 'it does not pretend the address was another project');
+  assert.ok(main.children.some((c) => c.attrs && c.attrs.role === 'alert'));
+});
+
+test('a known project, or none at all, is not an error', () => {
+  const t = loadDom('#/overview?project=b');
+  t.route(true);
+  assert.equal(t.ci.pid, 'b');
+  assert.doesNotMatch(textOf(t.nodes['ci-main']), /There is no project/);
+});

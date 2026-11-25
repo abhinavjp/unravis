@@ -75,6 +75,14 @@ type Request struct {
 	Reason     string `json:"reason,omitempty"`
 	// SupersededBy is the id of the request that replaced this one.
 	SupersededBy string `json:"supersededBy,omitempty"`
+	// Slot is the time slot of a scheduled run (the day it fired for), so the same commit asked for again on the
+	// next day is a new claim on the other PCs.
+	Slot string `json:"slot,omitempty"`
+	// Rerun is set when a person asked for the run again: a finished claim of the same commit does not stop it.
+	Rerun bool `json:"rerun,omitempty"`
+	// DeferUntil keeps a request that another PC holds in the queue until then; DeferNote says why, in plain words.
+	DeferUntil time.Time `json:"deferUntil,omitzero"`
+	DeferNote  string    `json:"deferNote,omitempty"`
 }
 
 // Key names what a request is about. A new head of the same key replaces the older request.
@@ -523,8 +531,12 @@ func (q *Queue) Claim(agent string, labels []string) (*Request, error) {
 	for _, l := range labels {
 		have[l] = true
 	}
+	now := q.now()
 next:
 	for _, r := range rs {
+		if r.DeferUntil.After(now) {
+			continue // another PC is running it; look again when the time is up
+		}
 		for _, l := range r.Labels {
 			if !have[l] {
 				continue next
@@ -548,6 +560,7 @@ next:
 			return nil, err
 		}
 		r.State, r.ClaimedBy, r.ClaimedAt = StateRunning, agent, q.now()
+		r.DeferUntil, r.DeferNote = time.Time{}, ""
 		r.Attempts++
 		if err := writeAtomic(q.path("running", r.ID), r); err != nil {
 			return nil, err
@@ -613,6 +626,37 @@ func (q *Queue) Requeue(id string) error {
 		return err
 	}
 	r.State, r.ClaimedBy, r.ClaimedAt = StateQueued, "", time.Time{}
+	r.DeferUntil, r.DeferNote = time.Time{}, ""
+	if err := writeAtomic(q.path("queued", id), r); err != nil {
+		return err
+	}
+	if err := retryFS(func() error { return os.Remove(q.path("running", id)) }); err != nil {
+		return err
+	}
+	q.dropMarker(id)
+	return nil
+}
+
+// Defer puts a running request back in the queue, not to be claimed before until. It is for a request another PC
+// is running: this PC looks again later. The claim does not count as an attempt.
+func (q *Queue) Defer(id string, until time.Time, note string) error {
+	if !validRequestID(id) {
+		return fmt.Errorf("%q is not a request id", id)
+	}
+	r, err := q.read(q.path("running", id))
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: %s", ErrNotRunning, id)
+	}
+	if err != nil {
+		return err
+	}
+	if _, _, marked := q.CancelRequested(id); marked {
+		_, err := q.Complete(id, "", StateCancelled, "cancelled while it waited for another PC")
+		return err
+	}
+	r.State, r.ClaimedBy, r.ClaimedAt = StateQueued, "", time.Time{}
+	r.DeferUntil, r.DeferNote = until, note
+	r.Attempts = max(r.Attempts-1, 0)
 	if err := writeAtomic(q.path("queued", id), r); err != nil {
 		return err
 	}

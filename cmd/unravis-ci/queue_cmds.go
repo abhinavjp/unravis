@@ -431,6 +431,7 @@ func cmdRerun(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 			return exitFailed
 		}
 	}
+	req.Rerun = true // an answer another PC left for this commit does not stand in the way of a rerun
 	got, added, err := queue.Enqueue(req)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "rerun:", err)

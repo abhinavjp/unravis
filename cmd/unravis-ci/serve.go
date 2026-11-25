@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,6 +25,12 @@ var defaultPushWorkflows = map[string][]string{"develop": {"fast-gate.yml", "ci.
 
 // pauseFileName is the file in the state folder whose presence stops the agent from taking new requests.
 const pauseFileName = "PAUSE"
+
+// How often serve saves the comparison with GitHub for the Releases app, and how many recent runs it looks at.
+const (
+	defaultCompareEvery = 10 * time.Minute
+	defaultCompareLimit = 30
+)
 
 // syncWriter makes the many log writers of one process (poller, agent, runs, children) take turns.
 type syncWriter struct {
@@ -91,6 +98,9 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	postRequired := fs.Bool("post-required", false, "post the REAL required status names (cutover phase 1/2 only; the default is shadow mode: local/<name> only)")
 	noStatus := fs.Bool("no-status", false, "post no commit statuses at all")
 	schedBranch := fs.String("schedule-branch", "master", "branch the schedule workflows are read from")
+	noClaims := fs.Bool("no-claims", false, "do not claim requests on the host (with more than one PC watching the repository, two of them may then run the same request)")
+	claimTTL := fs.Duration("claim-ttl", localci.DefaultLeaseTTL, "a claim its PC did not refresh for this long is taken over by another PC")
+	compareEvery := fs.Duration("compare-every", defaultCompareEvery, "how often the comparison with GitHub is saved for the Releases app's Overview (0 turns it off)")
 	var wfFor, pushWf, protect, vars, labels, schedule, trustedBase, allowEnv, ctxFlag multiFlag
 	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
 	fs.Var(&pushWf, "push-workflow", "branch=file.yml: a workflow run when branch is pushed (repeatable; replaces the defaults)")
@@ -119,6 +129,14 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	}
 	if *slots < 1 || *jobSlots < 1 {
 		_, _ = fmt.Fprintln(stderr, "serve: --slots and --job-slots must be at least 1")
+		return exitUsage
+	}
+	if *claimTTL < 2*localci.DefaultFleetEvery {
+		_, _ = fmt.Fprintf(stderr, "serve: --claim-ttl must be at least %s (a claim is refreshed every %s)\n", 2*localci.DefaultFleetEvery, localci.DefaultFleetEvery)
+		return exitUsage
+	}
+	if *compareEvery < 0 || (*compareEvery > 0 && *compareEvery < time.Minute) {
+		_, _ = fmt.Fprintln(stderr, "serve: --compare-every must be 0 (off) or at least 1m")
 		return exitUsage
 	}
 	prWorkflows := map[string]string{}
@@ -247,6 +265,13 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		Log:      logw,
 		Status:   statusSvc,
 	}
+	if !*noClaims {
+		fleet, code := startFleet(ctx, newClaimHost(environ), *repo, store.Dir, labels, *claimTTL, logw, stderr, redact)
+		if code != exitOK {
+			return code
+		}
+		agent.Fleet = fleet
+	}
 	if !*noKeepAwake {
 		ka := localci.NewKeepAwake()
 		defer ka.Close()
@@ -294,6 +319,19 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		defer pollDone.Done()
 		poller.Run(pollCtx)
 	}()
+	if *compareEvery > 0 {
+		cmpNaming, code := namingFromFlags("serve", wfFor, pushWf, ctxFlag, false, stderr)
+		if code != exitOK {
+			return code
+		}
+		pollDone.Add(1)
+		go func() {
+			defer pollDone.Done()
+			compareTimer(pollCtx, *compareEvery, *repo, store.Dir, cmpNaming, defaultCompareLimit, environ, func(m string) {
+				_, _ = fmt.Fprintf(logw, "%s %s\n", time.Now().Format("15:04:05"), redact(m))
+			})
+		}()
+	}
 	_, _ = fmt.Fprintf(logw, "watching %s every %s (state %s)\n", *repo, *interval, store.Dir)
 	runErr := agent.Run(hard)
 	if poster != nil {
@@ -307,6 +345,35 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return exitUsage
 	}
 	return exitOK
+}
+
+// startFleet makes the fleet of this PC and checks that the host takes its records. A token that may not write the
+// repository ends serve with a plain message: carrying on without claims would let two PCs run the same request
+// without anyone knowing. A host that cannot be reached now is no reason to stop: requests wait until it can.
+func startFleet(ctx context.Context, host localci.ClaimHost, repo, dir string, labels []string, ttl time.Duration, logw, stderr io.Writer, redact func(string) string) (*localci.Fleet, int) {
+	id, err := localci.LoadFleetID(dir)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "serve:", err)
+		return nil, exitUsage
+	}
+	fleet := &localci.Fleet{Host: host, Repo: repo, ID: id, Labels: labels, TTL: ttl, Log: func(format string, a ...any) {
+		_, _ = fmt.Fprintf(logw, "%s %s\n", time.Now().Format("15:04:05"), redact(fmt.Sprintf(format, a...)))
+	}}
+	pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	switch err := fleet.Probe(pctx); {
+	case errors.Is(err, localci.ErrClaimDenied):
+		_, _ = fmt.Fprintf(stderr, "serve: this PC may not write claim records to %s: %s\n"+
+			"  Claims keep two PCs from running the same request. They need a GitHub login that can write the repository's contents\n"+
+			"  (a token that can only post commit statuses is not enough). Sign in with `gh auth login`, or start serve with --no-claims\n"+
+			"  if this is the only PC that watches the repository.\n", repo, redact(err.Error()))
+		return nil, exitUsage
+	case err != nil:
+		_, _ = fmt.Fprintf(logw, "claims: the host could not be reached now (%s); requests wait until it can be\n", redact(err.Error()))
+	default:
+		_, _ = fmt.Fprintf(logw, "claims: on. This PC is %s to the other PCs; a claim not refreshed for %s is taken over\n", id, ttl)
+	}
+	return fleet, exitOK
 }
 
 // trustCfg is what a run needs besides the request: the protected paths, the trusted bases and the allowed

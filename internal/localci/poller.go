@@ -478,7 +478,7 @@ func (p *Poller) pollSchedule(ctx context.Context) error {
 			p.fired[key] = due
 			changed = true
 			p.logf("schedule %s (%s) fell due at %s", wf, c.Spec, due.Format("2006-01-02 15:04 UTC"))
-			p.enqueue(Request{Kind: KindSchedule, Ref: p.ScheduleBranch, SHA: tip, Workflow: wf, Cron: c.Spec})
+			p.enqueue(Request{Kind: KindSchedule, Ref: p.ScheduleBranch, SHA: tip, Workflow: wf, Cron: c.Spec, Slot: due.UTC().Format("20060102T1504")})
 		}
 	}
 	if changed {

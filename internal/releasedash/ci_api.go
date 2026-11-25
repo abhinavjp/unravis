@@ -33,6 +33,7 @@ func (d *Dash) registerCI(mux *http.ServeMux) {
 			fail(w, http.StatusInternalServerError, err.Error())
 		}
 	}
+	d.registerMachines(mux, view)
 	mux.HandleFunc("/api/projects", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"projects": d.Projects2()})
 	})

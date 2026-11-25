@@ -506,6 +506,8 @@ func TestMain(m *testing.M) {
 func childMain(mode string) int {
 	state, id := os.Getenv("LOCALCI_TEST_STATE"), os.Getenv("LOCALCI_TEST_ID")
 	switch mode {
+	case "gh":
+		return fakeGHMain(os.Args[1:], state)
 	case "ok":
 		fmt.Println("child ran", id)
 		if err := WriteOutcome(state, id, Outcome{RunID: "child-run", Conclusion: "success"}); err != nil {
