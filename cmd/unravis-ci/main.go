@@ -290,11 +290,9 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer, enviro
 		}
 		return exitUnsupported
 	}
-	if len(wf.On) > 0 {
-		if _, ok := wf.On[*event]; !ok {
-			_, _ = fmt.Fprintf(stderr, "run: %s does not run on %s\n", wfPath, *event)
-			return exitUsage
-		}
+	if !wf.RunnableAsEvent(*event) {
+		_, _ = fmt.Fprintf(stderr, "run: %s does not run on %s\n", wfPath, *event)
+		return exitUsage
 	}
 	cfg, err := loadConfig(*cfgPath, workdir)
 	if err != nil {

@@ -1,13 +1,3 @@
-# Tests that fail on a normal (non-elevated) Windows account, on top of baseline-go-tests.txt (the Linux list).
-# Used only when the comparer runs on Windows: the local CI runner (unravis-ci). GitHub's Linux job never reads it.
-# Causes: SetSDDL owner Administrators needs an elevated account; Windows path and golden-file differences.
-# Same form as baseline-go-tests.txt: <package>.<Test>
-api-audit-explorer/internal/autostart.TestStartupDirDoesNotCreateAnything
-api-audit-explorer/internal/autostart.TestStartupDirIsAnExistingAbsoluteStartupFolder
-api-audit-explorer/internal/bbsql.TestFolderAdapterAcceptsAdministratorsOwnedLock
-api-audit-explorer/internal/bbsql.TestFolderAdapterAcceptsInstallerLock
-api-audit-explorer/internal/bbsql.TestFolderAdapterRefusesUnreadableGrantForms
-api-audit-explorer/internal/bbsql.TestFolderAdapterRefusesUserOwnedLockedFolder
 api-audit-explorer/internal/blackbox.TestReadOpenedSettingsHoldsTheFileWhileReading
 api-audit-explorer/internal/blackbox.TestReadOpenedSettingsMissingFileIsRefused
 api-audit-explorer/internal/blackbox.TestReadOpenedSettingsRefusesAFileOverTheLimit
@@ -34,7 +24,6 @@ api-audit-explorer/internal/mcp.TestResultShapesAdditive
 api-audit-explorer/internal/mcpsrv.TestOpenSetsFileModeAndFolder
 api-audit-explorer/internal/mcpsrv.TestStoreFilesAndFolderAreOwnerOnly
 api-audit-explorer/internal/setup.TestAPlainWriteInTheAdminOnlyFolderIsJudgedByItsRealOwner
-api-audit-explorer/internal/setup.TestOSDirsDesktopIsEmptyOrInsideTheProfile
 api-audit-explorer/internal/setup.TestReadFileProvenHoldsTheFileWhileReading
 api-audit-explorer/internal/setup.TestReadFileProvenReadsAnAdminOnlyFile
 api-audit-explorer/internal/setup.TestReadFileProvenRefusesAFileAnotherProgramHoldsOpenForWriting
@@ -53,7 +42,6 @@ api-audit-explorer/internal/setup.TestReadFileProvenRefusesAUsersWritableFile/wr
 api-audit-explorer/internal/setup.TestReadFileProvenRefusesTooLarge
 api-audit-explorer/internal/setup.TestRecoverJournalOnRealNTFS
 api-audit-explorer/internal/setup.TestRecoverJournalOnRealNTFSRefusesWhatIsNotProven
-api-audit-explorer/internal/setup.TestSetSDDLRefusesAJunction
-api-audit-explorer/internal/setup.TestSetSDDLRefusesALinkInThePath
+api-audit-explorer/internal/setup.TestSetSDDLStillWorksOnAFolder
 api-audit-explorer/internal/setup.TestTheRealJournalWriterMakesAFileTheRealReaderAccepts
 api-audit-explorer/internal/update.TestSilentNoUAC

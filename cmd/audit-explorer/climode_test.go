@@ -24,7 +24,7 @@ func TestCLIRouteIsWiredBehindThePipeHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	dash := server.New(audit.NewDemo(time.Now()), nil, token, false, server.WithCases(store, nil, nil))
-	h := pipesrv.Handler(dash, pipesrv.WithCLI(newCLIHandler(dash, token, "app", nil)))
+	h := pipesrv.Handler(dash, pipesrv.WithCLI(newCLIHandler(dash, token, "app", nil, nil)))
 	call := func(role pipesrv.Role, image, method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r = r.WithContext(pipesrv.WithPeerImage(pipesrv.WithRole(context.Background(), role), image))
@@ -93,7 +93,7 @@ func TestOwnerFlagReachesHelloAndStop(t *testing.T) {
 			t.Fatalf("%v: %v", c.args, err)
 		}
 		stopped := make(chan struct{}, 1)
-		h := cliHandlerFor(f, dash, token, func() { stopped <- struct{}{} })
+		h := cliHandlerFor(f, dash, token, func() { stopped <- struct{}{} }, nil)
 		do := func(method, path, body string) (int, string) {
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))

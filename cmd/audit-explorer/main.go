@@ -33,6 +33,7 @@ import (
 	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/pipesrv"
+	"api-audit-explorer/internal/power"
 	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/store"
@@ -337,11 +338,24 @@ func run(args []string, getenv func(string) string) error {
 	// Code mode (BL-574): the routes answer 503 until the broker is mounted just below (it needs the server built first).
 	codeMount := server.NewCodeMount()
 	serverOptions = append(serverOptions, server.WithCodeMount(codeMount))
+	var idlePower *power.Policy
+	if !f.demo {
+		idlePower = newPowerPolicy(updater, logFile)
+		if updater != nil {
+			updater.SetPowerTouch(idlePower.Touch)
+		}
+		serverOptions = append(serverOptions, server.WithPower(idlePower))
+	}
 	served := server.New(wired.repo, explorer.Assets(), token, f.demo, serverOptions...)
-	mountCodeMode(getenv, served, token, codeMount)
+	codeBroker := mountCodeMode(getenv, served, token, codeMount)
 	if f.demo && !pipeMode {
 		closeDemoMCP := openDemoMCP(appCtx, getenv, wired.repo, mcpMount)
 		defer closeDemoMCP()
+	}
+	if idlePower != nil {
+		powerDone := make(chan struct{})
+		go func() { defer close(powerDone); idlePower.Run(signalContext) }()
+		defer func() { cancel(); <-powerDone }()
 	}
 	if updater != nil {
 		updaterDone := make(chan struct{})
@@ -380,8 +394,8 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 	if pipes != nil {
-		pipeOpts := []pipesrv.Option{pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel))}
-		mcpHandler, closeMCP := openMCPEndpoint(appCtx, getenv, served, token, f.demo, sealedfile.CurrentUser, withMCPMount(mcpMount))
+		pipeOpts := []pipesrv.Option{pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel, codeBroker))}
+		mcpHandler, closeMCP := openMCPEndpoint(appCtx, getenv, served, token, f.demo, sealedfile.CurrentUser, withMCPMount(mcpMount), withCodeBroker(codeBroker))
 		defer closeMCP() // runs after the servers have stopped (awaitShutdownWithin below)
 		if mcpHandler != nil {
 			pipeOpts = append(pipeOpts, pipesrv.WithMCP(mcpHandler))

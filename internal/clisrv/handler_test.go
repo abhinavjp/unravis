@@ -135,6 +135,15 @@ func TestGateIsTheMatrix(t *testing.T) {
 			if r.OK || r.Error.Code != want {
 				t.Errorf("%s: %+v", row.Op, r)
 			}
+		case row.Op == "code.types" || row.Op == "code.run":
+			// built (BL-371): this handler has no broker behind it, so types answer ENDPOINT_UNAVAILABLE, and a run with no script is a usage error
+			want := "ENDPOINT_UNAVAILABLE"
+			if row.Op == "code.run" {
+				want = "INVALID_ARGUMENT"
+			}
+			if r.OK || r.Error.Code != want {
+				t.Errorf("%s: %+v", row.Op, r)
+			}
 		default:
 			if r.OK || r.Error.Code != "UNKNOWN_OPERATION" {
 				t.Errorf("%s (not built): %+v", row.Op, r)

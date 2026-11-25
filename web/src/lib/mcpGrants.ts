@@ -8,7 +8,8 @@
  *  - An approval always names the revision the card showed (`expectRev`). `approveBody` throws without one, so no code path can approve
  *    "whatever is there now".
  *  - A host that another program also tried to register as (`contested`) is approved only with an explicit extra tick.
- *  - Nothing is allowed by default: the form starts with summaries only, the connected sources, no identifiers, and the person presses Approve.
+ *  - Nothing is allowed by default: the form starts with summaries only, the connected sources, no identifiers, no code mode, and the person presses Approve.
+ *  - Code mode (BL-574 M1) is its own permission of a grant: a separate tick, off by default, never part of the tier or the identifiers choice.
  */
 
 export type McpState = 'pending' | 'active' | 'revoked' | 'denied';
@@ -33,6 +34,8 @@ export interface McpProfile {
   identifiers: boolean;
   identifiersUntil: string;
   requestedIdentifiers: boolean;
+  /** The person allowed code mode (small scripts over the read-only tools) for this grant. False for any grant that was not ticked. */
+  code: boolean;
   idleMinutes: number;
   expiresAt: string;
   approvedAt: string;
@@ -88,7 +91,7 @@ export function parseProfile(raw: unknown): McpProfile | null {
     id, state: state as McpState, expired: r.expired === true, rev: num(r.rev), enrolled: r.enrolled === true, contested: num(r.contested),
     hostName: str(r.hostName), hostVersion: str(r.hostVersion), exe: str(r.exe), ppid: num(r.ppid), tier: str(r.tier),
     tools: strings(r.tools), sources: strings(r.sources), identifiers: r.identifiers === true, identifiersUntil: str(r.identifiersUntil),
-    requestedIdentifiers: r.requestedIdentifiers === true, idleMinutes: num(r.idleMinutes), expiresAt: str(r.expiresAt), approvedAt: str(r.approvedAt),
+    requestedIdentifiers: r.requestedIdentifiers === true, code: r.code === true, idleMinutes: num(r.idleMinutes), expiresAt: str(r.expiresAt), approvedAt: str(r.approvedAt),
     createdAt: str(r.createdAt), lastCallAt: str(r.lastCallAt), claimed: r.claimed === true
   };
 }
@@ -130,6 +133,7 @@ export interface McpDraft {
   sources: string[];
   identifiers: boolean;
   identifiersMinutes: number;
+  code: boolean;
   idleMinutes: number;
   acceptContested: boolean;
 }
@@ -141,11 +145,11 @@ export function toolsOf(tiers: readonly McpTierInfo[], tier: McpTier): string[] 
   return tiers.find((t) => t.id === tier)?.tools ?? [];
 }
 
-/** The form a card starts with: summaries only, every tool of that tier, every source connected now, no identifiers, 8 hours idle. */
+/** The form a card starts with: summaries only, every tool of that tier, every source connected now, no identifiers, no code mode, 8 hours idle. */
 export function defaultDraft(tiers: readonly McpTierInfo[], limits: McpLimits, sourceIds: readonly string[]): McpDraft {
   return {
     tier: 'aggregate', tools: toolsOf(tiers, 'aggregate'), sources: [...sourceIds], identifiers: false,
-    identifiersMinutes: limits.defaultIdentifiersMinutes, idleMinutes: limits.defaultIdleMinutes, acceptContested: false
+    identifiersMinutes: limits.defaultIdentifiersMinutes, code: false, idleMinutes: limits.defaultIdleMinutes, acceptContested: false
   };
 }
 
@@ -179,6 +183,7 @@ export interface ApproveBody {
   sources: string[];
   identifiers: boolean;
   identifiersMinutes: number;
+  code: boolean;
   idleMinutes: number;
   acceptContested: boolean;
 }
@@ -186,14 +191,14 @@ export interface ApproveBody {
 /**
  * The body of an approval. It always carries the revision the card showed: without one this throws, so the screen cannot send an
  * approval that would bind to a host the person never saw (review N5 of PR 260, N-c of PR 263). The identifiers duration is sent only when
- * identifiers are on.
+ * identifiers are on. `code` is sent as ticked and is false unless the person ticked it.
  */
 export function approveBody(p: McpProfile, d: McpDraft, tiers: readonly McpTierInfo[]): ApproveBody {
   if (!Number.isInteger(p.rev) || p.rev <= 0) throw new Error('An approval needs the revision of the card.');
   const allowed = toolsOf(tiers, d.tier);
   return {
     expectRev: p.rev, tier: d.tier, tools: d.tools.filter((t) => allowed.includes(t)), sources: [...d.sources], identifiers: d.identifiers,
-    identifiersMinutes: d.identifiers ? d.identifiersMinutes : 0, idleMinutes: d.idleMinutes, acceptContested: p.contested > 0 && d.acceptContested
+    identifiersMinutes: d.identifiers ? d.identifiersMinutes : 0, code: d.code === true, idleMinutes: d.idleMinutes, acceptContested: p.contested > 0 && d.acceptContested
   };
 }
 

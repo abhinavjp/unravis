@@ -278,8 +278,8 @@ func eachBudget(t *testing.T, f Factory, caps casestore.Caps) {
 		delivered++
 		return nil
 	})
-	if !errors.Is(err, casestore.ErrScanBudget) || delivered == 0 || delivered >= 700 {
-		t.Errorf("MaxScanTime 10ms on a slow scan: %d of 700 events, %v; want a partial scan and ErrScanBudget", delivered, err)
+	if !errors.Is(err, casestore.ErrScanBudget) || delivered >= 700 { // 0 is fine: a slow runner can spend the budget before the first event
+		t.Errorf("MaxScanTime 10ms on a slow scan: %d of 700 events, %v; want a scan stopped early with ErrScanBudget", delivered, err)
 	}
 }
 

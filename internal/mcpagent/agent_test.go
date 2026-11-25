@@ -58,7 +58,10 @@ type rig struct {
 	enrollStatus, claimStatus atomic.Int32
 }
 
-func newRig(t *testing.T) *rig {
+func newRig(t *testing.T) *rig { return newRigWith(t, nil) }
+
+// newRigWith is newRig with the dispatcher given a code-mode backend (nil: none, as in a build without one).
+func newRigWith(t *testing.T, code mcpsrv.CodeBackend) *rig {
 	t.Helper()
 	ctx := context.Background()
 	db, _, err := mcpaudit.Open(ctx, filepath.Join(t.TempDir(), "mcp"), seal{"srv"}, nil)
@@ -81,7 +84,7 @@ func newRig(t *testing.T) *rig {
 	r.ui = httptest.NewServer(dash)
 	t.Cleanup(r.ui.Close)
 	h, err := mcpsrv.Handler(mcpsrv.Deps{
-		Grants: grants, Backend: mcpsrv.NewLocalBackend(dash, dashToken), Recorder: db,
+		Grants: grants, Backend: mcpsrv.NewLocalBackend(dash, dashToken), Recorder: db, Code: code,
 		Info: func() mcpsrv.Info { return mcpsrv.Info{PID: ownerPID, Gen: ownerGen, AppVersion: "t"} },
 	})
 	if err != nil {
@@ -149,7 +152,10 @@ func (r *rig) rev(id string) int {
 	return 0
 }
 
-func (r *rig) approve(id string) {
+func (r *rig) approve(id string) { r.t.Helper(); r.approveWith(id, nil) }
+
+// approveWith approves from the screen with extra fields in the approve body (for example "code": true).
+func (r *rig) approveWith(id string, extra map[string]any) {
 	r.t.Helper()
 	req, _ := http.NewRequest("GET", r.ui.URL+"/api/sources", nil)
 	req.Header.Set("X-Audit-Token", dashToken)
@@ -164,7 +170,11 @@ func (r *rig) approve(id string) {
 	for _, s := range list {
 		ids = append(ids, s.ID)
 	}
-	code, m := r.screen("POST", "/api/mcp/profiles/"+id+"/approve", map[string]any{"expectRev": r.rev(id), "tier": "aggregate", "sources": ids})
+	body := map[string]any{"expectRev": r.rev(id), "tier": "aggregate", "sources": ids}
+	for k, v := range extra {
+		body[k] = v
+	}
+	code, m := r.screen("POST", "/api/mcp/profiles/"+id+"/approve", body)
 	if code != 200 {
 		r.t.Fatalf("approve: %d %v", code, m)
 	}

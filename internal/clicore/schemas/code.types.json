@@ -1,0 +1,11 @@
+{
+  "operation": "code.types",
+  "description": "Print what a code-mode script can use: the TypeScript typings of its tools, the hash of the tool list they were made from and the limits of a run. It works whether or not code mode is switched on.",
+  "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "properties": {}},
+  "output": {"type": "object", "additionalProperties": false, "required": ["namespace", "dts", "schemaSha256", "limits"], "properties": {
+    "namespace": {"type": "string"}, "dts": {"type": "string", "description": "The TypeScript declarations a script is written against"},
+    "schemaSha256": {"type": "string", "description": "The hash of the tool list the declarations were made from"},
+    "limits": {"type": "object", "additionalProperties": {"type": "integer"}, "description": "maxSourceBytes, defaultTimeoutMs, minTimeoutMs, maxTimeoutMs, runCapSeconds, maxCalls, maxInFlight, maxResultBytes, maxLogBytes, maxConcurrentRuns"}}},
+  "errors": ["INVALID_ARGUMENT", "ENDPOINT_UNAVAILABLE", "APP_NOT_RUNNING", "OWNER_BUSY", "UPDATE_IN_PROGRESS", "ENDPOINT_UNTRUSTED", "VERSION_INCOMPATIBLE", "CANCELED", "TIMEOUT", "INTERNAL"],
+  "examples": [{"command": "unravis code types -o json"}]
+}

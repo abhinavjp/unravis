@@ -33,6 +33,9 @@ func KnownTool(name string) bool { return knownTool(name) }
 // and whether it is an error answer. The call ends with ctx and, at the latest, after the five-minute operation deadline. The answer
 // never repeats the arguments, a path or upstream text.
 func (b *Bridge) CallEnvelope(ctx context.Context, name string, args json.RawMessage) (body []byte, isError bool) {
+	if IsCodeTool(name) {
+		return codeRefused(name), true // the loopback bridge has no grant: it never runs code
+	}
 	if !knownTool(name) {
 		return encodeError("unknown", coded(CodeInvalidArguments, unknownToolText)), true
 	}

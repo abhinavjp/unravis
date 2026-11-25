@@ -556,3 +556,72 @@ func TestModesWithoutAStore(t *testing.T) {
 		t.Errorf("off: %v", got)
 	}
 }
+
+// BL-574 M1: the approve body carries `code`; the card shows it; a non-boolean is refused; a second approval without it clears it.
+func TestApproveCarriesCodeModeAndNeverInheritsIt(t *testing.T) {
+	r := newRig(t)
+	src := r.demoSources()
+	r.enroll("c1", "C", `C:\c.exe`, nonceA)
+	p := r.profile("c1")
+	if p["code"] != false {
+		t.Fatalf("a pending card must say code=false: %v", p)
+	}
+	rev := int(p["rev"].(float64))
+	if res := r.screen("POST", "/api/mcp/profiles/c1/approve", func() map[string]any { b := approveBody(rev, src); b["code"] = "yes"; return b }()); res.code != 400 {
+		t.Errorf("a code that is not a boolean: %d %s", res.code, res.body)
+	}
+	body := approveBody(rev, src)
+	body["code"] = true
+	if res := r.screen("POST", "/api/mcp/profiles/c1/approve", body); res.code != 200 {
+		t.Fatalf("approve with code: %d %s", res.code, res.body)
+	}
+	if p := r.profile("c1"); p["state"] != "active" || p["code"] != true {
+		t.Fatalf("card after approval with code: %v", p)
+	}
+	// reissue, enrol again, approve with the defaults: code is off again
+	if res := r.screen("POST", "/api/mcp/profiles/c1/reissue", map[string]any{}); res.code != 200 {
+		t.Fatalf("reissue: %d", res.code)
+	}
+	if p := r.profile("c1"); p["code"] != false {
+		t.Fatalf("a reissued card kept code: %v", p)
+	}
+	r.enroll("c1", "C", `C:\c.exe`, nonceB)
+	rev = int(r.profile("c1")["rev"].(float64))
+	if res := r.screen("POST", "/api/mcp/profiles/c1/approve", approveBody(rev, src)); res.code != 200 {
+		t.Fatalf("second approve: %d %s", res.code, res.body)
+	}
+	if p := r.profile("c1"); p["code"] != false {
+		t.Fatalf("the second approval inherited code: %v", p)
+	}
+}
+
+// BL-351: the person's actions on the real routes leave lifecycle rows in the call ledger, and none of them holds a credential.
+func TestPersonActionsLeaveLedgerRows(t *testing.T) {
+	r := newRig(t)
+	src := r.demoSources()
+	if res := r.enroll("ledger-host", "Claude Desktop", `C:\Apps\claude.exe`, nonceA); res.code != 200 {
+		t.Fatalf("enroll: %d %s", res.code, res.body)
+	}
+	rev := int(r.profile("ledger-host")["rev"].(float64))
+	if res := r.screen("POST", "/api/mcp/profiles/ledger-host/approve", approveBody(rev, src)); res.code != 200 {
+		t.Fatalf("approve: %d %s", res.code, res.body)
+	}
+	if res := r.screen("POST", "/api/mcp/profiles/ledger-host/revoke", map[string]any{}); res.code != 200 {
+		t.Fatalf("revoke: %d %s", res.code, res.body)
+	}
+	rows, err := r.db.RecentEvents(context.Background(), 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for i := len(rows) - 1; i >= 0; i-- { // oldest first
+		e := rows[i]
+		if e.ProfileID != "ledger-host" || e.Outcome != mcpaudit.OutcomeOK || len(e.Fingerprint) != 0 {
+			t.Errorf("row %+v", e)
+		}
+		kinds = append(kinds, e.Kind)
+	}
+	if got := strings.Join(kinds, ","); got != "enroll,approve,revoke" {
+		t.Errorf("kinds = %s", got)
+	}
+}

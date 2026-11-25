@@ -1,0 +1,284 @@
+===== unravis audit =====
+Compare API timings between two periods, from the running app
+
+Usage:
+  unravis audit [flags]
+  unravis audit [command]
+
+Available Commands:
+  activity    Activity of the sources around a time, across their APIs and jobs (a live read, at most 24 hours)
+  breakdown   Count the comparison's requests by status code, user, UI version, user agent, polling type or IP
+  compare     Compare the timing of every API between a period and a baseline period
+  groups      Page, search or sort the groups of the latest comparison (no new query on the sources)
+  guide       Print the investigation guide of the audit tools
+  requests    A page of the newest requests of one group (a live read of metadata)
+  slowest     The slowest completed requests of the comparison (a live read of metadata)
+  timeline    One group's timeline and baseline statistics (from the stored comparison)
+  timelines   Compare the timelines of several groups
+
+Flags:
+  -h, --help   help for audit
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)
+
+Use "unravis audit [command] --help" for more information about a command.
+===== unravis audit activity =====
+Activity of the sources around a time, across their APIs and jobs (a live read, at most 24 hours). Give the same arguments as one JSON object with --request FILE (or - for the input) to use every field of the tool ('unravis schema audit.activity' lists them).
+
+Usage:
+  unravis audit activity --source ID --start T --end T [flags]
+
+Flags:
+      --cursor string        the nextCursor of the last page
+      --end string           end of the window (RFC 3339)
+  -h, --help                 help for activity
+      --limit int            rows on the page, 1 to 100
+      --source stringArray   source id (repeat for more, 1 to 8)
+      --start string         start of the window (RFC 3339)
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)
+===== unravis audit breakdown =====
+Count the comparison's requests by status code, user, UI version, user agent, polling type or IP. Give the same arguments as one JSON object with --request FILE (or - for the input) to use every field of the tool ('unravis schema audit.breakdown' lists them).
+
+Usage:
+  unravis audit breakdown --result-id ID --dim DIM [flags]
+
+Flags:
+      --dim string         statusCode, userId, uiVersion, userAgent, pollingType or userIp
+  -h, --help               help for breakdown
+      --include-ip         needed for --dim userIp (the app must allow identifiers)
+      --result-id string   the result id that 'audit compare' printed
+      --top int            values to list, 1 to 50 (0 or unset: 20)
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)
+===== unravis audit compare =====
+Runs one comparison on the running app and prints the groups that slowed down most. The result id it prints keeps the result in the app for ten minutes: use 'unravis audit groups --result-id ID' to page or filter it with no second query on the sources.
+
+Times are RFC 3339 with an explicit zone, for example 2026-11-23T09:00:00Z. Give the same arguments as one JSON object with --request FILE (or - for the input) to use every field of the tool ('unravis schema audit.compare' lists them). A comparison can take five minutes.
+
+Usage:
+  unravis audit compare --source ID --start T --end T --baseline-start T --baseline-end T [flags]
+
+Flags:
+      --action string                only this action or job method
+      --audit-id string              only this audit record id (24 hex characters)
+      --baseline-end string          end of the baseline period (RFC 3339)
+      --baseline-start string        start of the baseline period (RFC 3339)
+      --bucket-seconds int           width of a chart slot, 10 to 86400 (default 60)
+      --completion string            completion: all, complete, incomplete, pending, invalid
+      --controller string            only this controller or job type
+      --end string                   end of the period (RFC 3339)
+  -h, --help                         help for compare
+      --kind string                  request kind: all, synchronous, asynchronous, hangfire, http, http_unknown (default "all")
+      --limit int                    groups on the first page, 1 to 100 (default 20)
+      --metric string                timing: total or api (default "total")
+      --operation string             only this Controller.Action
+      --outcome string               outcome: all, success, failure, client_error, server_error (default "all")
+      --sort string                  order: p95_delta_ms, p95_ratio or current_count
+      --source stringArray           source id (repeat for more, 1 to 8)
+      --start string                 start of the period (RFC 3339)
+      --status-code stringArray      only this status code (repeat)
+      --ui-version stringArray       only this UI version (repeat)
+      --url-contains string          only URLs that contain this text
+      --user-agent-contains string   only user agents that contain this text
+      --user-id stringArray          only this user id (repeat)
+      --user-ip stringArray          only this IP address (repeat)
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)
+===== unravis audit groups =====
+Page, search or sort the groups of the latest comparison (no new query on the sources)
+
+Usage:
+  unravis audit groups --result-id ID [flags]
+
+Flags:
+  -h, --help               help for groups
+      --limit int          groups to show, 1 to 100 (default 20)
+      --offset int         first group to show
+      --result-id string   the result id that 'audit compare' printed
+      --search string      only groups whose controller, action, source, type or outcome contains this text
+      --sort string        order: p95_delta_ms, p95_ratio or current_count
+      --state string       only groups in this state: compared, missing_current, missing_reference, insufficient_data, undefined_baseline
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)
+===== unravis audit guide =====
+Print the investigation guide of the audit tools
+
+Usage:
+  unravis audit guide [flags]
+
+Flags:
+  -h, --help   help for guide
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)
+===== unravis audit requests =====
+A page of the newest requests of one group (a live read of metadata). Give the same arguments as one JSON object with --request FILE (or - for the input) to use every field of the tool ('unravis schema audit.requests' lists them). With -o jsonl it prints one line per row, page after page, up to --max-rows (1000 unless set) and 64 MiB; --limit is then the page size. A stream that stops at a limit ends with coverage partial and the nextCursor to continue from.
+
+Usage:
+  unravis audit requests --result-id ID --api-key KEY [flags]
+
+Flags:
+      --api-key string     the exact group key from 'audit compare' or 'audit groups' (never rebuild it from names)
+      --cursor string      the nextCursor of the last page
+  -h, --help               help for requests
+      --limit int          rows on the page, 1 to 100
+      --max-bytes int      with -o jsonl: most bytes to print, at most 64 MiB (default 67108864)
+      --max-rows int       with -o jsonl: most rows to print, 1 to 10000 (default 1000)
+      --result-id string   the result id that 'audit compare' printed
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)
+===== unravis audit slowest =====
+The slowest completed requests of the comparison (a live read of metadata). Give the same arguments as one JSON object with --request FILE (or - for the input) to use every field of the tool ('unravis schema audit.slowest' lists them). With -o jsonl it prints one line per row, page after page, up to --max-rows (1000 unless set) and 64 MiB; --limit is then the page size. A stream that stops at a limit ends with coverage partial and the nextCursor to continue from.
+
+Usage:
+  unravis audit slowest --result-id ID [flags]
+
+Flags:
+      --cursor string      the nextCursor of the last page
+  -h, --help               help for slowest
+      --limit int          rows on the page, 1 to 50
+      --max-bytes int      with -o jsonl: most bytes to print, at most 64 MiB (default 67108864)
+      --max-rows int       with -o jsonl: most rows to print, 1 to 10000 (default 1000)
+      --min-ms float       only requests at least this slow, in milliseconds
+      --result-id string   the result id that 'audit compare' printed
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)
+===== unravis audit timeline =====
+One group's timeline and baseline statistics (from the stored comparison). Give the same arguments as one JSON object with --request FILE (or - for the input) to use every field of the tool ('unravis schema audit.timeline' lists them).
+
+Usage:
+  unravis audit timeline --result-id ID --api-key KEY [flags]
+
+Flags:
+      --api-key string     the exact group key from 'audit compare' or 'audit groups' (never rebuild it from names)
+  -h, --help               help for timeline
+      --result-id string   the result id that 'audit compare' printed
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)
+===== unravis audit timelines =====
+Compare the timelines of several groups
+
+Usage:
+  unravis audit timelines [flags]
+  unravis audit timelines [command]
+
+Available Commands:
+  compare     Compare 1 to 8 groups on aligned time slots (from the stored comparison)
+
+Flags:
+  -h, --help   help for timelines
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)
+
+Use "unravis audit timelines [command] --help" for more information about a command.
+===== unravis audit timelines compare =====
+Compare 1 to 8 groups on aligned time slots (from the stored comparison). Give the same arguments as one JSON object with --request FILE (or - for the input) to use every field of the tool ('unravis schema audit.timelines.compare' lists them).
+
+Usage:
+  unravis audit timelines compare --result-id ID --api-key KEY [--api-key KEY ...] [flags]
+
+Flags:
+      --api-key stringArray   the exact group key from 'audit compare' or 'audit groups' (never rebuild it from names); repeat for up to 8
+  -h, --help                  help for compare
+      --result-id string      the result id that 'audit compare' printed
+
+Global Flags:
+      --json                 same as -o json
+      --no-color             no colour (there is none yet)
+  -o, --output string        output format: table, json or jsonl (default "table")
+      --output-file string   write JSON output to a new file (json mode only)
+      --overwrite            with --output-file: replace an existing file
+      --profile string       run as an automation profile (not available yet)
+  -q, --quiet                no progress text on stderr
+      --request string       the arguments of the operation as one JSON object, from a file or - for the input
+      --timeout duration     give up after this long (at most 1h) (default 30s)

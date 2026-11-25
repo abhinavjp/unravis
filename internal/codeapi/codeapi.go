@@ -66,6 +66,7 @@ type Options struct {
 // sweep of runs a crash left open.
 func Install(o Options) {
 	api := &api{broker: o.Broker, files: o.Settings, allowIdentifiers: o.AllowIdentifiers}
+	o.Mount.SetCaseStopper(func(caseID string) { o.Broker.CancelCase(caseID) })
 	o.Mount.Set(api, func(ctx context.Context, store casestore.CodeRunStore) error {
 		_, err := o.Broker.OnCaseOpen(ctx, store)
 		return err
@@ -197,17 +198,24 @@ type typesDTO struct {
 	Limits       limitsDTO `json:"limits"`
 }
 
+// buildTypes is the document of GET /api/code/types and of the command line's code.types: the typings, their hash and the limits.
+func buildTypes() (typesDTO, error) {
+	res, err := bindings.Types()
+	if err != nil {
+		return typesDTO{}, err
+	}
+	return typesDTO{Namespace: bindings.Namespace, DTS: res.DTS, SchemaSHA256: res.SchemaSHA256, Limits: limitsDTO{
+		MaxInFlight: codemode.MaxInFlight, MaxCalls: codemode.MaxCalls, MaxResultBytes: codemode.MaxResultBytes, MaxLogBytes: codemode.MaxLogBytes,
+		RunCapSeconds: int(codemode.RunCap.Seconds()), MaxSourceBytes: codemode.MaxSource, MaxConcurrentRuns: codemode.MaxConcurrentRuns,
+		DefaultTimeoutMS: codemode.DefaultTimeout.Milliseconds(), MinTimeoutMS: codemode.MinTimeout.Milliseconds(), MaxTimeoutMS: codemode.MaxTimeout.Milliseconds(),
+	}}, nil
+}
+
 func (a *api) getTypes(w http.ResponseWriter) {
 	a.typesOnce.Do(func() {
-		res, err := bindings.Types()
-		if err != nil {
-			return
+		if dto, err := buildTypes(); err == nil {
+			a.types, _ = json.Marshal(dto)
 		}
-		a.types, _ = json.Marshal(typesDTO{Namespace: bindings.Namespace, DTS: res.DTS, SchemaSHA256: res.SchemaSHA256, Limits: limitsDTO{
-			MaxInFlight: codemode.MaxInFlight, MaxCalls: codemode.MaxCalls, MaxResultBytes: codemode.MaxResultBytes, MaxLogBytes: codemode.MaxLogBytes,
-			RunCapSeconds: int(codemode.RunCap.Seconds()), MaxSourceBytes: codemode.MaxSource, MaxConcurrentRuns: codemode.MaxConcurrentRuns,
-			DefaultTimeoutMS: codemode.DefaultTimeout.Milliseconds(), MinTimeoutMS: codemode.MinTimeout.Milliseconds(), MaxTimeoutMS: codemode.MaxTimeout.Milliseconds(),
-		}})
 	})
 	if a.types == nil {
 		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The app hit an internal problem.")
@@ -414,3 +422,7 @@ func Resolver(m *server.CodeMount) codemode.CaseResolver {
 		return store, id, nil
 	}
 }
+
+// ManyOpen says whether the resolver, in a context from WithLeases, found more than one case open and none named (the reason of a
+// no_case refusal that the host can fix by naming one).
+func ManyOpen(ctx context.Context) bool { return leasesOf(ctx).many() }

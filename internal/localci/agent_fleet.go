@@ -111,7 +111,7 @@ func (a *Agent) fleetLoop(ctx context.Context) {
 	if a.Fleet == nil {
 		return
 	}
-	// idle-ok: the CI agent program only (not the app); the period is the fleet interval, seconds or more.
+	// idle-ok: runs only inside the separate CI agent process (not the desktop app); the period is the agent setting.
 	t := time.NewTicker(a.fleetEvery())
 	defer t.Stop()
 	var lastClean time.Time

@@ -25,6 +25,7 @@ import (
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/history"
 	"api-audit-explorer/internal/ledger"
+	"api-audit-explorer/internal/power"
 	"api-audit-explorer/internal/sessionproof"
 )
 
@@ -79,7 +80,10 @@ type handler struct {
 	// mcp is where the AI access screen's handler hangs once the grant store is open (nil: grants do not apply, see mcp_admin.go).
 	mcp *MCPMount
 	// code is where internal/codeapi hangs the code-mode handler (nil: the code routes answer 503, see code_mount.go).
-	code *CodeMount
+	code  *CodeMount
+	power *power.Policy
+	// trim limits the forced memory return after a slow request (see power_trim.go).
+	trim memoryTrimmer
 
 	casesState
 
@@ -100,6 +104,19 @@ type Option func(*handler)
 // Home and Case home as it does in live mode. Only the capture-only demo cases
 // set it; plain --demo never does.
 func WithCaptureCases() Option { return func(h *handler) { h.captureCases = true } }
+
+func WithPower(p *power.Policy) Option {
+	return func(h *handler) {
+		h.power = p
+		if p != nil {
+			p.AddBusy(h.jobs.anyRunning)
+			p.AddBusy(func() bool {
+				cf := h.caseFiles()
+				return cf.busy.Load() || cf.jobs.anyRunning(jobArchive) || cf.jobs.anyRunning(jobVerify)
+			})
+		}
+	}
+}
 
 func WithHistory(value savedHistory) Option { return func(h *handler) { h.history = value } }
 

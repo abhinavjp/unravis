@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/appdirs"
+	"api-audit-explorer/internal/codemode"
 	"api-audit-explorer/internal/mcpadmin"
 	"api-audit-explorer/internal/mcpaudit"
 	"api-audit-explorer/internal/mcpsrv"
@@ -19,7 +20,14 @@ import (
 // mcpOption adjusts openMCPEndpoint.
 type mcpOption func(*mcpOpts)
 
-type mcpOpts struct{ mount *server.MCPMount }
+type mcpOpts struct {
+	mount *server.MCPMount
+	code  *codemode.Broker
+}
+
+// withCodeBroker lets the MCP endpoint run unravis_types and unravis_execute for its grants through broker (BL-574 slice 2b). Without it
+// (or with a nil broker) both tools answer that code mode is off.
+func withCodeBroker(b *codemode.Broker) mcpOption { return func(o *mcpOpts) { o.code = b } }
 
 // withMCPMount hands the AI access screen's routes (BL-347) to the dashboard server through m once the store is open; when the store
 // stays closed, m learns why (a short code, never a path or an error text).
@@ -98,13 +106,18 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 		return server.EvidenceTarget{SourceID: e.SourceID, RecordID: e.RecordID, Host: e.ProfileID, ExpiresAt: e.ExpiresAt}, true
 	})
 	server.SetMasterKeyLockHook(dashboard, grants.CancelAll) // the master-key lock ends every host's handles and aliases
-	h, err = mcpsrv.Handler(mcpsrv.Deps{
+	disp, err := mcpsrv.NewDispatcher(mcpsrv.Deps{
 		Grants:   grants,
 		Backend:  backend,
 		Recorder: db,
 		Info:     func() mcpsrv.Info { return mcpsrv.Info{PID: os.Getpid(), Gen: gen, AppVersion: version.Version} },
+		Code:     codeBackendFor(o.code),
 		Logf:     log.Printf,
 	})
+	if err == nil {
+		bindCodeBroker(o.code, disp, grants)
+		h = disp.Handler()
+	}
 	if err != nil {
 		server.SetEvidenceResolver(dashboard, nil)
 		server.SetMasterKeyLockHook(dashboard, nil)

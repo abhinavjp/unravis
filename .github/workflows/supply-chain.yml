@@ -113,6 +113,11 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: stable
         run: cargo install --locked --version "$CARGO_DENY_VERSION" cargo-deny
+      - name: Tauri Windows dependency tree
+        working-directory: desktop
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: cargo tree --locked -i tauri --target x86_64-pc-windows-msvc -e all
       - name: cargo deny check
         working-directory: desktop
         env:

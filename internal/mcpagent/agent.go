@@ -107,7 +107,7 @@ func (a *Agent) now() time.Time {
 // mcp.Bridge.CallEnvelope, so the stdio server can use either.
 func (a *Agent) CallEnvelope(ctx context.Context, tool string, args json.RawMessage) ([]byte, bool) {
 	fail := func(code, msg, action string) ([]byte, bool) { return mcp.ErrorEnvelope(tool, code, msg, action), true }
-	if !mcp.KnownTool(tool) {
+	if !mcp.KnownTool(tool) && !mcp.IsCodeTool(tool) { // the two code-mode tools are the dispatcher's to answer (BL-574 slice 2b)
 		return fail(mcp.WireInvalidArguments, "unknown tool; only the advertised read-only audit tools are available", "")
 	}
 	if len(args) == 0 {

@@ -359,18 +359,21 @@ export interface PressArea { x: PressSpan; y: PressSpan }
 
 /**
  * BL-492: the invisible press area of every bar. A bar is only a few pixels tall (the lane height is fixed, Slow call lane rule BL-005), so each bar
- * gets an area of up to `needX` x `needY` drawing units (24 px) around it, inside 0..maxX and 0..maxY (the lane's own drawing). Two areas never
- * overlap: where two bars sit close together (stacked bar rows, or bars side by side in one row) the free space between them is split at the
- * middle of the gap between the two bars, and each bar then takes what is left on its other side. A bar with nothing close reaches the full size,
- * a bar in a stack gets what its row allows. No area covers another bar. Two bars drawn over each other split their shared part in the middle, so
- * each keeps a pressable part of its own bar. A bar with no room left (two short bars at the very edge) gets no area and is absent from the result.
+ * gets an area of up to `needX` x `needY` drawing units (24 px) around it, inside `minX`..`maxX` and `minY`..`maxY`. The Slow call lanes allow the
+ * area to reach into their non-interactive name row above the drawing, never into the lane above or below. Two areas never overlap: where two bars
+ * sit close together (stacked bar rows, or bars side by side in one row) the free space between them is split at the middle of the gap between the
+ * two bars, and each bar then takes what is left on its other side. A bar with nothing close reaches the full size, a bar in a stack gets what its
+ * row allows. No area covers another bar. Two bars drawn over each other split their shared part in the middle, so each keeps a pressable part of
+ * its own bar. A bar with no room left (two short bars at the very edge) gets no area and is absent from the result.
  */
 export function barPressAreas(
   bars: readonly { key: string; x: PressSpan; y: PressSpan }[],
   needX: number,
   needY: number,
   maxX: number,
-  maxY: number
+  maxY: number,
+  minX = 0,
+  minY = 0
 ): Map<string, PressArea> {
   // Grows a span to `need`, evenly on both sides, inside the limits; what one side cannot give is taken from the other.
   const grow = (s: PressSpan, need: number, limit: PressSpan): PressSpan => {
@@ -382,7 +385,7 @@ export function barPressAreas(
     return { a, b };
   };
   const overlap = (p: PressSpan, q: PressSpan): number => Math.min(p.b, q.b) - Math.max(p.a, q.a);
-  const room: PressArea[] = bars.map(() => ({ x: { a: 0, b: maxX }, y: { a: 0, b: maxY } }));
+  const room: PressArea[] = bars.map(() => ({ x: { a: minX, b: maxX }, y: { a: minY, b: maxY } }));
   let hit: PressArea[] = [];
   // Each pass grows every area inside its room, then cuts the room of two areas that still touch at the middle of the gap between their bars.
   // Rooms only shrink, so the passes end; the last pass has no touching pair left.
@@ -406,7 +409,7 @@ export function barPressAreas(
         const mid = !byY && gapX < 0
           ? (bars[hi].x.a + Math.min(bars[lo].x.b, bars[hi].x.b)) / 2
           : (bars[lo][axis].b + bars[hi][axis].a) / 2;
-        const cutAt = Math.min(axis === 'x' ? maxX : maxY, Math.max(0, mid)); // two short bars at the very edge: the cut may not lie outside the drawing
+        const cutAt = Math.min(axis === 'x' ? maxX : maxY, Math.max(axis === 'x' ? minX : minY, mid)); // two short bars at the very edge: the cut may not lie outside the drawing
         room[lo][axis] = { a: room[lo][axis].a, b: Math.min(room[lo][axis].b, cutAt) };
         room[hi][axis] = { a: Math.max(room[hi][axis].a, cutAt), b: room[hi][axis].b };
         cut = true;

@@ -311,15 +311,15 @@ func (p *Poller) maybePush(ctx context.Context, branch, wf, sha string, catchUp 
 		p.logf("push to %s: %s: %v", branch, wf, perr)
 		return
 	}
-	trig, ok := w.On["push"]
-	if !ok {
-		if !p.pushNoted[branch+wf] {
-			p.pushNoted[branch+wf] = true
-			p.logf("push to %s: %s does not run on push, nothing queued", branch, wf)
-		}
-		return
+	// The push map names this workflow for this branch, so a workflow without a push trigger (a gate that is
+	// on: workflow_dispatch only since the cutover, BL-586d) is still run. Only a workflow that has a push
+	// trigger can narrow it further with its own branches filter.
+	trig, hasPush := w.On["push"]
+	if !hasPush && !p.pushNoted[branch+wf] {
+		p.pushNoted[branch+wf] = true
+		p.logf("push to %s: %s has no push trigger; it is named for pushes to this branch, so it runs", branch, wf)
 	}
-	if len(trig.Branches) > 0 {
+	if hasPush && len(trig.Branches) > 0 {
 		match := false
 		for _, g := range trig.Branches {
 			if matchGlob(g, branch) {

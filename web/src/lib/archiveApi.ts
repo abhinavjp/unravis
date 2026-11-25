@@ -29,7 +29,7 @@ function toPage(body: { cases?: Partial<CaseInfo>[]; archivedTotal?: unknown; of
     archivedTotal: num(body.archivedTotal, 0),
     offset: num(body.offset, 0),
     pageSize: num(body.pageSize, 50),
-    // The lines left by erased cases (id and time only). The archived list never carries them.
+    // The lines left by erased cases (id and time only). The owner sends them with every page, archived pages too.
     erased: Array.isArray(body.erased) ? body.erased.map(toErased).filter((l): l is ErasedLine => l !== null) : [],
     oldCases: num(body.oldCases, 0)
   };

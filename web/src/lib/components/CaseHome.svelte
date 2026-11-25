@@ -83,6 +83,8 @@
   $effect(() => { if (phase === 'ready') return setDocTitle(timelineShown ? TRACING_TEXT.heading : info?.title || caseCode(caseId)); });
   let controller: AbortController | null = null;
   let rereadRun = 0;
+  // Counts the reads of the whole page (load). A re-read that began before one of them must not write over what that read decided, such as a locked or gone case.
+  let pageLoads = 0;
   // Set when the page goes away: a re-read that was held for a read of the page is not run for a page that is no longer there.
   let destroyed = false;
   let loadedFor = '';
@@ -183,8 +185,8 @@
   function archiveChanged() { archiveDrawer = null; changed = true; void tick().then(() => reloadEl?.focus()); }
 
   // quiet: the page is read again after a move on the case (archive, restore, free), so it stays on screen and does not show the loading text.
-  // An add that lands while a read of the page is on its way is not dropped and does not race it: the re-read waits for that read to end, then runs once
-  // (so the read that started last is the one that shows, whichever way round they would have finished).
+  // An add that lands while a read of the page is on its way is not dropped and does not race it: the re-read waits for that read to end, then runs once.
+  // Each kind of answer keeps the newest read that succeeded, so a newer failed read never erases or replaces a good answer.
   let loadsOpen = 0;
   let rereadWanted = '';
   async function load(id: string, quiet = false) {
@@ -197,13 +199,22 @@
   async function loadPage(id: string, quiet: boolean) {
     // The newest read wins: a quiet re-read that is still on its way (after an add) must not put its older answer over this one.
     rereadRun += 1;
+    pageLoads += 1;
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
     if (!quiet) phase = 'loading';
     // Another case: what this page holds of the last one (its health checks) is let go at once, so it can never show in this case's story.
-    if (loadedFor !== id) { health = []; imports = []; }
+    if (loadedFor !== id) {
+      health = [];
+      imports = [];
+      caseReads = newestWins();
+      fileReads = newestWins();
+      healthReads = newestWins();
+    }
     loadedFor = id;
+    const caseToken = caseReads.begin();
+    const fileToken = fileReads.begin();
     lastReadAt = Date.now();
     copyNote = '';
     copyProblem = '';
@@ -233,8 +244,8 @@
     if (refusedWith(caseView, 'case-locked') || refusedWith(files, 'case-locked')) { phase = 'locked'; return; }
     if (refusedWith(caseView, 'untrusted-case')) { phase = 'untrusted'; return; }
     if (caseView.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
-    info = found;
-    imports = files.status === 'fulfilled' ? files.value : [];
+    if (found && caseReads.accept(caseToken)) info = found;
+    if (files.status === 'fulfilled' && fileReads.accept(fileToken)) imports = files.value;
     // A health read that failed puts nothing in and takes no turn: the checks already shown stay, and an older good answer is not held back.
     // (A case opened afresh starts with none, see above.)
     if (runs.status === 'fulfilled' && healthReads.accept(healthToken)) health = runs.value;
@@ -314,28 +325,38 @@
   // A read that fails keeps what the page shows. An answer that says what the page already shows is not put in, so nothing is redrawn.
   let lastReadAt = 0;
   let rereadsOpen = 0;
-  // Every read of the health checks (page read, re-read, return, a finished check) takes a number; only the newest read's answer is put in.
-  const healthReads = newestWins();
+  // Each case owns its read turns. A slow older answer may be shown only when no newer successful answer has been shown; a failed read takes no turn.
+  let caseReads = newestWins();
+  let fileReads = newestWins();
+  let healthReads = newestWins();
   async function rereadFiles(everything = false) {
     const id = caseId;
     if (!id || phase !== 'ready' || destroyed) return;
     const mine = ++rereadRun;
+    const loadsBefore = pageLoads;
     lastReadAt = Date.now();
     rereadsOpen += 1;
+    const caseToken = caseReads.begin();
+    const fileToken = fileReads.begin();
+    const healthToken = healthReads.begin();
     try {
       // The case was erased in another tab: say so (the page for a case that is gone, which reads nothing more) instead of showing it as if it were there.
       const fresh = await getCaseView(id).catch((error: unknown) => { if (isCaseGone(error)) return null; throw error; });
       if (!fresh) { if (id === caseId && mine === rereadRun) gone(); return; }
       const reads = readsCaseData(fresh);
-      // Gone from this page (another case was opened, or a newer read began) while the case was read: nothing more is read or taken.
-      if (id !== caseId || mine !== rereadRun) return;
-      const healthToken = healthReads.begin();
-      const [files, runs] = await Promise.all([reads ? listImports(id) : Promise.resolve([] as ImportRecord[]), reads ? fetchHealthRuns(id).catch(() => null) : Promise.resolve(null)]);
+      // Gone from this page while the case was read: nothing more is read or taken. A newer re-read does not discard this one's answer;
+      // the per-kind turns below decide which successful answer is shown.
+      if (id !== caseId) return;
+      const [fileResult, healthResult] = await Promise.allSettled([reads ? listImports(id) : Promise.resolve([] as ImportRecord[]), reads ? fetchHealthRuns(id) : Promise.resolve(null)]);
       const theoriesRead = everything && reads ? refreshLedger().catch(() => { /* the theories keep what they show */ }) : Promise.resolve();
-      if (id !== caseId || mine !== rereadRun) return;
-      if (!sameRead(info, fresh)) info = fresh;
-      if (!sameRead(imports, files)) imports = files;
-      if (runs && healthReads.accept(healthToken) && !sameRead(health, runs)) health = runs;
+      // Checked again after the reads: nothing is written when another case was opened, or when a read of the whole page began meanwhile (it
+      // may have ended locked or gone, and decides what the page shows). A newer re-read does not discard this one's answer; the per-kind
+      // turns below decide which successful answer is shown. A files read that says the case is locked goes back to the key page, as before.
+      if (id !== caseId || destroyed || loadsBefore !== pageLoads) return;
+      if (fileResult.status === 'rejected' && lockedUnder(fileResult.reason)) return;
+      if (caseReads.accept(caseToken) && !sameRead(info, fresh)) info = fresh;
+      if (fileResult.status === 'fulfilled' && fileReads.accept(fileToken) && !sameRead(imports, fileResult.value)) imports = fileResult.value;
+      if (healthResult.status === 'fulfilled' && healthResult.value && healthReads.accept(healthToken) && !sameRead(health, healthResult.value)) health = healthResult.value;
       await theoriesRead;
     } catch (error) { lockedUnder(error); /* otherwise the page keeps the list it had */ } finally { rereadsOpen -= 1; }
   }

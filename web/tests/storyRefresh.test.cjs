@@ -145,7 +145,12 @@ test('Case home reads the case again quietly for each signal, with no loading sc
   const home = read('src/lib/components/CaseHome.svelte');
   const reread = home.match(/async function rereadFiles\(everything = false\) \{[\s\S]*?\n  \}\n/)[0];
   assert.doesNotMatch(reread, /phase\s*=|focus\(|load\(/, 'the quiet read never shows the loading text or moves focus');
-  assert.match(reread, /mine !== rereadRun/, 'an older read never overwrites a newer one');
+  assert.match(reread, /const caseToken = caseReads\.begin\(\);[^\n]*\n[^\n]*fileReads\.begin\(\);[^\n]*\n[^\n]*healthReads\.begin\(\);/, 'each answer kind gets its own read turn');
+  assert.ok(reread.indexOf('const caseToken = caseReads.begin()') < reread.indexOf('await getCaseView(id)'), 'the case turn is taken before its answer is awaited');
+  assert.match(reread, /if \(caseReads\.accept\(caseToken\)[^\n]*info = fresh;/, 'only the newest successful case answer is taken');
+  assert.match(reread, /fileResult\.status === 'fulfilled' && fileReads\.accept\(fileToken\)[^\n]*imports = fileResult\.value;/, 'only the newest successful file answer is taken');
+  assert.match(reread, /healthResult\.status === 'fulfilled' && healthResult\.value && healthReads\.accept\(healthToken\)[^\n]*health = healthResult\.value;/, 'only the newest successful health answer is taken');
+  assert.doesNotMatch(reread, /catch \(error\) \{[^}]*accept\(/, 'a failed read never accepts a turn');
   const loadPage = home.match(/async function loadPage\(id: string, quiet: boolean\) \{[\s\S]*?controller\?\.abort\(\);/)[0];
   assert.match(loadPage, /rereadRun \+= 1;/, 'a load that starts after a re-read outranks it');
   // The other way round: an add that lands while a read of the page is on its way waits for it, then reads once, so the read that started last is the one that shows.
@@ -156,6 +161,21 @@ test('Case home reads the case again quietly for each signal, with no loading sc
   assert.match(home, /if \(loadsOpen > 0\) rereadWanted = id; else void untrack\(\(\) => rereadFiles\(\)\);/, 'a signal during a read is kept, not dropped, and not run beside it');
   assert.match(home, /\$effect\(\(\) => \{\s*const seq = caseAdded\.seq;\s*if \(seq === seenAdd\) return;\s*seenAdd = seq;/, 'one read for each signal');
   assert.doesNotMatch(home, /drawerWas/, 'the read no longer waits for the pop-up to close');
+});
+
+test('a re-read writes nothing after a page load began or the case changed, and a locked files read goes back to the key page', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  const start = home.indexOf('async function rereadFiles');
+  const reread = home.slice(start, home.indexOf('function backOnPage', start));
+  const loadPage = home.slice(home.indexOf('async function loadPage'), home.indexOf('controller?.abort();', home.indexOf('async function loadPage')));
+  assert.match(loadPage, /pageLoads \+= 1;/, 'every read of the whole page is counted');
+  assert.match(reread, /const loadsBefore = pageLoads;/, 'the re-read notes how many page loads there were when it began');
+  const after = reread.slice(reread.indexOf('await Promise.allSettled'));
+  const guard = after.indexOf('loadsBefore !== pageLoads');
+  assert.ok(guard > 0 && /id !== caseId \|\| destroyed \|\| loadsBefore !== pageLoads\) return;/.test(after), 'the case and the page loads are checked again after the reads');
+  assert.ok(guard < after.indexOf('caseReads.accept('), 'the check comes before anything is written');
+  assert.match(after, /fileResult\.status === 'rejected' && lockedUnder\(fileResult\.reason\)\) return;/, 'a locked files read is routed as the old await path did');
+  assert.ok(after.indexOf('lockedUnder(fileResult.reason)') < after.indexOf('caseReads.accept('), 'a locked case is routed before anything is written');
 });
 
 test('the add paths signal once, after the case kept something', () => {

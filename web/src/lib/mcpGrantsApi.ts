@@ -4,7 +4,7 @@ import { parseList, parseProfile, type ApproveBody, type McpList, type McpProfil
 /**
  * The AI access calls (server: internal/mcpadmin, mounted by internal/server/mcp_admin.go). Every request carries X-Audit-Token.
  *   GET  /api/mcp/profiles                   -> the list (mode, stopped, tiers, limits, profiles)
- *   POST /api/mcp/profiles/{id}/approve      {expectRev, tier, tools, sources, identifiers, identifiersMinutes, idleMinutes, acceptContested}
+ *   POST /api/mcp/profiles/{id}/approve      {expectRev, tier, tools, sources, identifiers, identifiersMinutes, code, idleMinutes, acceptContested}
  *   POST /api/mcp/profiles/{id}/{deny|revoke|reissue|remove}   {expectRev?}
  *   POST /api/mcp/profiles/{id}/renew        {expectRev}
  *   POST /api/mcp/stop, /api/mcp/resume      {}

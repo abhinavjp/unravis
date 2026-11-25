@@ -203,11 +203,9 @@ func TestServePostsShadowStatusesAndNeverTheRequiredNames(t *testing.T) {
 			gate = append(gate, c.State+": "+c.Description)
 		}
 	}
-	if len(gate) < 3 || gate[0] != "pending: queued" || !strings.HasPrefix(gate[len(gate)-1], "success: passed in ") {
+	// A newer state replaces one that has not gone out yet, so a quick run may skip "queued" or "running"; it never ends on anything but success.
+	if len(gate) < 2 || !strings.HasPrefix(gate[0], "pending: ") || !strings.HasPrefix(gate[len(gate)-1], "success: passed in ") {
 		t.Fatalf("gate sequence %v", gate)
-	}
-	if !contains(gate, "pending: running") {
-		t.Fatalf("no running status: %v", gate)
 	}
 	// the state folder keeps the dedup memory and the status command shows how posting went
 	if _, err := os.Stat(ledgerPath(state)); err != nil {
@@ -428,5 +426,19 @@ func TestCompareSaveWritesTheReportTheDashboardReads(t *testing.T) {
 	rep, err := localci.ReadCompare(state)
 	if err != nil || rep == nil || rep.Repo != "acme/widgets" || rep.Streak != 1 || rep.Agree != 1 {
 		t.Fatalf("%+v %v", rep, err)
+	}
+}
+
+// After the cutover fast-gate.yml has workflow_dispatch and nothing else in on:; that is exactly what the
+// fallback needs, so a dry run accepts it and starts nothing.
+func TestFallbackCommandAcceptsADispatchOnlyFastGate(t *testing.T) {
+	f := withStatusFakes(t)
+	fallbackHost(t, "name: x\non:\n  workflow_dispatch:\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n")
+	code, out, e := cli(t, nil, "fallback", "9", "--repo", "acme/widgets", "--dry-run")
+	if code != exitOK || !strings.Contains(out, "dry run: would start fast-gate.yml on branch feature/x") {
+		t.Fatalf("%d\n%s\n%s", code, out, e)
+	}
+	if len(f.disp.Calls) != 0 {
+		t.Fatalf("a dry run starts nothing: %v", f.disp.Calls)
 	}
 }

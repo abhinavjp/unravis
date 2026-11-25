@@ -44,12 +44,13 @@ type Profile struct {
 	CreatedAt            time.Time
 	LastCallAt           time.Time
 	Claimed              bool
+	Code                 bool   // the grant may run unravis_execute and unravis_types (code mode as its own permission); never inherited by a new approval
 	Contested            int    // how many times another process enrolled this id with a different nonce (capped); the card warns on it
 	SecretDigest         []byte `json:"-"` // never serialised: a profile is shown to the screen as is
 	ClaimDigest          []byte `json:"-"`
 }
 
-const cols = `id,state,rev,host_name,host_version,exe,ppid,tier,tools,sources,identifiers,identifiers_until,requested_identifiers,idle_ttl_s,expires_at,approved_at,created_at,last_call_at,claimed,secret_digest,claim_digest,contested`
+const cols = `id,state,rev,host_name,host_version,exe,ppid,tier,tools,sources,identifiers,identifiers_until,requested_identifiers,idle_ttl_s,expires_at,approved_at,created_at,last_call_at,claimed,secret_digest,claim_digest,contested,code`
 
 type scanner interface{ Scan(...any) error }
 
@@ -70,10 +71,10 @@ func ms(t time.Time) int64 {
 func scan(s scanner) (Profile, error) {
 	var p Profile
 	var tools, sources string
-	var ident, reqIdent, claimed int
+	var ident, reqIdent, claimed, code int
 	var identUntil, idle, exp, appr, created, last int64
 	if err := s.Scan(&p.ID, &p.State, &p.Rev, &p.HostName, &p.HostVersion, &p.Exe, &p.PPID, &p.Tier, &tools, &sources, &ident, &identUntil,
-		&reqIdent, &idle, &exp, &appr, &created, &last, &claimed, &p.SecretDigest, &p.ClaimDigest, &p.Contested); err != nil {
+		&reqIdent, &idle, &exp, &appr, &created, &last, &claimed, &p.SecretDigest, &p.ClaimDigest, &p.Contested, &code); err != nil {
 		return Profile{}, err
 	}
 	if err := json.Unmarshal([]byte(tools), &p.Tools); err != nil {
@@ -82,7 +83,7 @@ func scan(s scanner) (Profile, error) {
 	if err := json.Unmarshal([]byte(sources), &p.Sources); err != nil {
 		return Profile{}, errors.New("mcpaudit: bad sources column")
 	}
-	p.Identifiers, p.RequestedIdentifiers, p.Claimed = ident != 0, reqIdent != 0, claimed != 0
+	p.Identifiers, p.RequestedIdentifiers, p.Claimed, p.Code = ident != 0, reqIdent != 0, claimed != 0, code != 0
 	p.IdentifiersUntil, p.IdleTTL = tm(identUntil), time.Duration(idle)*time.Second
 	p.ExpiresAt, p.ApprovedAt, p.CreatedAt, p.LastCallAt = tm(exp), tm(appr), tm(created), tm(last)
 	return p, nil
@@ -100,7 +101,7 @@ func args(p Profile) []any {
 	sources, _ := json.Marshal(nonNil(p.Sources))
 	return []any{p.ID, p.State, p.Rev, p.HostName, p.HostVersion, p.Exe, p.PPID, p.Tier, string(tools), string(sources), b2i(p.Identifiers),
 		ms(p.IdentifiersUntil), b2i(p.RequestedIdentifiers), int64(p.IdleTTL / time.Second), ms(p.ExpiresAt), ms(p.ApprovedAt), ms(p.CreatedAt),
-		ms(p.LastCallAt), b2i(p.Claimed), p.SecretDigest, p.ClaimDigest, p.Contested}
+		ms(p.LastCallAt), b2i(p.Claimed), p.SecretDigest, p.ClaimDigest, p.Contested, b2i(p.Code)}
 }
 
 func nonNil(s []string) []string {
@@ -145,7 +146,7 @@ func (d *DB) Count(ctx context.Context) (n int, err error) {
 
 // Insert adds a new profile; ErrExists if the id is taken.
 func (d *DB) Insert(ctx context.Context, p Profile) error {
-	_, err := d.sql.ExecContext(ctx, "INSERT INTO profiles("+cols+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", args(p)...)
+	_, err := d.sql.ExecContext(ctx, "INSERT INTO profiles("+cols+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", args(p)...)
 	if err != nil {
 		if _, gerr := d.Get(ctx, p.ID); gerr == nil {
 			return ErrExists
@@ -174,9 +175,9 @@ func (d *DB) Update(ctx context.Context, id string, fn func(*Profile) error) (Pr
 		return Profile{}, err
 	}
 	a := args(p)
-	// id is the key and does not change; the other twenty columns are set.
+	// id is the key and does not change; the other twenty-one columns are set.
 	if _, err := tx.ExecContext(ctx, `UPDATE profiles SET state=?,rev=?,host_name=?,host_version=?,exe=?,ppid=?,tier=?,tools=?,sources=?,identifiers=?,
-identifiers_until=?,requested_identifiers=?,idle_ttl_s=?,expires_at=?,approved_at=?,created_at=?,last_call_at=?,claimed=?,secret_digest=?,claim_digest=?,contested=? WHERE id=?`,
+identifiers_until=?,requested_identifiers=?,idle_ttl_s=?,expires_at=?,approved_at=?,created_at=?,last_call_at=?,claimed=?,secret_digest=?,claim_digest=?,contested=?,code=? WHERE id=?`,
 		append(a[1:], p.ID)...); err != nil {
 		return Profile{}, err
 	}

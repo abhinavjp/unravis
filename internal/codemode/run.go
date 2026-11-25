@@ -36,6 +36,7 @@ type failure struct {
 type run struct {
 	b      *Broker
 	id     string
+	caseID string // the case the run is recorded in (CancelCase ends the runs of one case)
 	store  casestore.CodeRunStore
 	req    RunRequest
 	allow  bool
@@ -242,7 +243,7 @@ func (b *Broker) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		return RunResult{}, refuse(CodeAuditFailed, plain[CodeAuditFailed])
 	}
 
-	r := &run{b: b, id: runID, store: store, req: req, allow: req.AllowIdentifiers, start: now, parent: ctx, usedIDs: map[int64]bool{}, tools: b.toolsFor(&req),
+	r := &run{b: b, id: runID, caseID: caseID, store: store, req: req, allow: req.AllowIdentifiers, start: now, parent: ctx, usedIDs: map[int64]bool{}, tools: b.toolsFor(&req),
 		guard: privacy.NewGuard(req.AllowIdentifiers), host: host}
 	r.timer.now = b.cfg.Now
 	r.timer.kick = make(chan struct{}, 1)
@@ -934,7 +935,11 @@ func (r *run) hostCall(ctx context.Context, tool string, args []byte) (body []by
 		body, isErr = r.safeHostCall(ctx, tool, args)
 		return body, isErr, nil
 	}
-	callCtx, end, refused := r.b.cfg.Admit(ctx, mcpsrv.Principal{ProfileID: r.req.ProfileID, Rev: r.req.ProfileRev}, tool, args, r.req.AllowIdentifiers)
+	admit := r.b.admitter()
+	if admit == nil { // unbound after the run started: fail closed
+		return nil, false, &denial{status: casestore.CallDenied, wire: mcp.WirePermissionRequired, msg: plain[CodeDenied]}
+	}
+	callCtx, end, refused := admit(ctx, mcpsrv.Principal{ProfileID: r.req.ProfileID, Rev: r.req.ProfileRev}, tool, args, r.req.AllowIdentifiers)
 	if refused != nil {
 		return nil, false, &denial{status: casestore.CallDenied, wire: refused.Code, msg: refused.Message}
 	}

@@ -108,14 +108,18 @@ func (u *Updater) WorkBegin() func() {
 // NoteMCP records a request from an MCP client.
 func (u *Updater) NoteMCP() { u.mcp.Touch() }
 
-// InUse says whether the app counts as in use now: a recent sign of use on the page, an MCP client at work, a request still running, or
-// other work that must not be cut off.
+// InUse says whether the app counts as in use now: a recent sign of use on the page, an MCP client at work, or work still running.
 func (u *Updater) InUse() bool {
 	now := time.Now()
-	if u.presence.Active(now, presenceWindow) || u.mcp.Active(now, mcpWindow) || u.inflight.Load() > 0 {
-		return true
-	}
-	if u.busy != nil && u.busy() {
+	return u.presence.Active(now, presenceWindow) || u.mcp.Active(now, mcpWindow) || u.Busy()
+}
+
+// Busy is the shared work signal for background policies. Unlike InUse it does not extend a request's activity window.
+func (u *Updater) Busy() bool {
+	u.inst.mu.Lock()
+	installing := u.inst.running || u.inst.busy
+	u.inst.mu.Unlock()
+	if installing || u.inflight.Load() > 0 || (u.busy != nil && u.busy()) {
 		return true
 	}
 	u.busyMu.Lock()
@@ -127,6 +131,22 @@ func (u *Updater) InUse() bool {
 		}
 	}
 	return false
+}
+
+// SetPowerTouch connects update downloads and installs to the owner's idle power policy.
+func (u *Updater) SetPowerTouch(touch func()) {
+	u.powerMu.Lock()
+	u.powerTouch = touch
+	u.powerMu.Unlock()
+}
+
+func (u *Updater) touchPower() {
+	u.powerMu.RLock()
+	touch := u.powerTouch
+	u.powerMu.RUnlock()
+	if touch != nil {
+		touch()
+	}
 }
 
 // RunAuto is the quiet-time loop. It stops when ctx ends. It does nothing for a development build, while updates are off, or when
