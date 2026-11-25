@@ -420,6 +420,13 @@ var routes = []route{
 	{pattern: "/api/mcp/profiles/{id}/{action}", match: mcpActionPath, methods: post((*handler).serveMCP)},
 	{pattern: mcpStopPath, match: exactPath(mcpStopPath), methods: post((*handler).serveMCP)},
 	{pattern: mcpResumePath, match: exactPath(mcpResumePath), methods: post((*handler).serveMCP)},
+	{pattern: codeTypesPath, match: exactPath(codeTypesPath), methods: get((*handler).serveCode)},
+	{pattern: codeSettingsPath, match: exactPath(codeSettingsPath), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveCode(w, r) },
+		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveCode(w, r) },
+	}},
+	{pattern: codeRunPath, match: exactPath(codeRunPath), methods: post((*handler).serveCode)},
+	{pattern: "/api/code/runs/{id}/cancel", match: codeCancelPath, methods: post((*handler).serveCode)},
 }
 
 // lookup returns the first route that owns path.
