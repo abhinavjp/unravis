@@ -25,8 +25,13 @@ var xbBatch = []string{
 // xbRow builds a row from alternating column names and values.
 func xbRow(kv ...any) Row {
 	r := Row{}
-	for i := 0; i < len(kv); i += 2 {
-		r[kv[i].(string)] = kv[i+1]
+	var col string
+	for i, x := range kv {
+		if i%2 == 0 {
+			col = fmt.Sprint(x)
+			continue
+		}
+		r[col] = x
 	}
 	return r
 }
@@ -351,8 +356,8 @@ func TestMemRejectsOutOfDomain(t *testing.T) {
 func xbAGRow(db, local int64, extra ...any) Row {
 	r := xbRow("database_id", db, "ag_local", local, "ag_health", int64(2), "ag_suspended", int64(0),
 		"ag_send_q_kb", nil, "ag_send_rate_kbs", nil, "ag_redo_q_kb", nil, "ag_redo_rate_kbs", nil)
-	for i := 0; i < len(extra); i += 2 {
-		r[extra[i].(string)] = extra[i+1]
+	for c, v := range xbRow(extra...) {
+		r[c] = v
 	}
 	return r
 }
