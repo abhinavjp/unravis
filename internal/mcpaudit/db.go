@@ -42,6 +42,10 @@ const (
 // valid for the newer version, and the person decides.
 var ErrNewerVersion = errors.New("mcpaudit: the store was written by a newer version")
 
+// ErrBackup means the copy kept before an upgrade of an older store could not be made. The store is left as it was (not set aside, not
+// upgraded): an upgrade is one-way, so without the copy a rollback to the older build would lose the grants for good.
+var ErrBackup = errors.New("mcpaudit: the copy of the store before the upgrade could not be made")
+
 // ErrBadFolder means the folder is not an absolute local path.
 var ErrBadFolder = errors.New("mcpaudit: the folder must be an absolute local path")
 
@@ -52,6 +56,7 @@ var ErrNoProtector = errors.New("mcpaudit: sealing is not available, the grant s
 // DB is the open grant store. It is safe for concurrent use.
 type DB struct {
 	sql    *sql.DB
+	path   string       // the file this store was opened from
 	kmu    sync.RWMutex // guards key against Close wiping it while MAC runs
 	closed bool         // Close wiped the key: MAC answers random bytes from then on
 	key    []byte
@@ -86,7 +91,7 @@ func Open(ctx context.Context, dir string, prot sealedfile.Protector, now func()
 	if err == nil {
 		return db, "", nil
 	}
-	if errors.Is(err, ErrNewerVersion) {
+	if errors.Is(err, ErrNewerVersion) || errors.Is(err, ErrBackup) {
 		return nil, "", err
 	}
 	if _, serr := os.Stat(path); serr != nil {
@@ -121,7 +126,7 @@ func openFile(ctx context.Context, path string, prot sealedfile.Protector) (*DB,
 	sdb.SetMaxOpenConns(4)
 	sdb.SetMaxIdleConns(1)
 	sdb.SetConnMaxIdleTime(30 * time.Second)
-	d := &DB{sql: sdb}
+	d := &DB{sql: sdb, path: path}
 	if err := d.init(ctx, prot); err != nil {
 		_ = sdb.Close()
 		return nil, err
@@ -209,6 +214,38 @@ CREATE INDEX IF NOT EXISTS audit_ts ON audit_events(ts);
 CREATE INDEX IF NOT EXISTS audit_profile ON audit_events(profile_id, ts);
 `
 
+// BackupName is the file name of the copy kept before an upgrade from schema version ver: mcp.db.v4.bak, in the store's own folder (same
+// owner-only folder, so the sealed server key in it is as protected as in the store). It is made once per old version and never overwritten, so
+// it always holds the store as the older build left it. A rolled-back (older) build refuses the upgraded store (ErrNewerVersion); the copy is
+// what it can be given back (BL-353).
+func BackupName(ver int) string { return fmt.Sprintf("%s.v%d.bak", FileName, ver) }
+
+// backupBeforeUpgrade writes the consistent copy of the open, not yet upgraded store (VACUUM INTO: no half-written pages, the -wal included).
+func (d *DB) backupBeforeUpgrade(ctx context.Context, ver int) error {
+	dst := filepath.Join(filepath.Dir(d.path), BackupName(ver))
+	if _, err := os.Stat(dst); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err // not knowing whether a copy exists is not a reason to replace one
+	}
+	tmp := dst + ".tmp"
+	_ = os.Remove(tmp)
+	//nolint:gosec // VACUUM INTO takes no bound parameter; the path is our own store folder plus a fixed name, with quotes doubled.
+	if _, err := d.sql.ExecContext(ctx, "VACUUM INTO '"+strings.ReplaceAll(filepath.ToSlash(tmp), "'", "''")+"'"); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := casestore.SecureFile(tmp); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 func (d *DB) init(ctx context.Context, prot sealedfile.Protector) error {
 	var ver int
 	if err := d.sql.QueryRowContext(ctx, "PRAGMA user_version").Scan(&ver); err != nil {
@@ -220,6 +257,11 @@ func (d *DB) init(ctx context.Context, prot sealedfile.Protector) error {
 	var qc string
 	if err := d.sql.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&qc); err != nil || qc != "ok" {
 		return errors.New("mcpaudit: the store is damaged")
+	}
+	if ver > 0 && ver < schemaVersion {
+		if err := d.backupBeforeUpgrade(ctx, ver); err != nil {
+			return ErrBackup
+		}
 	}
 	if _, err := d.sql.ExecContext(ctx, schemaSQL+aliasSchemaSQL); err != nil {
 		return errors.New("mcpaudit: creating the schema failed")

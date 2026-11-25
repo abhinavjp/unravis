@@ -22,6 +22,7 @@ export const MCP_TEXT = {
   legacyBody: 'This run has no approval store. An AI program that is started with the --mcp option reads through the older local link, and nothing here controls it. The Windows app asks for your approval for each program.',
   offTitle: 'AI access is off',
   offSealing: 'This PC cannot protect the approval store for your Windows account, so no AI program can connect. Nothing here needs your attention.',
+  offNewer: 'This version of Unravis is older than the one that set up your AI approvals, so no AI program can connect for now. Your approvals are kept untouched and work again when the newer version is back.',
   offStore: 'The approval store could not be opened, so no AI program can connect. Restart Unravis. If this stays, send the support log.',
 
   // Global stop

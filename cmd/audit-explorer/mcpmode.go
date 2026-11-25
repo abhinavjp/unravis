@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -67,6 +68,12 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 		return nil, noop
 	}
 	db, recovered, err := mcpaudit.Open(ctx, dir, p, time.Now)
+	if errors.Is(err, mcpaudit.ErrNewerVersion) {
+		// BL-353: this build was rolled back to an older version. The store is left exactly as it is; the newer build reads it again.
+		log.Print("MCP access is off: the approval store was written by a newer version of Unravis and is kept untouched until that version is back")
+		off(server.MCPOffNewer)
+		return nil, noop
+	}
 	if err != nil {
 		// A fixed line: the error text of the store never names a path or a driver message.
 		log.Printf("MCP access is off: %v", err)

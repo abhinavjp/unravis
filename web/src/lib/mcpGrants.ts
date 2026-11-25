@@ -57,7 +57,7 @@ export interface McpLimits {
   minCohort: number;
 }
 
-export type McpOffReason = 'sealing' | 'store' | '';
+export type McpOffReason = 'sealing' | 'store' | 'newer' | '';
 
 export interface McpList {
   /** on: the grant store is open. legacy: this run has no grants (browser mode). off: the store could not be opened. */
@@ -110,7 +110,7 @@ export function parseList(raw: unknown): McpList | null {
   const limits: McpLimits = { ...EMPTY_LIMITS };
   for (const key of Object.keys(limits) as (keyof McpLimits)[]) if (num(lim[key]) > 0) limits[key] = num(lim[key]);
   const profiles = (Array.isArray(r.profiles) ? r.profiles : []).map(parseProfile).filter((p): p is McpProfile => p !== null);
-  return { mode, reason: reason === 'sealing' || reason === 'store' ? reason : '', stopped: r.stopped === true, now: str(r.now), tiers, limits, profiles };
+  return { mode, reason: reason === 'sealing' || reason === 'store' || reason === 'newer' ? reason : '', stopped: r.stopped === true, now: str(r.now), tiers, limits, profiles };
 }
 
 export interface McpGroups { pending: McpProfile[]; active: McpProfile[]; ended: McpProfile[] }

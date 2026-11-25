@@ -138,7 +138,7 @@
     {:else if list && list.mode === 'legacy'}
       <section class="state-note" data-testid="mcp-legacy"><h3>{T.legacyTitle}</h3><p>{T.legacyBody}</p></section>
     {:else if list && list.mode === 'off'}
-      <section class="state-note" data-testid="mcp-off"><h3>{T.offTitle}</h3><p>{list.reason === 'sealing' ? T.offSealing : T.offStore}</p></section>
+      <section class="state-note" data-testid="mcp-off"><h3>{T.offTitle}</h3><p>{list.reason === 'sealing' ? T.offSealing : list.reason === 'newer' ? T.offNewer : T.offStore}</p></section>
     {:else if list}
       <!-- The global stop: one control, always at the top, never scrolled away. -->
       <div class="stopbar" class:on={stopped} data-testid="mcp-stopbar">

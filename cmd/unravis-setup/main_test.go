@@ -571,6 +571,21 @@ func TestAfterUnattendedStartsTheAppAndLeavesANote(t *testing.T) {
 	}
 }
 
+// BL-353: a rollback says that AI programs cannot connect on the older version while a newer one holds the approvals, and the whole
+// sentence survives the note's length cap.
+func TestRollbackNoteWarnsThatAIApprovalsWaitForTheNewerVersion(t *testing.T) {
+	rg := newRig(t)
+	rg.env.startBackground = func(string) error { return nil }
+	old := &setup.Installed{Location: filepath.Join(rg.dirs.LocalAppData, "Programs", "Unravis"), Version: "1.1.0"}
+	l, _ := openLog(options{}, rg.env, rg.dirs.LocalAppData, false)
+	afterUnattended(options{expectVersion: "1.0.0", allowDowngrade: true}, rg.env, rg.dirs, old, setup.Result{Outcome: setup.OutcomeDone}, func(string, ...any) {}, l)
+	closeLog(l)
+	got, ok := update.ReadApplyResult(filepath.Join(rg.dirs.LocalAppData, "Unravis", "update-result"))
+	if !ok || got.Outcome != "rolled-back" || !strings.Contains(got.Message, "no AI program can connect") || !strings.HasSuffix(got.Message, "when the newer version is back.") {
+		t.Fatalf("%+v %v", got, ok)
+	}
+}
+
 func TestAfterUnattendedWritesTheNoteBeforeTheMessageBox(t *testing.T) {
 	rg := newRig(t)
 	rg.env.startBackground = func(string) error { return errors.New("blocked") }
