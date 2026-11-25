@@ -12,8 +12,20 @@ import fs from 'node:fs';
 
 const args = process.argv.slice(2);
 const opt = (n) => { const i = args.indexOf(n); return i < 0 ? null : args[i + 1]; };
-const jsonFile = opt('--json'), baselineFile = opt('--baseline'), write = args.includes('--write');
+let baselineFile = opt('--baseline');
+const jsonFile = opt('--json'), write = args.includes('--write');
 if (!jsonFile || !baselineFile) { console.error('usage: --json <file> --baseline <file> [--write] [--out summary.md]'); process.exit(2); }
+
+// The baseline holds the failures of the machine CI runs on (Linux: the Windows-only tests fail there). The local
+// pipeline runs this step on a Windows PC, where a different set fails (privileges, the startup folder, ...), so
+// there the sibling "<name>.windows.txt" is the baseline when it exists. Same rule either way: only a failure that
+// is not in the baseline is new. Without that file a Windows run compares with the Linux baseline, as before.
+// --os pins the host for the tests.
+const hostOS = opt('--os') || process.platform;
+if (!write && hostOS === 'win32' && baselineFile && !/\.windows\.txt$/.test(baselineFile)) {
+  const alt = baselineFile.replace(/\.txt$/, '.windows.txt');
+  if (fs.existsSync(alt)) { console.log(`Windows host: comparing with ${alt}`); baselineFile = alt; }
+}
 
 const testOutput = new Map(); // "<package>.<Test>" -> its output chunks
 const failedTests = new Set(), passedTests = new Set(), pkgFail = new Set(), pkgsWithFailedTest = new Set(), pkgPanic = new Set();
