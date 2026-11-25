@@ -80,6 +80,13 @@ The repository is public and the runner executes code from branches on a persona
 4. The release signing key, passphrase and the release lock are not reachable from a CI user. The runner never calls `Release.ps1`.
 5. The runner has no inbound listener. The Releases app stays loopback-only.
 
+What the runner does about it (slice 2, `internal/localci`):
+
+- **Who runs.** Collaborators are only users with push permission. A pull request of the owner runs with its own workflow files only when every commit in it was written and committed by the owner (GitHub's web editor committer counts); one foreign, unknown or truncated commit makes the run use the runner definition of the base, like a collaborator's. A non-owner pull request runs only into a trusted base (the bases of the workflow map, plus `--trusted-base`), never into a branch somebody with push access could have just created.
+- **Git is sealed.** The runner's own git ignores the user's and the system's config, hooks, fsmonitor and replace objects, never follows symlinks and never signs. The mirror's `config` is rewritten from a fixed template and its hooks are emptied before every run; stale worktrees are pruned. Only the fetch sees the user's credential helper.
+- **Steps get a profile of their own.** Each run gets a throw-away folder as `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `GH_CONFIG_DIR` and `XDG_*`, git with no global or system config and an empty `credential.helper`, no ssh agent, no askpass; Go and npm settings and caches come from the store, and a run of a pull request whose definition is not the owner's gets caches apart from the owner's. The environment is an allow-list (`PATH`, `SystemRoot`, ... plus `--allow-env NAME`), and every secret-looking value, plus the `gh auth token` value, is masked in every sink.
+- **This stops casual access only.** A step still runs as the runner's Windows user: it can call the Windows Credential Manager API, start a credential helper by its full path, or read files elsewhere in that user's profile by absolute path. Pointing `HOME` somewhere else closes none of that. **A separate Windows user for the CI runner (point 2) therefore stays the recommendation**, and is the only thing that closes it; until then, treat the collaborator allow-list as the real boundary.
+
 ### 7. Cutover: replacing the GitHub gate safely
 
 Branch protection today: `develop` requires `fast-build`, source **any** (`app_id` null); `master` requires `build`, source **GitHub Actions** (`app_id` 15368), strict. Both stay as they are, with one change on master, below.
