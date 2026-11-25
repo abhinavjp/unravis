@@ -258,7 +258,7 @@ func TestCredentialFileIsSealedAndPrivate(t *testing.T) {
 	// the plain secret is nowhere in the file or in the folder
 	entries, _ := os.ReadDir(r.credDr)
 	for _, e := range entries {
-		b, _ := os.ReadFile(filepath.Join(r.credDr, e.Name())) //nolint:gosec // a test file in the test folder
+		b, _ := os.ReadFile(filepath.Join(r.credDr, e.Name()))
 		if strings.Contains(string(b), c.Secret) && !bytes.HasPrefix(b, []byte("S:user:")) {
 			t.Errorf("%s holds the secret unsealed", e.Name())
 		}
