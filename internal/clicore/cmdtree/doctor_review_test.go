@@ -27,7 +27,12 @@ func touch(t *testing.T, p string) {
 }
 
 func TestAppProgramOnDisk(t *testing.T) {
-	root := t.TempDir()
+	// appProgram follows links to the real folder, so the expected paths start from the real temp folder too (the
+	// runner's TEMP is an 8.3 short name such as RUNNER~1)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	thin := filepath.Join(root, "a", "bin", "unravis.exe")
 	touch(t, thin)
 	touch(t, filepath.Join(root, "a", "unravis.exe"))
