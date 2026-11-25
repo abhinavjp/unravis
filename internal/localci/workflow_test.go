@@ -500,7 +500,7 @@ func TestRepoWorkflows(t *testing.T) {
 	var clean []string
 	for _, f := range files {
 		name := filepath.Base(f)
-		data, err := os.ReadFile(f)
+		data, err := os.ReadFile(f) //nolint:gosec // path built by the tool/test itself, reading it is the point
 		if err != nil {
 			t.Fatal(err)
 		}

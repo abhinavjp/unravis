@@ -398,10 +398,10 @@ func (p *wfParser) parseOn(w *Workflow, n *yaml.Node) {
 		k, v *yaml.Node
 	}
 	var evs []ev
-	switch {
-	case n.Kind == yaml.ScalarNode:
+	switch n.Kind {
+	case yaml.ScalarNode:
 		evs = append(evs, ev{n.Value, n, nil})
-	case n.Kind == yaml.SequenceNode:
+	case yaml.SequenceNode:
 		for _, c := range n.Content {
 			c = deref(c)
 			if c.Kind != yaml.ScalarNode {

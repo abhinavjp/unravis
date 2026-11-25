@@ -28,7 +28,7 @@ func TestLocalConfigDefaults(t *testing.T) {
 				t.Errorf("Resolve(%q) ok = %v, want %v", label, ok, wantOK)
 			}
 		}
-		if o := c.Override("ci.yml", "x"); o != (JobOverride{}) {
+		if o := c.Override("ci.yml", "x"); o.Skip != "" || o.Accepted || len(o.StepEnv) > 0 {
 			t.Errorf("override = %+v", o)
 		}
 	}
@@ -68,10 +68,10 @@ jobs:
 	if o := c.Override("ci.yml", "other"); o.Skip != "why" || o.Accepted {
 		t.Errorf("other = %+v", o)
 	}
-	if o := c.Override("ci.yml", "missing"); o != (JobOverride{}) {
+	if o := c.Override("ci.yml", "missing"); o.Skip != "" || o.Accepted || len(o.StepEnv) > 0 {
 		t.Errorf("missing = %+v", o)
 	}
-	if o := c.Override("nope.yml", "other"); o != (JobOverride{}) {
+	if o := c.Override("nope.yml", "other"); o.Skip != "" || o.Accepted || len(o.StepEnv) > 0 {
 		t.Errorf("nope = %+v", o)
 	}
 }
@@ -102,7 +102,24 @@ func TestLocalConfigNilReceiver(t *testing.T) {
 	if m, ok := c.Resolve("ubuntu-24.04"); m != "host-bash" || !ok {
 		t.Errorf("got %q %v", m, ok)
 	}
-	if o := c.Override("a", "b"); o != (JobOverride{}) {
+	if o := c.Override("a", "b"); o.Skip != "" || o.Accepted || len(o.StepEnv) > 0 {
 		t.Errorf("got %+v", o)
+	}
+}
+
+func TestLocalConfigStepEnv(t *testing.T) {
+	src := `jobs:
+  fast-gate.yml:
+    lint:
+      step-env:
+        "Go - lint":
+          GOOS: linux
+`
+	c, err := ParseLocalConfig([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Override("fast-gate.yml", "lint").StepEnv["Go - lint"]["GOOS"]; got != "linux" {
+		t.Fatalf("step env override lost: %q", got)
 	}
 }

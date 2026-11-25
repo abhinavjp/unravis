@@ -420,10 +420,10 @@ func TestHashFiles(t *testing.T) {
 	write := func(name, body string) {
 		t.Helper()
 		p := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -544,7 +544,7 @@ func workflowFiles(t *testing.T) []string {
 func TestWorkflowExpressions(t *testing.T) {
 	total := 0
 	for _, f := range workflowFiles(t) {
-		data, err := os.ReadFile(f)
+		data, err := os.ReadFile(f) //nolint:gosec // test reads workflow files it discovered itself
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -570,7 +570,7 @@ func TestWorkflowExpressions(t *testing.T) {
 func TestWorkflowConditions(t *testing.T) {
 	total := 0
 	for _, f := range workflowFiles(t) {
-		data, err := os.ReadFile(f)
+		data, err := os.ReadFile(f) //nolint:gosec // path built by the tool/test itself, reading it is the point
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -597,7 +597,7 @@ func TestWorkflowConditions(t *testing.T) {
 func TestWorkflowInterpolation(t *testing.T) {
 	// Every ${{ }} of every workflow must evaluate against an empty context.
 	for _, f := range workflowFiles(t) {
-		data, err := os.ReadFile(f)
+		data, err := os.ReadFile(f) //nolint:gosec // path built by the tool/test itself, reading it is the point
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -189,7 +189,7 @@ func parseNumber(s string) (float64, bool) {
 	}
 	for i := 0; i < len(t); i++ {
 		c := t[i]
-		if !(isDigit(c) || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-') {
+		if !isDigit(c) && c != '.' && c != 'e' && c != 'E' && c != '+' && c != '-' {
 			return 0, false
 		}
 	}

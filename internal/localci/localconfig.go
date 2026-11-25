@@ -19,8 +19,9 @@ type LocalConfig struct {
 
 // JobOverride is a per-job local override.
 type JobOverride struct {
-	Skip     string // reason; non-empty means the job is skipped locally
-	Accepted bool   // a skipped job counts as passed for the gate
+	Skip     string                       // reason; non-empty means the job is skipped locally
+	Accepted bool                         // a skipped job counts as passed for the gate
+	StepEnv  map[string]map[string]string // step name -> local-only environment for that step (wins over the workflow's)
 }
 
 type rawLocalConfig struct {
@@ -29,8 +30,9 @@ type rawLocalConfig struct {
 }
 
 type rawJobOver struct {
-	Skip     string `yaml:"skip"`
-	Accepted bool   `yaml:"accepted"`
+	Skip     string                       `yaml:"skip"`
+	Accepted bool                         `yaml:"accepted"`
+	StepEnv  map[string]map[string]string `yaml:"step-env"`
 }
 
 // ParseLocalConfig parses the overrides file strictly: unknown keys are an error, and runs-on
@@ -57,7 +59,7 @@ func ParseLocalConfig(data []byte) (*LocalConfig, error) {
 	for file, jobs := range raw.Jobs {
 		c.Jobs[file] = map[string]JobOverride{}
 		for id, o := range jobs {
-			c.Jobs[file][id] = JobOverride{Skip: o.Skip, Accepted: o.Accepted}
+			c.Jobs[file][id] = JobOverride(o)
 		}
 	}
 	return c, nil
