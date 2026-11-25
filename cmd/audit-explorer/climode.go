@@ -14,7 +14,8 @@ import (
 // process with the session token the process already holds, through the same tool code the MCP bridge runs. The command line itself
 // never sees that token: the pipe's peer policy is the gate (BL-318, option B). Identifiers are shown, as in the app for its operator.
 // owner is what the app says of itself in hello: "app", "headless" or "shell". stop starts the normal quit (app.stop of a headless owner).
-func newCLIHandler(dashboard http.Handler, token, owner string, stop func()) http.Handler {
+// code is the entrance of "unravis code types|run" into the code-mode broker (BL-371); nil answers ENDPOINT_UNAVAILABLE.
+func newCLIHandler(dashboard http.Handler, token, owner string, stop func(), code clisrv.Code) http.Handler {
 	gen := ""
 	if start, err := selfStart(); err == nil && !start.IsZero() {
 		gen = start.UTC().Format(time.RFC3339Nano) // the locator's startTime, so the command line can match the two
@@ -24,6 +25,7 @@ func newCLIHandler(dashboard http.Handler, token, owner string, stop func()) htt
 		Backend:  clisrv.MCPBackend(bridge),
 		Internal: clisrv.NewInternalGET(dashboard, token),
 		Stop:     stop,
+		Code:     code,
 		Info: func() clisrv.Info {
 			return clisrv.Info{PID: os.Getpid(), Gen: gen, AppVersion: version.Version, Owner: owner}
 		},

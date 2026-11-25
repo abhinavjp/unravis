@@ -55,8 +55,9 @@ func (r Row) Cell(s Surface) Access {
 	return Deny
 }
 
-// The v1 matrix (spec 05-cli, section 3.6). Add a row before the operation exists. A row for area 04 (code.*) is deny in every column
-// until that area flips its own cells.
+// The v1 matrix (spec 05-cli, section 3.6). Add a row before the operation exists. The code.* rows of area 04 stay deny except the cells that
+// area has flipped: code.run and code.types are open to the person at the command line (BL-371) and to nobody else; code.replay stays
+// closed until it is built (BL-370).
 var matrix = []Row{
 	{Op: "version", Gui: NA, Human: Allow, Auto: NA, MCP: NA, Sandbox: NA},
 	{Op: "schema", Gui: NA, Human: Allow, Auto: NA, MCP: NA, Sandbox: NA},
@@ -80,8 +81,8 @@ var matrix = []Row{
 	{Op: "grant.approve", Gui: Allow, Human: Allow, Auto: Deny, MCP: Deny, Sandbox: Deny},
 	{Op: "grant.revoke", Gui: Allow, Human: Allow, Auto: Deny, MCP: Deny, Sandbox: Deny},
 	{Op: "blackbox.inspect", Gui: NA, Human: Allow, Auto: NA, MCP: NA, Sandbox: NA},
-	{Op: "code.run", Gui: Deny, Human: Deny, Auto: Deny, MCP: Deny, Sandbox: Deny},
-	{Op: "code.types", Gui: Deny, Human: Deny, Auto: Deny, MCP: Deny, Sandbox: Deny},
+	{Op: "code.run", Gui: Deny, Human: Allow, Auto: Deny, MCP: Deny, Sandbox: Deny},
+	{Op: "code.types", Gui: Deny, Human: Allow, Auto: Deny, MCP: Deny, Sandbox: Deny},
 	{Op: "code.replay", Gui: Deny, Human: Deny, Auto: Deny, MCP: Deny, Sandbox: Deny},
 }
 

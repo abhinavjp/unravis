@@ -12,6 +12,8 @@ import (
 
 	"api-audit-explorer/internal/appdirs"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/codeapi"
+	"api-audit-explorer/internal/codemode"
 	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/ownerlease"
@@ -176,6 +178,6 @@ func ownerName(flag string) string {
 
 // cliHandlerFor is the command line route of this owner: hello says the --owner of this copy, and app.stop (which quits through
 // stop) works only when that is headless. The desktop shell's owner (--pipe-only with no --owner) is never stopped from the command line.
-func cliHandlerFor(f runFlags, dashboard http.Handler, token string, stop func()) http.Handler {
-	return newCLIHandler(dashboard, token, ownerName(f.owner), stop)
+func cliHandlerFor(f runFlags, dashboard http.Handler, token string, stop func(), broker *codemode.Broker) http.Handler {
+	return newCLIHandler(dashboard, token, ownerName(f.owner), stop, codeapi.CLI(broker))
 }

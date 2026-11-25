@@ -54,6 +54,8 @@ type Deps struct {
 	State   func() string // "ready", "locked" or "updating"
 	// Internal runs the allow-listed reads of the case routes (NewInternalGET). nil: the case operations answer ENDPOINT_UNAVAILABLE.
 	Internal InternalGET
+	// Code is the code-mode broker (BL-371). nil: code.types and code.run answer ENDPOINT_UNAVAILABLE.
+	Code Code
 	// Stop starts the normal quit of the owner (the one --quit and Ctrl+C run). nil: app.stop answers ENDPOINT_UNAVAILABLE. Only an owner
 	// that says "headless" is ever stopped from here (D20).
 	Stop func()
@@ -239,6 +241,10 @@ func (s *server) run(parent context.Context, req request) (answer, int) {
 		data, cerr = s.casesList(ctx, args)
 	case req.Op == "cases.show":
 		data, cerr = s.casesShow(ctx, args)
+	case req.Op == "code.types":
+		data, cerr = s.codeTypes(ctx, args)
+	case req.Op == "code.run":
+		data, cerr = s.codeRun(ctx, args)
 	default:
 		return fail(clicore.NewError(clicore.CodeUnknownOperation, "This operation is not built in this version of Unravis.", "Update Unravis.")), 0
 	}
@@ -251,6 +257,9 @@ func (s *server) run(parent context.Context, req request) (answer, int) {
 		return fail(clicore.NewError(clicore.CodeInternal, "The result could not be encoded.", "")), 0
 	}
 	meta := metaOf(raw)
+	if req.Op == "code.run" {
+		meta = codeMeta(raw, meta)
+	}
 	out := answer{OK: true, Data: json.RawMessage(raw), Meta: &meta}
 	if len(raw)+1024 > MaxResponseBytes {
 		return fail(clicore.NewError(clicore.CodeResultTooLarge, "The result is larger than 16 MiB. Narrow the request.", "")), 0

@@ -472,3 +472,26 @@ func TestMutationGuards(t *testing.T) {
 		t.Error("401")
 	}
 }
+
+// Every refusal and failure of code mode (BL-371) has plain words, a command line code and, except cancelled, a next step; a code that
+// is not known is INTERNAL and never exits 0. busy is the one that passes by itself.
+func TestCodeModeErrorHasWordsForEveryCode(t *testing.T) {
+	for code, c := range codeModeTexts {
+		e := CodeModeError(code)
+		if e.Code != c.code || e.Message == "" || strings.ContainsAny(e.Message, "\r\n\x1b") || ExitCode(e.Code) == 0 {
+			t.Errorf("%s: %+v", code, e)
+		}
+		if c.action == "" && code != "cancelled" {
+			t.Errorf("%s says nothing about what to do next", code)
+		}
+		if (code == "busy") != e.Retryable {
+			t.Errorf("%s: retryable is %v", code, e.Retryable)
+		}
+	}
+	if e := CodeModeError("a_code_from_the_future"); e.Code != CodeInternal || ExitCode(e.Code) == 0 || e.Message == "" {
+		t.Errorf("unknown: %+v", e)
+	}
+	if e := CodeModeError(CodeModeManyCases); e.Code != CodeInvalidArgument || !strings.Contains(e.Action, "--case") {
+		t.Errorf("many cases: %+v", e)
+	}
+}

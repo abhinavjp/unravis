@@ -61,15 +61,24 @@ func (st *state) runOp(op string, args json.RawMessage, table func(w io.Writer, 
 	return st.runWith(sess, op, args, table)
 }
 
-// runWith runs one operation on an open session and writes the result.
-func (st *state) runWith(sess *clicore.Session, op string, args json.RawMessage, table func(w io.Writer, data json.RawMessage) error) error {
+// callOp runs one operation on an open session and returns what the owner answered.
+func (st *state) callOp(sess *clicore.Session, op string, args json.RawMessage) (*clicore.Result, error) {
 	callID, err := newCallID()
 	if err != nil {
-		return clicore.NewError(clicore.CodeInternal, "No random source for the call id.", "")
+		return nil, clicore.NewError(clicore.CodeInternal, "No random source for the call id.", "")
 	}
 	res, e := sess.Do(st.ctx, clicore.Call{Op: op, Args: args, RequestID: st.reqID, CallID: callID, Deadline: st.opts.timeout})
 	if e != nil {
-		return e
+		return nil, e
+	}
+	return res, nil
+}
+
+// runWith runs one operation on an open session and writes the result.
+func (st *state) runWith(sess *clicore.Session, op string, args json.RawMessage, table func(w io.Writer, data json.RawMessage) error) error {
+	res, err := st.callOp(sess, op, args)
+	if err != nil {
+		return err
 	}
 	return st.emit(op, res.Data, res.Meta, func(w io.Writer) error { return table(w, res.Data) })
 }
@@ -80,7 +89,7 @@ func (st *state) requestArgs(path string) (json.RawMessage, error) {
 	var raw []byte
 	if path == "-" {
 		var err error
-		if raw, err = st.readAll(st.io.In); err != nil {
+		if raw, err = st.readLimited(st.io.In, 2*clicore.MaxRequestBytes+2, "The --request input cannot be read."); err != nil {
 			return nil, err
 		}
 	} else {
@@ -93,7 +102,7 @@ func (st *state) requestArgs(path string) (json.RawMessage, error) {
 			return nil, usage("The --request file cannot be read.")
 		}
 		defer func() { _ = f.Close() }()
-		if raw, err = st.readAll(f); err != nil {
+		if raw, err = st.readLimited(f, 2*clicore.MaxRequestBytes+2, "The --request input cannot be read."); err != nil {
 			return nil, err
 		}
 	}
@@ -111,22 +120,23 @@ func (st *state) requestArgs(path string) (json.RawMessage, error) {
 	return json.RawMessage(b), nil
 }
 
-// readAll reads the request input, at most twice the limit (UTF-16 doubles the size of the text), and stops when the command's own
-// context ends: a reader that never answers (a terminal, a stalled pipe) cannot hold the program past --timeout.
-func (st *state) readAll(r io.Reader) ([]byte, error) {
+// readLimited reads an input of the command, at most n bytes (the callers allow twice the limit of the text, since UTF-16 doubles it), and
+// stops when the command's own context ends: a reader that never answers (a terminal, a stalled pipe) cannot hold the program past --timeout.
+// unreadable is the usage error when the read fails.
+func (st *state) readLimited(r io.Reader, n int64, unreadable string) ([]byte, error) {
 	type result struct {
 		b   []byte
 		err error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		b, err := io.ReadAll(io.LimitReader(r, 2*clicore.MaxRequestBytes+2))
+		b, err := io.ReadAll(io.LimitReader(r, n))
 		ch <- result{b, err}
 	}()
 	select {
 	case res := <-ch:
 		if res.err != nil {
-			return nil, usage("The --request input cannot be read.")
+			return nil, usage(unreadable)
 		}
 		return res.b, nil
 	case <-st.ctx.Done():

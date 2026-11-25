@@ -282,7 +282,7 @@ func (st *state) root() *cobra.Command {
 		st.ctx, st.cancel = context.WithTimeout(st.ctx, st.opts.timeout) // Run cancels it when the command ends
 		return nil
 	}
-	root.AddCommand(st.versionCmd(), st.schemaCmd(), st.blackboxCmd(), st.completionCmd(), st.auditCmd(), st.sourcesCmd(), st.casesCmd(), st.doctorCmd(), st.appCmd())
+	root.AddCommand(st.versionCmd(), st.schemaCmd(), st.blackboxCmd(), st.completionCmd(), st.auditCmd(), st.sourcesCmd(), st.casesCmd(), st.codeCmd(), st.doctorCmd(), st.appCmd())
 	return root
 }
 
