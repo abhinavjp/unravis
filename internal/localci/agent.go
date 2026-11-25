@@ -283,6 +283,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.beat(true)
 	a.logf("agent %s: %d slots%s", a.Name, a.slots(), labelNote(a.Labels))
 
+	// idle-ok: the CI agent program only (not the app); the period is the claim interval, seconds or more.
 	t := time.NewTicker(a.claimEvery())
 	defer t.Stop()
 	for {

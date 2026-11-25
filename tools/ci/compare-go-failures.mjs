@@ -7,6 +7,9 @@
 // is explicit; a package that starts crashing is new.
 // Exit 0: no failure outside the baseline. Exit 1: prints "NEW FAILURE <name>" per line.
 // A baseline line that now passes prints a ::notice:: and is NOT an error (trim by hand).
+// On Windows (the local CI runner) <baseline>.windows.txt, if present, is added to the baseline: tests that fail on a normal,
+// non-elevated Windows account (owner SID, Windows paths) and pass or skip on Linux. The Linux entries are another OS's list
+// there, so "now passes" notices are not printed on Windows.
 // (Spec 08 names this tool Compare-GoFailures.ps1; it is Node so it runs where pwsh is absent. See docs/desktop/ci-audit.md.)
 import fs from 'node:fs';
 
@@ -35,9 +38,12 @@ if (write) {
   console.log(`wrote ${failures.length} entries to ${baselineFile}`);
   process.exit(0);
 }
-const baseline = new Set(fs.existsSync(baselineFile) ? fs.readFileSync(baselineFile, 'utf8').split('\n').map((s) => s.trim()).filter((s) => s && !s.startsWith('#')) : []);
+const readList = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').map((s) => s.trim()).filter((s) => s && !s.startsWith('#')) : []);
+const onWindows = process.platform === 'win32';
+const winFile = baselineFile.replace(/\.txt$/, '') + '.windows.txt';
+const baseline = new Set([...readList(baselineFile), ...(onWindows ? readList(winFile) : [])]);
 const fresh = failures.filter((f) => !baseline.has(f));
-const stale = [...baseline].filter((b) => passedTests.has(b));
+const stale = onWindows ? [] : [...baseline].filter((b) => passedTests.has(b));
 for (const s of stale) console.log(`::notice::baseline entry now passes, trim it from ${baselineFile}: ${s}`);
 for (const f of fresh) console.log(`NEW FAILURE ${f}`);
 const summary = `### Go failures vs baseline\n\n| | count |\n|---|---|\n| failing now | ${failures.length} |\n| in baseline | ${baseline.size} |\n| new | ${fresh.length} |\n| baseline now passing | ${stale.length} |\n`;

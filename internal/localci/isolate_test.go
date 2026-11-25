@@ -30,10 +30,14 @@ func TestStepEnvGivesTheRunAProfileOfItsOwn(t *testing.T) {
 	}
 	m := envMap(env)
 	home := filepath.Join(s.HomesPath(), "run1")
-	for _, k := range []string{"HOME", "USERPROFILE", "GH_CONFIG_DIR", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "GIT_CONFIG_GLOBAL", "GOENV", "NPM_CONFIG_USERCONFIG", "TEMP", "TMP"} {
+	for _, k := range []string{"HOME", "USERPROFILE", "GH_CONFIG_DIR", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "GIT_CONFIG_GLOBAL", "GOENV", "NPM_CONFIG_USERCONFIG"} {
 		if !pathInside(home, m[k]) {
 			t.Errorf("%s = %q, want a folder of the run's profile %s", k, m[k], home)
 		}
+	}
+	// TEMP and TMP are a short folder under the owner's temp folder, removed with the run
+	if m["TEMP"] != m["TMP"] || m["TEMP"] == "" || pathInside(home, m["TEMP"]) || !exists(m["TEMP"]) {
+		t.Errorf("TEMP %q TMP %q must be one short folder outside the profile", m["TEMP"], m["TMP"])
 	}
 	if !pathInside(s.CachesPath(), m["GOPATH"]) || !pathInside(s.CachesPath(), m["GOCACHE"]) {
 		t.Errorf("GOPATH %q GOCACHE %q must be inside the store's caches", m["GOPATH"], m["GOCACHE"])
@@ -60,9 +64,10 @@ func TestStepEnvGivesTheRunAProfileOfItsOwn(t *testing.T) {
 	if !exists(home) {
 		t.Fatal("the profile folder is missing")
 	}
+	tempDir := m["TEMP"]
 	cleanup()
-	if exists(home) {
-		t.Fatal("cleanup must delete the profile")
+	if exists(home) || exists(tempDir) {
+		t.Fatal("cleanup must delete the profile and the run's temp folder")
 	}
 	// an untrusted run gets caches of its own
 	env, cleanup, err = s.StepEnv(base, "run2", true)
