@@ -12,6 +12,7 @@ import (
 const (
 	EnvRunDir    = "UNRAVIS_RUN_DIR"
 	EnvMCPDir    = "UNRAVIS_MCP_DIR"
+	EnvCrashDir  = "UNRAVIS_CRASH_DIR"
 	envConfigDir = "AUDIT_CONFIG_DIR"
 	envLocalApp  = "LOCALAPPDATA"
 )
@@ -47,6 +48,24 @@ func MCPDir(getenv func(string) string) (string, error) {
 	}
 	if d := getenv(envLocalApp); d != "" {
 		return filepath.Join(d, "Unravis", "mcp"), nil
+	}
+	return "", errors.New("appdirs: %LOCALAPPDATA% is not set")
+}
+
+// CrashDir is the folder of the local crash files (spec 01 D11, BL-315): UNRAVIS_CRASH_DIR, else <AUDIT_CONFIG_DIR>\crashes, else
+// %LOCALAPPDATA%\Unravis\crashes. Nothing in it is ever sent anywhere.
+func CrashDir(getenv func(string) string) (string, error) {
+	if getenv == nil {
+		return "", errors.New("appdirs: no environment")
+	}
+	if d := getenv(EnvCrashDir); d != "" {
+		return d, nil
+	}
+	if d := getenv(envConfigDir); d != "" {
+		return filepath.Join(d, "crashes"), nil
+	}
+	if d := getenv(envLocalApp); d != "" {
+		return filepath.Join(d, "Unravis", "crashes"), nil
 	}
 	return "", errors.New("appdirs: %LOCALAPPDATA% is not set")
 }

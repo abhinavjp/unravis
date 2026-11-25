@@ -197,6 +197,8 @@ func run(args []string, getenv func(string) string) error {
 	for _, note := range demoNotes {
 		log.Print(note)
 	}
+	// A real run (not --version, --quit, --check-update or a refused demo setting) records an unhandled panic locally (crashwire.go).
+	defer startCrashCapture(getenv).Close()
 	if f.mcp {
 		return runMCP(f, getenv)
 	}
