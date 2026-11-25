@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/mcpaudit"
 )
@@ -123,6 +122,7 @@ type Dispatcher struct {
 	d Deps
 
 	lim     *limiter
+	flights *flights // identical comparisons that are running (BL-350)
 	mu      sync.Mutex
 	perProf map[string]int
 	total   int
@@ -145,7 +145,7 @@ func NewDispatcher(d Deps) (*Dispatcher, error) {
 		d.Info = func() Info { return Info{} }
 	}
 	d.Grants.OnRevoke(d.Backend.Forget)
-	return &Dispatcher{d: d, lim: newLimiter(d.Budgets), perProf: map[string]int{}, byCall: map[string]context.CancelFunc{}}, nil
+	return &Dispatcher{d: d, lim: newLimiter(d.Budgets), flights: newFlights(), perProf: map[string]int{}, byCall: map[string]context.CancelFunc{}}, nil
 }
 
 // refuse is an answer that carries no result.
@@ -253,32 +253,51 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 	}
 	ev.Fingerprint = s.d.Recorder.Fingerprint(compact(req.Args))
 
+	// BL-350: an identical comparison of this host that is already running is shared, not run again (docs/desktop/spikes/BL-350-dedupe.md).
+	var lead *flight
+	var admitted bool
+	var start time.Time
+	if class == ClassLiveCompare {
+		key := flightKey(pr, ev.Fingerprint)
+		var handled bool
+		var st int
+		var a Answer
+		st, a, handled, lead, admitted, start = s.shareCompare(ctx, runCtx, pr, &req, ev, key)
+		if handled {
+			return st, a
+		}
+		if lead != nil {
+			defer s.flights.finish(key, lead)
+		}
+	}
+
 	// Budgets (BL-350): a host that may call is still limited in how much it asks of the repositories. Charged before the ledger row and
 	// before the run; a refusal is a denied row and says "do not loop".
 	budgetDone, over := s.lim.admit(pr.ProfileID, class, s.d.Now())
 	if over != nil {
 		ev.Kind, ev.Outcome, ev.Code = mcpaudit.KindDenied, mcpaudit.OutcomeDenied, mcp.WireBudgetExceeded
+		if admitted { // a call that waited on another run already has its admit row: it ends with a closing row
+			ev.Kind, ev.Time = mcpaudit.KindEnd, s.d.Now()
+		}
 		_ = s.d.Recorder.Record(context.WithoutCancel(runCtx), ev)
 		return refuse(http.StatusTooManyRequests, mcp.WireBudgetExceeded, "This host reached its limit for "+over.what+".", "Wait and retry later, or ask the person to review the limits in Unravis > AI access. Do not loop.")
 	}
 	budgetBytes := 0
 	defer func() { budgetDone(budgetBytes, s.d.Now()) }()
 
-	start := s.d.Now()
-	admit := ev
-	admit.Kind, admit.Time = mcpaudit.KindAdmit, start
-	if err := s.d.Recorder.Record(runCtx, admit); err != nil && isLive(class) {
-		// Live work with no ledger row does not run (spec 03 section 3.5). Work that reads nothing live (the guide, the list, a cached page)
-		// goes on without a row.
-		s.d.Logf("mcp: the call ledger did not take a row; a live call was refused")
-		return refuse(http.StatusInternalServerError, mcp.WireInternal, "Unravis could not record this call, so it was not run.", "Tell the person to check Unravis.")
+	if !admitted {
+		start = s.d.Now()
+		admit := ev
+		admit.Kind, admit.Time = mcpaudit.KindAdmit, start
+		if err := s.d.Recorder.Record(runCtx, admit); err != nil && isLive(class) {
+			// Live work with no ledger row does not run (spec 03 section 3.5). Work that reads nothing live (the guide, the list, a cached page)
+			// goes on without a row.
+			s.d.Logf("mcp: the call ledger did not take a row; a live call was refused")
+			return refuse(http.StatusInternalServerError, mcp.WireInternal, "Unravis could not record this call, so it was not run.", "Tell the person to check Unravis.")
+		}
 	}
 
-	timeout := audit.OperationTimeout
-	if req.DeadlineMs > 0 && req.DeadlineMs < timeout.Milliseconds() {
-		timeout = time.Duration(req.DeadlineMs) * time.Millisecond
-	}
-	tctx, cancelTimeout := context.WithTimeout(runCtx, timeout)
+	tctx, cancelTimeout := context.WithTimeout(runCtx, callTimeout(&req))
 	defer cancelTimeout()
 	ranWithIdentifiers := IdentifiersAllowed(p, start) // what the backend is told: the identifiers switch of the bridge is this value
 	result, isError := s.d.Backend.Call(tctx, p, req.Tool, req.Args, start)
@@ -304,6 +323,9 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 	end.Bytes = len(result)
 	budgetBytes = len(result)
 	end.Outcome, end.Code = outcomeOf(result, isError, tctx)
+	if lead != nil && end.Outcome == mcpaudit.OutcomeOK {
+		lead.share(result, isError, ranWithIdentifiers) // the followers get it when this call returns
+	}
 	s.recordEnd(ctx, end)
 	return http.StatusOK, Answer{OK: true, IsError: isError, ProfileRev: pr.Rev, Result: json.RawMessage(result), Ms: end.DurMs}
 }
