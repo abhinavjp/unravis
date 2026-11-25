@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing } from '../appState.svelte';
+  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing, results, scope } from '../appState.svelte';
   import { pacedTimeout } from '../visibility';
   import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, closeButton, closedEraseAt, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
@@ -24,6 +24,7 @@
   import { lazyComponent } from '../lazy';
   import { formatTime } from '../time';
   import { timeZone } from '../timeZone.svelte';
+  import { caseSpan, resourceFiles } from '../resourceSpan';
   import { getCaseKeyStatus } from '../caseKeyApi';
   import { keyEndingLabel, type CaseKeyStatus } from '../caseKey';
   import { CASE_KEY_TEXT } from '../copy/caseKeyCopy';
@@ -38,6 +39,8 @@
   import { HUB_TEXT } from '../copy/sourcesCopy';
 
   const TracingPaper = lazyComponent(() => import('../../components/TracingPaper.svelte'));
+  // The resource counters of the case's host files (BL-495j): its code (and the chart library) is read only when the case page is on screen.
+  const ResourcePanel = lazyComponent(() => import('../../components/ResourcePanel.svelte'));
 
   // One page per case: the story (what happened, in order), the theories, the health checks, the analysis and the files.
   // Everything here is read from what the case already saved. Nothing runs by itself.
@@ -80,6 +83,8 @@
   $effect(() => { if (phase === 'ready') return setDocTitle(timelineShown ? TRACING_TEXT.heading : info?.title || caseCode(caseId)); });
   let controller: AbortController | null = null;
   let rereadRun = 0;
+  // Counts the reads of the whole page (load). A re-read that began before one of them must not write over what that read decided, such as a locked or gone case.
+  let pageLoads = 0;
   // Set when the page goes away: a re-read that was held for a read of the page is not run for a page that is no longer there.
   let destroyed = false;
   let loadedFor = '';
@@ -90,6 +95,12 @@
   const showJump = $derived(offersWork);
   const story = $derived(buildStory({ info, imports, health, theories, history: info?.history }));
   const keptFiles = $derived(imports.filter(record => record.status === 'ok'));
+  // The Resource counters panel exists only for a case that holds counter files (Windows Performance Monitor, SQL, runtime, Redis, Mongo, Linux samples,
+  // the live recording): a case with only IIS or app logs mounts nothing, so it reads nothing, draws nothing and moves nothing. The panel reads the audit
+  // window on screen, the period those files cover (for its "Show that period" offer) and the API P95 of the analysis already on screen.
+  const counterFiles = $derived(resourceFiles(imports));
+  const filesSpan = $derived(caseSpan(counterFiles));
+  const apiWindows = $derived((results.analysis?.loadWindows ?? []).map(item => ({ at: item.at, p95Ms: item.timing.p95?.valueMs ?? null })));
   // An archived case reads no files, so the header counts them from the case record until the working copy is freed; after that there is no count.
   const filesShown = $derived(offersWork ? keptFiles.length : info?.archive?.freed ? null : (info?.imports ?? 0));
   const hasIis = $derived(keptFiles.some(record => record.importer === 'iis-w3c'));
@@ -110,6 +121,8 @@
   // When a closed case will be erased: 30 days after it was closed. Said on the closed page, so the deadline is in view when it starts (CASES-10).
   const eraseAt = $derived(isClosed ? closedEraseAt(info?.closed) : null);
   const timelineShown = $derived(tracingOpen && !isArchived);
+  /* The case page proper (not the key, erase, locked or untrusted pages, which stay one narrow column): a side column with the case facts and a wide column of blocks. */
+  const homeShown = $derived(!!caseId && phase === 'ready' && view === 'home' && !timelineShown && !guidedOpen);
   const archivedMoves = $derived(info ? archivedActions(info) : null);
   const madeCount = $derived(info?.archive?.files?.length || info?.filesMade || 0);
   const currentFile = $derived(info?.archive?.current ?? null);
@@ -172,8 +185,8 @@
   function archiveChanged() { archiveDrawer = null; changed = true; void tick().then(() => reloadEl?.focus()); }
 
   // quiet: the page is read again after a move on the case (archive, restore, free), so it stays on screen and does not show the loading text.
-  // An add that lands while a read of the page is on its way is not dropped and does not race it: the re-read waits for that read to end, then runs once
-  // (so the read that started last is the one that shows, whichever way round they would have finished).
+  // An add that lands while a read of the page is on its way is not dropped and does not race it: the re-read waits for that read to end, then runs once.
+  // Each kind of answer keeps the newest read that succeeded, so a newer failed read never erases or replaces a good answer.
   let loadsOpen = 0;
   let rereadWanted = '';
   async function load(id: string, quiet = false) {
@@ -186,13 +199,22 @@
   async function loadPage(id: string, quiet: boolean) {
     // The newest read wins: a quiet re-read that is still on its way (after an add) must not put its older answer over this one.
     rereadRun += 1;
+    pageLoads += 1;
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
     if (!quiet) phase = 'loading';
     // Another case: what this page holds of the last one (its health checks) is let go at once, so it can never show in this case's story.
-    if (loadedFor !== id) { health = []; imports = []; }
+    if (loadedFor !== id) {
+      health = [];
+      imports = [];
+      caseReads = newestWins();
+      fileReads = newestWins();
+      healthReads = newestWins();
+    }
     loadedFor = id;
+    const caseToken = caseReads.begin();
+    const fileToken = fileReads.begin();
     lastReadAt = Date.now();
     copyNote = '';
     copyProblem = '';
@@ -222,8 +244,8 @@
     if (refusedWith(caseView, 'case-locked') || refusedWith(files, 'case-locked')) { phase = 'locked'; return; }
     if (refusedWith(caseView, 'untrusted-case')) { phase = 'untrusted'; return; }
     if (caseView.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
-    info = found;
-    imports = files.status === 'fulfilled' ? files.value : [];
+    if (found && caseReads.accept(caseToken)) info = found;
+    if (files.status === 'fulfilled' && fileReads.accept(fileToken)) imports = files.value;
     // A health read that failed puts nothing in and takes no turn: the checks already shown stay, and an older good answer is not held back.
     // (A case opened afresh starts with none, see above.)
     if (runs.status === 'fulfilled' && healthReads.accept(healthToken)) health = runs.value;
@@ -303,28 +325,38 @@
   // A read that fails keeps what the page shows. An answer that says what the page already shows is not put in, so nothing is redrawn.
   let lastReadAt = 0;
   let rereadsOpen = 0;
-  // Every read of the health checks (page read, re-read, return, a finished check) takes a number; only the newest read's answer is put in.
-  const healthReads = newestWins();
+  // Each case owns its read turns. A slow older answer may be shown only when no newer successful answer has been shown; a failed read takes no turn.
+  let caseReads = newestWins();
+  let fileReads = newestWins();
+  let healthReads = newestWins();
   async function rereadFiles(everything = false) {
     const id = caseId;
     if (!id || phase !== 'ready' || destroyed) return;
     const mine = ++rereadRun;
+    const loadsBefore = pageLoads;
     lastReadAt = Date.now();
     rereadsOpen += 1;
+    const caseToken = caseReads.begin();
+    const fileToken = fileReads.begin();
+    const healthToken = healthReads.begin();
     try {
       // The case was erased in another tab: say so (the page for a case that is gone, which reads nothing more) instead of showing it as if it were there.
       const fresh = await getCaseView(id).catch((error: unknown) => { if (isCaseGone(error)) return null; throw error; });
       if (!fresh) { if (id === caseId && mine === rereadRun) gone(); return; }
       const reads = readsCaseData(fresh);
-      // Gone from this page (another case was opened, or a newer read began) while the case was read: nothing more is read or taken.
-      if (id !== caseId || mine !== rereadRun) return;
-      const healthToken = healthReads.begin();
-      const [files, runs] = await Promise.all([reads ? listImports(id) : Promise.resolve([] as ImportRecord[]), reads ? fetchHealthRuns(id).catch(() => null) : Promise.resolve(null)]);
+      // Gone from this page while the case was read: nothing more is read or taken. A newer re-read does not discard this one's answer;
+      // the per-kind turns below decide which successful answer is shown.
+      if (id !== caseId) return;
+      const [fileResult, healthResult] = await Promise.allSettled([reads ? listImports(id) : Promise.resolve([] as ImportRecord[]), reads ? fetchHealthRuns(id) : Promise.resolve(null)]);
       const theoriesRead = everything && reads ? refreshLedger().catch(() => { /* the theories keep what they show */ }) : Promise.resolve();
-      if (id !== caseId || mine !== rereadRun) return;
-      if (!sameRead(info, fresh)) info = fresh;
-      if (!sameRead(imports, files)) imports = files;
-      if (runs && healthReads.accept(healthToken) && !sameRead(health, runs)) health = runs;
+      // Checked again after the reads: nothing is written when another case was opened, or when a read of the whole page began meanwhile (it
+      // may have ended locked or gone, and decides what the page shows). A newer re-read does not discard this one's answer; the per-kind
+      // turns below decide which successful answer is shown. A files read that says the case is locked goes back to the key page, as before.
+      if (id !== caseId || destroyed || loadsBefore !== pageLoads) return;
+      if (fileResult.status === 'rejected' && lockedUnder(fileResult.reason)) return;
+      if (caseReads.accept(caseToken) && !sameRead(info, fresh)) info = fresh;
+      if (fileResult.status === 'fulfilled' && fileReads.accept(fileToken) && !sameRead(imports, fileResult.value)) imports = fileResult.value;
+      if (healthResult.status === 'fulfilled' && healthResult.value && healthReads.accept(healthToken) && !sameRead(health, healthResult.value)) health = healthResult.value;
       await theoriesRead;
     } catch (error) { lockedUnder(error); /* otherwise the page keeps the list it had */ } finally { rereadsOpen -= 1; }
   }
@@ -483,7 +515,7 @@
   const kindLabel = { case: CASE_HOME_TEXT.kindCase, file: CASE_HOME_TEXT.kindFile, health: CASE_HOME_TEXT.kindHealth, theory: CASE_HOME_TEXT.kindTheory } as const;
 </script>
 
-<div class="case-home" class:wide={timelineShown}>
+<div class="case-home" class:wide={timelineShown} class:home={homeShown}>
   <!-- On the timeline (and the slow call screen inside it) the one way back is the timeline's own button, so "All cases" is not drawn a second time (ANALYSIS-15). -->
   {#if !timelineShown}
   <div class="top">
@@ -525,6 +557,7 @@
       <GuidedAnalysis {caseId} closed={!!info?.closed} {readOnly} {hasIis} onAddData={openCaseImport} onClose={() => (guidedFor = '')} />
     {/key}
   {:else}
+    <div class="home-cols">
     <header class="head">
       <p class="eyebrow">{CASE_HOME_TEXT.heading} · {caseCode(caseId)}</p>
       <h2 tabindex="-1" bind:this={headingEl}>{info?.title || caseCode(caseId)}</h2>
@@ -579,8 +612,9 @@
       </div>
     </header>
 
+    <div class="home-blocks">
     {#if retries.length > 0}
-      <section class="block" aria-labelledby="home-retries">
+      <section class="block full" aria-labelledby="home-retries">
         <h3 id="home-retries">{CASE_HOME_TEXT.retryHeading}</h3>
         <p class="note">{CASE_HOME_TEXT.retryIntro}</p>
         <ul class="retries" bind:this={retriesEl}>
@@ -623,7 +657,7 @@
 
     {/if}
 
-    <section class="block" aria-labelledby="home-story">
+    <section class="block full" aria-labelledby="home-story">
       <h3 id="home-story">{CASE_HOME_TEXT.storyHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.storyIntro}</p>
       {#if story.length === 0}
@@ -645,7 +679,7 @@
     </section>
 
     {#if offersWork}
-    <section class="block" aria-labelledby="home-theories">
+    <section class="block full" aria-labelledby="home-theories">
       <h3 id="home-theories">{CASE_HOME_TEXT.theoriesHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.theoriesIntro}</p>
       <div aria-live="polite">
@@ -674,13 +708,20 @@
       </div>
     </section>
 
-    <section class="block" aria-labelledby="home-health">
+    <section class="block full" aria-labelledby="home-health">
       <h3 id="home-health">{CASE_HOME_TEXT.healthHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.healthText}</p>
       <HealthPanel {caseId} embedded onGone={gone} onRan={() => void rereadHealth()} />
     </section>
 
-    <section class="block" aria-labelledby="home-sources">
+    <!-- Resource counters (BL-495j): only when the case holds counter files. The panel's window is its own here; it never moves the analysis zoom. -->
+    {#if counterFiles.length > 0}
+      <div class="resource-slot full">
+        {#key caseId + ':' + counterFiles.length}<ResourcePanel {caseId} query={scope.query} zone={timeZone.zone} span={filesSpan} {apiWindows} ownWindow onGone={gone} />{/key}
+      </div>
+    {/if}
+
+    <section class="block full" aria-labelledby="home-sources">
       <h3 id="home-sources">{HUB_TEXT.heading}</h3>
       <p class="note">{HUB_TEXT.intro}</p>
       <SourcesHub {caseId} readOnly={readOnly || stale} onGone={gone} onAddFiles={openCaseImport} onAddMongo={() => void openConnections('new')} />
@@ -715,6 +756,8 @@
         <div class="actions"><button type="button" class="secondary-button danger" aria-haspopup="dialog" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button></div>
       </section>
     {/if}
+    </div>
+    </div>
   {/if}
 </div>
 
@@ -723,9 +766,26 @@
 <style>
   /* width: 100% matters: a grid item with margin auto shrinks to its content, so its width (and everything inside) moved sideways
      whenever hover text or table rows changed. With a fixed width the column only ever stops at its max-width. */
-  .case-home { display: grid; gap: 20px; width: 100%; max-width: 880px; margin: 0 auto; padding: 8px 0 48px; }
+  .case-home { display: grid; gap: 20px; width: 100%; max-width: var(--form-max); margin: 0 auto; padding: 8px 0 48px; }
   /* The Investigation timeline needs room for its plot; the other pages of the case keep the narrow column. */
-  .case-home.wide { max-width: 1480px; }
+  .case-home.wide, .case-home.home { max-width: var(--page-max); }
+  /* The case page on a wide window: the case facts and actions stay in view in a side column; the blocks fill the rest, two across where they are short. */
+  .home-cols { display: grid; gap: 20px; min-width: 0; }
+  .home-blocks { display: grid; gap: 20px; min-width: 0; }
+  .home-blocks .block .note, .home-blocks .block .empty { max-width: var(--read-max); }
+  /* Decided by the width of the case page itself, not the window, so a narrower page (any panel beside it) never gets columns it has no room for. */
+  .case-home.home { container-type: inline-size; }
+  @container (min-width: 1300px) {
+    .home-cols { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap: 32px; align-items: start; }
+    .home-blocks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .home-blocks > .block.full, .home-blocks > .resource-slot.full { grid-column: 1 / -1; }
+  }
+  /* The side column stays in view while the blocks scroll; if it is taller than the window it scrolls on its own, so none of its buttons is out of reach. The padding keeps the focus ring inside the scrolling box. */
+  @media (min-height: 760px) {
+    @container (min-width: 1300px) {
+      .head { position: sticky; top: 0; max-height: calc(100dvh - 180px); overflow-y: auto; padding: 4px; margin: -4px; scrollbar-width: thin; }
+    }
+  }
   .top { display: flex; }
   .head h2 { margin: 2px 0 6px; font-size: 24px; overflow-wrap: anywhere; }
   .eyebrow { margin: 0; color: var(--text-2); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
@@ -733,8 +793,12 @@
   .counts div { display: grid; gap: 2px; }
   .counts dt { color: var(--text-2); font-size: 12px; }
   .counts dd { margin: 0; font-size: 15px; }
-  .block { display: grid; gap: 10px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .block { display: grid; align-content: start; gap: 10px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
   .block h3 { margin: 0; font-size: 16px; }
+  /* The resource panel brings its own section; it is dressed as a block here. */
+  .resource-slot { min-width: 0; }
+  .resource-slot.full > :global(.tools) { padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .resource-slot :global(.tools h3) { font-size: 16px; }
   .note, .empty { margin: 0; color: var(--text-2); font-size: 14px; }
   .gap { font-size: 13px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }

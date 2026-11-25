@@ -6,13 +6,17 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"sync"
 
 	"api-audit-explorer/internal/appdirs"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/codeapi"
+	"api-audit-explorer/internal/codemode"
 	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/locator"
+	"api-audit-explorer/internal/ownerlease"
 	"api-audit-explorer/internal/pipesec"
 	"api-audit-explorer/internal/pipesrv"
 	"api-audit-explorer/internal/version"
@@ -26,6 +30,8 @@ var (
 	afterServing = func(context.CancelFunc) {}
 	// pipeGateDepsFn builds the singleton gate of pipe mode; tests swap it for fakes.
 	pipeGateDepsFn = pipeGateDeps
+	// ownerLeaseFn takes the per-profile owner lease; tests swap it for fakes.
+	ownerLeaseFn = ownerlease.Acquire
 	// selfStart is this process's creation time for the locator; tests swap it off Windows.
 	selfStart = locator.SelfStart
 	// instanceListen receives Open and Quit signals from other copies; tests swap it.
@@ -66,6 +72,15 @@ func writeLocator(path string, pipes *pipesrv.Pipes) (remove func(), err error) 
 // checkPipeFlags validates --pipe-server, --pipe-only and --loopback (BL-301).
 func checkPipeFlags(f runFlags) error {
 	pipe := f.pipeServer || f.pipeOnly
+	if f.ownerSet && f.owner == "" {
+		return fmt.Errorf("--owner needs a value: headless or shell")
+	}
+	if f.owner != "" && f.owner != "headless" && f.owner != "shell" {
+		return fmt.Errorf("--owner must be headless or shell")
+	}
+	if f.owner != "" && !pipe {
+		return fmt.Errorf("--owner is only valid with --pipe-server or --pipe-only")
+	}
 	if f.loopback && f.pipeOnly {
 		return fmt.Errorf("--pipe-only never opens a TCP port; do not combine it with --loopback")
 	}
@@ -140,5 +155,29 @@ func enterPipeSingleton(demo bool, getenv func(string) string) (release func(), 
 	if !gate.proceed {
 		return nil, "", instance.Names{}, errors.New("pipe mode: the singleton gate neither proceeded nor attached")
 	}
-	return gate.release, runDir, gate.names, nil
+	// The Local\ mutex is per session; the lease also stops an owner in another sign-in session of the same profile.
+	leaseRelease, err := ownerLeaseFn(runDir, demo)
+	if err != nil {
+		gate.release()
+		if errors.Is(err, ownerlease.ErrBusy) {
+			return nil, "", instance.Names{}, &exitCodeError{code: exitOtherSession, msg: "Unravis is already running for this user in another sign-in session"}
+		}
+		return nil, "", instance.Names{}, fmt.Errorf("pipe mode: owner lease: %w", err)
+	}
+	// Lease first, then the gate, the reverse of how they were taken.
+	return func() { leaseRelease(); gate.release() }, runDir, gate.names, nil
+}
+
+// ownerName is the owner that hello reports: the --owner value, or "app" for a copy that was not told.
+func ownerName(flag string) string {
+	if flag == "" {
+		return "app"
+	}
+	return flag
+}
+
+// cliHandlerFor is the command line route of this owner: hello says the --owner of this copy, and app.stop (which quits through
+// stop) works only when that is headless. The desktop shell's owner (--pipe-only with no --owner) is never stopped from the command line.
+func cliHandlerFor(f runFlags, dashboard http.Handler, token string, stop func(), broker *codemode.Broker) http.Handler {
+	return newCLIHandler(dashboard, token, ownerName(f.owner), stop, codeapi.CLI(broker))
 }

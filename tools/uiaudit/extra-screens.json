@@ -330,6 +330,94 @@
       ]
     },
     {
+      "id": "x-case-resource",
+      "phase": "X",
+      "note": "The case page with a Windows counters file in the case: the Resource counters panel closed (BL-495j). The case and its file are made through the real API and importer for this screen and erased after it.",
+      "narrow": true,
+      "restoreHosts": true,
+      "steps": [
+        {
+          "seedCounters": "Audit resource counters"
+        },
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Audit resource counters\"]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Resource counters\"]"
+        },
+        {
+          "scrollTo": "role=heading[name=\"Resource counters\"]"
+        }
+      ],
+      "after": [
+        {
+          "dropCase": "Audit resource counters"
+        }
+      ]
+    },
+    {
+      "id": "x-case-resource-lines",
+      "phase": "X",
+      "note": "The same panel with the lines of the host open: the three strips on one time axis, the zoom buttons and the lists under them (BL-495j).",
+      "narrow": true,
+      "restoreHosts": true,
+      "steps": [
+        {
+          "seedCounters": "Audit resource counters"
+        },
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Audit resource counters\"]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Resource counters\"]"
+        },
+        {
+          "scrollTo": "role=heading[name=\"Resource counters\"]"
+        },
+        {
+          "click": "role=button[name=/^Show the resource lines for/]"
+        },
+        {
+          "waitFor": ".resource-slot canvas"
+        }
+      ],
+      "after": [
+        {
+          "dropCase": "Audit resource counters"
+        }
+      ]
+    },
+    {
       "id": "x-case-timeline",
       "phase": "X",
       "note": "The case Investigation timeline.",
@@ -554,6 +642,60 @@
         },
         {
           "waitFor": "role=dialog"
+        }
+      ]
+    },
+    {
+      "id": "x-blackbox-charts-sql",
+      "phase": "X",
+      "note": "Blackbox charts with SQL Server lines ticked (demo SQL samples).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"Blackbox\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"Blackbox\"s]"
+        },
+        {
+          "waitFor": "#blackbox-title"
+        },
+        {
+          "click": "role=button[name=\"Open status: web-a\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
+        },
+        {
+          "click": "role=button[name=/charts/i]"
+        },
+        {
+          "waitFor": "role=dialog"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=/^Counters \\(/]"
+        },
+        {
+          "click": "summary:has-text(\"SQL Server: deeper checks\")"
+        },
+        {
+          "click": "role=checkbox[name=/Queries queued for a memory grant/]"
+        },
+        {
+          "click": "role=checkbox[name=/Tasks ready to run/]"
+        },
+        {
+          "click": "role=checkbox[name=/Time per read, all database files/]"
         }
       ]
     },
@@ -1066,6 +1208,272 @@
         },
         {
           "waitFor": "role=dialog[name=\"Leave Add data?\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-sql-access-check",
+      "phase": "X",
+      "narrow": false,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=/^More/]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "#home-sources"
+        },
+        {
+          "click": "role=button[name=\"+ SQL Server\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"SQL Server connection\"]"
+        },
+        {
+          "fill": [
+            "role=textbox[name=\"Server name\"]",
+            "demo-sql.example.invalid"
+          ]
+        },
+        {
+          "fill": [
+            "role=textbox[name=\"User name\"]",
+            "unravis_ro"
+          ]
+        },
+        {
+          "fill": [
+            "input[type=password]",
+            "demo-only"
+          ]
+        },
+        {
+          "click": "role=button[name=\"Check Blackbox access\"s]"
+        },
+        {
+          "waitFor": "text=One step left"
+        }
+      ],
+      "note": "SQL connection form with the Blackbox access check run (demo answer: one right missing, script shown)."
+    },
+    {
+      "id": "x-blackbox-sql-collect",
+      "phase": "X",
+      "note": "Blackbox status: Collect SQL data (Windows sign-in, grant script shown).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"Blackbox\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"Blackbox\"s]"
+        },
+        {
+          "waitFor": "#blackbox-title"
+        },
+        {
+          "click": "role=button[name=\"Open status: web-a\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Collect SQL data\"]"
+        },
+        {
+          "click": "role=radio[name=/Windows sign-in/]"
+        },
+        {
+          "click": "role=button[name=\"Get the script\"]"
+        },
+        {
+          "waitFor": "role=textbox[name=\"Script to run in SSMS as an admin\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-blackbox-sql-text",
+      "phase": "X",
+      "note": "Blackbox status: Collect SQL data with the Deep choice and the query text switch on (warning and size shown).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"Blackbox\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"Blackbox\"s]"
+        },
+        {
+          "waitFor": "#blackbox-title"
+        },
+        {
+          "click": "role=button[name=\"Open status: web-a\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Collect SQL data\"]"
+        },
+        {
+          "select": [
+            "role=combobox[name=\"What to collect\"]",
+            "deep"
+          ]
+        },
+        {
+          "click": "role=checkbox[name=/Also keep the text/]"
+        },
+        {
+          "waitFor": "role=combobox[name=\"Longest text kept for one query\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-ai-access",
+      "phase": "X",
+      "note": "AI access: a program that needs a decision (approval card with the choices), another that a second program tried to register as, one approved and one revoked, and the Stop all AI access button.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "waitFor": "role=button[name=\"Stop all AI access\"s]"
+        },
+        {
+          "waitFor": "text=Needs your decision"
+        }
+      ]
+    },
+    {
+      "id": "x-ai-access-identifiers",
+      "phase": "X",
+      "note": "AI access: the approval card with the user ids and addresses switch on (the length-of-time choice shows).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "waitFor": "role=button[name=\"Stop all AI access\"s]"
+        },
+        {
+          "waitFor": "text=Needs your decision"
+        },
+        {
+          "click": "role=checkbox[name=\"Also allow user ids and addresses\"] >> nth=0"
+        },
+        {
+          "waitFor": "role=combobox[name=\"Allow them for\"] >> nth=0"
+        }
+      ]
+    },
+    {
+      "id": "x-ai-access-stopped",
+      "phase": "X",
+      "note": "AI access after Stop all AI access: the stopped banner with the Resume button.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "waitFor": "role=button[name=\"Stop all AI access\"s]"
+        },
+        {
+          "waitFor": "text=Needs your decision"
+        },
+        {
+          "click": "role=button[name=\"Stop all AI access\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Resume AI access\"s]"
+        }
+      ],
+      "after": [
+        {
+          "click": "role=button[name=\"Resume AI access\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Stop all AI access\"s]"
         }
       ]
     }

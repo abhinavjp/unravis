@@ -139,3 +139,26 @@ func TestIsShellImage(t *testing.T) {
 		}
 	}
 }
+
+func TestIsCLIImage(t *testing.T) {
+	for img, want := range map[string]bool{
+		`C:\Program Files\Unravis\bin\unravis.exe`:     true,
+		`C:\Program Files\Unravis\UNRAVIS.EXE`:         true,
+		`C:\Program Files\Unravis\unravis-desktop.exe`: false,
+		`C:\Program Files\Unravis\unravis-core.exe`:    false,
+		`C:\Windows\System32\cmd.exe`:                  false,
+		``:                                             false,
+	} {
+		if got := IsCLIImage(img); got != want {
+			t.Errorf("%q: %v, want %v", img, got, want)
+		}
+	}
+}
+
+func TestIsCLIImageIsAnExactName(t *testing.T) {
+	for _, img := range []string{`C:\A\xunravis.exe`, `C:\A\unravis.exe.bak`, `C:\A\unravis.exe `, `C:\A\unravis.exe\x.exe`, `C:\A\unravis-cli.exe`, `unravis.exe.exe`} {
+		if IsCLIImage(img) {
+			t.Errorf("%q", img)
+		}
+	}
+}

@@ -47,14 +47,16 @@ test('tooltip wiring: the hero tooltip without latency has no explanation', () =
   assert.ok(!text.includes('About 95 of every 100'), text);
 });
 
-test('tooltip wiring: tooltip text is escaped', () => {
+test('tooltip wiring: tooltip text is rich text, with the control characters defused', () => {
   const original = dict.DICTIONARY['latency.p95'].plain;
-  dict.DICTIONARY['latency.p95'].plain = '<b>&';
+  dict.DICTIONARY['latency.p95'].plain = '{b|x}&';
   try {
     const option = heroOption([{ at: 0, count: 5, latency: 200, max: 400 }], 'UTC', true);
     const text = option.tooltip.formatter([{ dataIndex: 0 }]);
-    assert.ok(text.includes('&lt;b&gt;&amp;'), text);
-    assert.ok(!text.includes('<b>'), text);
+    assert.equal(option.tooltip.renderMode, 'richText');
+    assert.ok(text.includes('｛b¦x｝&'), text);
+    assert.ok(!text.includes('{b|x}'), text);
+    assert.ok(!text.includes('<br'), text);
   } finally {
     dict.DICTIONARY['latency.p95'].plain = original;
   }

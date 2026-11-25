@@ -62,6 +62,21 @@ fn tauri_conf_security_block() {
 }
 
 #[test]
+fn development_csp_is_separate_from_the_release_config() {
+    let release: serde_json::Value = serde_json::from_str(&desktop("src-tauri/tauri.conf.json")).unwrap();
+    assert!(release["app"]["security"].get("devCsp").is_none(), "release config carries no devCsp");
+
+    let dev: serde_json::Value = serde_json::from_str(&desktop("src-tauri/tauri.dev.conf.json")).unwrap();
+    let csp = dev["app"]["security"]["devCsp"].as_str().expect("development csp is set");
+    assert!(csp.contains("style-src 'self' 'unsafe-inline'"), "Vite styles may be inline in development");
+    assert!(csp.contains("ws://localhost:*") && csp.contains("ws://127.0.0.1:*"), "Vite HMR needs local websockets");
+    assert!(!csp.contains("unsafe-eval"), "development csp still denies eval");
+
+    let workflow = desktop("../.github/workflows/desktop-windows.yml");
+    assert!(!workflow.contains("tauri.dev.conf.json"), "release workflow must not merge the development config");
+}
+
+#[test]
 fn cargo_manifest_has_no_plugin_dependency() {
     let m = desktop("src-tauri/Cargo.toml");
     assert!(!m.lines().any(|l| l.trim_start().starts_with("tauri-plugin-")), "a tauri-plugin dependency is declared");

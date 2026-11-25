@@ -32,6 +32,10 @@ const (
 	OpSnapshot Op = "snapshot"
 	// OpUpdate replaces the installed recorder program with the one Unravis ships.
 	OpUpdate Op = "update"
+	// OpSQLSetup installs the SQL service when needed, saves the SQL login (or goes back to Windows sign-in) and can start the service.
+	OpSQLSetup Op = "setup-sql"
+	// OpClearSQLLogin deletes the saved SQL login.
+	OpClearSQLLogin Op = "clear-sql-login"
 )
 
 // NeedsAdmin says whether an operation changes the service (a snapshot only
@@ -46,7 +50,9 @@ func (o Op) NeedsAdmin() bool { return o != OpSnapshot }
 //
 // Update fails closed as well: it copies the program that is about to run into
 // Program Files, so that program must be the pinned build.
-func (o Op) NeedsGuard() bool { return o == OpInstall || o == OpApply || o == OpUpdate }
+func (o Op) NeedsGuard() bool {
+	return o == OpInstall || o == OpApply || o == OpUpdate || o == OpSQLSetup
+}
 
 // Failure reasons beyond the install and snapshot ones.
 const (
@@ -79,6 +85,13 @@ type HelperRequest struct {
 	Config           Config // install, apply and snapshot (snapshot reads the installed copy)
 	DeleteRecordings bool   // remove
 	ConfirmName      string // remove with DeleteRecordings: the name, typed
+
+	// setup-sql: the file holding the SQL login (made by the caller or by the key keeper; the helper only reads it and never writes or deletes it) and its SHA-256, or SQLWindows to use
+	// Windows sign-in instead; SQLEnable starts the service when it is set up.
+	SQLLoginFile string
+	SQLLoginSHA  string
+	SQLWindows   bool
+	SQLEnable    bool
 }
 
 // HelperAnswer is what the helper printed.
@@ -96,6 +109,11 @@ type HelperAnswer struct {
 	ConfigPath string `json:"configPath"`
 
 	Restarted bool `json:"restarted"`
+	// setup-sql
+	SQLInstalled bool   `json:"installed"`
+	LoginSaved   bool   `json:"loginSaved"`
+	Started      bool   `json:"started"`
+	GrantScript  string `json:"grantScript"`
 	// SQLSettingsUnlocked is apply's BL-139 warning (ApplyResult).
 	SQLSettingsUnlocked bool   `json:"sqlSettingsUnlocked"`
 	Updated             bool   `json:"updated"`
@@ -149,6 +167,15 @@ func HelperArgs(req HelperRequest, cfgPath string) []string {
 	switch req.Op {
 	case OpInstall, OpApply:
 		args = append(args, "--config", cfgPath)
+	case OpSQLSetup:
+		if req.SQLWindows {
+			args = append(args, "--windows-signin")
+		} else {
+			args = append(args, "--login-file", req.SQLLoginFile, "--login-sha256", req.SQLLoginSHA)
+		}
+		if req.SQLEnable {
+			args = append(args, "--enable")
+		}
 	case OpRemove:
 		if req.DeleteRecordings {
 			args = append(args, "--delete-recordings", "--confirm-name", req.ConfirmName)
@@ -264,6 +291,11 @@ func (t *ThisPC) do(ctx context.Context, req HelperRequest) (HelperAnswer, error
 		// Caught here so a typo never costs a permission prompt.
 		return HelperAnswer{}, &ThisPCError{Reason: ReasonConfirm, Message: ErrConfirmName.Error(), Cause: ErrConfirmName}
 	}
+	if req.SQLLoginFile != "" {
+		// The helper only reads the login file. A file the app wrote itself is removed here when the call ends, however it ends; one made by
+		// the key keeper is removed by the keeper (a short timer, and a sweep when it starts), because the app may not own it.
+		defer removeLoginFile(req.SQLLoginFile)
+	}
 	cfgPath := ""
 	cfgSum := ""
 	if req.Op == OpInstall || req.Op == OpApply {
@@ -319,6 +351,14 @@ func (t *ThisPC) do(ctx context.Context, req HelperRequest) (HelperAnswer, error
 	return a, nil
 }
 
+// removeLoginFile wipes and removes a login file, and its folder when Unravis made one just for it.
+func removeLoginFile(path string) {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() && fi.Size() <= 8<<10 {
+		_ = os.WriteFile(path, make([]byte, fi.Size()), 0o600)
+	}
+	_ = os.Remove(path)
+}
+
 // startFailureWords is the plain sentence for a Blackbox program that Windows
 // could not start. The OS error text stays in Cause: it names paths and codes
 // that mean nothing to the person.
@@ -357,6 +397,30 @@ func (t *ThisPC) Install(ctx context.Context, cfg Config) (InstallOutcome, error
 		return InstallOutcome{}, &ThisPCError{Reason: string(ReasonOther), Message: "The Blackbox installed but gave no read key, so Unravis cannot read it. Remove it and install again."}
 	}
 	return InstallOutcome{ReadKey: a.ReadKey, Name: a.Name, Folder: a.Folder, Port: a.Port, ExePath: a.ExePath, ConfigPath: a.ConfigPath}, nil
+}
+
+// SQLSetupOutcome is a finished setup-sql as the helper answered it.
+type SQLSetupOutcome struct {
+	Installed   bool   // the SQL service was installed by this call
+	LoginSaved  bool   // a SQL login is now saved (false: Windows sign-in)
+	Started     bool   // the SQL service was started
+	GrantScript string // with Windows sign-in: what the owner runs in SSMS first
+}
+
+// SetupSQL turns SQL collection on: one administrator prompt. Give loginFile and its SHA-256 for a SQL login, or windows for Windows
+// sign-in; enable starts the service (with Windows sign-in only after the owner ran the grant). The file is removed when the call ends.
+func (t *ThisPC) SetupSQL(ctx context.Context, loginFile, loginSHA string, windows, enable bool) (SQLSetupOutcome, error) {
+	a, err := t.do(ctx, HelperRequest{Op: OpSQLSetup, SQLLoginFile: loginFile, SQLLoginSHA: loginSHA, SQLWindows: windows, SQLEnable: enable})
+	if err != nil {
+		return SQLSetupOutcome{}, err
+	}
+	return SQLSetupOutcome{Installed: a.SQLInstalled, LoginSaved: a.LoginSaved, Started: a.Started, GrantScript: a.GrantScript}, nil
+}
+
+// ClearSQLLogin deletes the saved SQL login. The SQL service goes back to Windows sign-in at its next start.
+func (t *ThisPC) ClearSQLLogin(ctx context.Context) error {
+	_, err := t.do(ctx, HelperRequest{Op: OpClearSQLLogin})
+	return err
 }
 
 // Start starts the service.
@@ -460,10 +524,14 @@ type LocalFound struct {
 	Installed bool     `json:"installed"`
 	State     SvcState `json:"-"`
 	Running   bool     `json:"running"`
-	Name      string   `json:"name,omitempty"`
-	Folder    string   `json:"folder,omitempty"`
-	Port      int      `json:"port,omitempty"`
-	Bind      string   `json:"bind,omitempty"`
+	// SQLInstalled and SQLRunning are the state of the second service (UnravisBlackboxSql), read from the service manager only. Whether it
+	// holds a login is not readable by an ordinary user (the folder is locked), so it is not claimed here.
+	SQLInstalled bool   `json:"sqlInstalled,omitempty"`
+	SQLRunning   bool   `json:"sqlRunning,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Folder       string `json:"folder,omitempty"`
+	Port         int    `json:"port,omitempty"`
+	Bind         string `json:"bind,omitempty"`
 	// ConfigUnreadable is set when the service exists but its settings could not be read.
 	ConfigUnreadable bool `json:"configUnreadable,omitempty"`
 	// Settings is the whole blackbox.json that was read (it holds no secret). nil when unreadable.
@@ -481,6 +549,9 @@ func ScanThisPC(svc ServiceControl, env Env, load func(path string) (Config, err
 		return LocalFound{}, nil
 	}
 	f := LocalFound{Installed: true, State: st, Running: st == SvcRunning || st == SvcStartPending}
+	if ss, serr := svc.State(SQLServiceName); serr == nil && ss != SvcNotInstalled {
+		f.SQLInstalled, f.SQLRunning = true, ss == SvcRunning || ss == SvcStartPending
+	}
 	dir, err := env.ProgramDir()
 	if err != nil || load == nil {
 		f.ConfigUnreadable = true

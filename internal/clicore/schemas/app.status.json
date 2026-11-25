@@ -1,0 +1,11 @@
+{
+  "operation": "app.status",
+  "description": "Say whether the Unravis app runs, who owns it and which protocol it speaks. Not running is an answer (running false), not an error.",
+  "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "properties": {}},
+  "output": {"type": "object", "required": ["running", "state"], "properties": {
+    "running": {"type": "boolean"}, "owner": {"type": "string"}, "pid": {"type": "integer"}, "version": {"type": "string"},
+    "state": {"enum": ["ready", "locked", "updating", "stopped", "stale"]},
+    "proto": {"type": "object", "properties": {"major": {"type": "integer"}, "minor": {"type": "integer"}}}}},
+  "errors": ["ENDPOINT_UNAVAILABLE", "ENDPOINT_UNTRUSTED", "VERSION_INCOMPATIBLE", "PERMISSION_DENIED"],
+  "examples": [{"command": "unravis app status -o json"}]
+}

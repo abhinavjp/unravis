@@ -81,6 +81,8 @@ type Option func(*config)
 type config struct {
 	token string
 	stop  func()
+	cli   http.Handler
+	mcp   http.Handler
 }
 
 // WithShutdown turns on POST ShutdownPath on the ui pipe. A request must carry token in the session token header (the same token as
@@ -88,6 +90,22 @@ type config struct {
 func WithShutdown(token string, stop func()) Option {
 	return func(c *config) { c.token, c.stop = token, stop }
 }
+
+// CLIPrefix is the route family of the command line on the ag pipe (spec 05 D6).
+const CLIPrefix = "/cli/v1/"
+
+// WithCLI serves the command line routes (CLIPrefix) with h on the ag pipe, and only for a peer whose image is the command line
+// (pipesec.IsCLIImage); any other peer gets 403 there. There is no token on these routes: the pipe's peer policy is the gate (BL-318,
+// option B). Without this option the prefix reaches the served handler, which has no such routes.
+func WithCLI(h http.Handler) Option { return func(c *config) { c.cli = h } }
+
+// MCPPrefix is the route family of the MCP bridge on the ag pipe (spec 03 D6).
+const MCPPrefix = "/mcp/v1/"
+
+// WithMCP serves the MCP routes (MCPPrefix) with h on the ag pipe, and only for a peer whose image may start the MCP bridge
+// (pipesec.IsMCPImage); any other peer gets 403 there. The peer policy is the first gate; the grant credential in each call is the
+// second (internal/mcpsrv). Without this option the prefix reaches the served handler, which has no such routes.
+func WithMCP(h http.Handler) Option { return func(c *config) { c.mcp = h } }
 
 // helloRoute answers GET HelloPath with {"token": ...}. It refuses a request that carries an Origin or comes from any image but the shell.
 func (c *config) helloRoute(w http.ResponseWriter, r *http.Request) {
@@ -164,6 +182,22 @@ func Handler(served http.Handler, opts ...Option) http.Handler {
 			p := r.URL.Path
 			if path.Clean(p) != p || (!agRoutes[p] && !hasAnyPrefix(p, agPrefixes)) {
 				http.NotFound(w, r)
+				return
+			}
+			if cfg.cli != nil && strings.HasPrefix(p, CLIPrefix) {
+				if !pipesec.IsCLIImage(peerImageFrom(r.Context())) {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				cfg.cli.ServeHTTP(w, r)
+				return
+			}
+			if cfg.mcp != nil && strings.HasPrefix(p, MCPPrefix) {
+				if !pipesec.IsMCPImage(peerImageFrom(r.Context())) {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				cfg.mcp.ServeHTTP(w, r)
 				return
 			}
 		default:

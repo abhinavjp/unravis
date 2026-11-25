@@ -36,12 +36,25 @@ type Bridge struct {
 	resultID  string
 	created   time.Time
 	comparing bool
-	now       func() time.Time
+	// BL-349 (evidence.go): the result's size and last use for the handle bounds, and the options of a host's bridge.
+	resultSize int
+	used       time.Time
+	resultCap  int
+	minter     EvidenceMinter
+	cursors    CursorCodec
+	now        func() time.Time
 	// allowIdentifiers is the operator switch (--mcp-allow-identifiers). Off by
 	// default. It is the only thing that decides whether identifiers are shown.
 	allowIdentifiers bool
-	sessionFile      string
-	envToken         string
+	// scoped says the bridge may reach only the sources in sources (a host's grant, BL-348). A nil set with scoped false is the
+	// unscoped bridge of the stdio server and the command line. Scoped with an empty set reaches no source at all.
+	// minCohort is the smallest count shown (suppress.go); zero shows every count. hideRecordIDs removes the audit record id from rows.
+	minCohort     int
+	hideRecordIDs bool
+	scoped        bool
+	sources       map[string]struct{}
+	sessionFile   string
+	envToken      string
 	// proven is set by New: the client's transport runs the session proof on
 	// each connection, with the token passed through the request context.
 	proven bool
@@ -54,6 +67,20 @@ type Option func(*Bridge)
 // accept filters on them and on URLs and audit record ids.
 func WithIdentifiers(allowed bool) Option {
 	return func(b *Bridge) { b.allowIdentifiers = allowed }
+}
+
+// WithSources limits the bridge to the given source ids: the source scope of a host's grant. Every request that names sources is
+// refused unless each one is in the list (checked at the one place that talks to the dashboard, so no tool can skip it), and the source
+// list shows only these. An empty list reaches no source. Without this option the bridge is unscoped, as the stdio server and the
+// command line are.
+func WithSources(ids []string) Option {
+	return func(b *Bridge) {
+		b.scoped = true
+		b.sources = make(map[string]struct{}, len(ids))
+		for _, id := range ids {
+			b.sources[id] = struct{}{}
+		}
+	}
 }
 
 // WithSessionFile names the session file the dashboard writes (see
@@ -180,7 +207,7 @@ func New(port int, opts ...Option) (*Bridge, error) {
 	b.locate = func() (string, string, error) {
 		record, err := readSessionRecord(path)
 		if err != nil {
-			return "", "", errors.New(notRunning)
+			return "", "", coded(CodeBackendUnavailable, notRunning)
 		}
 		filePort, fileToken := record.Port, record.Token
 		if err := checkSessionProcess(path, record); err != nil {
@@ -206,7 +233,7 @@ func checkSessionProcess(path string, record sessionRecord) error {
 	}
 	if !processAlive(record.Pid) {
 		_ = RemoveSessionFile(path, record.Token)
-		return errors.New(notRunning)
+		return coded(CodeBackendUnavailable, notRunning)
 	}
 	owners, ok := listenerOwners(record.Port)
 	if !ok {
@@ -214,7 +241,7 @@ func checkSessionProcess(path string, record sessionRecord) error {
 	}
 	for _, owner := range owners {
 		if owner != record.Pid {
-			return errors.New(notOwner)
+			return coded(CodeBackendUnavailable, notOwner)
 		}
 	}
 	return nil
@@ -233,6 +260,16 @@ func newBridge(locate locator, client *http.Client, opts ...Option) *Bridge {
 // and nothing else: no dashboard response, demo flag included, can relax it.
 func (b *Bridge) identifiersAllowed() bool {
 	return b.allowIdentifiers
+}
+
+// noIdentifiers is the reason text of a refused identifier filter. On the stdio server the switch is the operator's flag; a bridge
+// scoped to a host's grant has no flag, the permission is the person's choice in Unravis, so the text must not point at a flag that does
+// nothing for that host.
+func (b *Bridge) noIdentifiers() string {
+	if b.scoped {
+		return "the identifiers permission is not on for this host. Ask the person to allow it in Unravis > AI access."
+	}
+	return "the operator has not turned on --mcp-allow-identifiers."
 }
 
 // identifierFilterNames lists the record filters of q that match on a user id,
@@ -267,13 +304,48 @@ func (b *Bridge) checkIdentifierFilters(q audit.Query) error {
 	if len(names) == 0 || b.identifiersAllowed() {
 		return nil
 	}
-	return errors.New("The " + strings.Join(names, ", ") + " filters are not available: the operator has not turned on --mcp-allow-identifiers. User ids, user agents, IP addresses, URLs and audit record ids are hidden, and filtering on them would reveal them")
+	return codedWire(CodeInvalidArguments, WirePermissionRequired, "The "+strings.Join(names, ", ")+" filters are not available: "+b.noIdentifiers()+" User ids, user agents, IP addresses, URLs and audit record ids are hidden, and filtering on them would reveal them")
+}
+
+// scopeRefused is the answer to a request that names a source outside the grant. It never repeats the ids that were asked for.
+const scopeRefused = "That request names a source this host is not approved for. Use audit_list_sources for the sources this host may read, or ask the person to widen the access in Unravis."
+
+// checkScope refuses a request whose sources are not all in the scope of a scoped bridge. It reads the typed input the tools are about to
+// send, so what is checked is exactly what the dashboard receives. Input of a type it does not know, or with no source at all, is
+// refused on a scoped bridge: that fails closed if a new route is added without a scope rule. A request with no input (the source list
+// and the info) names no source.
+func (b *Bridge) checkScope(input any) error {
+	if !b.scoped || input == nil {
+		return nil
+	}
+	var ids []string
+	switch in := input.(type) {
+	case audit.Query:
+		ids = in.SourceIDs
+	case audit.ActivityInput:
+		ids = in.SourceIDs
+	case audit.PageInput:
+		ids = in.Query.SourceIDs
+	case audit.BreakdownInput:
+		ids = in.Query.SourceIDs
+	default:
+		return codedWire(CodeInvalidArguments, WirePermissionRequired, scopeRefused)
+	}
+	if len(ids) == 0 {
+		return codedWire(CodeInvalidArguments, WirePermissionRequired, scopeRefused)
+	}
+	for _, id := range ids {
+		if _, ok := b.sources[id]; !ok {
+			return codedWire(CodeInvalidArguments, WirePermissionRequired, scopeRefused)
+		}
+	}
+	return nil
 }
 
 func boundedBody(r io.Reader, limit int) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, int64(limit)+1))
 	if err != nil || len(data) > limit {
-		return nil, errors.New("audit response exceeded its read budget")
+		return nil, coded(CodeResultTooLarge, "audit response exceeded its read budget")
 	}
 	return data, nil
 }
@@ -282,14 +354,14 @@ func boundedBody(r io.Reader, limit int) ([]byte, error) {
 // the cached comparison belongs to another dashboard session and is dropped.
 func (b *Bridge) session() (string, string, error) {
 	if b.locate == nil {
-		return "", "", errors.New(notRunning)
+		return "", "", coded(CodeBackendUnavailable, notRunning)
 	}
 	base, token, err := b.locate()
 	if err != nil {
 		return "", "", err
 	}
 	if token == "" || len(token) > maxTokenBytes {
-		return "", "", errors.New(notRunning)
+		return "", "", coded(CodeBackendUnavailable, notRunning)
 	}
 	b.mu.Lock()
 	changed := b.token != token
@@ -297,6 +369,7 @@ func (b *Bridge) session() (string, string, error) {
 		b.token = token
 		b.result = nil
 		b.resultID = ""
+		b.resultSize = 0
 	}
 	b.mu.Unlock()
 	if changed && b.client != nil {
@@ -310,14 +383,17 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 	switch path {
 	case "/api/info", "/api/sources", "/api/analyze", "/api/requests", "/api/activity", "/api/slowest", "/api/breakdown":
 	default:
-		return errors.New("audit operation is not allowed")
+		return coded(CodeInternal, "audit operation is not allowed")
+	}
+	if err := b.checkScope(input); err != nil {
+		return err
 	}
 	var payload []byte
 	var err error
 	if input != nil {
 		payload, err = json.Marshal(input)
 		if err != nil {
-			return errors.New("invalid audit request")
+			return coded(CodeInternal, "invalid audit request")
 		}
 	}
 	for attempt := 0; attempt < 2; attempt++ {
@@ -342,12 +418,15 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 		res, err := b.client.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return errors.New("audit operation cancelled or its five-minute deadline expired")
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					return coded(CodeDeadlineExceeded, "audit operation cancelled or its five-minute deadline expired")
+				}
+				return coded(CodeCancelled, "audit operation cancelled or its five-minute deadline expired")
 			}
 			if errors.Is(err, errUnproven) {
-				return errors.New(unproven)
+				return coded(CodeBackendUnavailable, unproven)
 			}
-			return errors.New("Unravis did not answer. Start the dashboard, then retry")
+			return coded(CodeBackendUnavailable, "Unravis did not answer. Start the dashboard, then retry")
 		}
 		data, readErr := boundedBody(res.Body, maxBody)
 		res.Body.Close()
@@ -368,27 +447,29 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 			// Never reflect arbitrary upstream text, URLs, credentials or driver errors.
 			switch res.StatusCode {
 			case 401:
-				return errors.New("Unravis refused the session. Restart the dashboard, then retry")
+				return coded(CodeBackendUnavailable, "Unravis refused the session. Restart the dashboard, then retry")
 			case 413:
-				return errors.New("audit processing limit reached; increase bucketSeconds, narrow controller/action or sources, and retry explicitly in the dashboard for its detailed limit message")
+				return coded(CodeBudgetExceeded, "audit processing limit reached; increase bucketSeconds, narrow controller/action or sources, and retry explicitly in the dashboard for its detailed limit message")
 			case 400:
-				return errors.New("audit query rejected; verify source IDs, date windows, filters and chart interval")
+				return coded(CodeInvalidArguments, "audit query rejected; verify source IDs, date windows, filters and chart interval")
 			case 404:
-				return errors.New("audit source or record is unavailable; list sources again")
+				return codedWire(CodeNotFound, WireSourceUnavailable, "audit source or record is unavailable; list sources again")
+			case 423:
+				return coded(CodeLocked, "Unravis is locked; unlock it in the app")
 			case 429:
-				return errors.New("audit service is busy; wait and retry explicitly")
+				return coded(CodeBusy, "audit service is busy; wait and retry explicitly")
 			case 504:
-				return errors.New("audit operation exceeded its five-minute deadline")
+				return coded(CodeDeadlineExceeded, "audit operation exceeded its five-minute deadline")
 			default:
-				return fmt.Errorf("local audit operation failed (HTTP %d); check the dashboard", res.StatusCode)
+				return coded(CodeInternal, fmt.Sprintf("local audit operation failed (HTTP %d); check the dashboard", res.StatusCode))
 			}
 		}
 		if err = json.Unmarshal(data, output); err != nil {
-			return errors.New("local audit response was not valid data")
+			return coded(CodeInternal, "local audit response was not valid data")
 		}
 		return nil
 	}
-	return errors.New("local audit session changed; list sources and retry")
+	return coded(CodeBackendUnavailable, "local audit session changed; list sources and retry")
 }
 func strictArgs(data json.RawMessage, target any) error {
 	data = bytes.TrimSpace(data)

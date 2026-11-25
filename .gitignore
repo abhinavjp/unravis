@@ -54,3 +54,8 @@ Thumbs.db
 /tools/uiaudit/report/
 /tools/uiaudit/test-results/
 /tools/uiaudit/test-results-selftest/
+/tools/uiaudit/test-results-width/
+/tools/uiaudit/test-results-csp/
+/tools/uiaudit/test-results-tt/
+/.csp-demo.exe
+/tools/uiaudit/width-report/

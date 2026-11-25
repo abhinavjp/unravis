@@ -912,6 +912,15 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 	return nil
 }
 
+// UnarmSQL leaves the SQL service switched off on disk (the same latch install-sql sets), so a reboot or an SCM start cannot run it until
+// the owner enables it again. It is used when the service goes back to Windows sign-in, which needs the owner's grant first.
+func (m *SQLManager) UnarmSQL(cfg Config) error {
+	unarmed := bbsql.NewState()
+	unarmed.AutoOff = true
+	unarmed.State = bbsql.StateAutoOff
+	return bbsql.Save(bbsql.StatePath(cfg.Folder), unarmed)
+}
+
 // EnableSQL is the administrator-only owner activation (W8-03): it confirms
 // the installed program and settings, checks the loaded folder against the
 // persisted INSTALL-TIME folder in the admin-locked install record (SEC-3),
@@ -1016,6 +1025,60 @@ func (m *SQLManager) EnableSQL(cfg Config, configPath string) error {
 		}
 	}
 	return nil
+}
+
+// ConfirmLoginDir proves that the SQL data folder a saved login would go into is the one install-sql made and locked, and returns it.
+// A saved login is sealed with the machine key, so the folder's access list is its only protection: the folder is taken from the admin-locked
+// install record (never from a settings file alone), the settings file is proved administrator-locked, and the folder's lock is written again
+// before anything is saved into it. Any doubt refuses. It never starts, stops or changes the service.
+func (m *SQLManager) ConfirmLoginDir(cfg Config, configPath string) (string, error) {
+	if err := cfg.Validate(); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(configPath) == "" || !filepath.IsAbs(configPath) {
+		return "", &InstallError{Reason: ReasonOther, Message: "The SQL service needs the absolute settings-file path it was installed with (--config)."}
+	}
+	if !m.Env.IsAdmin() {
+		return "", msgNoAdmin()
+	}
+	st, serr := m.Svc.State(SQLServiceName)
+	if serr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "Could not ask Windows about the SQL service.", Cause: serr}
+	}
+	if st == SvcNotInstalled {
+		return "", ErrNotSQLInstalled
+	}
+	progDir, perr := m.Env.ProgramDir()
+	if perr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "Could not find the Program Files folder.", Cause: perr}
+	}
+	markerPath := sqlInstallMarkerPath(progDir)
+	if verr := verifySQLConfigFile(m.Env, markerPath); verr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "The SQL service install record is not locked to administrators, so nothing was saved. Re-run install-sql.", Cause: verr}
+	}
+	installedFolder, merr := readSQLInstallMarker(markerPath)
+	if merr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "The SQL service install record could not be read, so nothing was saved. Re-run install-sql.", Cause: merr}
+	}
+	if cfg.Folder != installedFolder {
+		return "", &InstallError{Reason: ReasonOther, Message: "The settings file does not match the folder the SQL service was installed with. Re-run install-sql."}
+	}
+	if verr := verifySQLConfigFile(m.Env, configPath); verr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service is not locked to administrators, so nothing was saved. Re-run install-sql.", Cause: verr}
+	}
+	sec, ok := m.Env.(sqlDirSecurer)
+	if !ok {
+		return "", &InstallError{Reason: ReasonOther, Message: "This program cannot lock the SQL data folder on this system."}
+	}
+	sid, serr := sqlServiceSID(SQLServiceName)
+	if serr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "Could not work out the SQL service account.", Cause: serr}
+	}
+	dir := SQLDataDir(cfg.Folder)
+	if serr := sec.SecureSQLDir(dir, sid); serr != nil {
+		return "", &InstallError{Reason: ReasonFolder, Message: "The SQL data folder could not be confirmed as locked for the SQL service only.", Cause: serr}
+	}
+	return dir, nil
 }
 
 // PublishSQLStopped writes the C11 off status into <folder>\sql\status.json so
@@ -1130,10 +1193,16 @@ func (m *SQLManager) RemoveSQL(cfg Config, confirmName string) error {
 	if m.RevokeScript != "" {
 		fmt.Fprintln(os.Stdout, m.RevokeScript)
 	}
+	// A saved SQL login belongs to the removed service: it is deleted here even
+	// when the samples are kept. A failure is reported, never left silent.
+	loginErr := bbsql.RemoveLogin(SQLDataDir(cfg.Folder))
 	if m.DeleteData {
 		if rerr := os.RemoveAll(SQLDataDir(cfg.Folder)); rerr != nil {
 			return rerr
 		}
+	}
+	if loginErr != nil {
+		return &InstallError{Reason: ReasonOther, Message: "The SQL service was removed, but its saved SQL login could not be deleted. Delete the file " + bbsql.LoginFile + " in the SQL data folder.", Cause: loginErr}
 	}
 	if revokeErr != nil {
 		return &InstallError{Reason: ReasonOther, Message: "The SQL service was removed, but its launch permissions could not all be taken back. Remove them by hand: they grant read access to the service account alone.", Cause: revokeErr}

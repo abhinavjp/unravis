@@ -8,9 +8,9 @@
  const pillText = $derived(scrubPillText(scrub));
  // Same lane colours as the chart rows: the shared --lane-* variables, never a literal colour.
  const SWATCH: Record<TracingLaneKey, string> = {
-  audit: 'background: var(--lane-audit)',
-  sql: 'background: var(--lane-sql)',
-  iis: 'background: var(--lane-iis)'
+  audit: 'var(--lane-audit)',
+  sql: 'var(--lane-sql)',
+  iis: 'var(--lane-iis)'
  };
 </script>
 
@@ -18,7 +18,7 @@
  <div class="tt-lanes" role="group" aria-label={TOOLBAR_TEXT.lanesLabel}>
   {#each LANE_ORDER as key (key)}
    <button type="button" class="tt-lane" aria-pressed={visible[key]} onclick={() => onToggle(key)}>
-    <span class="tt-swatch" style={SWATCH[key]} aria-hidden="true"></span>{TOOLBAR_TEXT[key]}
+    <span class="tt-swatch" style:background={SWATCH[key]} aria-hidden="true"></span>{TOOLBAR_TEXT[key]}
    </button>
   {/each}
  </div>

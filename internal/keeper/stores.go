@@ -16,6 +16,7 @@ import (
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/sqlaccess"
 	"api-audit-explorer/internal/sqlconn"
 )
 
@@ -89,6 +90,19 @@ func (s *SQLStore) TestSaved(ctx context.Context, ref SQLRef) (dbhealth.TestResu
 		return dbhealth.TestResult{}, "", native(err, kindSQL)
 	}
 	return out.Result, out.ListError, nil
+}
+
+// AccessSaved runs the Blackbox access check with a saved login inside the keeper.
+func (s *SQLStore) AccessSaved(ctx context.Context, ref SQLRef) (sqlaccess.Report, error) {
+	var out sqlaccess.Report
+	return out, native(s.c.Call(ctx, OpSQLAccess, ref, &out), kindSQL)
+}
+
+// LoginFileSaved has the keeper write a saved SQL login into a short-lived private file for the Blackbox helper and returns where it is and
+// its hash. The login itself never reaches this process; the keeper removes the file after ten minutes.
+func (s *SQLStore) LoginFileSaved(ctx context.Context, ref SQLRef) (blackbox.SQLLoginFile, error) {
+	var out blackbox.SQLLoginFile
+	return out, native(s.c.Call(ctx, OpSQLLoginFile, ref, &out), kindSQL)
 }
 
 // HealthSaved runs the fixed SQL Server checks inside the keeper.
@@ -422,6 +436,16 @@ func (k keyedSource) Status(ctx context.Context) (*blackbox.StatusDoc, error) {
 
 func (k keyedSource) OpenFile(ctx context.Context, name string) (io.ReadCloser, error) {
 	rc, err := k.inner.OpenFile(ctx, name)
+	return rc, keeperReadErr(err)
+}
+
+// OpenSQLFile opens one SQL sample file through the keeper (the recorder serves it behind the same read key).
+func (k keyedSource) OpenSQLFile(ctx context.Context, name string) (io.ReadCloser, error) {
+	ss, ok := k.inner.(blackbox.SQLSource)
+	if !ok {
+		return nil, &blackbox.ReadError{Kind: blackbox.ReadNotFound, Message: "No SQL samples are served here."}
+	}
+	rc, err := ss.OpenSQLFile(ctx, name)
 	return rc, keeperReadErr(err)
 }
 

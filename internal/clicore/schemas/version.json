@@ -1,0 +1,11 @@
+{
+  "operation": "version",
+  "description": "Print the version of the command line and the protocol it speaks.",
+  "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "properties": {}},
+  "output": {"type": "object", "required": ["app", "version", "cliSchema", "proto", "role"], "properties": {
+    "app": {"type": "string"}, "version": {"type": "string"}, "commit": {"type": "string"}, "date": {"type": "string"},
+    "cliSchema": {"type": "string"}, "proto": {"type": "object", "properties": {"major": {"type": "integer"}, "minor": {"type": "integer"}}},
+    "role": {"const": "cli"}, "exe": {"type": "string"}}},
+  "errors": [],
+  "examples": [{"command": "unravis version -o json"}]
+}

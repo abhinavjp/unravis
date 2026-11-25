@@ -4,7 +4,9 @@
   import { CONN_TEXT } from '../../lib/copy/sourcesCopy';
   import { SOURCES_TEXT } from '../../lib/copy/wizardSourcesCopy';
   import { connectedText } from '../../lib/copy/healthCopy';
-  import type { SavedSqlConnection } from '../../lib/types';
+  import { ACCESS_TEXT } from '../../lib/copy/sqlAccessCopy';
+  import SqlAccessResult from './SqlAccessResult.svelte';
+  import type { SavedSqlConnection, SqlAccessReport } from '../../lib/types';
   import StateSticker from './StateSticker.svelte';
   import './sources.css';
 
@@ -15,7 +17,12 @@
 
   const uid = $props.id();
   let form = $state<SqlForm>(blankSqlForm());
-  let busy = $state<'' | 'test' | 'save'>('');
+  let busy = $state<'' | 'test' | 'save' | 'access'>('');
+  let access = $state<SqlAccessReport | null>(null);
+  // The access result belongs to the form it was run on: any change to the form drops it, so a green result never stays beside another server.
+  const formKey = $derived(JSON.stringify(sqlTestInput(form)));
+  let accessKey = '';
+  $effect(() => { if (formKey !== accessKey) access = null; });
   let line = $state('');
   let word = $state<'' | 'Works' | 'Failed'>('');
   let failed = $state(false);
@@ -34,13 +41,27 @@
   async function test() {
     if (busy || invalid()) return;
     if (form.auth === 'sql' && form.password === '' && !usesKeptPassword(form)) { failed = true; word = 'Failed'; line = SOURCES_TEXT.sqlTestNeedPassword; return; }
-    busy = 'test'; failed = false; word = ''; line = '';
+    busy = 'test'; failed = false; word = ''; line = ''; access = null;
     try {
       const result = await api.testSqlConnection(sqlTestInput(form));
       word = 'Works'; line = connectedText(result.version, result.edition) + (usesKeptPassword(form) ? ' ' + SOURCES_TEXT.sqlTestKeptPassword : '');
     } catch (error) {
       failed = true; word = 'Failed'; line = error instanceof Error && error.message ? error.message : SOURCES_TEXT.sqlTestFailed;
     } finally { busy = ''; }
+  }
+
+  // The Blackbox access check: what this login can read, whether it holds more than needed, and a script only when something is missing.
+  async function checkAccess() {
+    if (busy || invalid()) return;
+    if (form.auth === 'sql' && form.password === '' && !usesKeptPassword(form)) { failed = true; word = 'Failed'; line = ACCESS_TEXT.needPassword; return; }
+    busy = 'access'; failed = false; word = ''; line = ''; access = null;
+    const key = formKey;
+    try {
+      const report = await api.checkSqlAccess(sqlTestInput(form));
+      if (key === formKey) { accessKey = key; access = report; }
+    }
+    catch (error) { failed = true; line = error instanceof Error && error.message ? error.message : ACCESS_TEXT.failed; }
+    finally { busy = ''; }
   }
 
   async function save() {
@@ -117,8 +138,10 @@
   <div class="actions">
     <button type="button" class={primary ? 'btn-primary' : 'btn'} disabled={busy !== ''} onclick={() => void save()}>{busy === 'save' ? CONN_TEXT.saving : CONN_TEXT.save}</button>
     <button type="button" class="btn" disabled={busy !== ''} onclick={() => void test()}>{busy === 'test' ? CONN_TEXT.testing : CONN_TEXT.test}</button>
+    <button type="button" class="btn" disabled={busy !== ''} onclick={() => void checkAccess()}>{busy === 'access' ? ACCESS_TEXT.checking : ACCESS_TEXT.button}</button>
     <button type="button" class="btn" onclick={() => onCancel?.()}>{CONN_TEXT.cancel}</button>
     {#if word !== ''}<StateSticker word={word} />{/if}
   </div>
   <p class="say" class:bad={failed} class:good={!failed && line !== ''} id="{uid}-line" role="status" hidden={line === ''}>{line}</p>
+  {#if access}<SqlAccessResult report={access} />{/if}
 </section>

@@ -236,3 +236,69 @@ type DumpEntry struct {
 	MTime  time.Time `json:"mtime"`
 	Target string    `json:"target,omitempty"`
 }
+
+// SQLLogGroup carries what the Blackbox host reads from the SQL Server files on
+// disk: the ERRORLOG and the system_health event files. It needs no SQL login
+// and no SQL right (the host recorder runs as LocalSystem and opens the files).
+// Numbers and fixed words only. No message text, no login or host names, no file
+// paths, no query text is ever kept (internal/blackbox/sqllog.go says how).
+type SQLLogGroup struct {
+	Errors []SQLLogEvent    `json:"errors,omitempty"`
+	Health []SQLHealthEvent `json:"health,omitempty"`
+	// Truncated says the per-poll byte budget stopped the ERRORLOG read with more
+	// still unread; the cursor continues next poll, so it is a late read, not a gap.
+	Truncated bool `json:"truncated,omitempty"`
+	// Unreadable counts log files that could not be read this time (access
+	// refused, not a plain file). Missing, never 0.
+	Unreadable uint32 `json:"unreadable,omitempty"`
+	// Lost marks an ERRORLOG that was cycled while its old tail could not be
+	// found, so some lines are missing for good.
+	Lost uint64 `json:"lost,omitempty"`
+	// HealthUnavailable says the system_health files cannot be read on this host
+	// ("not available"); it never falls back to a SQL right.
+	HealthUnavailable bool `json:"healthUnavailable,omitempty"`
+
+	// commit/pending carry the acknowledgement, same rule as EventsGroup: the read
+	// position moves only when the recorder has durably written the sample.
+	commit  *sqlLogCommitted
+	pending sqlLogCursors
+}
+
+// SQL ERRORLOG event kinds (a fixed enum).
+const (
+	SQLLogKindError    = "error"    // an "Error: N, Severity: S, State: T" line
+	SQLLogKindStartup  = "startup"  // SQL Server is starting
+	SQLLogKindShutdown = "shutdown" // SQL Server is terminating
+	SQLLogKindSlowIO   = "slowio"   // I/O requests taking longer than N seconds
+)
+
+// SQLLogEvent is one kind of ERRORLOG event, counted. Numbers and enums only.
+type SQLLogEvent struct {
+	Instance string    `json:"instance"` // MSSQLSERVER or the instance name
+	Kind     string    `json:"kind"`
+	Number   uint32    `json:"number,omitempty"`   // error number
+	Severity uint8     `json:"severity,omitempty"` // error severity
+	State    uint8     `json:"state,omitempty"`    // error state
+	Database uint32    `json:"database,omitempty"` // numeric database id (slowio)
+	Seconds  uint32    `json:"seconds,omitempty"`  // slowio: the limit the message names
+	Count    uint32    `json:"count"`
+	T        time.Time `json:"t"` // latest, UTC
+}
+
+// SQL system_health event kinds (a fixed enum).
+const (
+	SQLHealthDeadlock = "deadlock"
+	SQLHealthLongWait = "longwait"
+	SQLHealthNonYield = "nonyield"
+	SQLHealthSlowIO   = "slowio"
+	SQLHealthError    = "error"
+)
+
+// SQLHealthEvent is one kind of system_health event, counted. No event text.
+type SQLHealthEvent struct {
+	Instance string    `json:"instance"`
+	Kind     string    `json:"kind"`
+	Count    uint32    `json:"count"`
+	MaxMs    uint64    `json:"maxMs,omitempty"` // longest wait or I/O stall named
+	T        time.Time `json:"t"`
+}

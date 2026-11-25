@@ -467,7 +467,7 @@
   .cards { display: grid; gap: var(--space-2); min-width: 0; }
   .cards h6, .group-head { margin: 0; font-size: var(--fs-3); font-weight: 600; }
   /* The cards in a row are as tall as the tallest one and each button sits on the same line at the bottom (CASES-16). */
-  .card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); align-items: stretch; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
   .file-card { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: var(--space-3); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .file-card > * { margin: 0; }
   .file-card button { align-self: flex-start; margin-top: auto; }

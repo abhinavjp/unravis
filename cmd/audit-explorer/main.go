@@ -33,6 +33,8 @@ import (
 	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/pipesrv"
+	"api-audit-explorer/internal/power"
+	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/store"
 	"api-audit-explorer/internal/tray"
@@ -83,6 +85,8 @@ type runFlags struct {
 	pipeOnly            bool
 	portSet             bool
 	loopback            bool
+	ownerSet            bool
+	owner               string // --owner: what hello says of this owner ("" means app)
 }
 
 // parseFlags parses and validates the command line. Every privacy and
@@ -105,10 +109,14 @@ func parseFlags(args []string) (runFlags, error) {
 	flags.BoolVar(&f.pipeServer, "pipe-server", false, "serve the dashboard over two secured named pipes (ui and ag) and open no TCP port unless --loopback is also given (Windows)")
 	flags.BoolVar(&f.pipeOnly, "pipe-only", false, "like --pipe-server, and never opens a TCP port or writes a session file; used by the desktop shell (Windows)")
 	flags.BoolVar(&f.loopback, "loopback", false, "with --pipe-server: also keep the loopback listener and the session file, as browser mode does")
+	flags.StringVar(&f.owner, "owner", "", "with --pipe-server or --pipe-only: who owns this copy, headless or shell (the command line reads it in hello; headless is the one 'unravis app stop' may stop)")
 	if err := flags.Parse(args); err != nil {
 		return runFlags{}, err
 	}
-	flags.Visit(func(x *flag.Flag) { f.portSet = f.portSet || x.Name == "port" })
+	flags.Visit(func(x *flag.Flag) {
+		f.portSet = f.portSet || x.Name == "port"
+		f.ownerSet = f.ownerSet || x.Name == "owner"
+	})
 	if f.version {
 		// Asking for the version wins over every other flag, so it never fails on them.
 		return runFlags{version: true}, nil
@@ -189,6 +197,10 @@ func run(args []string, getenv func(string) string) error {
 	for _, note := range demoNotes {
 		log.Print(note)
 	}
+	// A real run (not --version, --quit, --check-update or a refused demo setting) records an unhandled panic locally (crashwire.go).
+	// CloseUnlessPanic keeps the file open while a panic unwinds, so a panic on this goroutine still gets its dump.
+	crash := startCrashCapture(getenv)
+	defer crash.CloseUnlessPanic()
 	if f.mcp {
 		return runMCP(f, getenv)
 	}
@@ -323,7 +335,32 @@ func run(args []string, getenv func(string) string) error {
 			}
 		}
 	}
+	// The AI access screen (BL-347): the routes are in the table of every run; they answer for real only once the grant store is open
+	// (pipe mode below, or the screenshot demo with UNRAVIS_DEMO_MCP), and say "legacy" in a browser-mode run, which has no grants.
+	mcpMount := server.NewMCPMount()
+	serverOptions = append(serverOptions, server.WithMCPMount(mcpMount))
+	// Code mode (BL-574): the routes answer 503 until the broker is mounted just below (it needs the server built first).
+	codeMount := server.NewCodeMount()
+	serverOptions = append(serverOptions, server.WithCodeMount(codeMount))
+	var idlePower *power.Policy
+	if !f.demo {
+		idlePower = newPowerPolicy(updater, logFile)
+		if updater != nil {
+			updater.SetPowerTouch(idlePower.Touch)
+		}
+		serverOptions = append(serverOptions, server.WithPower(idlePower))
+	}
 	served := server.New(wired.repo, explorer.Assets(), token, f.demo, serverOptions...)
+	codeBroker := mountCodeMode(getenv, served, token, codeMount)
+	if f.demo && !pipeMode {
+		closeDemoMCP := openDemoMCP(appCtx, getenv, wired.repo, mcpMount)
+		defer closeDemoMCP()
+	}
+	if idlePower != nil {
+		powerDone := make(chan struct{})
+		go func() { defer close(powerDone); idlePower.Run(signalContext) }()
+		defer func() { cancel(); <-powerDone }()
+	}
 	if updater != nil {
 		updaterDone := make(chan struct{})
 		go func() { defer close(updaterDone); updater.Run(signalContext) }()
@@ -361,7 +398,13 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 	if pipes != nil {
-		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel))), newHTTPServer)
+		pipeOpts := []pipesrv.Option{pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel, codeBroker))}
+		mcpHandler, closeMCP := openMCPEndpoint(appCtx, getenv, served, token, f.demo, sealedfile.CurrentUser, withMCPMount(mcpMount), withCodeBroker(codeBroker))
+		defer closeMCP() // runs after the servers have stopped (awaitShutdownWithin below)
+		if mcpHandler != nil {
+			pipeOpts = append(pipeOpts, pipesrv.WithMCP(mcpHandler))
+		}
+		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipeOpts...)), newHTTPServer)
 		stopServers = append(stopServers, group)
 		go func() { serveDone <- <-group.Done() }()
 		log.Print("Serving over the ui and ag pipes")

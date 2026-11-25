@@ -1,0 +1,9 @@
+{
+  "operation": "app.stop",
+  "description": "Stop the headless Unravis app and wait until it is gone. An app owned by the desktop shell is not stopped from the command line. An app that does not run is already stopped.",
+  "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "properties": {}},
+  "output": {"type": "object", "required": ["stopped", "alreadyStopped"], "properties": {
+    "stopped": {"type": "boolean"}, "alreadyStopped": {"type": "boolean"}, "pid": {"type": "integer"}}},
+  "errors": ["PERMISSION_DENIED", "TIMEOUT", "CANCELED", "OWNER_BUSY", "UPSTREAM_UNAVAILABLE", "ENDPOINT_UNAVAILABLE", "ENDPOINT_UNTRUSTED", "VERSION_INCOMPATIBLE", "INTERNAL"],
+  "examples": [{"command": "unravis app stop -o json"}]
+}

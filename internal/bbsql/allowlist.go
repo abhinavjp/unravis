@@ -340,6 +340,15 @@ func renderTokens(toks []sqlToken) string {
 // SET), no SELECT INTO, no execution/write keyword, only approved sources and
 // only N'...' literals. It is the mechanical gate behind TestLintC2.
 func lintStatement(id, text string) error {
+	return lintStatementFrags(id, text, extraLintFrags[id])
+}
+
+// lintStatementFrags is lintStatement with a narrow carve-out: each fragment in
+// frags is removed ONCE from the text before the banned-column scan, so a fixed
+// text-statement (extras_qtext.go) can name the columns of sys.dm_exec_sql_text
+// without relaxing the rule for any other statement. Everything else (prefix,
+// tag, keywords, one SELECT, approved source) is checked on the full text.
+func lintStatementFrags(id, text string, frags []string) error {
 	if !strings.HasPrefix(text, setPrefix) {
 		return fmt.Errorf("missing the exact C3 SET prefix")
 	}
@@ -352,7 +361,14 @@ func lintStatement(id, text string) error {
 	if strings.Contains(sql, "/*") || strings.Contains(sql, "--") {
 		return fmt.Errorf("comment inside the statement body")
 	}
-	lower := strings.ToLower(text)
+	scan := text
+	for _, f := range frags {
+		if !strings.Contains(scan, f) {
+			return fmt.Errorf("allowed fragment is not in the statement")
+		}
+		scan = strings.Replace(scan, f, " ", 1)
+	}
+	lower := strings.ToLower(scan)
 	for _, tok := range lintBannedColumns {
 		if strings.Contains(lower, tok) {
 			return fmt.Errorf("banned column token %q", tok)

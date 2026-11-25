@@ -3,10 +3,12 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +33,10 @@ type simBB struct {
 	files      map[string][]byte
 	key        string
 	down       error
+	// sqlFiles are the SQL service's hourly sample files (simRec.SQL); sqlLocked answers every one
+	// of them as a folder this account may not read.
+	sqlFiles  map[string][]byte
+	sqlLocked bool
 	// dropAt makes a file stop after that many bytes with a read error, the way a
 	// share drops part way through a read.
 	dropAt map[string]int
@@ -128,6 +134,9 @@ type simRec struct {
 	Dumps     []blackbox.DumpEntry
 	WinEvents []blackbox.EventEntry
 	Markers   []blackbox.Event
+	// SQL adds the SQL service's sample files (requests, waits, schedulers, memory grants, tempdb, file stalls,
+	// availability-group state). SQLLocked answers them as a folder this account may not read.
+	SQL, SQLLocked bool
 }
 
 func f64(v float64) *float64 { return &v }
@@ -255,6 +264,10 @@ func (r simRec) build() *simBB {
 		}
 	}
 	bb.man = m
+	if r.SQL && len(times) > 0 {
+		bb.sqlFiles = simSQLFiles(times[0], times[len(times)-1], r.CPU)
+		bb.sqlLocked = r.SQLLocked
+	}
 	now := r.Now
 	if now.IsZero() {
 		now = r.End
@@ -490,8 +503,13 @@ type simPC struct {
 	now       time.Time
 	installed bool
 	running   bool
-	cfg       blackbox.Config
-	keys      int
+	// sqlInstalled: the pretend SQL service was set up by a setup-sql call.
+	sqlInstalled bool
+	sqlRunning   bool
+	// loginFileOK: the last setup call was handed a login file whose hash matched (tests).
+	loginFileOK bool
+	cfg         blackbox.Config
+	keys        int
 
 	// failNext is returned by the next change, then cleared (tests).
 	failNext error
@@ -654,6 +672,40 @@ func (p *simPC) Update(ctx context.Context) (blackbox.UpdateOutcome, error) {
 	return blackbox.UpdateOutcome{}, nil
 }
 
+// SetupSQL pretends to turn SQL collection on. Nothing is installed and no file is read.
+func (p *simPC) SetupSQL(ctx context.Context, loginFile, loginSHA string, windows, enable bool) (blackbox.SQLSetupOutcome, error) {
+	if err := p.enter(ctx, "setup-sql"); err != nil {
+		return blackbox.SQLSetupOutcome{}, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if loginFile != "" {
+		// The pretend helper checks what the real one checks: the file is there and is the bytes the app hashed.
+		if b, err := os.ReadFile(loginFile); err != nil || fmt.Sprintf("%x", sha256.Sum256(b)) != loginSHA { //nolint:gosec // G304: the demo helper reads the path the app just made
+			return blackbox.SQLSetupOutcome{}, &blackbox.ThisPCError{Reason: blackbox.ReasonInvalid, Message: "The SQL login settings are not valid."}
+		}
+		p.loginFileOK = true
+	}
+	out := blackbox.SQLSetupOutcome{Installed: !p.sqlInstalled, LoginSaved: !windows, Started: enable}
+	if windows {
+		out.GrantScript = "-- Run in SSMS as an admin. The Blackbox never runs this for you.\nCREATE LOGIN [NT SERVICE\\UnravisBlackboxSql] FROM WINDOWS WITH DEFAULT_DATABASE=master;\nGRANT VIEW SERVER PERFORMANCE STATE TO [NT SERVICE\\UnravisBlackboxSql];\n"
+	}
+	p.sqlInstalled = true
+	p.sqlRunning = enable
+	return out, nil
+}
+
+// ClearSQLLogin pretends to delete the saved login.
+func (p *simPC) ClearSQLLogin(ctx context.Context) error {
+	if err := p.enter(ctx, "clear-sql-login"); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	p.sqlRunning = false
+	p.mu.Unlock()
+	return nil
+}
+
 // cloneCfg copies the settings the simulated service runs with. The caller holds p.mu.
 func (p *simPC) cloneCfg() *blackbox.Config {
 	c := p.cfg
@@ -669,7 +721,7 @@ func (p *simPC) Scan() (blackbox.LocalFound, error) {
 		return blackbox.LocalFound{}, nil
 	}
 	return blackbox.LocalFound{
-		Installed: true, Running: p.running, Name: p.cfg.Name, Folder: p.cfg.Folder, Port: p.cfg.Port, Bind: p.cfg.Bind, Settings: p.cloneCfg(),
+		Installed: true, Running: p.running, SQLInstalled: p.sqlInstalled, SQLRunning: p.sqlRunning, Name: p.cfg.Name, Folder: p.cfg.Folder, Port: p.cfg.Port, Bind: p.cfg.Bind, Settings: p.cloneCfg(),
 	}, nil
 }
 
@@ -718,7 +770,7 @@ func demoBlackboxes(now time.Time) (*memBBStore, *simWorld, *simPC) {
 	boxes := []seedBox{
 		{name: "web-a", loc: "http://127.0.0.1:7788", thisPC: true, rec: simRec{
 			Name: "web-a", Start: four, End: now.Add(-5 * time.Second), Now: now, CPU: spike, Busy: "w3wp",
-			Key: "ubk-demo-a-NOT-A-REAL-KEY",
+			Key: "ubk-demo-a-NOT-A-REAL-KEY", SQL: true,
 			// A short hiccup (90 seconds) well before the busy stretch.
 			Skip: [][2]time.Time{{now.Add(-3 * time.Hour), now.Add(-3*time.Hour + 90*time.Second)}},
 			// Things that happened, for the "What happened" view: two crash dumps, a restart and some Windows events.

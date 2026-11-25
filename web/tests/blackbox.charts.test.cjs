@@ -8,6 +8,7 @@ const { loadTypeScript } = require('./helpers/loadTs.cjs');
 // value formats, gap breaks, the log-scale rule, figures, windows, and the wiring into the panel.
 
 const s = loadTypeScript('src/lib/blackboxSeries.ts');
+const bb = loadTypeScript('src/lib/blackbox.ts');
 const { BBC_TEXT } = loadTypeScript('src/lib/copy/blackboxChartsCopy.ts');
 const { lintCopy } = loadTypeScript('src/lib/copy/copylint.ts');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
@@ -20,6 +21,23 @@ const answer = (extra = {}) => ({
   read: { files: 1, samples: 3, torn: 0, dropped: [], missing: [] }, state: {}, ...extra
 });
 
+// magic "UBB1" + u16 version + u32 header length, then the JSON header, then six doubles per point.
+const PREFIX = 10;
+function binaryFrame(header, rows, { version = 1, magic = 'UBB1', metadata = Buffer.from(JSON.stringify(header)) } = {}) {
+  const body = Buffer.alloc(PREFIX + metadata.length + rows.length * 48);
+  body.write(magic, 0, 'latin1');
+  body.writeUInt16LE(version, 4);
+  body.writeUInt32LE(metadata.length, 6);
+  metadata.copy(body, PREFIX);
+  rows.forEach((row, index) => row.forEach((value, column) => body.writeDoubleLE(value, PREFIX + metadata.length + index * 48 + column * 8)));
+  return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+}
+
+const bytes = (frame) => {
+  const value = Buffer.from(frame);
+  return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+};
+
 test('readSeriesAnswer keeps a documented answer and refuses one with a bad point, so the view never draws a guess', () => {
   assert.equal(s.readSeriesAnswer(answer()).lines[0].key, 'cpu');
   assert.equal(s.readSeriesAnswer(answer({ lines: [{ key: 'cpu', unit: 'pct', points: [[T0, 'x', 1, 2]] }] })), null);
@@ -28,6 +46,197 @@ test('readSeriesAnswer keeps a documented answer and refuses one with a bad poin
   assert.equal(s.readSeriesAnswer(null), null);
   // a server that sends null for an empty list (Go nil slice) still reads
   assert.deepEqual(s.readSeriesAnswer(answer({ processes: null, markers: null })).processes, []);
+});
+
+test('readSeriesBinary reads six-value M4 lines and process series, including an empty answer', () => {
+  const header = {
+    ...answer({ lines: [], processes: [] }),
+    lines: [{ key: 'cpu', group: 'host', label: 'cpu', unit: 'pct', points: { n: 2 } }],
+    processes: [{ name: 'w3wp.exe', peakCpuPct: 99, cpu: { n: 1 }, workingSet: { n: 1 }, privateBytes: { n: 1 } }]
+  };
+  const rows = [
+    [T0, 10, 5, 20, 5, 20], [T0 + 15000, 30, 25, 40, 25, 40],
+    [T0 + 30000, 99, 99, 99, 99, 99], [T0, 1024, 1024, 1024, 1024, 1024], [T0, 512, 512, 512, 512, 512]
+  ];
+  const got = s.readSeriesBinary(binaryFrame(header, rows));
+  const want = s.readSeriesAnswer({
+    ...header,
+    lines: [{ ...header.lines[0], points: rows.slice(0, 2) }],
+    processes: [{ ...header.processes[0], cpu: [rows[2]], workingSet: [rows[3]], privateBytes: [rows[4]] }]
+  });
+  assert.deepEqual(got, want);
+
+  const emptyHeader = { ...answer({ lines: [], processes: [] }) };
+  const empty = s.readSeriesBinary(binaryFrame(emptyHeader, []));
+  assert.ok(empty);
+  assert.deepEqual(empty.lines, []);
+  assert.deepEqual(empty.processes, []);
+});
+
+test('readSeriesBinary refuses malformed, truncated, trailing and unbounded frames', () => {
+  const header = { ...answer({ lines: [{ key: 'cpu', group: 'host', label: 'cpu', unit: 'pct', points: { n: 1 } }], processes: [] }) };
+  const row = [T0, 10, 5, 20, 5, 20];
+  const valid = Buffer.from(binaryFrame(header, [row]));
+  const withCount = (n) => Buffer.from(binaryFrame({ ...header, lines: [{ ...header.lines[0], points: { n } }] }, [row]));
+  const badCount = withCount(2);
+  // a point count far beyond what the payload holds is refused before anything is allocated for it
+  const hugeCount = withCount(2 ** 40);
+  const unsafeCount = withCount(Number.MAX_SAFE_INTEGER);
+  const badUtf8 = Buffer.from(valid);
+  badUtf8[PREFIX] = 0xff;
+  const nan = Buffer.from(valid);
+  nan.writeDoubleLE(NaN, PREFIX + valid.readUInt32LE(6));
+  const infinite = Buffer.from(valid);
+  infinite.writeDoubleLE(Infinity, PREFIX + valid.readUInt32LE(6) + 8);
+  const trailing = Buffer.concat([valid, Buffer.alloc(1)]);
+  const hugeHeader = Buffer.alloc(PREFIX + (1 << 20) + 1);
+  hugeHeader.write('UBB1', 0, 'latin1');
+  hugeHeader.writeUInt16LE(1, 4);
+  hugeHeader.writeUInt32LE((1 << 20) + 1, 6);
+  const wrongVersion = Buffer.from(binaryFrame(header, [row], { version: 2 }));
+  const versionZero = Buffer.from(binaryFrame(header, [row], { version: 0 }));
+  const wrongMagic = Buffer.from(binaryFrame(header, [row], { magic: 'URS1' }));
+  const noMagic = Buffer.from(binaryFrame(header, [row]));
+  noMagic.fill(0, 0, 4);
+  const notJson = Buffer.from(binaryFrame(header, [row], { metadata: Buffer.from('this is valid utf-8, not json') }));
+  const jsonArray = Buffer.from(binaryFrame(header, [row], { metadata: Buffer.from('[]') }));
+  const shortPrefix = Buffer.from('UBB1\x01\x00\x02\x00', 'latin1');
+  for (const frame of [new ArrayBuffer(0), valid.subarray(0, 3), shortPrefix, badCount, hugeCount, unsafeCount, badUtf8, nan, infinite, trailing,
+    valid.subarray(0, valid.length - 1), hugeHeader, wrongVersion, versionZero, wrongMagic, noMagic, notJson, jsonArray,
+    new ArrayBuffer((16 << 20) + 1)]) {
+    assert.equal(s.readSeriesBinary(bytes(frame)), null);
+  }
+  // the control: the same frame, untouched, still reads
+  assert.ok(s.readSeriesBinary(bytes(valid)));
+});
+
+test('readSeriesBinary takes a header of exactly 1 MiB and refuses one byte more', () => {
+  const header = { ...answer({ lines: [], processes: [] }) };
+  const padTo = (size) => {
+    const base = JSON.stringify(header);
+    return Buffer.from(base + ' '.repeat(size - Buffer.byteLength(base)));
+  };
+  const atCap = s.readSeriesBinary(binaryFrame(header, [], { metadata: padTo(1 << 20) }));
+  assert.ok(atCap, 'a header exactly at the cap is accepted');
+  assert.deepEqual(atCap.lines, []);
+  assert.equal(s.readSeriesBinary(binaryFrame(header, [], { metadata: padTo((1 << 20) + 1) })), null);
+});
+
+test('the Blackbox client asks for binary M4 only on opt-in and accepts a JSON fallback', async () => {
+  const realFetch = globalThis.fetch;
+  const hadStorage = Object.prototype.hasOwnProperty.call(globalThis, 'sessionStorage');
+  const oldStorage = globalThis.sessionStorage;
+  globalThis.sessionStorage = { getItem: () => 'test-token', setItem() {}, removeItem() {} };
+  const calls = [];
+  const header = { ...answer({ lines: [{ key: 'cpu', group: 'host', label: 'cpu', unit: 'pct', points: { n: 1 } }], processes: [] }) };
+  const rows = [[T0, 10, 5, 20, 5, 20]];
+  const jsonAnswer = { ...header, lines: [{ ...header.lines[0], points: rows }] };
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), headers: new Headers(init.headers), body: JSON.parse(init.body) });
+    if (calls.length === 1) return new Response(binaryFrame(header, rows), { headers: { 'Content-Type': s.SERIES_BINARY_TYPE } });
+    if (calls.length === 3) {
+      const malformed = { ...header, lines: [{ ...header.lines[0], points: { n: 2 } }] };
+      return new Response(binaryFrame(malformed, rows), { headers: { 'Content-Type': s.SERIES_BINARY_TYPE } });
+    }
+    return new Response(JSON.stringify(jsonAnswer), { headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const request = { start: answer().start, end: answer().end, width: 60, shape: 'm4' };
+    const binary = await bb.blackboxApi.series('bb-test', request, undefined, true);
+    assert.deepEqual(binary, s.readSeriesAnswer(jsonAnswer));
+    const fallback = await bb.blackboxApi.series('bb-test', request);
+    assert.deepEqual(fallback, jsonAnswer);
+    assert.equal(calls[0].url, '/api/blackbox/bb-test/series');
+    assert.equal(calls[0].headers.get('Accept'), s.SERIES_BINARY_TYPE);
+    assert.equal(calls[0].headers.get('X-Audit-Token'), 'test-token');
+    assert.deepEqual(calls[0].body, request);
+    assert.equal(calls[1].headers.get('Accept'), null);
+    const retried = await bb.blackboxApi.series('bb-test', request, undefined, true);
+    assert.deepEqual(retried, jsonAnswer);
+    assert.equal(calls[2].headers.get('Accept'), s.SERIES_BINARY_TYPE);
+    assert.equal(calls[3].headers.get('Accept'), null);
+    assert.equal(calls.length, 4, 'a malformed binary answer gets exactly one JSON retry');
+  } finally {
+    globalThis.fetch = realFetch;
+    if (hadStorage) globalThis.sessionStorage = oldStorage;
+    else delete globalThis.sessionStorage;
+  }
+});
+
+test('the Blackbox client retries once as JSON when the binary body drops, is declared too big or streams past the cap, and not when aborted', async () => {
+  const realFetch = globalThis.fetch;
+  const hadStorage = Object.prototype.hasOwnProperty.call(globalThis, 'sessionStorage');
+  const oldStorage = globalThis.sessionStorage;
+  globalThis.sessionStorage = { getItem: () => 'test-token', setItem() {}, removeItem() {} };
+  const type = { 'Content-Type': s.SERIES_BINARY_TYPE };
+  const jsonAnswer = answer();
+  const makers = {
+    dropped: () => new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(16)); c.error(new TypeError('network error')); } }), { headers: type }),
+    declared: () => new Response(new Uint8Array(16), { headers: { ...type, 'Content-Length': String((16 << 20) + 1) } }),
+    streamed: () => {
+      let sent = 0;
+      return new Response(new ReadableStream({ pull(c) { sent += 1 << 20; c.enqueue(new Uint8Array(1 << 20)); if (sent > (17 << 20)) c.close(); } }), { headers: type });
+    }
+  };
+  const request = { start: answer().start, end: answer().end, width: 60, shape: 'm4' };
+  try {
+    for (const [name, make] of Object.entries(makers)) {
+      const accepts = [];
+      globalThis.fetch = async (url, init = {}) => {
+        accepts.push(new Headers(init.headers).get('Accept'));
+        return accepts.length === 1 ? make() : new Response(JSON.stringify(jsonAnswer), { headers: { 'Content-Type': 'application/json' } });
+      };
+      assert.deepEqual(await bb.blackboxApi.series('bb-test', request, undefined, true), jsonAnswer, name);
+      assert.deepEqual(accepts, [s.SERIES_BINARY_TYPE, null], name + ': one JSON retry');
+    }
+    const controller = new AbortController();
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(16)); controller.abort(); c.error(new DOMException('aborted', 'AbortError')); } }), { headers: type });
+    };
+    await assert.rejects(bb.blackboxApi.series('bb-test', request, controller.signal, true));
+    assert.equal(calls, 1, 'an abort is not retried');
+  } finally {
+    globalThis.fetch = realFetch;
+    if (hadStorage) globalThis.sessionStorage = oldStorage;
+    else delete globalThis.sessionStorage;
+  }
+});
+
+test('settleWidth ignores an unmeasured width, rounds up to 64 px steps, and shrinks only when clearly narrower', () => {
+  assert.equal(s.settleWidth(0, 0), 0, 'width 0 waits for a real measure');
+  assert.equal(s.settleWidth(0, NaN), 0);
+  assert.equal(s.settleWidth(0, -5), 0);
+  assert.equal(s.settleWidth(640, 0), 640, 'a box that reads 0 later (hidden) keeps the width in hand');
+  assert.equal(s.settleWidth(0, 1), 64);
+  assert.equal(s.settleWidth(0, 800), 832);
+  assert.equal(s.settleWidth(0, 832), 832);
+  // a small change in either direction does not change the step, so nothing is read again
+  assert.equal(s.settleWidth(832, 810), 832);
+  assert.equal(s.settleWidth(832, 780), 832, 'a scrollbar-sized shrink stays');
+  assert.equal(s.settleWidth(832, 833), 896, 'growing past the step moves up at once');
+  // a clear shrink moves down
+  assert.equal(s.settleWidth(832, 700), 704);
+  // a width sitting on a step edge cannot flip back and forth
+  let w = s.settleWidth(0, 832.5);
+  const seen = new Set();
+  for (let i = 0; i < 6; i++) { w = s.settleWidth(w, i % 2 ? 832.5 : 817.5); seen.add(w); }
+  assert.equal(seen.size, 1, 'a 15 px scrollbar toggle gives one width');
+});
+
+test('the Blackbox charts and the host lines wait for a measured width, read in steps, and keep the zoom when only the width changed', () => {
+  const view = read('src/components/BlackboxCharts.svelte');
+  assert.match(view, /let chartWidth = \$state\(0\);/, 'no guessed 800 px before the first measure');
+  assert.match(view, /pixelWidth = settleWidth\(pixelWidth, measured\)/);
+  assert.match(view, /if \(!w \|\| width <= 0\) return;/, 'an unmeasured width does not read');
+  assert.match(view, /if \(w !== zoomWin\) \{ zoom = null; zoomWin = w; \}/, 'the zoom is cleared for a new window only');
+  assert.doesNotMatch(view, /busy = true; problem = ''; zoom = null;/);
+  const lines = read('src/components/resource/HostLines.svelte');
+  assert.match(lines, /let chartWidth = \$state\(0\);/);
+  assert.match(lines, /pixelWidth = settleWidth\(pixelWidth, measured\)/);
+  assert.equal((lines.match(/if \(width <= 0\) return;/g) || []).length, 2, 'both the host and the process read wait for a width');
+  assert.doesNotMatch(lines, /Math\.max\(1, Math\.floor\(chartWidth\)\)/);
 });
 
 test('names follow the key shape the server writes: host fields, named things, the CPU split, TCP states and event levels', () => {
@@ -45,7 +254,7 @@ test('names follow the key shape the server writes: host fields, named things, t
 test('every field the recorder writes as a number has a plain name', () => {
   const src = ['groups_types.go', 'sample.go'].map((f) => fs.readFileSync(path.join(__dirname, '..', '..', 'internal', 'blackbox', f), 'utf8')).join('\n');
   const numeric = [...src.matchAll(/^\s*\w+\s+\*?(?:float64|uint64|uint32|int)\s+`json:"(\w+)/gm)].map((m) => m[1]);
-  const skip = new Set(['v', 'seq', 'pid', 'startTicks', 'start', 'channel', 'eventId', 'level', 'count', 'state', 'size', 'seconds', 'cpuSec', 'ws', 'priv', 'handles', 'netIn', 'netOut', 'unreadable', 'outboundQueueInterfaces', 'discardedInterfaces', 'outErrorsInterfaces']);
+  const skip = new Set(['v', 'seq', 'pid', 'startTicks', 'start', 'channel', 'eventId', 'level', 'count', 'state', 'size', 'seconds', 'number', 'database', 'maxMs', 'cpuSec', 'ws', 'priv', 'handles', 'netIn', 'netOut', 'unreadable', 'outboundQueueInterfaces', 'discardedInterfaces', 'outErrorsInterfaces']);
   const missing = [...new Set(numeric)].filter((f) => !skip.has(f)).filter((f) => s.seriesName('g.x.' + f).name === f);
   assert.deepEqual(missing, []);
 });
@@ -147,7 +356,7 @@ test('the panel opens the charts for a Blackbox with facts, and the client posts
   assert.match(panel, /<BlackboxCharts item=\{chartsFor\}/);
   assert.match(panel, /chartsFor = item/);
   assert.doesNotMatch(panel, /PROTOTYPE \(throwaway/);
-  assert.match(read('src/lib/blackbox.ts'), /series: \(id: string[^\n]*\n\s*call<unknown>\('POST', '\/' \+ encodeURIComponent\(id\) \+ '\/series'/);
+  assert.match(read('src/lib/blackbox.ts'), /send\('POST', path, body, signal, binary \? SERIES_BINARY_TYPE : undefined\)/);
   const view = read('src/components/BlackboxCharts.svelte');
   assert.match(view, /readSeriesAnswer\(raw\)/, 'every answer goes through the shape check');
   assert.match(view, /type: log \? 'log' : 'value'/);

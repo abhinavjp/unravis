@@ -1,4 +1,4 @@
-import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile, VersionInfo, UpdateCheckReply } from './types';
+import type { SqlAccessReport, SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile, VersionInfo, UpdateCheckReply } from './types';
 import { signalIfAppLocked } from './lockSignal';
 import { configureClientLog, dropClientLog, reportAction, reportError } from './clientLog';
 import { noticeKeeperRefusal, type KeeperStatus } from './keeper';
@@ -194,6 +194,7 @@ export const api = {
   sqlConnections: () => request<SavedSqlConnection[]>('/sql-connections'),
   saveSqlConnection: (input: SqlConnectionInput) => request<SavedSqlConnection>('/sql-connections', json(input)),
   testSqlConnection: (input: SqlTestRequest, signal?: AbortSignal) => request<SqlTestResult>('/sql-connections/test', json(input), signal),
+  checkSqlAccess: (input: SqlTestRequest, signal?: AbortSignal) => request<SqlAccessReport>('/sql-connections/access', json(input), signal),
   forgetSqlConnection: (id: string) => request<void>('/sql-connections/' + encodeURIComponent(id), { method: 'DELETE' }),
   /** The key keeper (P14): whether it runs and what still waits to be moved. preview is answered only in the demo. */
   keeperStatus: (preview = '') => request<KeeperStatus>('/keeper/status' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),

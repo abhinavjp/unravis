@@ -60,8 +60,9 @@
   // Real pixel size of the plot, so diamonds stay square and the call column keeps a 2 px minimum.
   let plotW = $state(0);
   let plotH = $state(0);
-  // The height of each lane's own drawing (the lanes can differ: a head that wraps on a phone leaves less for the plot). Used for the bar press areas.
+  // The height of each lane's own drawing and name row. Upper stacked bars may use the non-interactive name row as part of their 24 px press area.
   let laneH = $state<Record<string, number>>({ audit: 0, iis: 0, sql: 0 });
+  let headH = $state<Record<string, number>>({ audit: 0, iis: 0, sql: 0 });
 
   let hoverMs = $state<number | null>(null);
   let pinnedMs = $state<number | null>(null);
@@ -176,7 +177,7 @@
   const barX = (bar: LaneBar): number => x(bar.start);
   const barW = (bar: LaneBar): number => Math.max(x(bar.end) - x(bar.start), 3 * pxX);
   // BL-492: a bar is only 5 to 9 px tall (the Slow call lane rule fixes the lane height), so each bar gets an invisible press area of up to
-  // 24 x 24 px around it (see barPressAreas: the areas never overlap, a bar with room reaches 24 px, a bar in a stack gets what its row allows).
+  // 24 x 24 px around it. The upper rows may reach into the lane's non-interactive name row, but never into another lane or over another bar.
   const HIT = 24;
   function hitBoxes(name: LaneName): Map<string, PressArea> {
     const boxes = drawnBars(name).map((bar) => {
@@ -184,7 +185,8 @@
       const y1 = 3 + bar.row * ROW_STEP;
       return { key: bar.id + ':' + bar.start, x: { a: x1, b: x1 + barW(bar) }, y: { a: y1, b: y1 + ROW_H } };
     });
-    return barPressAreas(boxes, HIT * pxX, HIT * (H / (laneH[name] > 0 ? laneH[name] : plotH > 0 ? plotH : 72)), W, H);
+    const yUnit = H / (laneH[name] > 0 ? laneH[name] : plotH > 0 ? plotH : 72);
+    return barPressAreas(boxes, HIT * pxX, HIT * yUnit, W, H, 0, -(headH[name] || 0) * yUnit);
   }
   const barLabel = (bar: LaneBar): string => `${bar.label}, ${formatDuration(bar.end - bar.start)}`;
 
@@ -388,8 +390,8 @@
       {@const path = shapePath(name)}
       {@const hitMap = hitBoxes(name)}
       <div class="scall-lane" data-lane={name} data-testid="scall-lane-{name}">
-        <div class="scall-head">
-          <span class="scall-name" style="color: {color}">{lane.title}</span>
+        <div class="scall-head" bind:clientHeight={headH[name]}>
+          <span class="scall-name" style:color={color}>{lane.title}</span>
           {#if name === 'sql'}
             <span class="scall-source" data-testid="scall-db-source">{DRILL_TEXT.laneSource(db.source)}</span>
           {/if}
@@ -446,7 +448,7 @@
             {/each}
           </svg>
           {#if path && lanes[name].peak}
-            <span class="y-peak" style="top: {peakTop}%" style:color={color} aria-hidden="true">{DRILL_TEXT.yPeak(peakNumber(name))}</span>
+            <span class="y-peak" style:top="{peakTop}%" style:color={color} aria-hidden="true">{DRILL_TEXT.yPeak(peakNumber(name))}</span>
             <span class="y-zero" aria-hidden="true">{DRILL_TEXT.yZero}</span>
           {/if}
           {#if name === 'sql' && db.shape === 'none'}
@@ -460,16 +462,16 @@
     {/each}
 
     {#if hoverMs !== null}
-      <div class="scall-line hover" style="left: {((hoverMs - start) / span) * 100}%"></div>
+      <div class="scall-line hover" style:left="{((hoverMs - start) / span) * 100}%"></div>
     {/if}
     {#if pinnedMs !== null}
-      <div class="scall-line pinned" style="left: {((pinnedMs - start) / span) * 100}%"></div>
+      <div class="scall-line pinned" style:left="{((pinnedMs - start) / span) * 100}%"></div>
     {/if}
   </div>
 
   <div class="scall-axis" aria-hidden="true">
     {#each ticks as tick}
-      <span class="tick {tick.edge}" style="left: {tick.pct}%">{tick.label}</span>
+      <span class="tick {tick.edge}" style:left="{tick.pct}%">{tick.label}</span>
     {/each}
     <span class="scall-xtitle">{DRILL_TEXT.xTitle(zoneName)}</span>
     <span class="scall-zone">{zoneName}</span>
@@ -565,6 +567,7 @@
     display: block;
     width: 100%;
     height: 100%;
+    overflow: visible;
   }
   .thiscall {
     fill: var(--bad);

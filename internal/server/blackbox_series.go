@@ -53,6 +53,10 @@ type bbSeriesPoint [4]float64
 // the lowest and highest are the whole bucket's, the first and last are by time.
 type bbSeriesPointM4 [6]float64
 
+type bbSeriesPointRef struct {
+	N int `json:"n"`
+}
+
 type bbSeriesLine struct {
 	Key    string          `json:"key"`   // for example "memCommit" or "sqlHost.SQLEXPRESS.batchRequestsPerSec"
 	Group  string          `json:"group"` // "host" for the core measurements, else the group name
@@ -60,11 +64,19 @@ type bbSeriesLine struct {
 	Unit   string          `json:"unit"` // "pct", "bytes", "bytesPerSec", "ms", "sec", "perSec", "count"
 	Points []bbSeriesPoint `json:"points"`
 	// M4, when set (Shape "m4"), is what the answer carries as "points" instead.
-	M4 []bbSeriesPointM4 `json:"-"`
+	M4     []bbSeriesPointM4 `json:"-"`
+	Binary bool              `json:"-"`
 }
 
 func (l bbSeriesLine) MarshalJSON() ([]byte, error) {
 	type plain bbSeriesLine
+	if l.Binary {
+		n := len(l.Points) + len(l.M4)
+		return json.Marshal(struct {
+			plain
+			Points bbSeriesPointRef `json:"points"`
+		}{plain(l), bbSeriesPointRef{N: n}})
+	}
 	if l.M4 == nil {
 		return json.Marshal(plain(l))
 	}
@@ -94,10 +106,19 @@ type bbSeriesProc struct {
 	// With Shape "m4" these (M4On set) are answered as cpu, workingSet and privateBytes instead.
 	M4On                bool              `json:"-"`
 	M4CPU, M4WS, M4Priv []bbSeriesPointM4 `json:"-"`
+	Binary              bool              `json:"-"`
 }
 
 func (p bbSeriesProc) MarshalJSON() ([]byte, error) {
 	type plain bbSeriesProc
+	if p.Binary {
+		return json.Marshal(struct {
+			plain
+			CPU  bbSeriesPointRef `json:"cpu"`
+			WS   bbSeriesPointRef `json:"workingSet"`
+			Priv bbSeriesPointRef `json:"privateBytes"`
+		}{plain(p), bbSeriesPointRef{N: len(p.CPU) + len(p.M4CPU)}, bbSeriesPointRef{N: len(p.WS) + len(p.M4WS)}, bbSeriesPointRef{N: len(p.Priv) + len(p.M4Priv)}})
+	}
 	if !p.M4On {
 		return json.Marshal(plain(p))
 	}
@@ -154,6 +175,8 @@ type bbSeriesAnswer struct {
 	Read            bbReadSummary        `json:"read"`
 	State           blackbox.StateInfo   `json:"state"`
 	Truncated       bool                 `json:"truncated,omitempty"` // more measurements than the answer carries
+	// SQL says what the SQL service's part of the answer rests on (absent when it was not asked for).
+	SQL *bbSeriesSQL `json:"sql,omitempty"`
 }
 
 // bbAcc is the sum, lowest, highest and count of one bucket of one measurement.
@@ -403,7 +426,13 @@ func (h *handler) bbSeries(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	rp := rep
 	state := blackbox.DeriveState(blackbox.StateInput{Placed: true, Reading: &rd, Report: &rp})
-	writeJSON(w, http.StatusOK, buildBBSeriesShape(rd.Manifest, samples, rep, state, win, points, body.Shape == "m4", body.Width > 0 || body.Shape == "m4"), maxResponseBytes)
+	sqlRead := b.readSQLSamples(r.Context(), e, win)
+	ans := buildBBSeriesWith(rd.Manifest, samples, rep, state, win, points, body.Shape == "m4", body.Width > 0 || body.Shape == "m4", sqlRead)
+	if body.Shape == "m4" && strings.Contains(r.Header.Get("Accept"), bbSeriesBinaryType) {
+		writeBBSeriesBinary(w, ans)
+		return
+	}
+	writeJSON(w, http.StatusOK, ans, maxResponseBytes)
 }
 
 // bbSeriesPointCount is the number of buckets to answer: the asked points (the
@@ -434,6 +463,12 @@ func buildBBSeries(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.
 // holds more than points buckets (the default answer holds one more when the
 // window divides evenly, and stays as it was).
 func buildBBSeriesShape(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.ReadReport, state blackbox.StateInfo, win bbWindow, points int, m4, bound bool) bbSeriesAnswer {
+	return buildBBSeriesWith(m, samples, rep, state, win, points, m4, bound, nil)
+}
+
+// buildBBSeriesWith is buildBBSeriesShape with the SQL service's samples for the same window
+// (nil when they were not read: the answer then has no "sql" part and no sqlDmv lines).
+func buildBBSeriesWith(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.ReadReport, state blackbox.StateInfo, win bbWindow, points int, m4, bound bool, sqlIn *bbSQLRead) bbSeriesAnswer {
 	width := win.End.Sub(win.Start) / time.Duration(points)
 	if bound {
 		width++ // span/width + 1 <= points, as M4BucketMs does for the case series
@@ -538,6 +573,12 @@ func buildBBSeriesShape(m blackbox.Manifest, samples []blackbox.Sample, rep blac
 			}
 		}
 	}
+
+	if sqlIn != nil {
+		// The SQL service's part is not a group of the host sample: it has its own cover, only when it was read.
+		cover[bbDmvGroup] = &bbSeriesGroupCover{Group: bbDmvGroup}
+	}
+	addSQLSeries(bk, cover, sqlIn)
 
 	keys := make([]string, 0, len(bk.byKey))
 	for k := range bk.byKey {
@@ -644,10 +685,13 @@ func buildBBSeriesShape(m blackbox.Manifest, samples []blackbox.Sample, rep blac
 	for _, g := range bbSeriesGroups {
 		groups = append(groups, *cover[g])
 	}
+	if c := cover[bbDmvGroup]; c != nil {
+		groups = append(groups, *c)
+	}
 	ans := bbSeriesAnswer{
 		Start: win.Start, End: win.End, BucketSeconds: int(width / time.Second), IntervalSeconds: m.CadenceSeconds(),
 		Samples: len(samples), Lines: lines, Groups: groups, Processes: procs, EventIDs: evs, Dumps: dl,
-		Gaps: gaps, Markers: marks, Read: summarize(rep), State: state, Truncated: bk.over,
+		Gaps: gaps, Markers: marks, Read: summarize(rep), State: state, Truncated: bk.over, SQL: bbSQLSummary(sqlIn),
 	}
 	if len(samples) > 0 {
 		f, l := samples[0].T.UTC(), samples[len(samples)-1].T.UTC()

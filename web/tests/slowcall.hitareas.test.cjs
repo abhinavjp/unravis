@@ -66,6 +66,17 @@ test('three stacked bar rows: the free space is split at the middle of each gap,
   for (const k of ['r0', 'r1', 'r2']) assert.ok(contains(m.get(k), rows.find((r) => r.key === k)));
 });
 
+test('upper stacked bars can reach 24 px inside their own non-interactive name row', () => {
+  const rows = [bar('r0', 500, 540, 0), bar('r1', 500, 540, 1), bar('r2', 500, 540, 2)];
+  const m = barPressAreas(rows, 24, 42, 1000, 100, 0, -40);
+  assert.deepEqual(size(m.get('r0')), { w: 40, h: 42 });
+  assert.ok(m.get('r0').y.a < 0, 'the upper bar uses the name row');
+  assert.ok(m.get('r0').y.a >= -40, 'but stays inside its own lane');
+  assert.ok(!overlaps(m.get('r0'), m.get('r1')));
+  assert.ok(!overlaps(m.get('r0'), rows[1]));
+  for (const k of ['r0', 'r1', 'r2']) assert.ok(contains(m.get(k), rows.find((r) => r.key === k)));
+});
+
 test('two bars side by side in one row share the gap between them; a bar far away keeps its full width', () => {
   const m = barPressAreas([bar('a', 100, 104, 0), bar('b', 112, 116, 0), bar('c', 600, 604, 0)], 24, 24, 1000, 100);
   assert.equal(m.get('a').x.b, 108);

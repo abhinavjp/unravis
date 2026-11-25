@@ -1,0 +1,338 @@
+package main
+
+// sqllogin.go: set-sql-login and clear-sql-login.
+//
+// These are the only commands that touch the stored SQL login (see
+// internal/bbsql/login.go). They run as an administrator, never run SQL and
+// never print, log or answer with any part of the login: every failure is a
+// fixed reason and a fixed sentence. The login arrives either on standard
+// input (an administrator at a console) or in a short-lived file that Unravis
+// made and hashed before the permission prompt (--login-file with
+// --login-sha256). The file is only read here; Unravis removes it.
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	"api-audit-explorer/internal/bbsql"
+	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/sealedfile"
+)
+
+const maxLoginInput = 8 << 10
+
+// Fixed reasons of the login commands.
+const (
+	reasonLoginInvalid = "login-invalid"
+	reasonLoginSave    = "login-save"
+	reasonLoginNoSQL   = "login-no-sql"
+)
+
+func init() {
+	sqlReasonSentences[reasonLoginInvalid] = "The SQL login settings are not valid. Check the server name, login and password."
+	sqlReasonSentences[reasonLoginSave] = "The SQL login could not be saved or removed."
+	sqlReasonSentences[reasonLoginNoSQL] = "Install the SQL service first (install-sql). The login is saved inside its locked folder."
+}
+
+// loginInput is the document the command reads. Unknown fields are refused.
+type loginInput struct {
+	Server                 string `json:"server"`
+	User                   string `json:"user"`
+	Password               string `json:"password"`
+	TrustServerCertificate bool   `json:"trustServerCertificate"`
+}
+
+type loginErr string
+
+func (e loginErr) Error() string { return string(e) }
+
+func (a answer) failLogin(reason string) int {
+	msg := sqlReasonSentences[reason]
+	if a.asJSON {
+		_ = json.NewEncoder(a.out).Encode(map[string]any{"ok": false, "reason": reason, "message": msg})
+	} else {
+		_, _ = fmt.Fprintln(a.err, msg)
+	}
+	return exitFail
+}
+
+// sealer is the machine-wide protector for the saved login.
+func (d deps) loginSealer() (sealedfile.Protector, error) {
+	if d.sealer != nil {
+		return d.sealer()
+	}
+	return sealedfile.LocalMachine()
+}
+
+// readLoginInput reads the login document from the hash-bound file or stdin.
+func (d deps) readLoginInput(file, sha string, stdin bool) ([]byte, error) {
+	switch {
+	case file != "" && !stdin:
+		if sha == "" {
+			return nil, loginErr(reasonLoginInvalid)
+		}
+		fi, err := os.Lstat(file) //nolint:gosec // G703: the path Unravis made; the hash below binds the content
+		if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxLoginInput {
+			return nil, loginErr(reasonLoginInvalid)
+		}
+		// This program only READS the file: it never writes or deletes a path it was handed (a path in a folder an ordinary user can change
+		// could be swapped for a link). The hash binds the content, so a swapped file is refused; Unravis, which made the file, removes it.
+		f, err := os.Open(file) //nolint:gosec // the path Unravis made; the hash below binds the content
+		if err != nil {
+			return nil, loginErr(reasonLoginInvalid)
+		}
+		b, err := io.ReadAll(io.LimitReader(f, maxLoginInput+1))
+		_ = f.Close()
+		if err != nil || len(b) > maxLoginInput {
+			wipe(b)
+			return nil, loginErr(reasonLoginInvalid)
+		}
+		sum := sha256.Sum256(b)
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), strings.TrimSpace(sha)) {
+			wipe(b)
+			return nil, loginErr(reasonLoginInvalid)
+		}
+		return b, nil
+	case stdin && file == "":
+		in := d.stdin
+		if in == nil {
+			in = os.Stdin
+		}
+		b, err := io.ReadAll(io.LimitReader(in, maxLoginInput+1))
+		if err != nil || len(b) > maxLoginInput {
+			wipe(b)
+			return nil, loginErr(reasonLoginInvalid)
+		}
+		return b, nil
+	}
+	return nil, loginErr(reasonLoginInvalid)
+}
+
+func wipe(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+// sqlLoginDir is the SQL data folder a login may be saved into or removed from. The administrator check comes first; then the folder is
+// proved to be the one install-sql made and locked (d.confirmDir, normally SQLManager.ConfirmLoginDir). A settings path an ordinary user
+// handed in cannot point the login at an open folder: the folder comes from the admin-locked install record.
+func (d deps) sqlLoginDir(configPath string) (string, error) {
+	if !d.sqlMgr.Env.IsAdmin() {
+		return "", blackbox.ErrNotAdmin
+	}
+	cfg, err := loadInstalledConfig(configPath)
+	if err != nil {
+		return "", err
+	}
+	if d.confirmDir != nil {
+		return d.confirmDir(cfg, configPath)
+	}
+	return d.sqlMgr.ConfirmLoginDir(cfg, configPath)
+}
+
+// readLogin reads and checks the login document without touching the service or the folder, so a bad or missing file is found before
+// anything is stopped. It returns "" on success or the fixed reason of the failure.
+func readLogin(d deps, file, sha string, stdin bool) (bbsql.StoredLogin, string) {
+	raw, err := d.readLoginInput(file, sha, stdin)
+	if err != nil {
+		return bbsql.StoredLogin{}, reasonLoginInvalid
+	}
+	defer wipe(raw)
+	var in loginInput
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&in) != nil {
+		return bbsql.StoredLogin{}, reasonLoginInvalid
+	}
+	s := bbsql.StoredLogin{Server: in.Server, Login: bbsql.Login{User: in.User, Password: in.Password}, TrustServerCertificate: in.TrustServerCertificate}
+	if s.Validate() != nil {
+		return bbsql.StoredLogin{}, reasonLoginInvalid
+	}
+	return s, ""
+}
+
+// sealLogin seals a checked login into dir. It returns "" on success or the fixed reason of the failure.
+func sealLogin(d deps, dir string, s bbsql.StoredLogin) string {
+	if fi, serr := os.Stat(dir); serr != nil || !fi.IsDir() {
+		return reasonLoginNoSQL
+	}
+	p, err := d.loginSealer()
+	if err != nil {
+		return reasonLoginSave
+	}
+	if err := bbsql.SaveLogin(dir, s, p); err != nil {
+		return reasonLoginSave
+	}
+	return ""
+}
+
+// saveLogin reads the login document and seals it into dir. It returns "" on success or the fixed reason of the failure.
+func saveLogin(d deps, dir, file, sha string, stdin bool) string {
+	if fi, serr := os.Stat(dir); serr != nil || !fi.IsDir() {
+		return reasonLoginNoSQL
+	}
+	s, reason := readLogin(d, file, sha, stdin)
+	if reason != "" {
+		return reason
+	}
+	return sealLogin(d, dir, s)
+}
+
+func runSetSQLLogin(a answer, d deps, configPath, file, sha string, stdin bool) int {
+	dir, err := d.sqlLoginDir(configPath)
+	if err != nil {
+		return a.failSQL(err)
+	}
+	if reason := saveLogin(d, dir, file, sha, stdin); reason != "" {
+		return a.failLogin(reason)
+	}
+	return a.ok("The SQL login is saved on this PC. Restart the SQL service (enable-sql) to use it. It is not in the settings file, the logs or any pack.",
+		map[string]any{"saved": true})
+}
+
+// runSetupSQL is the one elevated call the app makes to turn SQL collection on: it installs the SQL service when it is not there,
+// saves the login (or goes back to Windows sign-in with --windows-signin) and, with --enable, starts it. With Windows sign-in the owner
+// must run the printed grant first, so the app calls it without --enable and enables later; with a SQL login there is no grant.
+func runSetupSQL(a answer, d deps, configPath, file, sha string, windows, enable bool) int {
+	if (file == "") == !windows {
+		// exactly one of --login-file and --windows-signin
+		return a.failLogin(reasonLoginInvalid)
+	}
+	if !d.sqlMgr.Env.IsAdmin() {
+		return a.failSQL(blackbox.ErrNotAdmin)
+	}
+	cfg, err := loadInstalledConfig(configPath)
+	if err != nil {
+		return a.failSQL(err)
+	}
+	// The login is read and checked before anything is installed or stopped: a missing, swapped or invalid file must not leave a working
+	// service stopped.
+	var login bbsql.StoredLogin
+	if !windows {
+		var reason string
+		if login, reason = readLogin(d, file, sha, false); reason != "" {
+			return a.failLogin(reason)
+		}
+	}
+	st, err := d.sqlMgr.Svc.State(blackbox.SQLServiceName)
+	if err != nil {
+		return a.failSQL(err)
+	}
+	fields := map[string]any{"service": blackbox.SQLServiceName}
+	if st == blackbox.SvcNotInstalled {
+		if err := d.sqlMgr.InstallSQL(cfg, configPath); err != nil {
+			return a.failSQL(err)
+		}
+		fields["installed"] = true
+	}
+	// The folder is proved only now: the install record and the folder lock exist once install-sql has run.
+	dir, err := d.sqlLoginDir(configPath)
+	if err != nil {
+		return a.failSQL(err)
+	}
+	// The service reads its login only when it starts. A running service is stopped here so it never goes on using the old login unnoticed;
+	// with a SQL login it is started again below (a restart), with Windows sign-in it stays stopped until the owner has run the grant.
+	wasRunning := st == blackbox.SvcRunning || st == blackbox.SvcStartPending
+	// A failure after the stop puts the service back the way it was (best effort), so collection that worked is not left off.
+	back := func() {
+		if wasRunning {
+			_ = d.sqlMgr.EnableSQL(cfg, configPath)
+		}
+	}
+	if wasRunning {
+		if err := stopSQLService(d, 30*time.Second); err != nil {
+			return a.failSQL(err)
+		}
+		fields["stopped"] = true
+	}
+	if windows {
+		if err := bbsql.RemoveLogin(dir); err != nil {
+			back()
+			return a.failLogin(reasonLoginSave)
+		}
+		if !enable {
+			// Stopped is not enough for a service that starts by itself: latch it off until the owner has run the grant and enables it.
+			if err := d.sqlMgr.UnarmSQL(cfg); err != nil {
+				return a.failSQL(err)
+			}
+		}
+		fields["loginSaved"] = false
+		fields["account"] = blackbox.SQLServiceAccount
+		fields["grantScript"] = grantScript
+	} else {
+		if reason := sealLogin(d, dir, login); reason != "" {
+			back()
+			return a.failLogin(reason)
+		}
+		fields["loginSaved"] = true
+	}
+	if enable || (wasRunning && !windows) {
+		if err := d.sqlMgr.EnableSQL(cfg, configPath); err != nil {
+			return a.failSQL(err)
+		}
+		fields["started"] = true
+	} else {
+		fields["started"] = false
+	}
+	return a.ok("The SQL service is set up.", fields)
+}
+
+// stopSQLService stops the SQL service and waits for it to be stopped.
+func stopSQLService(d deps, within time.Duration) error {
+	svc := d.sqlMgr.Svc
+	if err := svc.Stop(blackbox.SQLServiceName); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(within)
+	for {
+		st, err := svc.State(blackbox.SQLServiceName)
+		if err != nil {
+			return err
+		}
+		if st == blackbox.SvcStopped || st == blackbox.SvcNotInstalled {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("the SQL service did not stop")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func runClearSQLLogin(a answer, d deps, configPath string) int {
+	dir, err := d.sqlLoginDir(configPath)
+	if err != nil {
+		return a.failSQL(err)
+	}
+	// Stop a running service: it would go on using the old login until its next start. After the grant for Windows sign-in, enable-sql starts it.
+	wasRunning := false
+	if st, serr := d.sqlMgr.Svc.State(blackbox.SQLServiceName); serr == nil && (st == blackbox.SvcRunning || st == blackbox.SvcStartPending) {
+		if err := stopSQLService(d, 30*time.Second); err != nil {
+			return a.failSQL(err)
+		}
+		wasRunning = true
+	}
+	if err := bbsql.RemoveLogin(dir); err != nil {
+		if wasRunning { // the login is still there: put the service back as it was (best effort)
+			if cfg, cerr := loadInstalledConfig(configPath); cerr == nil {
+				_ = d.sqlMgr.EnableSQL(cfg, configPath)
+			}
+		}
+		return a.failLogin(reasonLoginSave)
+	}
+	if cfg, cerr := loadInstalledConfig(configPath); cerr == nil {
+		if err := d.sqlMgr.UnarmSQL(cfg); err != nil {
+			return a.failSQL(err)
+		}
+	}
+	return a.ok("The saved SQL login is removed and the SQL service is stopped. Run the grant for Windows sign-in, then start it again (enable-sql).", map[string]any{"saved": false})
+}

@@ -20,9 +20,12 @@ package main
 import (
 	"context"
 	"os"
+	"slices"
+	"sort"
 
 	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/sealedfile"
 )
 
 // sqlLocalServer is the only SQL target this build can reach. C12 keeps the
@@ -75,7 +78,14 @@ func runSQLServiceLoop(ctx context.Context, o sqlRunOptions) error {
 		log("sql: " + bbsql.CodeFolder)
 		return err
 	}
-	r := bbsql.NewRunner(o.Dir, sqlConnConfig(o.Config.Probe))
+	conn, err := sqlConnFor(o.Dir, o.Config.Probe, loginProtector)
+	if err != nil {
+		log("sql: " + bbsql.CodeLoginUnreadable) // the fixed code only, never a path or the login
+		return err
+	}
+	r := bbsql.NewRunner(o.Dir, conn)
+	r.EnabledExtras = sqlEnabledExtras(o.Config)
+	r.QueryTextMaxChars = sqlQueryTextChars(o.Config)
 	r.MinFreePercent, r.KeepHours, r.MaxBytes = sqlDiskBounds(o.Config)
 	r.FreePercent = sqlFreePercent
 	r.Log = log
@@ -102,6 +112,43 @@ func sqlFreePercent(path string) (float64, error) {
 	return info.FreePercent(), nil
 }
 
+// sqlEnabledExtras is the extra sampler kinds to run on top of Standard: the ones the profile turns on plus the names in sql.extras.
+// bbsql ignores a name no sampler knows, so a typo or a stale list cannot change what is sent. Standard (the default) adds nothing.
+func sqlEnabledExtras(c blackbox.Config) []string {
+	kinds := bbsql.ExtrasForProfile(c.SQLProfileName())
+	if c.SQL != nil {
+		kinds = append(kinds, c.SQL.Extras...)
+	}
+	sort.Strings(kinds)
+	return slices.Compact(kinds)
+}
+
+// loginProtector is the machine-wide protector the stored login is sealed with.
+// A test seam; nil-safe behaviour lives in bbsql.LoadLogin.
+var loginProtector = func() (sealedfile.Protector, error) { return sealedfile.LocalMachine() }
+
+// sqlConnFor is the connection the service uses: the stored login when one is
+// saved in the locked folder, else Windows sign-in on the local instance. A
+// login file that is there but cannot be read stops the service with a fixed
+// error: it never falls back to Windows sign-in by surprise.
+func sqlConnFor(dir string, p blackbox.Probe, prot func() (sealedfile.Protector, error)) (bbsql.ConnConfig, error) {
+	base := sqlConnConfig(p)
+	pr, err := prot()
+	if err != nil {
+		pr = nil // LoadLogin turns a missing protector into the fixed error when a login file is there
+	}
+	// LoadLogin alone decides: "not there" is the only answer that means Windows sign-in. A file that is there but cannot be checked or read
+	// (access denied, a sharing violation, a damaged file) is an error, never a fall back.
+	s, found, err := bbsql.LoadLogin(dir, pr)
+	if err != nil {
+		return bbsql.ConnConfig{}, err
+	}
+	if !found {
+		return base, nil
+	}
+	return s.Conn(base), nil
+}
+
 // sqlConnConfig maps the probe block onto the connection settings. Empty
 // anchors mean no anchor, and bbsql.Open then fails closed rather than
 // accepting an unverifiable certificate. The C4 per-query budgets are not
@@ -113,4 +160,13 @@ func sqlConnConfig(p blackbox.Probe) bbsql.ConnConfig {
 		Certificate:           p.Certificate,
 		HostNameInCertificate: p.HostNameInCertificate,
 	}
+}
+
+// sqlQueryTextChars is the size cap of one kept statement, or 0 when query text is off. It is nonzero only for the deep profile with
+// sql.queryText set (Config.SQLQueryText); the one value that switches the text sampler on in bbsql.
+func sqlQueryTextChars(c blackbox.Config) int {
+	if on, n := c.SQLQueryText(); on {
+		return n
+	}
+	return 0
 }

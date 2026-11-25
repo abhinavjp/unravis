@@ -1,0 +1,30 @@
+unravis | --json bool, --no-color bool, --output string, --output-file string, --overwrite bool, --profile string, --quiet bool, --request string, --timeout duration
+unravis app start | --headless bool
+unravis app status | 
+unravis app stop | 
+unravis app | 
+unravis audit activity | --cursor string, --end string, --limit int, --source stringArray, --start string
+unravis audit breakdown | --dim string, --include-ip bool, --result-id string, --top int
+unravis audit compare | --action string, --audit-id string, --baseline-end string, --baseline-start string, --bucket-seconds int, --completion string, --controller string, --end string, --kind string, --limit int, --metric string, --operation string, --outcome string, --sort string, --source stringArray, --start string, --status-code stringArray, --ui-version stringArray, --url-contains string, --user-agent-contains string, --user-id stringArray, --user-ip stringArray
+unravis audit groups | --limit int, --offset int, --result-id string, --search string, --sort string, --state string
+unravis audit guide | 
+unravis audit requests | --api-key string, --cursor string, --limit int, --max-bytes int64, --max-rows int, --result-id string
+unravis audit slowest | --cursor string, --limit int, --max-bytes int64, --max-rows int, --min-ms float64, --result-id string
+unravis audit timeline | --api-key string, --result-id string
+unravis audit timelines compare | --api-key stringArray, --result-id string
+unravis audit timelines | 
+unravis audit | 
+unravis blackbox inspect | --from string, --input string, --max-bytes int64, --offline bool, --samples int, --to string
+unravis blackbox | 
+unravis cases list | --archived bool, --offset int
+unravis cases show | 
+unravis cases | 
+unravis code run | --allow-identifiers bool, --case string, --code string, --reason string, --timeout-ms int
+unravis code types | 
+unravis code | 
+unravis completion | 
+unravis doctor | 
+unravis schema | 
+unravis sources list | 
+unravis sources | 
+unravis version | 

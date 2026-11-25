@@ -144,6 +144,11 @@ jobs:
         working-directory: web
         run: npm test
 
+      - name: Code mode declarations compile (BL-364)
+        # internal/codemode/bindings/testdata/unravis.d.ts with the pinned TypeScript of this build; test tool only, never shipped.
+        if: ${{ !cancelled() }}
+        run: node tools/codemode/check-dts.mjs
+
       - name: Web - build
         if: ${{ !cancelled() }}
         working-directory: web
@@ -516,6 +521,14 @@ jobs:
         shell: pwsh
         run: |
           go test -count=1 -v -run '^(TestShutdown.*|TestKillDuringWriteReopens)$' ./cmd/audit-explorer/... ./internal/pipesrv/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Adapter parity and Windows power policy
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./internal/power
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go test -count=1 -v -run '^(TestParity.*|TestSnapshot.*)$' ./internal/clicore/cmdtree
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Real exe in pipe-only mode (no port, no session file, both pipes)

@@ -71,7 +71,8 @@ export async function startDemo(opts: StartOptions = {}): Promise<Demo> {
   mkdirSync(configDir, { recursive: true });
   mkdirSync(scratch, { recursive: true });
 
-  const env: NodeJS.ProcessEnv = { ...process.env, AUDIT_CONFIG_DIR: configDir, UNRAVIS_DEMO_NOW: DEMO_NOW };
+  // UNRAVIS_DEMO_MCP gives the demo its own grant store with four made-up hosts (AI access screen, BL-347); the store is the real one.
+  const env: NodeJS.ProcessEnv = { ...process.env, AUDIT_CONFIG_DIR: configDir, UNRAVIS_DEMO_NOW: DEMO_NOW, UNRAVIS_DEMO_MCP: '1' };
   if (opts.cases === false) delete env.UNRAVIS_DEMO_CASES;
   else env.UNRAVIS_DEMO_CASES = '1';
 

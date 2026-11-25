@@ -15,7 +15,7 @@
 //   STORY-10  A reload of the page whose health read fails keeps the health checks Story so far already shows (a failed read puts nothing in).
 //   STORY-07  No request storm: a return inside the gap, or while the page is hidden, reads nothing; five returns together read once.
 import { test, expect, type Page } from '../support/fixtures';
-import { goHome, openCase } from '../support/ui';
+import { goHome, layoutSettled, openCase } from '../support/ui';
 import { createCase, ensureHost, importFile, HOST } from '../support/api';
 
 const FIELDS = '#Fields: date time s-sitename s-computername s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Cookie) cs(Referer) sc-status sc-substatus sc-win32-status time-taken';
@@ -219,8 +219,11 @@ test('STORY-05: a file added through the case API shows in Story so far when the
   const id = await createCase(api, title);
   await openStory(page, title);
   await expect(storyFiles(page)).toHaveCount(0);
+  // Measure once the page has stopped moving: the same two reads in a row are the place to hold to.
+  const panelBox = () => page.locator('section[aria-labelledby="home-story"]').boundingBox();
+  let panelBefore = await panelBox();
+  await expect.poll(async () => { const now = await panelBox(); const same = JSON.stringify(now) === JSON.stringify(panelBefore); panelBefore = now; return same; }, { intervals: [250] }).toBe(true);
   const headingBefore = await page.getByRole('heading', { name: 'Story so far' }).boundingBox();
-  const panelBefore = await page.locator('section[aria-labelledby="home-story"]').boundingBox();
 
   await away(page);
   await addByApi(api, id, '05');
@@ -282,9 +285,12 @@ test('STORY-07: no request storm: a return inside the gap or while hidden reads 
   const title = 'QA Story Return Storm';
   const id = await createCase(api, title);
   await openStory(page, title);
+  await layoutSettled(page);
   const reads = watchReads(page, id);
   const panel = page.locator('section[aria-labelledby="home-story"]');
-  const rectBefore = await panel.boundingBox();
+  // Measure once the page has stopped moving (fonts, scrollbar, late rows); the same two reads in a row are the place to hold to.
+  let rectBefore = await panel.boundingBox();
+  await expect.poll(async () => { const now = await panel.boundingBox(); const same = JSON.stringify(now) === JSON.stringify(rectBefore); rectBefore = now; return same; }, { intervals: [250] }).toBe(true);
 
   // Just read: a return now reads nothing.
   await back(page);
@@ -402,4 +408,79 @@ test('STORY-10: a reload of the page whose health read fails keeps the health ch
   await expect(page.locator('.loading-state')).toHaveCount(0);
   // The health read of the reload failed: the check stays in the story (it did not become "none").
   await expect(health).toHaveCount(1);
+});
+
+test('STORY-11: an older held case, file and health answer cannot replace a newer successful re-read', async ({ page, api }) => {
+  const title = 'QA Story Newest Re-read';
+  const id = await createCase(api, title);
+  await ensureHost(api);
+  expect((await importFile(api, id, IIS_TEXT('11a'), { name: 'u_ex261011a.log', importer: 'iis-w3c' })).status).toBeLessThan(300);
+  const oldRun = { id: 1, at: '2026-10-20T08:30:00Z', kind: 'sql', label: 'Orders database', status: 'warn', report: null };
+  const newRun = { id: 2, at: '2026-10-20T08:45:00Z', kind: 'mongo', label: 'Events database', status: 'ok', report: null };
+  await page.route(new RegExp(`/api/cases/${id}/health$`), async (route) => {
+    if (route.request().method() !== 'GET') { await route.fallback(); return; }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runs: [oldRun] }) });
+  });
+  await openStory(page, title);
+  await expect(storyFiles(page)).toHaveCount(1);
+  const oldCase = (await api('GET', `/api/cases/${id}`)).json;
+  const oldFiles = (await api('GET', `/api/cases/${id}/imports`)).json;
+  expect((await importFile(api, id, IIS_TEXT('11b'), { name: 'u_ex261011b.log', importer: 'iis-w3c' })).status).toBeLessThan(300);
+  const newFiles = (await api('GET', `/api/cases/${id}/imports`)).json;
+
+  let armed = false;
+  let caseReads = 0, fileReads = 0, healthReads = 0;
+  let releaseOldCase!: () => void, releaseNewFiles!: () => void, releaseNewHealth!: () => void;
+  let oldCaseSeen!: () => void, newFilesSeen!: () => void, newHealthSeen!: () => void;
+  let oldFilesSeen!: () => void, oldHealthSeen!: () => void;
+  const held = () => { let release!: () => void; const gate = new Promise<void>((resolve) => (release = resolve)); return { gate, release }; };
+  const noticed = () => { let seen!: () => void; const promise = new Promise<void>((resolve) => (seen = resolve)); return { promise, seen }; };
+  const oldCaseGate = held(), newFilesGate = held(), newHealthGate = held();
+  const oldCaseNotice = noticed(), newFilesNotice = noticed(), newHealthNotice = noticed(), oldFilesNotice = noticed(), oldHealthNotice = noticed();
+  releaseOldCase = oldCaseGate.release; releaseNewFiles = newFilesGate.release; releaseNewHealth = newHealthGate.release;
+  oldCaseSeen = oldCaseNotice.seen; newFilesSeen = newFilesNotice.seen; newHealthSeen = newHealthNotice.seen; oldFilesSeen = oldFilesNotice.seen; oldHealthSeen = oldHealthNotice.seen;
+  const answer = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+
+  await page.route(new RegExp(`/api/cases/${id}$`), async (route) => {
+    if (!armed || route.request().method() !== 'GET') { await route.fallback(); return; }
+    caseReads += 1;
+    if (caseReads === 1) { oldCaseSeen(); await oldCaseGate.gate; await route.fulfill(answer(oldCase)); }
+    else await route.fulfill({ response: await route.fetch() });
+  });
+  await page.route(new RegExp(`/api/cases/${id}/imports$`), async (route) => {
+    if (!armed || route.request().method() !== 'GET') { await route.fallback(); return; }
+    fileReads += 1;
+    if (fileReads === 1) { newFilesSeen(); await newFilesGate.gate; await route.fulfill(answer(newFiles)); }
+    else { oldFilesSeen(); await route.fulfill(answer(oldFiles)); }
+  });
+  await page.route(new RegExp(`/api/cases/${id}/health$`), async (route) => {
+    if (!armed || route.request().method() !== 'GET') { await route.fallback(); return; }
+    healthReads += 1;
+    if (healthReads === 1) { newHealthSeen(); await newHealthGate.gate; await route.fulfill(answer({ runs: [oldRun, newRun] })); }
+    else { oldHealthSeen(); await route.fulfill(answer({ runs: [oldRun] })); }
+  });
+  armed = true;
+  await page.waitForTimeout(GAP);
+  await away(page);
+  await back(page);
+  await oldCaseNotice.promise;
+
+  // Close starts the newer re-read while the return read is still held. Its case answer arrives first; its file and health answers wait.
+  await page.getByRole('button', { name: 'Close this case' }).click();
+  await Promise.all([newFilesNotice.promise, newHealthNotice.promise]);
+  releaseOldCase();
+  await Promise.all([oldFilesNotice.promise, oldHealthNotice.promise]);
+  releaseNewFiles();
+  releaseNewHealth();
+
+  await expect(page.getByText(/^This case is closed\./)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reopen this case' })).toBeVisible();
+  const count = (label: string) => page.locator('dl.counts dt').filter({ hasText: label }).locator('..').locator('dd');
+  await expect(count('Files')).toHaveText('2');
+  await expect(count('Health checks')).toHaveText('2');
+  await expect(storyFiles(page)).toHaveCount(2);
+  await page.waitForTimeout(300);
+  await expect(page.getByText(/^This case is closed\./)).toBeVisible();
+  await expect(count('Files')).toHaveText('2');
+  await expect(count('Health checks')).toHaveText('2');
 });

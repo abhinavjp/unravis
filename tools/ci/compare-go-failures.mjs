@@ -12,15 +12,29 @@ import fs from 'node:fs';
 
 const args = process.argv.slice(2);
 const opt = (n) => { const i = args.indexOf(n); return i < 0 ? null : args[i + 1]; };
-const jsonFile = opt('--json'), baselineFile = opt('--baseline'), write = args.includes('--write');
+let baselineFile = opt('--baseline');
+const jsonFile = opt('--json'), write = args.includes('--write');
 if (!jsonFile || !baselineFile) { console.error('usage: --json <file> --baseline <file> [--write] [--out summary.md]'); process.exit(2); }
 
+// The baseline holds the failures of the machine CI runs on (Linux: the Windows-only tests fail there). The local
+// pipeline runs this step on a Windows PC, where a different set fails (privileges, the startup folder, ...), so
+// there the sibling "<name>.windows.txt" is the baseline when it exists. Same rule either way: only a failure that
+// is not in the baseline is new. Without that file a Windows run compares with the Linux baseline, as before.
+// --os pins the host for the tests.
+const hostOS = opt('--os') || process.platform;
+if (!write && hostOS === 'win32' && baselineFile && !/\.windows\.txt$/.test(baselineFile)) {
+  const alt = baselineFile.replace(/\.txt$/, '.windows.txt');
+  if (fs.existsSync(alt)) { console.log(`Windows host: comparing with ${alt}`); baselineFile = alt; }
+}
+
+const testOutput = new Map(); // "<package>.<Test>" -> its output chunks
 const failedTests = new Set(), passedTests = new Set(), pkgFail = new Set(), pkgsWithFailedTest = new Set(), pkgPanic = new Set();
 for (const line of fs.readFileSync(jsonFile, 'utf8').split('\n')) {
   if (!line.startsWith('{')) continue;
   let e; try { e = JSON.parse(line); } catch { continue; }
   if (!e.Package) continue;
-  if (e.Action === 'output' && /^(panic: |FAIL\t.*\[build failed\])/.test(e.Output || '')) pkgPanic.add(e.Package);
+  if (e.Action === 'output' && e.Test) { const k = `${e.Package}.${e.Test}`; if (!testOutput.has(k)) testOutput.set(k, []); testOutput.get(k).push(e.Output || ''); }
+  if (e.Action === 'output' && /^(panic:|FAIL\t.*\[build failed\])/.test(e.Output || '')) pkgPanic.add(e.Package);
   if (e.Action === 'fail' && e.Test) { failedTests.add(`${e.Package}.${e.Test}`); pkgsWithFailedTest.add(e.Package); }
   else if (e.Action === 'pass' && e.Test) passedTests.add(`${e.Package}.${e.Test}`);
   else if (e.Action === 'fail' && !e.Test) pkgFail.add(e.Package);
@@ -39,7 +53,12 @@ const baseline = new Set(fs.existsSync(baselineFile) ? fs.readFileSync(baselineF
 const fresh = failures.filter((f) => !baseline.has(f));
 const stale = [...baseline].filter((b) => passedTests.has(b));
 for (const s of stale) console.log(`::notice::baseline entry now passes, trim it from ${baselineFile}: ${s}`);
-for (const f of fresh) console.log(`NEW FAILURE ${f}`);
+for (const f of fresh) {
+  console.log(`NEW FAILURE ${f}`);
+  // The last lines of the failing test's own output, so the log says why (the JSON itself is not kept).
+  const lines = (testOutput.get(f) || []).join('').split('\n').filter((l) => l.trim()).slice(-40);
+  for (const l of lines) console.log(`    | ${l}`);
+}
 const summary = `### Go failures vs baseline\n\n| | count |\n|---|---|\n| failing now | ${failures.length} |\n| in baseline | ${baseline.size} |\n| new | ${fresh.length} |\n| baseline now passing | ${stale.length} |\n`;
 if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + (fresh.length ? '\n' + fresh.map((f) => `- NEW FAILURE \`${f}\``).join('\n') + '\n' : ''));
 const out = opt('--out'); if (out) fs.writeFileSync(out, summary);

@@ -54,7 +54,8 @@ export function sameRead(before: unknown, after: unknown): boolean {
  * add, the read on return, and the one a finished check asks for. A read takes a number when it starts (`begin`) and asks `accept` when its
  * answer is in: it is put in only when no read that started later has already put its answer in, so an older list that was slow never replaces
  * a newer one. A read that fails, or is thrown away, never calls `accept`, so it cannot hold back an answer that is right.
- * A read takes its number only while it is still wanted (the page still shows its case): take it after that check, never before.
+ * A read takes its number when it starts, before its first await, so a slow older read cannot become the newest one after it answers.
+ * The page takes it only while the read is still wanted (the page still shows its case).
  */
 export function newestWins(): { begin: () => number; accept: (token: number) => boolean } {
   let started = 0;

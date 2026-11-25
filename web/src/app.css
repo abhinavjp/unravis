@@ -1,5 +1,6 @@
 @import "./brand/tokens.css";
 
+
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; min-height: 100%; }
 /* A pinned Back/Next bar must not hide the control that keyboard focus just moved to (WCAG 2.2 Focus Not Obscured). Room for the bar, only while one is on the page. */
@@ -32,7 +33,7 @@ input, textarea { caret-color: var(--accent); }
 .app-shell { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
 .topbar { position: relative; z-index: 12; flex: 0 0 var(--header-h); min-height: var(--header-h); padding: 0 24px; display: flex; align-items: center; gap: 18px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .brand-lockup { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
-.brand-lockup h1 { margin: 0; font-size: 16px; line-height: 1.1; font-weight: 600; letter-spacing: -.01em; }
+.brand-lockup .brand-name { margin: 0; font-size: 16px; line-height: 1.1; font-weight: 600; letter-spacing: -.01em; }
 .brand-mark { width: 26px; height: 26px; padding: 5px; display: flex; align-items: end; gap: 2px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--line); }
 .brand-mark span { display: block; flex: 1; border-radius: 1px; background: var(--accent); }
 .brand-mark span:nth-child(1) { height: 7px; opacity: .55; }
@@ -80,9 +81,9 @@ input, textarea { caret-color: var(--accent); }
 
 /* ---------- Scope bar and chips ---------- */
 .scope { flex: 0 0 auto; z-index: 9; padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--line); }
-.scope-main { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; max-width: 1560px; margin: 0 auto; }
+.scope-main { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; max-width: var(--page-max); margin: 0 auto; }
 .scope-main .run-actions { margin-left: auto; }
-.scope .interval-note { max-width: 1560px; margin: 6px auto 0; color: var(--text-2); font-size: 12px; }
+.scope .interval-note { max-width: var(--page-max); margin: 6px auto 0; color: var(--text-2); font-size: 12px; }
 .query-controls.part-bar { display: contents; }
 .scope-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; min-width: 0; }
 .quick-ranges, .kind-control { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
@@ -121,11 +122,13 @@ input, textarea { caret-color: var(--accent); }
 .chip-clear:hover { color: var(--text); }
 
 /* ---------- Stage and depth views ---------- */
+/* A new case-home row must not shift the page sideways when it makes the stage scroll. */
 .stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 22px 24px 48px; scroll-padding-bottom: 80px; }
+.stage:has(.case-home.home) { scrollbar-gutter: stable; }
 .stage:focus { outline: none; }
 /* The wizard's Back/Next bar is pinned to the bottom edge of the scroller, so the stage keeps no padding under it (CASES-01): text no longer shows through a strip below the bar. */
 .stage:has(.wizard .bar) { padding-bottom: 0; }
-.stage-inner { max-width: 1560px; margin: 0 auto; display: grid; gap: 12px; min-width: 0; }
+.stage-inner { max-width: var(--page-max); margin: 0 auto; display: grid; gap: 12px; min-width: 0; }
 .stage-views { display: contents; }
 .view { min-width: 0; display: grid; gap: 12px; align-content: start; animation: reveal 200ms var(--ease) both; }
 .view.off { display: none; }
@@ -246,7 +249,7 @@ input, textarea { caret-color: var(--accent); }
 .phase-group p { margin: 0; color: var(--text-2); font-size: 12px; }
 .target-note { margin: 0; padding: 8px 0; color: var(--text-2); background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); border-radius: 0; font-size: 13px; }
 .target-note strong { color: var(--text); }
-.record-view { max-width: 1240px; }
+.record-view { max-width: min(var(--page-max), 1560px); }
 .record-view .back-to-groups { justify-self: start; }
 
 /* ---------- Buttons, banners, forms ---------- */
@@ -498,7 +501,8 @@ th.numeric { text-align: right; }
 .volume-table thead th { background: transparent; border-bottom-color: var(--hairline); font-weight: 500; }
 .request-volume .volume-table th:nth-child(n + 2):nth-child(-n + 3), .request-volume .volume-table td:nth-child(n + 2):nth-child(-n + 3), .traffic-windows .volume-table th:nth-child(n + 2):nth-child(-n + 5), .traffic-windows .volume-table td:nth-child(n + 2):nth-child(-n + 5), .breakdown-table th:nth-child(n + 2), .breakdown-table td:nth-child(n + 2) { text-align: right; }
 .breakdown-table .table-empty { text-align: left; }
-.volume-table tbody th { overflow-wrap: anywhere; max-width: 550px; background: transparent; color: var(--text); font-weight: 500; font-size: 13px; }
+/* min-width: the first column holds a name (an API, a time window); with only `overflow-wrap: anywhere` the table gave it its smallest width (about 70 px) and the words broke after a few letters (BL-538). */
+.volume-table tbody th { overflow-wrap: anywhere; min-width: 9rem; max-width: 550px; background: transparent; color: var(--text); font-weight: 500; font-size: 13px; }
 .request-volume .pagination-row > div { display: flex; gap: 8px; }
 .traffic-chart { width: 100%; height: 380px; min-width: 0; padding: 0 6px; }
 .traffic-slowness .volume-controls input[type=number], .traffic-slowness .volume-controls select { min-height: 34px; max-width: 100%; }
@@ -508,6 +512,10 @@ th.numeric { text-align: right; }
 .traffic-windows summary, .traffic-method summary { color: var(--accent); font-size: 13px; }
 .traffic-method p { margin: 10px 0; color: var(--text-2); font-size: 13px; }
 .traffic-windows .pagination-row { padding: 12px 0; }
+/* The slowest-request list: its API / source cell has a second line, so it gets more room (11rem), and the Started time and the API / audit time may wrap at their spaces so the list fits the 679 px panel of a 1440 px window and "Nearby activity" is not pushed out of the panel (BL-538). */
+.traffic-slowness .slow-result .volume-table tbody th { min-width: 11rem; }
+.traffic-slowness .slow-result .volume-table tbody td:first-child, .traffic-slowness .slow-result .volume-table tbody td:nth-child(5) { white-space: normal; }
+.traffic-slowness .keep-together { white-space: nowrap; }
 .traffic-slowness .volume-table th small { display: block; font-weight: 400; font-size: var(--fs-1); color: var(--text-2); margin-top: 4px; }
 /* The two headings start where the text of the controls and notes under them starts (14 px), not 2 px to the left (BL-537, UIFIX-52). Only the left side moves. */
 .traffic-slowness .section-heading { padding-left: 14px; }
@@ -672,7 +680,7 @@ th.numeric { text-align: right; }
 @media (max-width: 720px) {
   .app-shell { height: auto; min-height: 100vh; min-height: 100dvh; overflow: visible; }
   .topbar { position: sticky; top: 0; padding: 0 14px; gap: 0 8px; flex: 0 0 auto; flex-wrap: wrap; align-content: center; }
-  .brand-lockup h1 { font-size: 15px; }
+  .brand-lockup .brand-name { font-size: 15px; }
   .header-button .label { max-width: 11ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .scope { padding: 10px 14px; }
   .scope-main { gap: 8px 12px; }

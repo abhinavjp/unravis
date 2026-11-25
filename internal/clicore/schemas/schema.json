@@ -1,0 +1,8 @@
+{
+  "operation": "schema",
+  "description": "List the operations, or describe one: its input, output and errors.",
+  "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "properties": {"operation": {"type": "string", "description": "Operation id; omit to list them"}}},
+  "output": {"type": "object", "description": "Without an operation: {operations:[{operation, description}]}. With one: {operation, input, output, errors, examples}."},
+  "errors": ["UNKNOWN_OPERATION"],
+  "examples": [{"command": "unravis schema"}, {"command": "unravis schema audit.compare -o json"}]
+}

@@ -54,6 +54,9 @@ type BlackboxPC interface {
 	Remove(ctx context.Context, name string, deleteRecordings bool, confirmName string) (blackbox.RemoveOutcome, error)
 	Snapshot(ctx context.Context) (blackbox.SnapshotOutcome, error)
 	Update(ctx context.Context) (blackbox.UpdateOutcome, error)
+	// SetupSQL turns SQL collection on (one prompt); ClearSQLLogin deletes the saved SQL login.
+	SetupSQL(ctx context.Context, loginFile, loginSHA string, windows, enable bool) (blackbox.SQLSetupOutcome, error)
+	ClearSQLLogin(ctx context.Context) error
 }
 
 // BlackboxDeps wires the Blackbox pages. Only Store is required; a missing ThisPC
@@ -125,10 +128,12 @@ const (
 	bbProbeTimeout  = 8 * time.Second
 	bbReadTimeout   = 40 * time.Second
 	bbActionTimeout = 3 * time.Minute
-	bbMaxBody       = 1 << 20
-	bbMaxSpan       = 7 * 24 * time.Hour
-	bbMaxName       = 200
-	bbNewestLook    = 10 * time.Minute
+	// bbSQLSetupTimeout bounds turning SQL collection on: install, a stop of up to 30 seconds and a start, after the person has answered the prompt.
+	bbSQLSetupTimeout = 5 * time.Minute
+	bbMaxBody         = 1 << 20
+	bbMaxSpan         = 7 * 24 * time.Hour
+	bbMaxName         = 200
+	bbNewestLook      = 10 * time.Minute
 )
 
 /* ------------------------------------------------------------- routes */
@@ -177,6 +182,8 @@ func init() {
 		bbRoute("/api/blackbox/this-pc/apply", bbExact("/api/blackbox/this-pc/apply"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbApply(w, r) })),
 		bbRoute("/api/blackbox/this-pc/remove", bbExact("/api/blackbox/this-pc/remove"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbRemoveThisPC(w, r) })),
 		bbRoute("/api/blackbox/this-pc/update", bbExact("/api/blackbox/this-pc/update"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbUpdate(w, r) })),
+		bbRoute("/api/blackbox/this-pc/sql/setup", bbExact("/api/blackbox/this-pc/sql/setup"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbSQLSetup(w, r) })),
+		bbRoute("/api/blackbox/this-pc/sql/login/clear", bbExact("/api/blackbox/this-pc/sql/login/clear"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbSQLClearLogin(w, r) })),
 		bbRoute("/api/blackbox/this-pc/snapshot", bbExact("/api/blackbox/this-pc/snapshot"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbSnapshot(w, r) })),
 		bbRoute("/api/blackbox/{id}/check", bbEntryPath("/check"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbCheck(w, r, id) })),
 		bbRoute("/api/blackbox/{id}/diagnostics", bbEntryPath("/diagnostics"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbDiagnostics(w, r, id) })),
@@ -259,9 +266,12 @@ type bbThisPC struct {
 	// Available is true when this build can change the Blackbox on this PC.
 	Available bool `json:"available"`
 	// Scanned is false when this PC could not be asked (nothing is claimed then).
-	Scanned          bool   `json:"scanned"`
-	Installed        bool   `json:"installed"`
-	Running          bool   `json:"running"`
+	Scanned   bool `json:"scanned"`
+	Installed bool `json:"installed"`
+	Running   bool `json:"running"`
+	// SQLInstalled and SQLRunning are the SQL service's state (UnravisBlackboxSql), from the service manager only.
+	SQLInstalled     bool   `json:"sqlInstalled,omitempty"`
+	SQLRunning       bool   `json:"sqlRunning,omitempty"`
 	Name             string `json:"name,omitempty"`
 	Folder           string `json:"folder,omitempty"`
 	Port             int    `json:"port,omitempty"`
@@ -523,6 +533,7 @@ func (b *blackboxHub) thisPCBlock(entries []bbsaved.Entry, found *blackbox.Local
 	case found != nil:
 		t.Scanned = true
 		t.Installed, t.Running = found.Installed, found.Running
+		t.SQLInstalled, t.SQLRunning = found.SQLInstalled, found.SQLRunning
 		t.Name, t.Folder, t.Port, t.Bind, t.ConfigUnreadable = found.Name, found.Folder, found.Port, found.Bind, found.ConfigUnreadable
 		t.Settings = found.Settings
 	}
@@ -1671,6 +1682,23 @@ func (b *blackboxHub) readSamples(ctx context.Context, e bbsaved.Entry, windows 
 	}
 	rep.Samples = len(kept)
 	return rd, kept, rep, nil
+}
+
+// readSQLSamples reads the SQL service's samples for a window through the same source as the
+// host samples. It never fails the charts: a read that cannot be made (key refused, cancelled)
+// keeps the samples already read and sets Failed.
+// nil means the SQL part was not read at all.
+func (b *blackboxHub) readSQLSamples(ctx context.Context, e bbsaved.Entry, win bbWindow) *bbSQLRead {
+	ctx, cancel := context.WithTimeout(ctx, bbReadTimeout)
+	defer cancel()
+	src, err := b.source(e)
+	if err != nil {
+		return nil
+	}
+	ss, rep, err := blackbox.ReadSQLSamples(ctx, src, win.Start, win.End)
+	// A read that stopped early (timeout, cancel, key refused, throttled) keeps what was read and says so: the view then
+	// tells the person some points are missing instead of acting as if the server were older.
+	return &bbSQLRead{Samples: ss, Report: rep, Failed: err != nil}
 }
 
 func summarize(r blackbox.ReadReport) bbReadSummary {

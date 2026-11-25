@@ -1,0 +1,13 @@
+{
+  "operation": "cases.show",
+  "description": "Show one case: the fields of the list plus the counts of environments and sources and the history (kind and time). A case whose key is locked answers CASE_LOCKED and no data.",
+  "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "required": ["id"], "properties": {
+    "id": {"type": "string", "pattern": "^[a-z2-7]{26}$", "description": "The case id from 'unravis cases list'"}}},
+  "output": {"type": "object", "additionalProperties": false, "properties": {
+    "id": {"type": "string"}, "title": {"type": "string"}, "created": {"type": ["string", "null"], "format": "date-time"}, "closed": {"type": ["string", "null"], "format": "date-time"}, "bytes": {"type": "integer"},
+    "imports": {"type": "integer"}, "envs": {"type": "integer"}, "sources": {"type": "integer"}, "ownKey": {"type": "boolean"}, "keyLocked": {"type": "boolean"},
+    "archived": {"type": "boolean"}, "missing": {"type": "boolean"}, "untrusted": {"type": "boolean"},
+    "history": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {"kind": {"type": "string"}, "at": {"type": "string", "format": "date-time"}}}}}},
+  "errors": ["INVALID_ARGUMENT", "NOT_FOUND", "CASE_LOCKED", "ENDPOINT_UNAVAILABLE", "APP_NOT_RUNNING", "OWNER_BUSY", "UPDATE_IN_PROGRESS", "ENDPOINT_UNTRUSTED", "VERSION_INCOMPATIBLE", "RESULT_TOO_LARGE", "CANCELED", "TIMEOUT"],
+  "examples": [{"command": "unravis cases show <id> -o json"}]
+}

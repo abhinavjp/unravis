@@ -101,6 +101,16 @@ The Blackbox on this PC also shows its read key, masked. **Show** reveals it for
 
 **Clock differs** is only checked for an address, where the server reports its own clock. **Disk low** for a folder or share comes from the recorder's own pause and resume events in the manifest. A recording in a newer format than Unravis knows, a refused key and a throttled address all show as **Unreachable**, with the reason in the detail line.
 
+## SQL Server: deeper checks in the charts
+
+If the Blackbox's SQL service is on (an administrator runs `unravis-blackbox install-sql`, runs the printed grant in SSMS, then runs `enable-sql`), **Open charts** also lists a group called **SQL Server: deeper checks**. It draws what the service read from the local SQL Server: requests running at once and how many were blocked, the time requests spent in each wait type, tasks waiting for a processor, queries waiting for memory, tempdb use, the time a read or write to a database file took, and the state of availability-group databases. These are numbers only: no query text, login, program or database name is recorded or shown. A database is shown by its number.
+
+The service's folder can only be opened by administrators, so Unravis reads these files through the Blackbox's own address, with the same read key as the rest. A Blackbox added as a folder or share shows a note instead of the lines. A line is left out for a moment where the service took no reading (for example the first minute after it starts, when waits have nothing to be compared with); it is never drawn as 0.
+
+### A SQL login instead of Windows sign-in
+
+By default the SQL service signs in to the local SQL Server with its own Windows account. If it must use a SQL login instead, or the SQL Server is on another machine, an administrator runs `unravis-blackbox set-sql-login --login-stdin` and gives it `{"server":"...","user":"...","password":"..."}` (add `"trustServerCertificate":true` only if the server's certificate cannot be checked). The login is saved sealed inside the service's own folder. It is not in the settings file, the logs, a pack or a case, and Unravis never shows it. `clear-sql-login` and `remove-sql` delete it. The same limits apply: the login may only read performance data, and the service stops if it has more rights.
+
 ## Use in a case
 
 Step 9, Host and network, asks one question: was the web server or the SQL server short of CPU, memory or disk? A case that names a Blackbox as a source reads it once, for the incident window and the reference window. The case keeps only the Blackbox name. It never keeps the address, the folder or the read key.

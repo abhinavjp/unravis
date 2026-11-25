@@ -222,6 +222,7 @@ test('gitattributes keeps the web inputs LF', () => {
     '/web/setup/index.html text eol=lf',
     '/web/lite/index.html text eol=lf',
     '/docs/user/*.md text eol=lf',
+    '/web/src/brand/favicon.svg text eol=lf',
     '/web/dist/** -text',
     '/cmd/unravis-setup/ui/** -text',
     '/cmd/unravis-lite/ui/** -text',

@@ -63,6 +63,10 @@ func statementCap(text string) int {
 	case stmtHadr, stmtCeilingRole:
 		return CapSingleRow
 	default:
+		// Extras (extras.go) register their own cap next to their statement.
+		if c, ok := extraCaps[text]; ok {
+			return c
+		}
 		return CapSingleRow
 	}
 }
@@ -325,6 +329,9 @@ func decodeRow(row Row, dst interface{}) error {
 	keyed := make(map[string]any, len(row))
 	for col, v := range row {
 		key, ok := columnKeys[col]
+		if !ok {
+			key, ok = extraColumnKeys[col]
+		}
 		if !ok {
 			return errUnknownColumn
 		}

@@ -14,9 +14,11 @@ import (
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/bbsaved"
+	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/sqlaccess"
 	"api-audit-explorer/internal/sqlconn"
 )
 
@@ -24,6 +26,7 @@ import (
 // SQL Server and MongoDB drivers; tests give a fake so nothing ever connects.
 type Runner interface {
 	TestSQL(ctx context.Context, t dbhealth.SQLTarget) (dbhealth.TestResult, error)
+	AccessSQL(ctx context.Context, t dbhealth.SQLTarget) sqlaccess.Report
 	HealthSQL(ctx context.Context, t dbhealth.SQLTarget, label string) (dbhealth.Report, error)
 	LaneSQL(ctx context.Context, t dbhealth.SQLTarget, label string, req dbhealth.LaneRequest) (dbhealth.Report, error)
 	TestMongo(ctx context.Context, in audit.ConnectionInput) (audit.ConnectionResult, error)
@@ -45,6 +48,11 @@ type Backend struct {
 
 	busyMu sync.Mutex
 	busy   map[string]bool
+
+	// bbClient is the one reader used for every Blackbox call. Its connections are reused, so
+	// repeated checks never pile up open connections at the Blackbox (which caps them per address).
+	bbOnce   sync.Once
+	bbClient *http.Client
 }
 
 // Timeouts and limits of the keeper's operations.
@@ -66,6 +74,8 @@ func (b *Backend) Register(s *Server) {
 	s.Handle(OpSQLDelete, classWrite, storeTimeout, b.sqlDelete)
 	s.Handle(OpSQLImport, classWrite, storeTimeout, b.sqlImport)
 	s.Handle(OpSQLTest, classReach, reachTimeout, b.sqlTest)
+	s.Handle(OpSQLAccess, classReach, runTimeout, b.sqlAccess)
+	s.Handle(OpSQLLoginFile, classWrite, storeTimeout, b.sqlLoginFile)
 	s.Handle(OpSQLHealth, classReach, runTimeout, b.sqlHealth)
 	s.Handle(OpSQLLane, classReach, dbhealth.LaneRunTimeout, b.sqlLane)
 
@@ -256,6 +266,53 @@ func (b *Backend) sqlTest(ctx context.Context, c *Call) (any, error) {
 		out.ListError = ce.Message
 	}
 	return out, nil
+}
+
+// sqlAccess runs the Blackbox access check with a saved login inside the keeper: the password never leaves it. The answer holds
+// fixed words, numbers and at most ten database names the login can already see; no driver text.
+func (b *Backend) sqlAccess(ctx context.Context, c *Call) (any, error) {
+	var ref SQLRef
+	if err := c.Decode(&ref); err != nil {
+		return nil, err
+	}
+	c.Record = ref.ID
+	t, _, err := b.sqlTarget(ref)
+	if err != nil {
+		return nil, err
+	}
+	return b.Runner.AccessSQL(ctx, t), nil
+}
+
+// loginFileLife is how long a login file made for the Blackbox helper may live. The helper only reads it; the keeper removes it, so the
+// password never needs to be handed to the app process, and a prompt nobody answers cannot leave it behind. It is the helper's time limit
+// plus a margin. A file a stopped keeper could not remove is swept when the keeper next starts (blackbox.SweepSQLLoginFiles).
+const loginFileLife = 5 * time.Minute
+
+// writeLoginFile is the seam tests replace; the real one writes under the keeper's own temp folder.
+var writeLoginFile = func(s bbsql.StoredLogin) (blackbox.SQLLoginFile, error) { return blackbox.WriteSQLLoginFile("", s) }
+
+// sqlLoginFile writes the saved SQL login of a connection into a short-lived private file for the Blackbox helper. Only the file's place and
+// hash go back to the app, never the login. Windows sign-in has nothing to write and is refused.
+func (b *Backend) sqlLoginFile(_ context.Context, c *Call) (any, error) {
+	var ref SQLRef
+	if err := c.Decode(&ref); err != nil {
+		return nil, err
+	}
+	c.Record = ref.ID
+	t, _, err := b.sqlTarget(ref)
+	if err != nil {
+		return nil, err
+	}
+	s, err := sqlaccess.StoredLoginFor(t)
+	if err != nil {
+		return nil, &WireError{Code: CodeInvalid, Message: err.Error()}
+	}
+	f, err := writeLoginFile(s)
+	if err != nil {
+		return nil, &WireError{Code: CodeInternal, Message: "The login could not be prepared for the Blackbox."}
+	}
+	time.AfterFunc(loginFileLife, func() { blackbox.RemoveSQLLoginFile(f) })
+	return f, nil
 }
 
 func (b *Backend) sqlHealth(ctx context.Context, c *Call) (any, error) {
@@ -692,10 +749,13 @@ func (b *Backend) bbImport(_ context.Context, c *Call) (any, error) {
 	return ImportResult{Imported: n}, err
 }
 
-// bbPathAllowed is the whole list of what the keeper GETs from a Blackbox: the manifest, the status, the diagnostics log and one recording file.
+// bbPathAllowed is the whole list of what the keeper GETs from a Blackbox: the manifest, the status, the diagnostics log, one recording file and one SQL sample file.
 func bbPathAllowed(p string) bool {
 	if p == "/manifest" || p == "/status" || p == "/diag" {
 		return true
+	}
+	if name, ok := strings.CutPrefix(p, "/sql/files/"); ok {
+		return blackbox.ValidSQLFileName(name)
 	}
 	name, ok := strings.CutPrefix(p, "/files/")
 	return ok && blackbox.ValidFileName(name)
@@ -707,9 +767,13 @@ func (b *Backend) httpClient() *http.Client {
 		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		return &c
 	}
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.Proxy = nil
-	return &http.Client{Transport: t, Timeout: BBRequestTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	// One transport for the life of the keeper. A new one per call left its connection open
+	// after the answer, so a few checks in a row filled the Blackbox's per-address limit and
+	// the next one was refused ("Cannot reach this Blackbox").
+	b.bbOnce.Do(func() {
+		b.bbClient = &http.Client{Transport: blackbox.NewSharedTransport(), Timeout: BBRequestTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	})
+	return b.bbClient
 }
 
 // bbReadFailure is a transport failure reading a Blackbox, worded without the address or the request (which holds the key).
@@ -730,7 +794,7 @@ func (b *Backend) bbHTTP(ctx context.Context, c *Call) (any, error) {
 	}
 	c.Record = a.ID
 	if !bbPathAllowed(a.Path) {
-		return nil, &WireError{Code: CodeRefused, Message: "The key keeper reads only the manifest, the status and recording files of a Blackbox."}
+		return nil, &WireError{Code: CodeRefused, Message: "The key keeper reads only the manifest, the status, the recording files and the SQL sample files of a Blackbox."}
 	}
 	e, err := b.BB.Get(a.ID)
 	if err != nil {

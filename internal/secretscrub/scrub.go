@@ -223,7 +223,7 @@ func Mask(s, mask string) string {
 	if len(s) < 4 {
 		return s
 	}
-	out, _ := maskPend(s, mask)
+	out, _, _ := maskPend(s, mask)
 	return out
 }
 
@@ -237,22 +237,36 @@ const (
 	pendColon        = 16 // added to pendNext, pendNextStrong and pendNextIndented when the key ended with a colon: the value is indented deeper
 	pendNextText     = 6  // an XML secret element ends the line: the next line is its text unless it starts a tag
 	pendNextQuoted   = 5  // a bare "token:" or "secret:" (also a sentence word): only a quoted next line is the value
+	pendQuote        = 7
+	pendBracket      = 8
+	pendXMLText      = 9
+	pendTag          = 10
 )
 
 // maskPend is Mask that also says what the text leaves open at its end.
-func maskPend(s, mask string) (string, int) {
+func maskPend(s, mask string) (string, int, carryHint) {
 	if len(s) < 4 {
-		return s, pendNone
+		return s, pendNone, carryHint{}
 	}
 	w := newWork(len(s))
 	s = maskRecords(s, mask, w)
 	s = maskFlags(s, mask, w)
 	s, p1 := maskXML(s, mask, w)
+	xmlCarry := w.carry
+	w.carry = carryHint{}
 	s, p2 := maskKV(s, mask, w)
-	if p2 > p1 {
-		p1 = p2
+	hint := xmlCarry
+	// A split XML tag or an XML element text hides the next line's value already; the key=value state must not replace it
+	// ("<Password client_secret:" then ">FAKEPW</Password>"). A quote or bracket left open still wins: it swallows the lines. They are
+	// told apart by kind: their numbers are below the XML ones, so comparing numbers would never let them win ("DB_PASSWORD=\"x <a").
+	xmlOpen := p1 == pendTag || p1 == pendXMLText
+	if p2 == pendQuote || p2 == pendBracket || (!xmlOpen && p2 > p1) {
+		p1, hint = p2, w.carry
+	} else if p1 == pendTag && p2 != pendNone && p2&^pendColon >= pendBlock && p2&^pendColon <= pendNextText {
+		// A block or a next-line value that opens beside a split tag is kept next to it, so the key=value reader runs under the tag.
+		hint.sub = p2
 	}
-	return s, p1
+	return s, p1, hint
 }
 
 // maskKV masks the value after "key=" or "key:" for every secret key in s.
@@ -471,6 +485,10 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 	if q < len(s) && (s[q] == '"' || s[q] == '\'') {
 		end, after := closingQuote(s, q, nest, !jsonKey)
 		see(after)
+		if end == len(s) && after == len(s) {
+			*pend = pendQuote
+			w.carry = carryHint{quote: s[q], nest: nest, literal: !jsonKey, class: class}
+		}
 		if nest == 0 && after <= len(s) && end < len(s) && !valueSeparator(s, after) {
 			// "x"y: text sticks to the closing quote, so the quote was not the end of the value (fail closed: take the rest of it).
 			end = unquotedEnd(s, after, class, false, false)
@@ -480,8 +498,12 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 		return q + 1, end, after, true
 	}
 	if jsonKey && (s[j] == '[' || s[j] == '{') {
-		end := bracketEnd(s, j)
+		end, depth, quote := bracketEndState(s, j)
 		see(end)
+		if depth > 0 {
+			*pend = pendBracket
+			w.carry = carryHint{depth: depth, quote: quote}
+		}
 		return j, end, end, true
 	}
 	if class == classToken && colon && !jsonKey && bare {
@@ -714,26 +736,34 @@ func looksLikeKey(t string) bool {
 // bracketEnd returns where the JSON array or object that opens at i ends: after the matching close, with quoted text skipped. One that
 // never closes runs to the end of the text.
 func bracketEnd(s string, i int) int {
-	depth := 0
+	end, _, _ := bracketEndState(s, i)
+	return end
+}
+
+func bracketEndState(s string, i int) (end, depth int, quote byte) {
 	for k := i; k < len(s); k++ {
+		if quote != 0 {
+			switch s[k] {
+			case '\\':
+				k++
+			case quote:
+				quote = 0
+			}
+			continue
+		}
 		switch s[k] {
 		case '[', '{':
 			depth++
 		case ']', '}':
 			depth--
 			if depth == 0 {
-				return k + 1
+				return k + 1, 0, 0
 			}
 		case '"', '\'':
-			qc := s[k]
-			for k++; k < len(s) && s[k] != qc; k++ {
-				if s[k] == '\\' {
-					k++
-				}
-			}
+			quote = s[k]
 		}
 	}
-	return len(s)
+	return len(s), depth, quote
 }
 
 // blockHeader says whether the text at j is the header of a YAML block scalar ("|", ">", "|-", ">+", "|2") that ends its line. It

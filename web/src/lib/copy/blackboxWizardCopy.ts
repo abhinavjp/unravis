@@ -35,7 +35,7 @@ export const BBW_TEXT = {
   'step.sql.title': 'SQL Server figures',
   'step.sql.lead': 'Recorded on its own if SQL Server runs on this PC.',
   'step.sql.leadPack': 'Recorded on its own if SQL Server runs on the server.',
-  'step.sql.help': 'These figures come from Windows. No SQL login, no queries and no query text.',
+  'step.sql.help': 'These figures come from Windows and need no SQL login. To also record waits, requests and blocking, turn on Collect SQL data on the Blackbox page after it is placed.',
 
   'step.watch.title': 'Watch any one thing closely?',
   'step.watch.lead': 'Optional. Without it you still get the whole machine.',
@@ -132,7 +132,7 @@ export const BBW_TEXT = {
   'sql.automaticPack': 'Recorded on its own if SQL Server runs on the server.',
   'sql.hostOnly': 'Windows supplies these figures for each SQL Server instance it finds. No SQL login is used.',
   'sql.singleCounters': 'You get all of these figures together. You cannot pick them one by one.',
-  'sql.deeperChecks': 'It never runs queries on SQL Server and never reads query text. It only reads the figures Windows keeps.',
+  'sql.deeperChecks': 'This step reads only the figures Windows keeps. Waits, running requests and blocking are added later, on the Blackbox page, with a login you choose. It only reads and never changes data.',
 
   'watch.legend': 'Watch closely',
   'watch.keptNote': (count: number): string => 'Your ' + count + (count === 1 ? ' picked name is' : ' picked names are') + ' kept. Choose the second option again to see ' + (count === 1 ? 'it' : 'them') + '.',

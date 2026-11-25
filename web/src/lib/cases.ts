@@ -3,7 +3,8 @@ import { WRONG_CASE_KEY_REASON, signalIfAppLocked } from './lockSignal';
 import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
 import { pacedSleep } from './visibility';
 import { parseTimelineView, type TimelineView } from './timeline';
-import { parseResource, parseSeries, type ResourceView, type SeriesView } from './resource';
+import { readBinaryBody } from './binaryBody';
+import { parseResource, parseSeries, parseSeriesBinary, type ResourceView, type SeriesView } from './resource';
 import { parseCollect, type CollectItem } from './collect';
 import { parseArchive, type ArchiveInfo } from './archiveModel';
 import type { EvidenceExport, ExportFile, Query } from './types';
@@ -1200,7 +1201,7 @@ export function reasonCounts(errors: RowError[]): { reason: string; count: numbe
 // The shape checks live in resource.ts; an answer that fails one is "unreadable", like every other route here.
 
 export interface ResourceRequest { fromMs: number; toMs: number; episodes?: Array<{ start: number; end: number }> }
-export interface SeriesRequest { fromMs: number; toMs: number; bucketMs: number; sels: string[] }
+export interface SeriesRequest { fromMs: number; toMs: number; bucketMs: number; sels: string[]; width?: number }
 
 const rfc3339 = (ms: number): string => new Date(ms).toISOString();
 const unreadable = (status = 200) => new CaseApiError('The server sent an answer that could not be read.', status, 'unreadable');
@@ -1228,10 +1229,27 @@ export async function fetchSeries(id: string, request: SeriesRequest, signal?: A
   const params = new URLSearchParams();
   params.set('from', rfc3339(request.fromMs));
   params.set('to', rfc3339(request.toMs));
-  params.set('bucket', String(Math.max(1, Math.floor(request.bucketMs))));
+  const width = request.width != null && Number.isFinite(request.width) && request.width >= 1 ? Math.max(1, Math.floor(request.width)) : null;
+  params.set('bucket', width == null ? String(Math.max(1, Math.floor(request.bucketMs))) : '1');
+  if (width != null) {
+    params.set('width', String(width));
+    params.set('format', 'binary');
+  }
   for (const sel of request.sels) params.append('sel', sel);
-  const response = await send(casePath(id, '/series') + '?' + params.toString(), {}, signal);
-  const view = parseSeries(await json<unknown>(response));
+  const path = casePath(id, '/series') + '?' + params.toString();
+  let response = await send(path, {}, signal);
+  const packed = response.headers.get('Content-Type')?.includes('application/octet-stream');
+  let view: SeriesView | null;
+  if (packed) {
+    // A body that is too big, cut short or not a frame this reader knows takes the one JSON retry, never an error.
+    const body = await readBinaryBody(response, signal);
+    view = body && parseSeriesBinary(body);
+  } else view = parseSeries(await json<unknown>(response));
+  if (!view && packed) {
+    params.delete('format');
+    response = await send(casePath(id, '/series') + '?' + params.toString(), {}, signal);
+    view = response.headers.get('Content-Type')?.includes('application/octet-stream') ? null : parseSeries(await json<unknown>(response));
+  }
   if (!view) throw unreadable(response.status);
   return view;
 }

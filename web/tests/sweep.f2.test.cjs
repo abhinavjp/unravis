@@ -287,7 +287,7 @@ test('SWEEP-F2-13: one name for each fact in the quality strip, Patterns and the
 });
 
 test('SWEEP-F2-17: the record page is wide, and the saving-time callout is for slow or missing times only', () => {
-  assert.match(read('src/app.css'), /\.record-view \{ max-width: 1240px; \}/);
+  assert.match(read('src/app.css'), /\.record-view \{ max-width: min\(var\(--page-max\), 1560px\); \}/);
   const src = read('src/components/RecordDetail.svelte');
   assert.match(src, /const AUDIT_NOTE_MIN_MS = 1000;/);
   assert.match(src, /\{#if plain && \(detail\.auditCreateTimeMs == null \|\| !Number\.isFinite\(detail\.auditCreateTimeMs\) \|\| detail\.auditCreateTimeMs >= AUDIT_NOTE_MIN_MS\)\}/);

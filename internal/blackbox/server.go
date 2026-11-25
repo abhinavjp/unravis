@@ -114,6 +114,7 @@ func NewServer(o ServerOptions) *Server {
 	mux.HandleFunc("/diag", s.guard(s.handleDiag))
 	mux.HandleFunc("/files", s.guard(s.handleFiles))
 	mux.HandleFunc("/files/", s.guard(s.handleFile))
+	mux.HandleFunc("/sql/files/", s.guard(s.handleSQLFile))
 	// WriteTimeout bounds how long a stalled client can hold a recording file
 	// open (an open file cannot be removed by housekeeping on Windows). Reads
 	// answer ranges, so a reader that is cut off resumes where it stopped.
@@ -510,6 +511,33 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	// ServeContent answers ranges, so a reader can resume or tail the open file.
+	http.ServeContent(w, r, name, st.ModTime(), f)
+}
+
+// handleSQLFile serves one hourly SQL sample file from <recordings>\sql. That folder is locked to
+// SYSTEM, Administrators and the SQL service account, so an ordinary reader cannot open it; this
+// recorder (LocalSystem) can, and hands the file to a holder of the read key. The same guard,
+// containment and name rules apply as for a recording file, and the name must be exactly a SQL
+// sample file name: no path, no other file of the folder (state.json, status.json) is reachable.
+// The files hold numbers, enum states and validated wait types only (C9).
+func (s *Server) handleSQLFile(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/sql/files/")
+	if !ValidSQLFileName(name) || name != filepath.Base(name) {
+		s.errorJSON(w, http.StatusNotFound, "no such SQL sample file")
+		return
+	}
+	f, err := openRecordingFile(SQLDataDir(s.o.Store.Dir()), name)
+	if err != nil {
+		s.errorJSON(w, http.StatusNotFound, "no such SQL sample file")
+		return
+	}
+	defer func() { _ = f.Close() }()
+	st, err := f.Stat()
+	if err != nil {
+		s.errorJSON(w, http.StatusInternalServerError, "cannot read the file")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
 	http.ServeContent(w, r, name, st.ModTime(), f)
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"strings"
@@ -12,6 +13,17 @@ import (
 )
 
 const cookieName = "rd_session"
+
+// The page is served from embedded files, and with X-Content-Type-Options: nosniff the browser trusts only the type
+// we send. On Windows Go reads types from the registry, which a tidy-up tool can break, so name the ones we need.
+func init() {
+	for ext, typ := range map[string]string{
+		".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
+		".woff2": "font/woff2", ".ico": "image/x-icon", ".html": "text/html; charset=utf-8",
+	} {
+		_ = mime.AddExtensionType(ext, typ)
+	}
+}
 
 // Handler serves the page and one JSON route. It is read-only (GET and HEAD only), answers only to a loopback host name
 // (so a web page cannot reach it by DNS rebinding), and needs the one-time code from the start link once per browser.
@@ -26,6 +38,7 @@ func Handler(d *Dash, token string, ui fs.FS) http.Handler {
 		_ = json.NewEncoder(w).Encode(s)
 	})
 	d.registerDetail(mux)
+	d.registerCI(mux)
 	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/api/bye", func(w http.ResponseWriter, r *http.Request) {
 		// The page is closing (or reloading). The program stops after a short wait unless the page comes back.
@@ -61,7 +74,7 @@ func Handler(d *Dash, token string, ui fs.FS) http.Handler {
 			d.OnRequest()
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; font-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/" || strings.Count(r.URL.Path, "/") == 1 {
 			mux.ServeHTTP(w, r)

@@ -19,9 +19,11 @@ import (
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/bbsaved"
+	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/sqlaccess"
 	"api-audit-explorer/internal/sqlconn"
 )
 
@@ -115,6 +117,11 @@ func (f *fakeRunner) TestSQL(_ context.Context, t dbhealth.SQLTarget) (dbhealth.
 		return dbhealth.TestResult{}, err
 	}
 	return dbhealth.TestResult{Version: "16.0", Edition: "Developer", Databases: []string{"Payroll"}}, nil
+}
+
+func (f *fakeRunner) AccessSQL(_ context.Context, t dbhealth.SQLTarget) sqlaccess.Report {
+	_ = f.sawSQL(t)
+	return sqlaccess.Report{Reached: true, Ready: true, Verdict: sqlaccess.VerdictReady, Checks: []sqlaccess.Check{}}
 }
 
 func (f *fakeRunner) HealthSQL(ctx context.Context, t dbhealth.SQLTarget, label string) (dbhealth.Report, error) {
@@ -1295,5 +1302,61 @@ func TestMigrationDoesNotTakeSomeoneElsesRecordAsVerified(t *testing.T) {
 	}
 	if err := m.RemoveOld(true); err != nil || m.OldFilesPresent() {
 		t.Fatalf("confirmed removal: %v", err)
+	}
+}
+
+func TestSQLAccessCheckRunsInsideTheKeeperAndNeverReturnsThePassword(t *testing.T) {
+	h := newHarness(t, nil)
+	s := NewSQLStore(h.client)
+	rec := h.saveSQL(sqlconn.AuthSQL)
+	rep, err := s.AccessSaved(context.Background(), SQLRef{ID: rec.ID})
+	if err != nil || !rep.Ready {
+		t.Fatalf("access: %+v %v", rep, err)
+	}
+	if got := h.runner.lastSQL(); got.Password != sqlSecret || got.Username != "auditor" {
+		t.Fatalf("the keeper must check with the stored password: %+v", got)
+	}
+	raw, _ := json.Marshal(rep)
+	if strings.Contains(string(raw), sqlSecret) {
+		t.Fatalf("password in the answer: %s", raw)
+	}
+	if _, err := s.AccessSaved(context.Background(), SQLRef{ID: "nope"}); err == nil {
+		t.Fatal("an unknown saved login must fail")
+	}
+}
+
+func TestSQLLoginFileIsWrittenByTheKeeperAndTheAnswerHoldsNoPassword(t *testing.T) {
+	h := newHarness(t, nil)
+	s := NewSQLStore(h.client)
+	rec := h.saveSQL(sqlconn.AuthSQL)
+	root := t.TempDir()
+	old := writeLoginFile
+	t.Cleanup(func() { writeLoginFile = old })
+	writeLoginFile = func(l bbsql.StoredLogin) (blackbox.SQLLoginFile, error) { return blackbox.WriteSQLLoginFile(root, l) }
+
+	f, err := s.LoginFileSaved(context.Background(), SQLRef{ID: rec.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(f)
+	if strings.Contains(string(raw), sqlSecret) || strings.Contains(string(raw), "auditor") {
+		t.Fatalf("the answer to the app holds the login: %s", raw)
+	}
+	b, err := os.ReadFile(f.Path)
+	var doc struct{ Server, User, Password string }
+	if err != nil || json.Unmarshal(b, &doc) != nil || doc.Password != sqlSecret || doc.User != "auditor" || doc.Server != "sql01.example.test,1433" {
+		t.Fatalf("the file does not hold the saved login: %v", err)
+	}
+	blackbox.RemoveSQLLoginFile(f)
+
+	// Windows sign-in and an unknown id write nothing.
+	win := h.saveSQL(sqlconn.AuthWindows)
+	for _, id := range []string{win.ID, "nope"} {
+		if _, err := s.LoginFileSaved(context.Background(), SQLRef{ID: id}); err == nil {
+			t.Fatalf("%s: wrote a login file", id)
+		}
+	}
+	if ents, _ := os.ReadDir(root); len(ents) != 0 {
+		t.Fatalf("left %d folders behind", len(ents))
 	}
 }

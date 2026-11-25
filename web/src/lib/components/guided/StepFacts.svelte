@@ -126,11 +126,11 @@
       <div class="bars" role="img" aria-label={T.barLabel}>
         <div class="bar-row">
           <span class="bar-name">{T.barNormal}</span>
-          <span class="bar-track">{#each bars.normal as b (b.key)}<span class={'seg part-' + b.key} style={`width:${b.pct}%`} title={`${b.label}: ${Math.round(b.ms)} ms`}></span>{/each}</span>
+          <span class="bar-track">{#each bars.normal as b (b.key)}<span class={'seg part-' + b.key} style:width={`${b.pct}%`} title={`${b.label}: ${Math.round(b.ms)} ms`}></span>{/each}</span>
         </div>
         <div class="bar-row">
           <span class="bar-name">{T.barIncident}</span>
-          <span class="bar-track">{#each bars.incident as b (b.key)}<span class={'seg part-' + b.key} style={`width:${b.pct}%`} title={`${b.label}: ${Math.round(b.ms)} ms`}></span>{/each}</span>
+          <span class="bar-track">{#each bars.incident as b (b.key)}<span class={'seg part-' + b.key} style:width={`${b.pct}%`} title={`${b.label}: ${Math.round(b.ms)} ms`}></span>{/each}</span>
         </div>
       </div>
       <p class="note">{T.barLabel}</p>

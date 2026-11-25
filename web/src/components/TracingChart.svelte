@@ -76,9 +76,9 @@
   } = $props();
 
   const SWATCH_STYLE: Record<TracingLaneKey, string> = {
-    audit: 'background: var(--lane-audit)',
-    sql: 'background: var(--lane-sql)',
-    iis: 'background: var(--lane-iis)'
+    audit: 'var(--lane-audit)',
+    sql: 'var(--lane-sql)',
+    iis: 'var(--lane-iis)'
   };
 
   const grid = $derived(slotGrid(response.window));
@@ -277,7 +277,7 @@
   let tipFromKeyboard = $state(false);
   // A tooltip left on screen by a tap (finger or pen): the same bar tapped again opens the analysis. A mouse click never sets this.
   let tipFromTouch = $state(false);
-  let tipStyle = $state('');
+  let tipPos = $state({ left: '0px', top: '4px' });
   let overlayEl: HTMLDivElement | undefined;
   let tipEl: HTMLDivElement | undefined;
 
@@ -377,13 +377,13 @@
     tipLane = null;
     tipSlot = current;
     tipFromKeyboard = true;
-    tipStyle = `left:${Math.min(80, leftPct(current))}%;top:4px`;
+    tipPos = { left: `${Math.min(80, leftPct(current))}%`, top: '4px' };
     // On a narrow plot the box is wider than what is left of the plot: once it is drawn, pull it back inside (the pointer tip does the same).
     void tick().then(() => {
       if (!overlayEl || !tipEl || tipSlot == null || !tipFromKeyboard) return;
       const width = overlayEl.getBoundingClientRect().width;
       const x = Math.min((Math.min(80, leftPct(tipSlot)) / 100) * width, width - tipEl.offsetWidth);
-      tipStyle = `left:${Math.max(0, x)}px;top:4px`;
+      tipPos = { left: `${Math.max(0, x)}px`, top: '4px' };
     });
   }
   // A resize changes the plot's width: a keyboard tip left where it was drawn would stick out of a narrower plot, so it is placed again.
@@ -484,7 +484,7 @@
     const rect = overlayEl.getBoundingClientRect();
     const tipWidth = tipEl?.offsetWidth || 220;
     const x = Math.min(clientX - rect.left, rect.width - tipWidth);
-    tipStyle = `left:${Math.max(0, x)}px;top:${Math.max(0, clientY - rect.top + 14)}px`;
+    tipPos = { left: `${Math.max(0, x)}px`, top: `${Math.max(0, clientY - rect.top + 14)}px` };
   }
 
   // Pointer moves are coalesced to one pass per frame: the last position wins, so layout is read once per frame, not once per event.
@@ -622,8 +622,8 @@
       {@const noFile = lane.key !== 'audit' && lane.state === 'no-data' && !lane.disabled && !unselected.includes(lane.key)}
       <!-- The head itself is not a tab stop (it has no action). Its "?" button is: it describes itself by the hint, which shows on hover or focus and closes with Esc. -->
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <div class="lane-label" role="group" aria-label={LANE_NAME[lane.key]} data-hint-closed={hintClosed.includes(lane.key) ? "true" : undefined} onpointerenter={() => hintEnter(lane.key)} onpointerleave={() => hintLeave(lane.key)} onfocusin={() => hintFocusIn(lane.key)} onfocusout={(event) => hintFocusOut(lane.key, event)} data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
-        <span class="lane-title"><span class="swatch" style={SWATCH_STYLE[lane.key]} aria-hidden="true"></span><strong>{LANE_NAME[lane.key]}</strong><button type="button" class="hint-btn" aria-label="{LANE_NAME[lane.key]}: what this row shows" aria-describedby="tc-hint-{lane.key}">?</button></span>
+      <div class="lane-label" role="group" aria-label={LANE_NAME[lane.key]} data-hint-closed={hintClosed.includes(lane.key) ? "true" : undefined} onpointerenter={() => hintEnter(lane.key)} onpointerleave={() => hintLeave(lane.key)} onfocusin={() => hintFocusIn(lane.key)} onfocusout={(event) => hintFocusOut(lane.key, event)} data-truncated={lane.truncated ? 'true' : undefined} style:--row={laneIndex + 1}>
+        <span class="lane-title"><span class="swatch" style:background={SWATCH_STYLE[lane.key]} aria-hidden="true"></span><strong>{LANE_NAME[lane.key]}</strong><button type="button" class="hint-btn" aria-label="{LANE_NAME[lane.key]}: what this row shows" aria-describedby="tc-hint-{lane.key}">?</button></span>
         <small class="ask">{LANE_ASK[lane.key]}</small>
         {#if showsProvenance(lane)}
           <small class="origin">{lane.origin === 'live' ? TOOLTIP_TEXT.readJustNow : TOOLTIP_TEXT.fromSavedLogs} · {at(lane.asOf)}</small>
@@ -638,7 +638,7 @@
         {/if}
         <span id="tc-hint-{lane.key}" role="tooltip" class="hint">{laneHeadHint(lane)}</span>
       </div>
-      <div class="axis axis-left" style="--row:{laneIndex + 1}">
+      <div class="axis axis-left" style:--row={laneIndex + 1}>
         {#if drawBars}
           <span class="y-title">events per slot</span>
           <div class="scale">
@@ -648,13 +648,13 @@
               {:else if value === max}
                 <span class="tick tick-top">{formatCount(max)}</span>
               {:else}
-                <span class="tick" style="bottom:{tickBottomPct(value, max)}%">{formatCount(value)}</span>
+                <span class="tick" style:bottom="{tickBottomPct(value, max)}%">{formatCount(value)}</span>
               {/if}
             {/each}
           </div>
         {/if}
       </div>
-      <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} data-hero={heroOf(lane.key) ? 'true' : undefined} style="--row:{laneIndex + 1}">
+      <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} data-hero={heroOf(lane.key) ? 'true' : undefined} style:--row={laneIndex + 1}>
         <div class="panel-head">
           <p class="panel-title">{PANEL_TITLE[lane.key]}</p>
           {#if drawBars}{@render legendFor(lane.key)}{/if}
@@ -671,28 +671,28 @@
             <div class="hgrid" aria-hidden="true">
               {#each yTicks(max) as value (value)}
                 {#if value > 0}
-                  <span style="bottom:{tickBottomPct(value, max)}%"></span>
+                  <span style:bottom="{tickBottomPct(value, max)}%"></span>
                 {/if}
               {/each}
             </div>
             <div class="vgrid" aria-hidden="true">
               {#each ticks as tick (tick.ms)}
-                <span style="left:{tick.offset * widthPct}%"></span>
+                <span style:left="{tick.offset * widthPct}%"></span>
               {/each}
             </div>
             {#each outside as i (i)}
-              <div class="outside-dash" style="left:{leftPct(i)}%;width:{widthPct}%"></div>
+              <div class="outside-dash" style:left="{leftPct(i)}%" style:width="{widthPct}%"></div>
             {/each}
             {#each unreadRunList as run (run.from)}
-              <div class="unread" data-testid="unread-run" style="left:{leftPct(run.from)}%;width:{(run.to - run.from) * widthPct}%"><span>{READ_TEXT.notRead}</span></div>
+              <div class="unread" data-testid="unread-run" style:left="{leftPct(run.from)}%" style:width="{(run.to - run.from) * widthPct}%"><span>{READ_TEXT.notRead}</span></div>
             {/each}
             {#each bars as bar (bar.index)}
-              <div class="bar" class:nonzero={bar.count > 0} style="left:{leftPct(bar.index)}%;width:calc({widthPct}% - 1px);height:{barHeightPct(bar.count, max)}%">
+              <div class="bar" class:nonzero={bar.count > 0} style:left="{leftPct(bar.index)}%" style:width="calc({widthPct}% - 1px)" style:height="{barHeightPct(bar.count, max)}%">
                 {#if bar.count > 0 && bar.clientErrors > 0}
-                  <div class="bar-warn" data-testid="bar-warn" style="height:{(bar.clientErrors / bar.count) * 100}%"></div>
+                  <div class="bar-warn" data-testid="bar-warn" style:height="{(bar.clientErrors / bar.count) * 100}%"></div>
                 {/if}
                 {#if bar.count > 0 && bar.errors > 0}
-                  <div class="bar-err" style="height:{(bar.errors / bar.count) * 100}%"></div>
+                  <div class="bar-err" style:height="{(bar.errors / bar.count) * 100}%"></div>
                 {/if}
               </div>
             {/each}
@@ -708,15 +708,15 @@
               </svg>
               {#if lane.key !== 'sql'}
                 {#each h.dots as dot (dot.index)}
-                  <span class="dot" data-slot={dot.index} aria-hidden="true" style="left:{dot.leftPct}%;bottom:{dot.bottomPct}%"></span>
+                  <span class="dot" data-slot={dot.index} aria-hidden="true" style:left="{dot.leftPct}%" style:bottom="{dot.bottomPct}%"></span>
                 {/each}
               {/if}
               {#each h.marks as mark (mark.index)}
                 {#if lane.key !== 'sql' || mark.flagged}
-                  <span class="mark" class:flagged={mark.flagged} data-slot={mark.index} aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%"></span>
+                  <span class="mark" class:flagged={mark.flagged} data-slot={mark.index} aria-hidden="true" style:left="{mark.leftPct}%" style:bottom="{mark.bottomPct}%"></span>
                 {/if}
                 {#if mark.labelled}
-                  <span class="mark-label" aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%">{mark.text}</span>
+                  <span class="mark-label" aria-hidden="true" style:left="{mark.leftPct}%" style:bottom="{mark.bottomPct}%">{mark.text}</span>
                 {/if}
               {/each}
               <span class="latency-max">{lineName(lane.key)}: up to {durationText(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
@@ -731,7 +731,7 @@
           </div>
         {/if}
       </div>
-      <div class="axis axis-right" data-lane={lane.key} style="--row:{laneIndex + 1}">
+      <div class="axis axis-right" data-lane={lane.key} style:--row={laneIndex + 1}>
         {#if heroOf(lane.key)}
           {@const h = heroOf(lane.key) as HeroLayout}
           {@const tickText = tickLabels(h.ticks.map((t) => t.ms))}
@@ -743,7 +743,7 @@
               {:else if tick.bottomPct === 0}
                 <span class="tick tick-bottom">{tickText[tickIndex]}</span>
               {:else}
-                <span class="tick" style="bottom:{tick.bottomPct}%">{tickText[tickIndex]}</span>
+                <span class="tick" style:bottom="{tick.bottomPct}%">{tickText[tickIndex]}</span>
               {/if}
             {/each}
           </div>
@@ -752,9 +752,9 @@
     {/each}
 
     {#if grid}
-      <div class="axisrow" style="--row:{orderedLanes.length + 1}">
+      <div class="axisrow" style:--row={orderedLanes.length + 1}>
         {#each ticks as tick (tick.ms)}
-          <span class="axtick" style="left:{tick.offset * widthPct}%">{at(tick.ms)}</span>
+          <span class="axtick" style:left="{tick.offset * widthPct}%">{at(tick.ms)}</span>
         {/each}
       </div>
     {/if}
@@ -771,7 +771,7 @@
       aria-describedby="tc-tip"
       tabindex="0"
       class="overlay"
-      style="--end:{Math.max(2, orderedLanes.length + 1)}"
+      style:--end={Math.max(2, orderedLanes.length + 1)}
       bind:this={overlayEl}
       bind:clientWidth={plotW}
       onkeydown={onOverlayKey}
@@ -783,7 +783,7 @@
       onclick={onOverlayClick}
       onblur={hideTip}
     >
-      <div id="tc-tip" role="tooltip" class="tip" style={tipStyle} hidden={tipGroups.length === 0} bind:this={tipEl}>
+      <div id="tc-tip" role="tooltip" class="tip" style:left={tipPos.left} style:top={tipPos.top} hidden={tipGroups.length === 0} bind:this={tipEl}>
         {#each tipGroups as group (group.key)}
           <div class="tip-group">
             <strong>{group.name}</strong>
@@ -795,10 +795,10 @@
       </div>
       {#if grid}
         {#each slotIndexes as i (i)}
-          <div class="column" class:selected={current === i} data-slot={i} aria-hidden="true" style="left:{leftPct(i)}%;width:{widthPct}%"></div>
+          <div class="column" class:selected={current === i} data-slot={i} aria-hidden="true" style:left="{leftPct(i)}%" style:width="{widthPct}%"></div>
         {/each}
         {#if dragFrom != null && dragTo != null}
-          <div class="brush" style="left:{leftPct(Math.min(dragFrom, dragTo))}%;width:{(Math.abs(dragTo - dragFrom) + 1) * widthPct}%"></div>
+          <div class="brush" style:left="{leftPct(Math.min(dragFrom, dragTo))}%" style:width="{(Math.abs(dragTo - dragFrom) + 1) * widthPct}%"></div>
         {/if}
       {/if}
     </div>

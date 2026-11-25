@@ -22,6 +22,7 @@ type routeCase struct {
 var routeCases = []routeCase{
 	{"/", "/", "GET, HEAD"},
 	{launchPath, launchPath, "GET"},
+	{launchStylePath, launchStylePath, "GET, HEAD"},
 	{sessionproof.Path, sessionproof.Path, "GET"},
 	{"/api/client-log", "/api/client-log", "POST"},
 	{"/api/logs/info", "/api/logs/info", "GET"},
@@ -29,6 +30,7 @@ var routeCases = []routeCase{
 	{"/api/connections/recent/{id}", "/api/connections/recent/c1", "DELETE"},
 	{"/api/sql-connections", "/api/sql-connections", "GET, POST"},
 	{"/api/sql-connections/test", "/api/sql-connections/test", "POST"},
+	{"/api/sql-connections/access", "/api/sql-connections/access", "POST"},
 	{"/api/keeper/status", "/api/keeper/status", "GET"},
 	{"/api/keeper/migrate", "/api/keeper/migrate", "POST"},
 	{"/api/keeper/remove-old", "/api/keeper/remove-old", "POST"},
@@ -73,6 +75,7 @@ var routeCases = []routeCase{
 	{"/api/sources/{id}/coverage", "/api/sources/s/coverage", "GET"},
 	{"/api/sources/{id}/stats", "/api/sources/s/stats", "GET"},
 	{"/api/sources/{id}", "/api/sources/s", "DELETE"},
+	{"/api/mcp/evidence/{alias}", "/api/mcp/evidence/ev1_aaaaaaaaaaaaaaaaaaaaaaaaaa", "GET"},
 	{"/api/analyze", "/api/analyze", "POST"},
 	{"/api/requests", "/api/requests", "POST"},
 	{"/api/activity", "/api/activity", "POST"},
@@ -150,6 +153,8 @@ var routeCases = []routeCase{
 	{"/api/blackbox/this-pc/remove", "/api/blackbox/this-pc/remove", "POST"},
 	{"/api/blackbox/this-pc/snapshot", "/api/blackbox/this-pc/snapshot", "POST"},
 	{"/api/blackbox/this-pc/update", "/api/blackbox/this-pc/update", "POST"},
+	{"/api/blackbox/this-pc/sql/setup", "/api/blackbox/this-pc/sql/setup", "POST"},
+	{"/api/blackbox/this-pc/sql/login/clear", "/api/blackbox/this-pc/sql/login/clear", "POST"},
 	{"/api/blackbox/{id}/check", "/api/blackbox/bb-1/check", "POST"},
 	{"/api/blackbox/{id}/diagnostics", "/api/blackbox/bb-1/diagnostics", "GET"},
 	{"/api/blackbox/{id}/key", "/api/blackbox/bb-1/key", "PUT"},
@@ -157,6 +162,14 @@ var routeCases = []routeCase{
 	{"/api/blackbox/{id}/host-reading", "/api/blackbox/bb-1/host-reading", "POST"},
 	{"/api/blackbox/{id}/series", "/api/blackbox/bb-1/series", "POST"},
 	{"/api/blackbox/{id}", "/api/blackbox/bb-1", "DELETE"},
+	{"/api/mcp/profiles", "/api/mcp/profiles", "GET"},
+	{"/api/mcp/profiles/{id}/{action}", "/api/mcp/profiles/claude/approve", "POST"},
+	{"/api/mcp/stop", "/api/mcp/stop", "POST"},
+	{"/api/mcp/resume", "/api/mcp/resume", "POST"},
+	{"/api/code/types", "/api/code/types", "GET"},
+	{"/api/code/settings", "/api/code/settings", "GET, PUT"},
+	{"/api/code/run", "/api/code/run", "POST"},
+	{"/api/code/runs/{id}/cancel", "/api/code/runs/r1/cancel", "POST"},
 }
 
 var routeTestMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}
@@ -197,7 +210,7 @@ func TestRouteTableCoversEveryRoute(t *testing.T) {
 func TestRoutesAnswerExpectedStatusPerMethod(t *testing.T) {
 	h := New(&fakeRepository{}, testAssets(), testToken, false)
 	for _, c := range routeCases {
-		public := c.path == "/" || c.path == sessionproof.Path || c.path == launchPath
+		public := c.path == "/" || c.path == sessionproof.Path || c.path == launchPath || c.path == launchStylePath
 		for _, method := range routeTestMethods {
 			res := request(h, method, c.path, "", !public)
 			if hasMethod(c.allow, method) {
@@ -222,7 +235,7 @@ func TestRoutesAnswerExpectedStatusPerMethod(t *testing.T) {
 func TestRoutesRequireTokenBeforeMethodCheck(t *testing.T) {
 	h := New(&fakeRepository{}, testAssets(), testToken, false)
 	for _, c := range routeCases {
-		if c.path == "/" || c.path == sessionproof.Path || c.path == launchPath {
+		if c.path == "/" || c.path == sessionproof.Path || c.path == launchPath || c.path == launchStylePath {
 			continue
 		}
 		for _, method := range routeTestMethods {

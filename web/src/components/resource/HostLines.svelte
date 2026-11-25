@@ -2,6 +2,8 @@
   import { untrack } from 'svelte';
   import { CaseApiError, fetchSeries, isCaseGone } from '../../lib/cases';
   import { errorText } from '../../lib/copy/importCopy';
+  import { logSeriesReadTiming } from '../../lib/chartPerf';
+  import { settleWidth } from '../../lib/blackboxSeries';
   import {
     PROC_METRICS, apiStrip, bucketFor, bucketText, buildStrips, hostSelectors, orderStrips, processSelectors, processStrip, readSeries, resourceCopy, stripsSummary,
     type EpisodeSpan, type Marker, type ProcMetricId, type ResourceHost, type SeriesRead, type ViewWindow
@@ -23,13 +25,16 @@
   let procBusy = $state(false);
   let problem = $state('');
   let attempt = $state(0);
+  // 0 until the box has a real size; nothing is read before then, and the width is taken in steps so a small change reads nothing again.
+  let chartWidth = $state(0);
+  let pixelWidth = $state(0);
+  $effect(() => { const measured = chartWidth; untrack(() => { pixelWidth = settleWidth(pixelWidth, measured); }); });
 
   const aborted = (error: unknown) => error instanceof DOMException && error.name === 'AbortError';
   function failure(error: unknown): string {
     if (isCaseGone(error)) onGone?.();
     return error instanceof CaseApiError ? errorText(error) : errorText({ status: 0, reason: 'unreachable', message: '' });
   }
-  const fetcher = (request: Parameters<typeof fetchSeries>[1], signal?: AbortSignal) => fetchSeries(caseId, request, signal);
 
   // The panel hands over a fresh host object after each summary read. These keep a read from repeating when nothing it depends on changed.
   const hostName = $derived(host.host);
@@ -39,14 +44,16 @@
 
   // The host lines. A window change waits a moment, so a run of zoom clicks makes one read.
   $effect(() => {
-    const from = fromMs, to = toMs, name = hostName;
+    const from = fromMs, to = toMs, name = hostName, width = pixelWidth;
     void attempt;
+    if (width <= 0) return;
     const mine = new AbortController();
     const timer = setTimeout(async () => {
       hostBusy = true; problem = '';
+      const began = performance.now();
       try {
-        const read = await readSeries(fetcher, { fromMs: from, toMs: to }, hostSelectors(name), mine.signal);
-        if (!mine.signal.aborted) hostRead = read;
+        const read = await readSeries((request, signal) => fetchSeries(caseId, { ...request, width }, signal), { fromMs: from, toMs: to }, hostSelectors(name), mine.signal);
+        if (!mine.signal.aborted) { hostRead = read; logSeriesReadTiming('host', performance.now() - began); }
       } catch (error) {
         if (mine.signal.aborted || aborted(error)) return;
         hostRead = null; problem = failure(error);
@@ -57,17 +64,19 @@
 
   // The process lines, for the measure picked. They come from selectors the server named for this host.
   $effect(() => {
-    const from = fromMs, to = toMs, metric = procMetric;
+    const from = fromMs, to = toMs, metric = procMetric, width = pixelWidth;
     void processKey;
     const refs = untrack(() => processSelectors(host.processes, metric));
     void attempt;
     if (refs.length === 0) { procRead = null; procBusy = false; return; }
+    if (width <= 0) return;
     const mine = new AbortController();
     const timer = setTimeout(async () => {
       procBusy = true;
+      const began = performance.now();
       try {
-        const read = await readSeries(fetcher, { fromMs: from, toMs: to }, refs.map(ref => ref.sel), mine.signal);
-        if (!mine.signal.aborted) procRead = read;
+        const read = await readSeries((request, signal) => fetchSeries(caseId, { ...request, width }, signal), { fromMs: from, toMs: to }, refs.map(ref => ref.sel), mine.signal);
+        if (!mine.signal.aborted) { procRead = read; logSeriesReadTiming('process', performance.now() - began); }
       } catch (error) {
         if (mine.signal.aborted || aborted(error)) return;
         procRead = null; problem = failure(error);
@@ -89,7 +98,7 @@
   const label = $derived(stripsSummary(host.host, strips, episodes, hostMarkers, view, zone));
 </script>
 
-<div class="lines">
+<div class="lines" bind:clientWidth={chartWidth}>
   {#if host.processes.length > 0}
     <div class="measure" role="group" aria-label={resourceCopy.processMetricLabel}>
       <span class="measure-label">{resourceCopy.processesHeading}</span>

@@ -37,7 +37,7 @@ func compareTimelines(result *audit.Analysis, id string, keys []string) (any, er
 	q := result.Query
 	width := time.Duration(q.BucketSeconds) * time.Second
 	if width <= 0 {
-		return nil, errors.New("cached query has no usable time interval")
+		return nil, coded(CodeInternal, "cached query has no usable time interval")
 	}
 	seconds := int64(q.BucketSeconds)
 	epoch := q.Start.Unix() / seconds
@@ -48,7 +48,7 @@ func compareTimelines(result *audit.Analysis, id string, keys []string) (any, er
 	slots := make([]map[string]any, 0, 120)
 	for at := first; at.Before(q.End); at = at.Add(width) {
 		if len(slots) >= 120 {
-			return nil, errors.New("cached query exceeds the time-slot budget")
+			return nil, coded(CodeBudgetExceeded, "cached query exceeds the time-slot budget")
 		}
 		start, end := at, at.Add(width)
 		if start.Before(q.Start) {

@@ -10,7 +10,7 @@ import (
 // groupKeys are the JSON keys of the optional counter groups on Sample.
 var groupKeys = []string{
 	"http", "iis", "diskCpu", "sqlHost", "clr", "proc10", "procIO",
-	"events", "tcp", "aspnet", "memPressure", "vm", "dumps",
+	"events", "tcp", "aspnet", "memPressure", "vm", "dumps", "sqlLog",
 }
 
 func fp64(v float64) *float64 { return &v }

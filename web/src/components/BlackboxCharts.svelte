@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { watchSize } from '../lib/chartPerf';
+  import { logSeriesReadTiming, watchSize } from '../lib/chartPerf';
   import { timeZone } from '../lib/timeZone.svelte';
   import { onMount, untrack } from 'svelte';
   import { MarkAreaComponent } from 'echarts/components';
@@ -9,9 +9,10 @@
   import { blackboxApi, refusalText, shownTime, type BlackboxItem } from '../lib/blackbox';
   import { BB_REFUSAL } from '../lib/copy/blackboxCopy';
   import { BBC_TEXT as T } from '../lib/copy/blackboxChartsCopy';
+  import { sqlNote } from '../lib/blackboxSqlNames';
   import {
     PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapRanges, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
-    alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own, niceBinaryMax, biggestPlotted,
+    alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own, niceBinaryMax, biggestPlotted, settleWidth,
     type SeriesAnswer, type SeriesLine, type SeriesPoint, type SeriesUnit, type WindowPreset
   } from '../lib/blackboxSeries';
   import { MAX_DRAWN, eventDots, eventRows, happenedItems, healthRows, statusChips, type HappenedItem, type Happened } from '../lib/blackboxHappened';
@@ -44,6 +45,15 @@
   let busy = $state(false);
   let problem = $state('');
   let attempt = $state(0);
+  // 0 until the chart box has a real size: nothing is read before then (a hidden box would ask for a 1-point answer).
+  let chartWidth = $state(0);
+  let readRun = 0;
+  // The window the current zoom belongs to: a new window clears the zoom, a new width does not.
+  let zoomWin: Win | null = null;
+  let paintSample = $state.raw<{ answer: SeriesAnswer; startedAt: number } | null>(null);
+  // The width the reads use: in steps of WIDTH_STEP, with some slack on a shrink, so a scrollbar or a nudge does not read again.
+  let pixelWidth = $state(0);
+  $effect(() => { const measured = chartWidth; untrack(() => { pixelWidth = settleWidth(pixelWidth, measured); }); });
   let log = $state(saved.log === true);
   let keys = $state<string[]>(Array.isArray(saved.keys) ? saved.keys : []);
   let tab = $state<'counters' | 'processes'>('counters');
@@ -89,29 +99,40 @@
     };
   });
 
-  // One read per window. A newer window cancels the older read.
+  // One debounced read per window or visible width step. A newer read cancels the older request and rejects a late answer even if abort lost the race.
+  // A width that is not measured yet waits. The user's zoom is kept when only the width changed; a new window clears it.
   $effect(() => {
-    const w = win;
+    const w = win, width = pixelWidth;
     void attempt;
-    if (!w) return;
+    const mine = ++readRun;
+    if (!w || width <= 0) return;
     const ctl = new AbortController();
-    untrack(() => { busy = true; problem = ''; zoom = null; });
-    const req = alignedRequest(w.startMs, w.endMs, facts?.effectiveIntervalSeconds || facts?.intervalSeconds || 15, POINTS);
-    blackboxApi.series(item.id, { start: new Date(req.startMs).toISOString(), end: new Date(req.endMs).toISOString(), points: req.points }, ctl.signal)
-      .then((raw) => {
-        const a = readSeriesAnswer(raw);
-        if (!a) { problem = T.badAnswer; answer = null; return; }
-        answer = a;
-        const have = new Set(a.lines.map((l) => l.key));
-        const kept = untrack(() => keys).filter((k) => have.has(k));
-        if (!kept.length) keys = defaultSelection(a.lines);
-      })
-      .catch((e: unknown) => {
-        if (e instanceof DOMException && e.name === 'AbortError') return;
-        problem = refusalText(e, BB_REFUSAL) || T.readFailed;
-      })
-      .finally(() => { if (!ctl.signal.aborted) busy = false; });
-    return () => ctl.abort();
+    paintSample = null;
+    untrack(() => { busy = true; problem = ''; if (w !== zoomWin) { zoom = null; zoomWin = w; } });
+    const maxPoints = Math.max(1, Math.min(POINTS, width));
+    const req = alignedRequest(w.startMs, w.endMs, facts?.effectiveIntervalSeconds || facts?.intervalSeconds || 15, maxPoints);
+    const timer = setTimeout(() => {
+      const began = performance.now();
+      blackboxApi.series(item.id, {
+        start: new Date(req.startMs).toISOString(), end: new Date(req.endMs).toISOString(), points: req.points, width, shape: 'm4'
+      }, ctl.signal, true)
+        .then((raw) => {
+          if (mine !== readRun || ctl.signal.aborted) return;
+          const a = readSeriesAnswer(raw);
+          if (!a) { problem = T.badAnswer; answer = null; return; }
+          answer = a;
+          paintSample = { answer: a, startedAt: began };
+          const have = new Set(a.lines.map((l) => l.key));
+          const kept = untrack(() => keys).filter((k) => have.has(k));
+          if (!kept.length) keys = defaultSelection(a.lines);
+        })
+        .catch((e: unknown) => {
+          if (mine !== readRun || ctl.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) return;
+          problem = refusalText(e, BB_REFUSAL) || T.readFailed;
+        })
+        .finally(() => { if (mine === readRun && !ctl.signal.aborted) busy = false; });
+    }, 150);
+    return () => { clearTimeout(timer); ctl.abort(); };
   });
 
   $effect(() => { save(item.id, { keys, log }); });
@@ -167,6 +188,7 @@
     if (!q) return groups;
     return groups.map((g) => ({ ...g, lines: g.lines.filter((l) => (seriesTitle(l.key) + ' ' + l.key + ' ' + g.title).toLowerCase().includes(q)) })).filter((g) => g.lines.length);
   });
+  const sqlNoteText = $derived(answer && answer.samples > 0 ? sqlNote(answer.sql) : null);
   const notRead = $derived((answer?.groups ?? []).map((c) => ({ c, note: answer && answer.samples > 0 ? coverNote(c) : null })).filter((x) => x.note));
   // BLACKBOX-04: a colour is never used twice inside one chart. The colours run per chart (per unit), not across all of them; only a
   // chart with more lines than the palette has colours goes on to dashed and then dotted lines, and the swatches show that too.
@@ -331,6 +353,11 @@
         }
       }
     }, true);
+    const sample = untrack(() => paintSample);
+    if (sample?.answer === a) {
+      paintSample = null;
+      logSeriesReadTiming('blackbox-paint', performance.now() - sample.startedAt);
+    }
   });
 
   // A click on a table row only restyles the lines (no rebuild of the chart).
@@ -449,10 +476,10 @@
               {#if answer}<p class="bbc-note">{T.noMatch}</p>{/if}
             {/each}
           </div>
-          {#if notRead.length}
+          {#if notRead.length || sqlNoteText}
             <div class="bbc-notread">
               <strong>{T.notReadGroups}</strong>
-              <ul>{#each notRead as x (x.c.group)}<li>{own(GROUP_TITLES, x.c.group) ?? x.c.group}: {x.note}</li>{/each}</ul>
+              <ul>{#each notRead as x (x.c.group)}<li>{own(GROUP_TITLES, x.c.group) ?? x.c.group}: {x.note}</li>{/each}{#if sqlNoteText}<li>{own(GROUP_TITLES, 'sqlDmv')}: {sqlNoteText}</li>{/if}</ul>
             </div>
           {/if}
         {:else}
@@ -488,11 +515,11 @@
             {/if}
           {/if}
           <div class="bbc-canvas-wrap" role="img" aria-label={T.chartLabel(item.name, drawn.slice(0, 6).map((d) => d.title).join(', '), Math.max(0, drawn.length - 6))} style:height={height + 'px'} class:empty={!drawn.length || !!problem}>
-            <div class="bbc-canvas" bind:this={node}></div>
+            <div class="bbc-canvas" bind:this={node} bind:clientWidth={chartWidth}></div>
             <div class="bbc-legends" aria-hidden="true">
               {#each legends as lg, i (lg.unit)}
                 <ul class="bbc-legend" style:top={(TOP + i * (STRIP_H + GAP) - 24) + 'px'} style:left={LEFT + 'px'}>
-                  {#each lg.shown as n (n.key)}<li><span class="bbc-swatch {n.c?.dash ?? 'solid'}" style:--sw={n.c?.color ?? 'transparent'}></span>{n.title}</li>{/each}
+                  {#each lg.shown as n (n.key)}<li><span class="bbc-swatch {n.c?.dash ?? 'solid'}" style:--sw={n.c?.color ?? 'transparent'}></span><span class="bbc-lgt" title={n.title}>{n.title}</span></li>{/each}
                   {#if lg.more}<li class="bbc-legend-more">{T.legendMore(lg.more)}</li>{/if}
                 </ul>
               {/each}
@@ -662,7 +689,7 @@
 </dialog>
 
 <style>
-  .bbc { width: min(1400px, calc(100vw - 32px)); max-width: none; height: calc(100vh - 32px); max-height: none; padding: 0; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md, 8px); display: flex; flex-direction: column; overflow: hidden; }
+  .bbc { width: min(1840px, calc(100vw - 32px)); max-width: none; height: calc(100vh - 32px); max-height: none; padding: 0; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md, 8px); display: flex; flex-direction: column; overflow: hidden; }
   .bbc:not([open]) { display: none; }
   .bbc::backdrop { background: var(--scrim); }
   .bbc-head { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
@@ -703,7 +730,8 @@
   .bbc-canvas-wrap.empty { visibility: hidden; height: 0 !important; }
   .bbc-legends { position: absolute; inset: 0; pointer-events: none; }
   .bbc-legend { position: absolute; display: flex; flex-wrap: nowrap; gap: var(--space-4); margin: 0; padding: 0; list-style: none; max-width: calc(100% - 100px); overflow: hidden; color: var(--text-2); font-size: 12px; white-space: nowrap; }
-  .bbc-legend li { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .bbc-legend li { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; }
+  .bbc-lgt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .bbc-legend-more { color: var(--text-2); }
   .bbc-empty { display: grid; justify-items: center; gap: var(--space-2); padding: var(--space-8, 48px) var(--space-4); text-align: center; }
   .bbc-empty-title { margin: 0; font-size: 14px; font-weight: 600; }

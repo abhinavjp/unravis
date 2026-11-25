@@ -24,8 +24,10 @@
 //   UIFIX-50  Row buttons of the All operations request list and "Show only" (BL-495 part): "Nearby activity" and "Inspect" are real <button type=button> of one size on one line each, named by their request (API, time to the millisecond, source and record id) with the visible words first (50a); the same Enter and Space act once, with the focus ring (50b, 50c); "Show only" of the Request volume table is a quiet button with a visible edge and one size, 24 px press area, and the table still fits its box (50d)
 //   UIFIX-51  Slowest tab (BL-495 part n): "Inspect window" of the exact time windows and "Nearby activity" of the slowest requests are real <button type=button> quiet buttons of one size with a visible edge, named by the window (start to end, zone) or by the request (API, time to the millisecond, source, record id) with the visible words first (51a); Enter and Space act once each, with the focus ring (51b, 51c)
 //   UIFIX-52  Slowest tab (BL-537): the small line under the API name of each slowest request is at least 11px (the audit's floor) and the two headings start their words where the controls and notes under them start; the heading boxes and the list's other columns stay where they were (52a, 52b)
+//   UIFIX-53  Slowest tab (BL-538): the "API / source" column of the slowest-request list and the first column of the exact time windows have a sensible width: the API name stays on one line, the rows are short (the 50-row list was about 11,000 px tall at 1440 px), and at 1440 px the list fits its panel so "Nearby activity" is not pushed out
 import { test, expect, type Page } from '../support/fixtures';
-import { openCase } from '../support/ui';
+import { openCase, layoutSettled } from '../support/ui';
+import { sweepTip } from '../support/chart-tip';
 
 type Box = { x: number; y: number; w: number; h: number };
 
@@ -44,6 +46,13 @@ async function openBlackbox(page: Page): Promise<void> {
     await page.getByRole('menuitem', { name: 'Blackbox' }).click();
   }
   await expect(page.locator('#blackbox-title')).toBeVisible();
+}
+
+let styleSequence = 0;
+async function addCspStyle(page: Page, content: string) {
+  const url = `/__e2e_style_${++styleSequence}.css`;
+  await page.route('**' + url, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: content }));
+  return page.addStyleTag({ url });
 }
 
 test('UIFIX-01 Place a Blackbox: the close button keeps clear of every step name', async ({ page }) => {
@@ -80,7 +89,7 @@ for (const touch of [false, true]) {
       return { q: r(q), i: r(i) };
     });
     expect(overlap(boxes.q, boxes.i), JSON.stringify(boxes)).toBe(0);
-    // the heading carries its "?" and the "i" follows it on the same line
+    // the "?" and the "i" share one line
     expect(boxes.i.x).toBeGreaterThanOrEqual(boxes.q.x + boxes.q.w - 0.5);
   });
 }
@@ -149,14 +158,14 @@ test('UIFIX-04b Sources pop-up: the demo note starts on the same line as the lis
 
 test('UIFIX-05 The selected-lines notes of the Where is it? timeline are at least 11px', async ({ page }) => {
   await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Where is it?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Where is it?', level: 2 })).toBeVisible();
   const sizes = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.timeline-selected small, .canvas-bar small')].filter((e) => e.offsetParent).map((e) => parseFloat(getComputedStyle(e).fontSize)));
   for (const s of sizes) expect(s).toBeGreaterThanOrEqual(11);
 });
 
 test('UIFIX-06a Where is it?: the Daily view buttons are 24 x 24 px or more', async ({ page }) => {
   await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Where is it?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Where is it?', level: 2 })).toBeVisible();
   await page.locator('summary', { hasText: 'API groups' }).click();
   const buttons = page.locator('button.daily-open');
   await expect(buttons.first()).toBeVisible();
@@ -298,7 +307,7 @@ async function shapes(page: Page, table: string): Promise<{ now: Shape; old: Sha
     }
     void document.body.offsetHeight;
     const old = shape();
-    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style); }
+    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.style.cssText = style; }
     return { now, old, touched: saved.length };
   }, DEVELOP_RULES);
 }
@@ -433,7 +442,7 @@ const important = (css: string) => css.replace(/;(?=\s*(\}|$))/g, ';').replace(/
 /** The same screenshots with the new rules and with the old ones put back. */
 async function paintedBoth(page: Page, take: () => Promise<Buffer[]>): Promise<{ now: Buffer[]; old: Buffer[] }> {
   const now = await take();
-  const style = await page.addStyleTag({ content: important(OLD_HEATMAP_CSS) + OFF_NEW_CSS });
+  const style = await addCspStyle(page, important(OLD_HEATMAP_CSS) + OFF_NEW_CSS);
   const old = await take();
   await style.evaluate((el) => el.remove());
   return { now, old };
@@ -498,7 +507,7 @@ test('UIFIX-13c Daily and hourly view: the size and place of every row and squar
     return { grid: box(g), slots: [...g.querySelectorAll('.hm-cell-wrap')].map(box), rows: [...g.querySelectorAll('.hm-row')].map(box) };
   });
   const now = await measure();
-  const style = await page.addStyleTag({ content: important(OLD_HEATMAP_CSS) + OFF_NEW_CSS });
+  const style = await addCspStyle(page, important(OLD_HEATMAP_CSS) + OFF_NEW_CSS);
   const old = await measure();
   await style.evaluate((el) => el.remove());
   const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.05);
@@ -634,12 +643,12 @@ test('UIFIX-16b Blackbox charts: nothing outside the side column moves, and the 
     const inSide = () => [...side.children].map((e) => e.getBoundingClientRect().top);
     const now = snap(), nowSide = sideBox(), nowIn = inSide(), nowH = tabs.getBoundingClientRect().height;
     // the old rule put back: the strip may shrink again
-    const sheet = document.createElement('style');
-    sheet.textContent = '.bbc-tabs { flex-shrink: 1 !important; transition: none !important; }'; // no transition, or the computed value is still on its way from the new value
-    document.head.appendChild(sheet);
+    const tabStyle = tabs.style.cssText;
+    tabs.style.setProperty('flex-shrink', '1', 'important');
+    tabs.style.setProperty('transition', 'none', 'important');
     void document.body.offsetHeight;
     const old = snap(), oldSide = sideBox(), oldIn = inSide(), oldH = tabs.getBoundingClientRect().height;
-    sheet.remove();
+    tabs.style.cssText = tabStyle;
     const moved = now.filter((n, i) => !old[i] || n.box.some((v, j) => Math.abs(v - old[i].box[j]) > 0.05)).map((n) => n.name);
     return { moved, total: now.length, sideSame: nowSide.every((v, i) => Math.abs(v - oldSide[i]) < 0.05), nowH, oldH, shift: nowIn.map((t, i) => Math.round((t - oldIn[i]) * 10) / 10) };
   });
@@ -713,7 +722,7 @@ async function scallRects(page: Page): Promise<{ now: Record<string, Rect[]>; ol
     });
     void document.body.offsetHeight;
     const old = grab();
-    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style); }
+    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.style.cssText = style; }
     return { now, old, labels: saved.length };
   }, SCALL_LABELS);
 }
@@ -785,8 +794,8 @@ for (const width of [320, 360, 390]) {
 type Rules = [string, Record<string, string>][];
 
 /** Every box inside `root` now and with `rules` put back. `moved` lists the boxes that differ; targets are compared by margin box. */
-async function layoutMoves(page: Page, root: string, rules: Rules, hideCss = ''): Promise<{ touched: number; moved: string[]; total: number }> {
-  return page.locator(root).first().evaluate((container, [rs, css]) => {
+async function layoutMoves(page: Page, root: string, rules: Rules): Promise<{ touched: number; moved: string[]; total: number }> {
+  return page.locator(root).first().evaluate((container, rs) => {
     const targets = new Set<Element>();
     for (const [selector] of rs) container.querySelectorAll(selector).forEach((e) => targets.add(e));
     // Boxes inside a closed <details> are skipped: the browser lays them out only when something asks, so the first read can say 0 x 0 and the second a real size (seen in the Slow call screen's closed "How to read" notes). They are not on screen, so they cannot have moved.
@@ -804,21 +813,23 @@ async function layoutMoves(page: Page, root: string, rules: Rules, hideCss = '')
         for (const [k, v] of Object.entries(declarations)) el.style.setProperty(k, v, 'important');
       });
     }
-    const sheet = document.createElement('style');
-    sheet.textContent = css;
-    document.head.appendChild(sheet);
     void document.body.offsetHeight;
     const old = snap();
-    sheet.remove();
-    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style); }
+    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.style.cssText = style; }
     const moved: string[] = [];
     now.forEach((n, i) => { if (!old[i] || n.box.some((v, j) => Math.abs(v - old[i].box[j]) > 0.05)) moved.push(n.name + ' now ' + n.box.map((v) => v.toFixed(2)).join(',') + ' old ' + (old[i]?.box ?? []).map((v) => v.toFixed(2)).join(',')); });
     return { touched: saved.length, moved: moved.slice(0, 6), total: now.length };
-  }, [rules, hideCss] as [Rules, string]);
+  }, rules);
 }
 
 async function expectNothingMoved(page: Page, root: string, rules: Rules, label: string, hideCss = ''): Promise<void> {
-  const facts = await layoutMoves(page, root, rules, hideCss);
+  const style = hideCss ? await addCspStyle(page, hideCss) : null;
+  let facts: { touched: number; moved: string[]; total: number };
+  try {
+    facts = await layoutMoves(page, root, rules);
+  } finally {
+    await style?.evaluate((el) => el.remove());
+  }
   expect(facts.touched, label + ': no target found to compare').toBeGreaterThan(0);
   expect(facts.total, label + ': nothing measured').toBeGreaterThan(5);
   expect(facts.moved, label + ': boxes that moved against the old rules').toEqual([]);
@@ -972,7 +983,7 @@ for (const scheme of ['dark', 'light'] as const) {
         const fx = Math.max(0, Math.floor(x)), fy = Math.max(0, Math.floor(y)); // whole pixels: a fractional clip is resampled
         return { x: fx, y: fy, width: Math.ceil(x + r.width + parseFloat(s.marginLeft) + parseFloat(s.marginRight) + 28 - fx), height: Math.ceil(y + r.height + parseFloat(s.marginTop) + parseFloat(s.marginBottom) + 28 - fy) };
       });
-      await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+      await addCspStyle(page, '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }');
       const take = async (): Promise<Buffer[]> => {
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
         await page.mouse.move(0, 0);
@@ -984,7 +995,7 @@ for (const scheme of ['dark', 'light'] as const) {
         return [rest, focused];
       };
       const now = await take();
-      const style = await page.addStyleTag({ content: important(OLD_FOCUS[name].css) });
+      const style = await addCspStyle(page, important(OLD_FOCUS[name].css));
       const old = await take();
       await style.evaluate((el) => el.remove());
       // Byte for byte, except the rounded ring of the Review link: a positioned control rasterises the four arcs of its ring a hair differently
@@ -1243,7 +1254,8 @@ async function barFacts(page: Page) {
       bar: rect(g.querySelector('.bar')!),
       hit: rect(g.querySelector('.bar-hit')!),
       svg: rect(g.closest('svg')!),
-      lane: g.closest('[data-lane]')?.getAttribute('data-lane') ?? ''
+      lane: rect(g.closest('[data-lane]')!),
+      laneName: g.closest('[data-lane]')?.getAttribute('data-lane') ?? ''
     }));
   });
 }
@@ -1258,15 +1270,15 @@ for (const size of SCALL_SIZES) {
     const overlapArea = (a: { l: number; t: number; r: number; b: number }, b: { l: number; t: number; r: number; b: number }) =>
       Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l)) * Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
     for (const b of bars) {
-      // holds its bar, inside its own lane drawing (never reaches the lane above or below)
+      // holds its bar and stays inside its own lane; the upper rows may use the non-interactive name row above the svg
       expect(b.hit.l, b.label + ' left').toBeLessThanOrEqual(b.bar.l + eps);
       expect(b.hit.r, b.label + ' right').toBeGreaterThanOrEqual(b.bar.r - eps);
       expect(b.hit.t, b.label + ' top').toBeLessThanOrEqual(b.bar.t + eps);
       expect(b.hit.b, b.label + ' bottom').toBeGreaterThanOrEqual(b.bar.b - eps);
-      expect(b.hit.t, b.label + ' inside the lane drawing (top)').toBeGreaterThanOrEqual(b.svg.t - eps);
-      expect(b.hit.b, b.label + ' inside the lane drawing (bottom)').toBeLessThanOrEqual(b.svg.b + eps);
-      expect(b.hit.l, b.label + ' inside the lane drawing (left)').toBeGreaterThanOrEqual(b.svg.l - eps);
-      expect(b.hit.r, b.label + ' inside the lane drawing (right)').toBeLessThanOrEqual(b.svg.r + eps);
+      expect(b.hit.t, b.label + ' inside its lane (top)').toBeGreaterThanOrEqual(b.lane.t - eps);
+      expect(b.hit.b, b.label + ' inside its lane (bottom)').toBeLessThanOrEqual(b.lane.b + eps);
+      expect(b.hit.l, b.label + ' inside its lane (left)').toBeGreaterThanOrEqual(b.lane.l - eps);
+      expect(b.hit.r, b.label + ' inside its lane (right)').toBeLessThanOrEqual(b.lane.r + eps);
       // grew: taller than the bar by something, and as wide as 24 px
       expect(b.hit.b - b.hit.t, b.label + ' taller than the bar').toBeGreaterThan(b.bar.b - b.bar.t + 1);
       expect(b.hit.r - b.hit.l, b.label + ' width').toBeGreaterThanOrEqual(24 - eps);
@@ -1274,9 +1286,9 @@ for (const size of SCALL_SIZES) {
       const height = b.hit.b - b.hit.t;
       if (height < 24 - eps) {
         for (const end of ['t', 'b'] as const) {
-          const edge = end === 't' ? b.svg.t : b.svg.b;
+          const edge = end === 't' ? b.lane.t : b.lane.b;
           const atEdge = Math.abs(b.hit[end] - edge) <= eps;
-          const atNeighbour = bars.some((o) => o !== b && o.lane === b.lane && Math.min(o.hit.r, b.hit.r) - Math.max(o.hit.l, b.hit.l) > 0 && Math.abs(o.hit[end === 't' ? 'b' : 't'] - b.hit[end]) <= eps);
+          const atNeighbour = bars.some((o) => o !== b && o.laneName === b.laneName && Math.min(o.hit.r, b.hit.r) - Math.max(o.hit.l, b.hit.l) > 0 && Math.abs(o.hit[end === 't' ? 'b' : 't'] - b.hit[end]) <= eps);
           expect(atEdge || atNeighbour, b.label + ' is short (' + height.toFixed(1) + ' px) and its ' + (end === 't' ? 'top' : 'bottom') + ' end touches neither the lane edge nor another area').toBe(true);
         }
       }
@@ -1299,8 +1311,12 @@ for (const size of SCALL_SIZES) {
       return out;
     });
     expect(wrong, 'presses inside an area that miss its bar').toEqual([]);
-    // at least the lowest bar of the stack reaches the full 24 px on the desktop sizes (a stack of three rows shares its room)
-    if (size.width >= 1024) expect(Math.max(...bars.map((b) => b.hit.b - b.hit.t)), 'the bar with room above and below').toBeGreaterThanOrEqual(24 - eps);
+    // the upper bar uses the name row and the lowest bar uses the room below it: both reach the full 24 px on desktop sizes
+    if (size.width >= 1024) {
+      const stack = bars.filter((b) => b.laneName === bars[0].laneName).sort((a, b) => a.bar.t - b.bar.t);
+      expect(stack[0].hit.b - stack[0].hit.t, 'the upper bar reaches 24 px through the name row').toBeGreaterThanOrEqual(24 - eps);
+      expect(Math.max(...bars.map((b) => b.hit.b - b.hit.t)), 'the bar with room above and below').toBeGreaterThanOrEqual(24 - eps);
+    }
   });
 }
 
@@ -1312,7 +1328,7 @@ for (const scheme of ['dark', 'light'] as const) {
       await openSlowCallScreen(page);
       const lanes = page.getByTestId('scall-lanes');
       await lanes.scrollIntoViewIfNeeded();
-      await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+      await addCspStyle(page, '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }');
       await page.mouse.move(0, 0);
       const snap = () => page.evaluate(() => [...document.querySelectorAll('[data-testid=slow-call-screen] *')]
         .filter((e) => !e.matches('.bar-hit, .bar-g') && !e.closest('.bar-hit') && (!e.closest('details:not([open])') || e.matches('details, summary')))
@@ -1321,7 +1337,7 @@ for (const scheme of ['dark', 'light'] as const) {
       if (!clip) throw new Error('no lanes box');
       const now = await snap();
       const shotNow = await page.screenshot({ clip: { x: Math.max(0, clip.x), y: Math.max(0, clip.y), width: clip.width, height: clip.height } });
-      const sheet = await page.addStyleTag({ content: '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; }' });
+      const sheet = await addCspStyle(page, '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; }');
       const old = await snap();
       const shotOld = await page.screenshot({ clip: { x: Math.max(0, clip.x), y: Math.max(0, clip.y), width: clip.width, height: clip.height } });
       await sheet.evaluate((el) => el.remove());
@@ -1337,7 +1353,7 @@ for (const scheme of ['dark', 'light'] as const) {
 test('UIFIX-19e Slow call screen: a press goes to the bar it is nearest to, an area never takes a press from the chart outside it or from the next lane', async ({ page }) => {
   await openSlowCallScreen(page);
   const bars = await barFacts(page);
-  const stack = bars.filter((b) => b.lane === bars[0].lane).sort((a, b) => a.bar.t - b.bar.t);
+  const stack = bars.filter((b) => b.laneName === bars[0].laneName).sort((a, b) => a.bar.t - b.bar.t);
   expect(stack.length, 'a stack of bars in one lane').toBeGreaterThan(1);
   const pressed = async () => page.evaluate(() => [...document.querySelectorAll('.bar-g')].map((g) => g.getAttribute('aria-pressed') === 'true'));
   const click = async (x: number, y: number) => { await page.mouse.click(x, y); };
@@ -1366,12 +1382,12 @@ test('UIFIX-19e Slow call screen: a press goes to the bar it is nearest to, an a
   expect((await pressed())[lowest.i], 'past the area the lowest bar is not selected (the chart takes the press)').toBe(false);
   expect((await pressed())[stack[0].i], 'past the area the earlier selection stays').toBe(true);
   await expect(page.locator('.scall-line.pinned')).toHaveCount(1);
-  // the lane boundary: one pixel below the drawing of a lane is not a bar of that lane
+  // the lane boundary: a press one pixel outside a lane never belongs to a bar of that lane
   for (const b of bars) {
-    const below = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.svg.b + 1] as [number, number]);
-    expect(below, 'one pixel below the lane drawing of ' + b.label).toBeNull();
-    const above = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.svg.t - 1] as [number, number]);
-    expect(above, 'one pixel above the lane drawing of ' + b.label).toBeNull();
+    const below = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.lane.b + 1] as [number, number]);
+    expect(below, 'one pixel below the lane of ' + b.label).not.toBe(b.label);
+    const above = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.lane.t - 1] as [number, number]);
+    expect(above, 'one pixel above the lane of ' + b.label).not.toBe(b.label);
   }
 });
 
@@ -1380,7 +1396,7 @@ for (const scheme of ['dark', 'light'] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width: 1440, height: 900 });
     await openSlowCallScreen(page);
-    await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+    await addCspStyle(page, '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }');
     for (const [name, selector] of [['crumb', '[data-testid=scall-back]'], ['minimap box', '[data-testid=scall-map-box]'], ['lane bar', '.bar-g']] as const) {
       const target = page.locator(selector).first();
       await target.scrollIntoViewIfNeeded();
@@ -1400,7 +1416,7 @@ for (const scheme of ['dark', 'light'] as const) {
         return [rest, focused];
       };
       const now = await take();
-      const style = await page.addStyleTag({ content: '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; } .scall-crumb .link { position: static !important; }' });
+      const style = await addCspStyle(page, '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; } .scall-crumb .link { position: static !important; }');
       const old = await take();
       await style.evaluate((el) => el.remove());
       for (const [i, what] of ['at rest', 'focused'].entries()) {
@@ -1516,22 +1532,9 @@ async function rerunWithWindows(page: Page, make: (i: number, at: number) => { c
   await page.waitForTimeout(400);
 }
 
-/** Sweep the pointer across the plot until the tooltip text matches, and return it; fails with the last text seen. */
+/** Sweep the pointer across the plot until the tooltip text matches, and return it; fails with the last text seen. The tooltip is drawn on the canvas (BL-323): support/chart-tip.ts reads it from the chart. */
 async function heroTip(page: Page, wanted: RegExp): Promise<string> {
-  await page.locator('.hero-chart').scrollIntoViewIfNeeded();
-  const box = (await page.locator('.hero-chart').boundingBox())!;
-  let last = '';
-  for (let x = 56; x < box.width - 48; x += 3) {
-    await page.mouse.move(box.x + x, box.y + box.height / 2);
-    const text = await page.locator('.hero-chart').evaluate((el) => {
-      const tips = [...el.querySelectorAll<HTMLElement>('div')].filter((d) => d.textContent?.startsWith('20 Oct') && d.textContent.includes('Requests:') && !d.querySelector('div'));
-      const shown = tips.filter((d) => getComputedStyle(d.parentElement!).opacity !== '0' && getComputedStyle(d.parentElement!).visibility !== 'hidden');
-      return (shown[0] ?? tips[0])?.innerText.replace(/\s+/g, ' ') ?? '';
-    });
-    if (text) last = text;
-    if (wanted.test(text)) return text;
-  }
-  throw new Error('no tooltip matched ' + wanted + '; the last one was: ' + last);
+  return sweepTip(page, '.hero-chart', wanted);
 }
 
 test('UIFIX-31a Requests over time, a slow hour: P95 and the slowest request in seconds with one decimal each, interval start and end named', async ({ page }) => {
@@ -1782,7 +1785,7 @@ test('UIFIX-40d Slow call screen, all sources: Tab, Enter and Space press a row 
 
 test('UIFIX-40e Where is it?: "Show only" of the Request volume table is a real button; Tab and Enter filter the histogram once', async ({ page }) => {
   await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Where is it?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Where is it?', level: 2 })).toBeVisible();
   await page.locator('summary', { hasText: 'Request volume' }).click();
   const only = page.getByRole('button', { name: /^Show only .* in histogram$/ });
   await expect(only.first()).toBeVisible();
@@ -1930,6 +1933,23 @@ for (const key of ['Enter', 'Space'] as const) {
     await expect(page.locator(OP_BUTTONS).nth(1), 'the button gets the focus back').toBeFocused();
   });
 }
+
+// UIFIX-54 (BL-495e): Nearby activity belongs before the request list, not after a list that can fill the drawer.
+test('UIFIX-54 All operations: Nearby activity precedes the request history in the drawer', async ({ page }) => {
+  await openRequestList(page);
+  await page.locator(OP_BUTTONS).first().click();
+  await expect(page.locator('#nearby-activity')).toBeVisible();
+  const order = await page.evaluate(() => {
+    const nearby = document.querySelector('#nearby-activity')!;
+    const history = document.querySelector('#request-history')!;
+    return {
+      beforeHistory: (nearby.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+      historyAfterNearby: history.getBoundingClientRect().top >= nearby.getBoundingClientRect().top
+    };
+  });
+  expect(order.beforeHistory, 'Nearby activity comes before request history in the DOM').toBe(true);
+  expect(order.historyAfterNearby, 'the request list starts below Nearby activity').toBe(true);
+});
 
 for (const size of OP_SIZES) {
   test('UIFIX-50d Where is it? at ' + size.width + ' px: "Show only" is a quiet button with a visible edge, one size in the column, a 24 px press area, and the table fits its box', async ({ page }) => {
@@ -2127,5 +2147,48 @@ for (const size of OP_SIZES) {
     const firstColumn = await wordsLeft(page, '.traffic-slowness .slow-result tbody tr:first-child > :first-child');
     expect(firstColumn, 'the first column starts under the summary line').toBe(summary);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
+  });
+}
+
+// UIFIX-53 (BL-538): on develop the first column of `.volume-table` (`tbody th`, overflow-wrap: anywhere) got the table's smallest width, about 71 px at 1440 and 1100 px, so
+// "Payroll.Run" broke after a few letters, every row of the slowest list was 223 px tall (50 rows = 11,220 px) and the time-window column broke the same way at 1100 px. Now the column has a
+// minimum width (11rem in the slowest list, 9rem in the other `.volume-table` lists) and the Started and API / audit time cells may wrap at their spaces.
+for (const size of OP_SIZES) {
+  test('UIFIX-53a Slowest tab at ' + size.width + ' px: the API / source column is wide enough to read, rows are short, the name is not broken', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowestLists(page);
+    await layoutSettled(page);
+    const facts = await page.locator('.traffic-slowness .slow-result tbody tr').evaluateAll((rows) => rows.map((tr) => {
+      const th = tr.querySelector('th')!;
+      const name = th.firstChild as Text;
+      const range = document.createRange();
+      range.selectNodeContents(name);
+      return { w: th.getBoundingClientRect().width, h: tr.getBoundingClientRect().height, nameLines: new Set([...range.getClientRects()].map((q) => Math.round(q.top))).size, name: (name.textContent ?? '').trim() };
+    }));
+    expect(facts.length, 'one row per slowest request').toBeGreaterThan(2);
+    for (const f of facts) {
+      expect(f.w, 'width of the API / source cell of ' + f.name).toBeGreaterThanOrEqual(150);
+      expect(f.nameLines, 'the API name ' + f.name + ' is on one line').toBe(1);
+      expect(f.h, 'row height of ' + f.name).toBeLessThanOrEqual(130);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
+    // On a wide window the list fits its panel, so the last column is whole; on narrower ones the table's own wrapper scrolls, as it did before.
+    const [need, have, buttonRight, wrapRight] = await page.locator('.traffic-slowness .slow-result .volume-table-wrap').evaluate((wrap) => [wrap.scrollWidth, wrap.clientWidth, wrap.querySelector('tbody td button')!.getBoundingClientRect().right, wrap.getBoundingClientRect().right]);
+    if (size.width >= 1280) {
+      expect(need, 'the list fits its panel').toBeLessThanOrEqual(have);
+      expect(buttonRight, '"Nearby activity" is whole').toBeLessThanOrEqual(wrapRight);
+    }
+  });
+
+  test('UIFIX-53b Slowest tab at ' + size.width + ' px: the time window column of the exact windows table keeps a readable width and the same row height or less', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowestLists(page);
+    await layoutSettled(page);
+    const facts = await page.locator('.traffic-slowness .traffic-windows tbody tr').evaluateAll((rows) => rows.map((tr) => ({ w: tr.querySelector('th')!.getBoundingClientRect().width, h: tr.getBoundingClientRect().height })));
+    expect(facts.length).toBeGreaterThan(2);
+    for (const f of facts) {
+      expect(f.w, 'width of the time window cell').toBeGreaterThanOrEqual(120);
+      expect(f.h, 'row height of the time window').toBeLessThanOrEqual(100);
+    }
   });
 }

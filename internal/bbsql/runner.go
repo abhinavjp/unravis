@@ -240,6 +240,17 @@ type Runner struct {
 	Now            func() time.Time
 	Log            func(format string, args ...any)
 
+	// EnabledExtras lists the extra sampler kinds to run on top of the Standard
+	// set (extras.go). nil, the default, runs none. It is read on the first
+	// tick; changing it afterwards needs a new Runner.
+	EnabledExtras []string
+
+	// QueryTextMaxChars > 0 builds and unlocks the query-text sampler (bb:qtext),
+	// with that size cap for querytext.Scrub. The host sets it only from
+	// blackbox.Config.SQLQueryText() (deep profile with sql.queryText on); 0, the
+	// default, keeps the text statement unbuilt and refused at every send gate.
+	QueryTextMaxChars int
+
 	// KeepHours bounds the sample files; 0 means defaultKeepHours.
 	KeepHours int
 	// MinFreePercent is the owner's free-space floor for the drive holding Dir.
@@ -293,6 +304,12 @@ type Runner struct {
 	// fsWriteFailures counts filesystem write/repair failures, tracked apart
 	// from SQL instance failures (W10-10). It never feeds State or auto-off.
 	fsWriteFailures int
+
+	// extras are the opt-in extra samplers built from EnabledExtras on the first
+	// tick; extraRuns is the per-extra health (extras.go).
+	extras      []Sampler
+	extraRuns   map[string]*extraRun
+	extrasReady bool
 }
 
 // NewRunner loads the persisted back-off state. A corrupt or unreadable state
@@ -504,6 +521,11 @@ func (r *Runner) tick(parent context.Context, now time.Time) error {
 		r.lastRun[s.Kind()] = now
 		r.lastOK = now
 		hadSuccess = true
+	}
+	// The extras run after the Standard samples, inside the same budget, and
+	// never touch State (extras.go).
+	if err := r.tickExtras(ctx, parent, now); err != nil {
+		return err
 	}
 	if partial {
 		// Due samplers that never ran miss a scheduled observation: the next
@@ -737,6 +759,7 @@ func (r *Runner) rotate(now time.Time) error {
 		return err
 	}
 	currentName := filepath.Base(SamplePath(r.Dir, now))
+	currentText := filepath.Base(TextSamplePath(r.Dir, now))
 	cutoff := now.Add(-time.Duration(r.keepHours()) * time.Hour).Format(hourLayout)
 	// A wall/monotonic discontinuity makes every file look old (forward jump) or
 	// hides expiry (backward jump): defer the age rule for this pass. The byte
@@ -752,11 +775,8 @@ func (r *Runner) rotate(now time.Time) error {
 	ageRemoved := 0
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasPrefix(name, "bb-sql-") || !strings.HasSuffix(name, ".ndjson") {
-			continue
-		}
-		hh := strings.TrimSuffix(strings.TrimPrefix(name, "bb-sql-"), ".ndjson")
-		if !validHour(hh) {
+		hh, ok := sampleFileHour(name)
+		if e.IsDir() || !ok {
 			continue
 		}
 		info, err := e.Info()
@@ -765,7 +785,7 @@ func (r *Runner) rotate(now time.Time) error {
 		}
 		// Age purge: never the current writing hour, bounded per pass, deferred
 		// on a clock jump. Future-dated files (hh > now) are not age-expired.
-		if !skipAge && hh < cutoff && name != currentName && ageRemoved < maxAgeRemovalsPerPass {
+		if !skipAge && hh < cutoff && name != currentName && name != currentText && ageRemoved < maxAgeRemovalsPerPass {
 			if err := os.Remove(filepath.Join(r.Dir, name)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -787,7 +807,7 @@ func (r *Runner) rotate(now time.Time) error {
 	for r.MaxBytes > 0 && total > r.MaxBytes && byteRemoved < maxByteRemovalsPerPass {
 		idx := -1
 		for i, f := range kept {
-			if f.name == currentName {
+			if f.name == currentName || f.name == currentText {
 				continue
 			}
 			if idx == -1 || f.hour < kept[idx].hour {
@@ -1086,4 +1106,25 @@ func itemLimit(interval time.Duration) time.Duration {
 		return quickLimit
 	}
 	return longLimit
+}
+
+// TextSamplePrefix frames the hourly file of the query-text sampler: bb-sqlq-<hour>.ndjson. Statement text never goes into a bb-sql-<hour>
+// file: those are served on the read key alone (/sql/files/, ValidSQLFileName) and hold numbers only, and the text file's name does not
+// parse as one of them, so no route lists or serves it. Only the recorder host and a future opt-in reader can open it.
+const TextSamplePrefix = "bb-sqlq-"
+
+// TextSamplePath is the hourly NDJSON file of query text for t.
+func TextSamplePath(dir string, t time.Time) string {
+	return filepath.Join(dir, TextSamplePrefix+t.UTC().Format(hourLayout)+SampleSuffix)
+}
+
+// sampleFileHour splits a file name of the folder into its hour when it is one of the two sample families.
+func sampleFileHour(name string) (string, bool) {
+	for _, p := range []string{SamplePrefix, TextSamplePrefix} {
+		if strings.HasPrefix(name, p) && strings.HasSuffix(name, SampleSuffix) {
+			hh := strings.TrimSuffix(strings.TrimPrefix(name, p), SampleSuffix)
+			return hh, validHour(hh)
+		}
+	}
+	return "", false
 }

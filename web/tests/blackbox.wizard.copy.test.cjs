@@ -60,9 +60,10 @@ test('the catalogue has no VM group and no deeper checks as items', () => {
   assert.equal(RECORD_GROUPS.some((group) => group.id.toLowerCase() === 'vm' || /\bvm\b/i.test(group.title)), false);
   assert.equal(figures.some((figure) => /deeper checks/i.test(figure.label)), false);
   // Changed on purpose (browser pass, defect J): the old line, "Deeper checks are not part of this release.", was release
-  // jargon a first-time investigator cannot act on. The note now says what is true: no queries, no query text.
-  assert.match(BBW_TEXT['sql.deeperChecks'], /never runs queries/);
-  assert.match(BBW_TEXT['sql.deeperChecks'], /never reads query text/);
+  // jargon a first-time investigator cannot act on. The note says what is true: this step reads only Windows figures, the SQL
+  // login is a later choice on the Blackbox page (Collect SQL data), and nothing is ever changed.
+  assert.match(BBW_TEXT['sql.deeperChecks'], /only the figures Windows keeps/);
+  assert.match(BBW_TEXT['sql.deeperChecks'], /never changes data/);
   for (const key of ['sql.deeperChecks', 'sql.singleCounters']) {
     assert.doesNotMatch(BBW_TEXT[key], /release|deeper checks/i, key);
   }

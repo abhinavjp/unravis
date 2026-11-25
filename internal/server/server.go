@@ -25,6 +25,7 @@ import (
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/history"
 	"api-audit-explorer/internal/ledger"
+	"api-audit-explorer/internal/power"
 	"api-audit-explorer/internal/sessionproof"
 )
 
@@ -66,6 +67,8 @@ type handler struct {
 	mongoTests mongoTests
 	// mk is the master-key session (nil when the feature is not wired).
 	mk *MasterKeySession
+	// evidence resolves the evidence references of MCP hosts (BL-349, mcp_evidence.go); nil until the owner wires it.
+	evidence evidenceHolder
 	// bb is the Blackbox pages (nil when not wired, see WithBlackbox).
 	bb *blackboxHub
 	// keeper is the key keeper wiring for the shared layout (nil in the per-user layout, see WithKeeper).
@@ -74,6 +77,13 @@ type handler struct {
 	links sourceLinkStore
 	// reconn is the state of the reopening pass (see reconnect.go).
 	reconn reconnectState
+	// mcp is where the AI access screen's handler hangs once the grant store is open (nil: grants do not apply, see mcp_admin.go).
+	mcp *MCPMount
+	// code is where internal/codeapi hangs the code-mode handler (nil: the code routes answer 503, see code_mount.go).
+	code  *CodeMount
+	power *power.Policy
+	// trim limits the forced memory return after a slow request (see power_trim.go).
+	trim memoryTrimmer
 
 	casesState
 
@@ -94,6 +104,19 @@ type Option func(*handler)
 // Home and Case home as it does in live mode. Only the capture-only demo cases
 // set it; plain --demo never does.
 func WithCaptureCases() Option { return func(h *handler) { h.captureCases = true } }
+
+func WithPower(p *power.Policy) Option {
+	return func(h *handler) {
+		h.power = p
+		if p != nil {
+			p.AddBusy(h.jobs.anyRunning)
+			p.AddBusy(func() bool {
+				cf := h.caseFiles()
+				return cf.busy.Load() || cf.jobs.anyRunning(jobArchive) || cf.jobs.anyRunning(jobVerify)
+			})
+		}
+	}
+}
 
 func WithHistory(value savedHistory) Option { return func(h *handler) { h.history = value } }
 
@@ -211,11 +234,7 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func setSecurityHeaders(w http.ResponseWriter) {
-	// style-src keeps 'unsafe-inline': the dashboard sets computed style
-	// attributes (bar widths and offsets in ActivityContext and other
-	// components), which style-src without it would block. Scripts stay
-	// 'self' only, which is the part that matters for the session token.
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "DENY")

@@ -1,0 +1,17 @@
+{
+  "operation": "cases.list",
+  "description": "List the cases of the running app, as its window lists them: id, title, dates, size and flags, plus erase notices and the old-layout count. No key text, path or ledger text.",
+  "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "dependentRequired": {"offset": ["archived"]}, "properties": {
+    "archived": {"type": "boolean", "description": "List the archived cases (50 to a page) instead of the other cases"},
+    "offset": {"type": "integer", "minimum": 0, "maximum": 999999999, "description": "First archived case to list; only with archived"}}},
+  "output": {"type": "object", "additionalProperties": false, "required": ["cases", "archivedTotal", "offset", "pageSize", "erased", "oldCases"], "properties": {
+    "cases": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {
+      "id": {"type": "string"}, "title": {"type": "string", "description": "(locked) while the key of the case is locked"}, "created": {"type": ["string", "null"], "format": "date-time"}, "closed": {"type": ["string", "null"], "format": "date-time"},
+      "bytes": {"type": "integer"}, "imports": {"type": "integer"}, "ownKey": {"type": "boolean"}, "keyLocked": {"type": "boolean"},
+      "archived": {"type": "boolean"}, "missing": {"type": "boolean"}, "untrusted": {"type": "boolean"}}}},
+    "archivedTotal": {"type": "integer"}, "offset": {"type": "integer"}, "pageSize": {"type": "integer"},
+    "erased": {"type": "array", "description": "Erase notices: case id and time only; no title, path or ledger text", "items": {"type": "object", "additionalProperties": false, "required": ["id", "at"], "properties": {"id": {"type": "string", "pattern": "^[a-z2-7]{26}$"}, "at": {"type": ["string", "null"], "format": "date-time", "description": "UTC time of the erase; null when the notice has no time"}}}},
+    "oldCases": {"type": "integer", "minimum": 0, "description": "Cases from before the shared layout that remain in the owner's folder"}}},
+  "errors": ["INVALID_ARGUMENT", "CASE_LOCKED", "ENDPOINT_UNAVAILABLE", "APP_NOT_RUNNING", "OWNER_BUSY", "UPDATE_IN_PROGRESS", "ENDPOINT_UNTRUSTED", "VERSION_INCOMPATIBLE", "RESULT_TOO_LARGE", "CANCELED", "TIMEOUT"],
+  "examples": [{"command": "unravis cases list -o json"}]
+}

@@ -1,6 +1,9 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
+import type { SqlAccessReport } from './types';
 import { utcToWall } from './zoneStamp';
 import { zoneAbbreviation } from './time';
+import { readBinaryBody } from './binaryBody';
+import { readSeriesBinary, SERIES_BINARY_TYPE, type SeriesRequest } from './blackboxSeries';
 
 /**
  * Client for the Blackbox routes (internal/server/blackbox.go) and the pure rules the Blackbox panel follows.
@@ -86,6 +89,9 @@ export interface ThisPc {
   scanned: boolean;
   installed: boolean;
   running: boolean;
+  /** The SQL service (UnravisBlackboxSql), from the service manager. Whether it holds a login is not readable by an ordinary user. */
+  sqlInstalled?: boolean;
+  sqlRunning?: boolean;
   name?: string;
   folder?: string;
   port?: number;
@@ -212,9 +218,16 @@ export interface Settings {
   record: { processes: boolean; logsCatalogue: boolean; copyLogsOnSnapshot: boolean };
   logPaths: string[];
   probe: { enabled: boolean };
+  /** Which SQL checks the SQL service runs. Missing means the standard set. Settings only: no server, login or password lives here. */
+  sql?: { profile?: string; extras?: string[]; queryText?: boolean; queryTextMaxChars?: number };
   /** The app pools and services the owner picked for per-process detail. Empty means machine-wide only. */
   targets: TargetRef[];
 }
+
+/** What "turn SQL collection on" sends: how the SQL service signs in, the saved connection (login mode), and whether to start the service now. */
+export interface SqlSetupRequest { mode: 'login' | 'windows'; savedId?: string; enable: boolean }
+/** What a finished setup says. `grantScript` is set only for Windows sign-in. */
+export interface SqlSetupAnswer { ok: boolean; installed: boolean; loginSaved: boolean; started: boolean; grantScript?: string }
 
 export interface Refusal {
   status: number;
@@ -224,6 +237,8 @@ export interface Refusal {
   next?: string;
   state?: StateInfo;
   existing?: BlackboxItem;
+  /** Set when "turn SQL collection on" stopped because the login is not ready: the access report, with the script for what is missing. */
+  report?: SqlAccessReport;
 }
 
 /** A refused Blackbox call. `refusal` holds what the server said, with no key in it. */
@@ -340,15 +355,16 @@ async function readRefusal(response: Response): Promise<Refusal> {
     status: response.status,
     error: typeof body.error === 'string' && body.error ? body.error : 'The Blackbox request failed (' + response.status + ').',
     reason: typeof body.reason === 'string' && body.reason ? body.reason : 'other',
-    what: body.what, next: body.next, state: body.state, existing: body.existing
+    what: body.what, next: body.next, state: body.state, existing: body.existing, report: body.report
   };
 }
 
-async function send(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
+async function send(method: string, path: string, body?: unknown, signal?: AbortSignal, accept?: string): Promise<Response> {
   const token = readSessionToken();
   if (!token) throw new BlackboxError({ status: 401, error: NO_SESSION_MESSAGE, reason: 'no_session' });
   const headers: Record<string, string> = { 'X-Audit-Token': token };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (accept) headers.Accept = accept;
   let response: Response;
   try {
     response = await fetch(base + path, { method, credentials: 'same-origin', signal, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -389,13 +405,29 @@ export const blackboxApi = {
   apply: (settings: Settings) => call<{ ok: boolean; restarted: boolean; sqlWarning?: string }>('POST', '/this-pc/apply', settings),
   remove: (deleteRecordings: boolean, confirmName: string) => call<RemoveAnswer>('POST', '/this-pc/remove', { deleteRecordings, confirmName }),
   snapshot: () => call<SnapshotAnswer>('POST', '/this-pc/snapshot', {}),
+  /**
+   * Turns SQL collection on, on this PC. Mode "login" uses a saved SQL connection (its password stays with the key keeper); "windows" uses the
+   * SQL service's own Windows account and prints a grant script first. A login that is not ready is refused with 409 and its access report.
+   */
+  sqlSetup: (body: SqlSetupRequest) => call<SqlSetupAnswer>('POST', '/this-pc/sql/setup', body),
+  /** Deletes the SQL login saved on this PC and stops the SQL service. */
+  sqlClearLogin: () => call<{ ok: boolean }>('POST', '/this-pc/sql/login/clear', {}),
   /** Replaces the recorder program installed on this PC with the one that ships with Unravis. One administrator approval. */
   updateThisPc: () => call<UpdateAnswer>('POST', '/this-pc/update', {}),
   hostReading: (id: string, body: { incident: { start: string; end: string }; reference: { start: string; end: string } }) =>
     call<HostAnswer>('POST', '/' + encodeURIComponent(id) + '/host-reading', body),
-  /** Every recorded measurement for one window, downsampled to at most `points` buckets (server cap 600). Check the shape with readSeriesAnswer. */
-  series: (id: string, body: { start: string; end: string; points?: number }, signal?: AbortSignal) =>
-    call<unknown>('POST', '/' + encodeURIComponent(id) + '/series', body, signal),
+  /** Every recorded measurement for one window. Browser charts opt into packed M4 data; JSON remains the fallback. */
+  series: async (id: string, body: SeriesRequest, signal?: AbortSignal, binary = false): Promise<unknown> => {
+    const path = '/' + encodeURIComponent(id) + '/series';
+    const response = await send('POST', path, body, signal, binary ? SERIES_BINARY_TYPE : undefined);
+    if (!response.headers.get('Content-Type')?.includes(SERIES_BINARY_TYPE)) return response.json();
+    // A body that is too big, cut short or not a frame this reader knows takes the one JSON retry, never an error.
+    const packed = await readBinaryBody(response, signal);
+    const decoded = packed && readSeriesBinary(packed);
+    if (decoded) return decoded;
+    const fallback = await send('POST', path, body, signal);
+    return fallback.headers.get('Content-Type')?.includes(SERIES_BINARY_TYPE) ? null : fallback.json();
+  },
   /**
    * The sealed read key of the Blackbox installed on this PC, for Show and Copy (A33, wireframe 65). A POST that is never
    * cached. The caller holds the answer only while it is on view and never stores it.

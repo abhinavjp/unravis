@@ -15,6 +15,7 @@ import (
 	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/mcp"
+	"api-audit-explorer/internal/ownerlease"
 	"api-audit-explorer/internal/pipesrv"
 )
 
@@ -85,6 +86,8 @@ func swapPipeSeams(t *testing.T, onServing func(cancel context.CancelFunc)) (ui,
 	ui, ag = newMem(), newMem()
 	asked := false
 	oldTCP, oldPipes, oldAfter, oldOS, oldStart := listenTCP, openPipes, afterServing, hostOS, selfStart
+	oldLease := ownerLeaseFn
+	ownerLeaseFn = func(string, bool) (func(), error) { return func() {}, nil }
 	selfStart = func() (time.Time, error) { return time.Now(), nil }
 	listenTCP = func(port int) (net.Listener, error) { asked = true; return oldTCP(port) }
 	openPipes = func() (*pipesrv.Pipes, error) {
@@ -94,6 +97,7 @@ func swapPipeSeams(t *testing.T, onServing func(cancel context.CancelFunc)) (ui,
 	hostOS = "windows"
 	t.Cleanup(func() {
 		listenTCP, openPipes, afterServing, hostOS, selfStart = oldTCP, oldPipes, oldAfter, oldOS, oldStart
+		ownerLeaseFn = oldLease
 	})
 	return ui, ag, &asked
 }
@@ -199,6 +203,11 @@ func TestPipeFlagRules(t *testing.T) {
 		{[]string{"--pipe-only", "--port", "0"}, "needs --loopback"},
 		{[]string{"--pipe-only", "--no-browser"}, "--no-browser"},
 		{[]string{"--pipe-server", "--no-browser"}, "--no-browser"},
+		{[]string{"--pipe-server", "--owner=headless"}, ""},
+		{[]string{"--pipe-only", "--owner", "shell"}, ""},
+		{[]string{"--pipe-server", "--owner=app"}, "headless or shell"},
+		{[]string{"--pipe-server", "--owner=other"}, "headless or shell"},
+		{[]string{"--owner=headless"}, "only valid with --pipe-server"},
 		{[]string{"--pipe-only", "--quit"}, "--quit"},
 		{[]string{"--pipe-server", "--check-update"}, "--check-update"},
 	} {
@@ -342,6 +351,66 @@ func TestPipeModeSecondCopyExits12(t *testing.T) {
 	}
 }
 
+// TestPipeModeLeaseBusyExits14: the first copy in this session, but another session holds the owner lease: exit 14 (not 12: nobody to attach to), gate released,
+// nothing served.
+func TestPipeModeLeaseBusyExits14(t *testing.T) {
+	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": t.TempDir(), "AUDIT_SESSION_TOKEN": testToken})
+	f := &fakeGate{first: true}
+	pipeGateWith(t, f, func() bool { return false })
+	opened := false
+	swapPipeSeams(t, func(cancel context.CancelFunc) { opened = true; cancel() })
+	ownerLeaseFn = func(string, bool) (func(), error) { return func() {}, ownerlease.ErrBusy }
+	err := run([]string{"--pipe-only", "--demo"}, getenv)
+	assertQuietExit(t, err, 14)
+	if f.released != 1 {
+		t.Errorf("gate released %d times, want 1", f.released)
+	}
+	if opened {
+		t.Error("serving started despite a busy lease")
+	}
+}
+
+// TestPipeModeLeaseOtherErrorIsFatal: any lease failure other than busy is returned as is, not as exit 12.
+func TestPipeModeLeaseOtherErrorIsFatal(t *testing.T) {
+	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": t.TempDir(), "AUDIT_SESSION_TOKEN": testToken})
+	f := &fakeGate{first: true}
+	pipeGateWith(t, f, func() bool { return false })
+	opened := false
+	swapPipeSeams(t, func(cancel context.CancelFunc) { opened = true; cancel() })
+	boom := errors.New("disk on fire")
+	ownerLeaseFn = func(string, bool) (func(), error) { return func() {}, boom }
+	err := run([]string{"--pipe-only", "--demo"}, getenv)
+	var ee *exitCodeError
+	if err == nil || errors.As(err, &ee) || !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the wrapped lease error and not an exit code", err)
+	}
+	if f.released != 1 {
+		t.Errorf("gate released %d times, want 1", f.released)
+	}
+	if opened {
+		t.Error("serving started despite a lease error")
+	}
+}
+
+// TestPipeModeLeaseReleasedOnExit: a normal run releases the lease exactly once when it ends.
+func TestPipeModeLeaseReleasedOnExit(t *testing.T) {
+	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": t.TempDir(), "AUDIT_SESSION_TOKEN": testToken})
+	f := &fakeGate{first: true}
+	pipeGateWith(t, f, func() bool { return false })
+	swapPipeSeams(t, func(cancel context.CancelFunc) { cancel() })
+	released := 0
+	ownerLeaseFn = func(string, bool) (func(), error) { return func() { released++ }, nil }
+	if err := run([]string{"--pipe-only", "--demo"}, getenv); err != nil {
+		t.Fatal(err)
+	}
+	if released != 1 {
+		t.Errorf("lease released %d times, want 1", released)
+	}
+	if f.released != 1 {
+		t.Errorf("gate released %d times, want 1", f.released)
+	}
+}
+
 // TestPipeModeSecondCopyNoLocator: no live locator within 40 x 250 ms (the owner is browser mode, or still starting) is a quiet exit 13:
 // no message box, because a pipe-mode copy runs detached with no window.
 func TestPipeModeSecondCopyNoLocator(t *testing.T) {
@@ -466,5 +535,13 @@ func TestPipeModeLocatorFailureIsFatal(t *testing.T) {
 	swapPipeSeams(t, func(cancel context.CancelFunc) { cancel() })
 	if err := run([]string{"--pipe-only", "--demo"}, getenv); err == nil {
 		t.Fatal("run succeeded without a locator")
+	}
+}
+
+func TestOwnerNameIsWhatHelloSays(t *testing.T) {
+	for in, want := range map[string]string{"": "app", "headless": "headless", "shell": "shell"} {
+		if got := ownerName(in); got != want {
+			t.Errorf("%q: %q", in, got)
+		}
 	}
 }

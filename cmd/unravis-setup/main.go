@@ -355,7 +355,7 @@ func afterUnattended(o options, e env, d setup.Dirs, old *setup.Installed, res s
 		r.Message = "Updated to " + o.expectVersion + "."
 		if o.allowDowngrade { // the app went back to the kept version because the new one kept failing to start
 			r.Outcome = "rolled-back"
-			r.Message = "Version " + from + " did not start properly, so Unravis went back to " + o.expectVersion + ". That version will not be offered again."
+			r.Message = "Version " + from + " did not start properly, so Unravis went back to " + o.expectVersion + ". That version will not be offered again. If a newer version had already changed how Unravis keeps its AI approvals, no AI program can connect on this version; they stay safe and work again when the newer version is back."
 		}
 	case setup.OutcomeRolledBack:
 		r.Outcome = "rolled-back"

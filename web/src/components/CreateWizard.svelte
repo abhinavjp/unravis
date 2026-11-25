@@ -265,7 +265,7 @@
 </section>
 
 <style>
-  .wizard { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); width: 100%; max-width: 1100px; min-width: 0; margin: 0 auto; font-size: var(--fs-5); }
+  .wizard { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); width: 100%; max-width: min(var(--page-max), 1560px); min-width: 0; margin: 0 auto; font-size: var(--fs-5); }
   /* The notes keep a readable line length, but the row with "Leave the guide" spans the page so the link sits at the right edge like the steps and the bar (CASES-15). */
   .wiz-top { display: grid; gap: var(--space-2); }
   .wiz-note, .wiz-resumed { max-width: 72ch; }

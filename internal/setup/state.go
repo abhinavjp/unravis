@@ -38,7 +38,10 @@ type State struct {
 	Firewall      *FirewallOptions `json:"firewall,omitempty"`
 	FirewallRule  string           `json:"firewallRule,omitempty"`
 	SharedRoot    string           `json:"sharedRoot,omitempty"`
-	Installed     time.Time        `json:"installed"`
+	// PathAdded says whether this install put the bin folder on the PATH (true) or found it there already (false). Nil: the state is from
+	// before this was kept, so uninstall takes the entry off as it always did.
+	PathAdded *bool     `json:"pathAdded,omitempty"`
+	Installed time.Time `json:"installed"`
 }
 
 // Options returns the choices of the install the state describes (for an upgrade or a repair, which keep them).
@@ -139,7 +142,11 @@ type Payload struct {
 	Manifest Manifest
 }
 
-var payloadNames = map[string]bool{AppExeName: true, KeeperExeName: true, BlackboxExeName: true, ReleasesExeName: true}
+// CLIExeName is the thin command line program in the payload. It is optional: a payload without it installs as before, with no bin
+// folder and no PATH entry. It is placed as bin\unravis.exe (CLIInstalledName).
+const CLIExeName = "unravis-cli.exe"
+
+var payloadNames = map[string]bool{AppExeName: true, KeeperExeName: true, BlackboxExeName: true, ReleasesExeName: true, CLIExeName: true}
 
 // LoadPayload reads the manifest. Only the known program names are accepted, so a damaged manifest cannot make setup write anywhere
 // else.

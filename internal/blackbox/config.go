@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"api-audit-explorer/internal/querytext"
 )
 
 // ServiceName is the Windows service the recorder runs as.
@@ -123,6 +125,74 @@ func (p Probe) validateTrust() error {
 	return nil
 }
 
+// SQL profiles: what the SQL service collects once it is on. Standard is the original seven checks.
+const (
+	SQLProfileStandard   = "standard"
+	SQLProfileEverything = "everything"
+	SQLProfileDeep       = "deep"
+	maxSQLExtras         = 64
+)
+
+var sqlExtraRe = regexp.MustCompile(`^[a-z][A-Za-z0-9]{0,31}$`)
+
+// SQLSettings is the "sql" block of blackbox.json: which set of SQL checks the SQL service runs, plus single checks added to
+// or taken out of that set. Settings only: no server name, login or password is ever kept in this file.
+type SQLSettings struct {
+	// Profile is "standard" (default), "everything" or "deep".
+	Profile string `json:"profile,omitempty"`
+	// Extras are check ids added on top of the profile (a name that no check knows is ignored by the service).
+	Extras []string `json:"extras,omitempty"`
+	// QueryText is the opt-in text level: the SQL service also keeps the text of the heaviest statements, with literals and credentials
+	// removed (internal/querytext). It is honoured only when Profile is "deep"; Standard and Everything never keep query text.
+	QueryText bool `json:"queryText,omitempty"`
+	// QueryTextMaxChars caps one kept statement. 0 is the default (querytext.DefaultMaxChars).
+	QueryTextMaxChars int `json:"queryTextMaxChars,omitempty"`
+}
+
+// SQLQueryText says whether query text is kept and the size cap for one statement. Text is kept only for the "deep" profile with the flag set.
+func (c Config) SQLQueryText() (on bool, maxChars int) {
+	if c.SQL == nil || !c.SQL.QueryText || c.SQLProfileName() != SQLProfileDeep {
+		return false, 0
+	}
+	if c.SQL.QueryTextMaxChars == 0 {
+		return true, querytext.DefaultMaxChars
+	}
+	return true, c.SQL.QueryTextMaxChars
+}
+
+// SQLProfileName is the profile in force: a missing block or an empty profile is standard.
+func (c Config) SQLProfileName() string {
+	if c.SQL == nil || c.SQL.Profile == "" {
+		return SQLProfileStandard
+	}
+	return c.SQL.Profile
+}
+
+func (s SQLSettings) validate() error {
+	switch s.Profile {
+	case "", SQLProfileStandard, SQLProfileEverything, SQLProfileDeep:
+	default:
+		return invalidf(`"sql.profile" must be "standard", "everything" or "deep"`)
+	}
+	if s.QueryTextMaxChars != 0 && (s.QueryTextMaxChars < querytext.MinMaxChars || s.QueryTextMaxChars > querytext.MaxMaxChars) {
+		return invalidf(`"sql.queryTextMaxChars" must be 0 or between %d and %d`, querytext.MinMaxChars, querytext.MaxMaxChars)
+	}
+	if len(s.Extras) > maxSQLExtras {
+		return invalidf(`"sql.extras" holds at most %d names`, maxSQLExtras)
+	}
+	seen := map[string]bool{}
+	for _, x := range s.Extras {
+		if !sqlExtraRe.MatchString(x) {
+			return invalidf(`"sql.extras" names must be letters and numbers, starting with a lowercase letter`)
+		}
+		if seen[x] {
+			return invalidf(`"sql.extras" lists %q twice`, x)
+		}
+		seen[x] = true
+	}
+	return nil
+}
+
 // Target is one owner-selected app pool or Windows service for per-process detail.
 type Target struct {
 	Kind string `json:"kind"` // "appPool" or "service"
@@ -142,7 +212,9 @@ type Config struct {
 	Record          Record   `json:"record"`
 	LogPaths        []string `json:"logPaths"`
 	Probe           Probe    `json:"probe"`
-	Targets         []Target `json:"targets,omitempty"`
+	// SQL says which SQL checks the SQL service runs. Absent means the standard set.
+	SQL     *SQLSettings `json:"sql,omitempty"`
+	Targets []Target     `json:"targets,omitempty"`
 	// AutoUpdate is left out of a new settings file: the defaults apply (install, every 30 minutes).
 	AutoUpdate *AutoUpdate `json:"autoUpdate,omitempty"`
 }
@@ -318,6 +390,11 @@ func (c Config) Validate() error {
 	}
 	if c.Probe.Enabled {
 		return invalidf(`"probe.enabled" must be false: the SQL probe is not part of this release`)
+	}
+	if c.SQL != nil {
+		if err := c.SQL.validate(); err != nil {
+			return err
+		}
 	}
 	if err := c.Probe.validateTrust(); err != nil {
 		return err
