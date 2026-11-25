@@ -1,6 +1,9 @@
 package localci
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // PullRequest is what the checkout and trust code need to know about a pull request, whatever hosts it.
 type PullRequest struct {
@@ -34,4 +37,31 @@ type Host interface {
 	Commits(ctx context.Context, repo string, number int) ([]PRCommit, error)
 	// CloneURL is where the bare mirror fetches repo from.
 	CloneURL(repo string) string
+	// OpenPullRequests lists the open pull requests of repo. etag is what the previous answer returned: when
+	// the host knows nothing changed since, it answers NotModified (hosts without that may ignore etag).
+	OpenPullRequests(ctx context.Context, repo, etag string) (PullList, error)
+	// BranchTip reads the head commit of a branch, with the same etag rule. A branch that does not exist is an
+	// error that satisfies errors.Is(err, ErrNoBranch).
+	BranchTip(ctx context.Context, repo, branch, etag string) (BranchInfo, error)
+	// FileAt reads one file of repo at ref (a branch name or a commit id).
+	FileAt(ctx context.Context, repo, ref, path string) ([]byte, error)
+	// ListDir lists the file names directly inside a folder of repo at ref.
+	ListDir(ctx context.Context, repo, ref, dir string) ([]string, error)
 }
+
+// PullList is the answer of Host.OpenPullRequests.
+type PullList struct {
+	PRs         []PullRequest
+	ETag        string // pass it back on the next call
+	NotModified bool   // nothing changed since the etag that was sent; PRs is empty then
+}
+
+// BranchInfo is the answer of Host.BranchTip.
+type BranchInfo struct {
+	SHA         string
+	ETag        string
+	NotModified bool
+}
+
+// ErrNoBranch is returned by Host.BranchTip for a branch that does not exist.
+var ErrNoBranch = errors.New("no such branch")

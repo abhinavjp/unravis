@@ -54,6 +54,18 @@ func realMain(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return cmdRuns(args[1:], stdout, stderr, environ)
 	case "log":
 		return cmdLog(args[1:], stdout, stderr, environ)
+	case "serve":
+		return cmdServe(ctx, args[1:], stdout, stderr, environ)
+	case "run-item":
+		return cmdRunItem(ctx, args[1:], stdout, stderr, environ)
+	case "status":
+		return cmdStatus(args[1:], stdout, stderr, environ)
+	case "cancel":
+		return cmdCancel(args[1:], stdout, stderr, environ)
+	case "rerun":
+		return cmdRerun(ctx, args[1:], stdout, stderr, environ)
+	case "drain":
+		return cmdDrain(args[1:], stdout, stderr, environ)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return exitOK
@@ -72,6 +84,15 @@ func usage(w io.Writer) {
   unravis-ci run-pr <number> --repo owner/name [--state DIR] [--workflow-for base=file.yml]... [--protect PATH]... [--trusted-base B]... [--allow-env NAME]... [--keep] [--slots N]
   unravis-ci runs [--state DIR] [--limit N]
   unravis-ci log <runid> [job|_checkout|_trust] [--state DIR]
+  unravis-ci serve [--repo owner/name] [--state DIR] [--name N] [--slots N] [--label L]... [--interval 30s] [--quiet 60s]
+        [--workflow-for base=file.yml]... [--push-workflow branch=file.yml]... [--schedule file.yml]... [--in-process]
+        [--pause-file FILE] [--release-dir DIR] [--no-release-pause] [--no-push] [--job-slots N] [--grace 30s] [--keep]
+        [--protect PATH]... [--trusted-base B]... [--allow-env NAME]... [--var k=v]...
+  unravis-ci run-item <id> [--state DIR] [--child] [--origin URL] [--job-slots N] [--protect PATH]... [--trusted-base B]... [--allow-env NAME]...
+  unravis-ci status [--state DIR] [--recent N]
+  unravis-ci cancel <id|pr> [--state DIR] [--reason TEXT]
+  unravis-ci rerun <runid|pr> [--state DIR] [--repo owner/name]
+  unravis-ci drain [--state DIR] [--name N]
   unravis-ci version
 exit codes: 0 pass, 1 workflow failed, 2 usage or I/O error, 3 unsupported
 `)
