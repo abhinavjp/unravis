@@ -144,6 +144,11 @@ jobs:
         working-directory: web
         run: npm test
 
+      - name: Code mode declarations compile (BL-364)
+        # internal/codemode/bindings/testdata/unravis.d.ts with the pinned TypeScript of this build; test tool only, never shipped.
+        if: ${{ !cancelled() }}
+        run: node tools/codemode/check-dts.mjs
+
       - name: Web - build
         if: ${{ !cancelled() }}
         working-directory: web

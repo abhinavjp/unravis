@@ -1,0 +1,15 @@
+note: string
+partial: boolean
+schemaVersion: number
+sources: array
+sources[].collection: string
+sources[].database: string
+sources[].id: string
+sources[].label: string
+sources[]: object
+tool: string
+truncation: null
+untrusted.note: string
+untrusted.paths: array
+untrusted.paths[]: string
+untrusted: object

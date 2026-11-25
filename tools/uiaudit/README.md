@@ -29,6 +29,19 @@ Give them `UNRAVIS_RELEASES_EXE` and `UNRAVIS_LITE_FIXTURE_EXE` when there is no
 `PW_CHROMIUM` points at a Chromium to use instead of the one Playwright installed.
 Exit code: 0 = PASS (no new errors), 1 = FAIL, 2 = could not run.
 
+## The strict-CSP run (BL-323)
+
+`npm run csp` (or `npx playwright test -c playwright.csp.config.ts`) opens the same screens of the full app, desktop width, dark, but answers every
+page document with the exact Content-Security-Policy of the desktop window (read from `desktop/src-tauri/tauri.conf.json`: no `unsafe-inline`, no `unsafe-eval`,
+`img-src 'self'`) and **fails on any `securitypolicyviolation`** (event, "Refused to ..." console line or script error). It sweeps the pointer over every chart, so hover
+tooltips are built too, and the screens listed in `TOOLTIP_SCREENS` fail when no chart on them drew a tooltip (compared with the resting canvas). It waits on conditions (no request in flight, two animation frames), never on a sleep or a silent time box. It uses the same demo exe and the same environment variables as the audit (`UNRAVIS_EXE`, `PW_CHROMIUM`); `UIAUDIT_ONLY=p1-home,...` picks screens.
+Build the web files first (`cd web && npm run build`), because the demo exe embeds them. The cheap static half of this check is `web/scripts/check-csp.cjs`
+(run by the web unit tests, so on every pull request). The run itself is **not** a check on every pull request: it needs the Go build of the demo app (about 30 s),
+`npm ci` and Chromium for the audit tools, and about 4 minutes for the screens, far more than the fast gate's budget; it runs in `ui-audit.yml` (pull requests that change `tools/uiaudit`,
+weekly, by hand), on Linux and Windows. A pull request that only changes `web/src` is covered by the static gate until the next run, so run `npm run csp` yourself after a UI change that
+touches markup, styles or chart options. `csp/tooltips.spec.ts` measures the rich-text tooltip of the multi-API timeline (3 and 8 groups, desktop and phone width) against its chart.
+The live WebView2 check stays with the owner's PC (BL-323 acceptance).
+
 ## What it checks
 
 Sideways scroll, elements past the window edge, cut-off or spilling text, overlapping controls and headings, tap targets
@@ -46,7 +59,7 @@ a person's taste. The report says so too.
 
 `tools/screens/screens.json` (the user-guide screens, so the guide and the audit cannot drift apart) plus `extra-screens.json`
 (screens the guide does not show: Where is it?, All operations, Patterns, Ledger, the case Timeline, Blackbox charts, and so on).
-Steps may also `clickCentre` (a mouse click on the middle of an element that takes no pointer events itself, such as the red diamonds of the Timeline that open the Slow call screen, x-slow-call), `upload` made-up fixture files (`lib/fixtures.ts`, generated in memory) to a real file input, use `macro` (steps listed once under `macros` in `extra-screens.json`), and `waitFor` a part of the screen that must be there. There is no "only on newer builds" step any more: it turned a renamed or removed part of a merged feature into a pass (sweep 2026-11-22), so a missing part is "not reached" and fails the audit; `tests/screens.test.mjs` fails when a screen list uses a step kind it does not know. A screen with `"restoreHosts": true` changes the demo's list of computers and has it put back afterwards. The add-files screens are p10-files-1 to 7 (BL-481).
+Steps may also `clickCentre` (a mouse click on the middle of an element that takes no pointer events itself, such as the red diamonds of the Timeline that open the Slow call screen, x-slow-call), `upload` made-up fixture files (`lib/fixtures.ts`, generated in memory) to a real file input, use `macro` (steps listed once under `macros` in `extra-screens.json`), and `waitFor` a part of the screen that must be there. There is no "only on newer builds" step any more: it turned a renamed or removed part of a merged feature into a pass (sweep 2026-11-22), so a missing part is "not reached" and fails the audit; `tests/screens.test.mjs` fails when a screen list uses a step kind it does not know. `seedCounters` makes a case with a made-up Windows counters file through the real API and importer (so the Resource counters panel has data) and `dropCase` erases it again (x-case-resource, x-case-resource-lines; they say `restoreHosts` and use `after`). A screen with `"restoreHosts": true` changes the demo's list of computers and has it put back afterwards. The add-files screens are p10-files-1 to 7 (BL-481).
 A screen whose steps fail (a renamed button, a screen only Windows can reach) is listed as **not reached**: that is a gap, not a pass.
 
 To add a screen: add an entry to `extra-screens.json` (same step language as `tools/screens/capture.spec.ts`), run it with

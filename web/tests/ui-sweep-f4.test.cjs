@@ -325,11 +325,21 @@ test('SWEEP-F4-28: the rail does not call SQL skipped before the Where answer is
   assert.match(w, /skipped: wizard\.where !== null && !list\.includes\(id\)/);
 });
 
-test('SWEEP-F4-29: nothing imports ResourcePanel (report only; it is not deleted here)', () => {
+test('SWEEP-F4-29 / BL-495j: ResourcePanel is mounted on the case page (the sweep found it mounted nowhere), and only there', () => {
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]);
   const files = walk(path.join(root, 'src')).filter((f) => /\.(svelte|ts)$/.test(f) && !f.endsWith('ResourcePanel.svelte') && !f.includes(path.sep + 'resource' + path.sep));
   const importers = files.filter((f) => /ResourcePanel/.test(fs.readFileSync(f, 'utf8')));
-  assert.deepEqual(importers.map((f) => path.relative(root, f)), []);
+  assert.deepEqual(importers.map((f) => path.relative(root, f).split(path.sep).join('/')), ['src/lib/components/CaseHome.svelte']);
+  // The behaviour (what shows for a case with and without counter files) is pinned by tools/e2e/specs/case-resource.spec.ts and web/tests/resource.mount.test.cjs.
+});
+
+test('BL-495j: the resource panel says what it is once (the plain line) and then how to open it', () => {
+  const resCopy = loadTypeScript('src/lib/resource.ts');
+  const helpCopy = loadTypeScript('src/lib/copy/helpCopy.ts');
+  assert.doesNotMatch(resCopy.resourceCopy.intro, /What each host measured/, 'the sentence of the plain help line is not said again');
+  assert.match(helpCopy.help.resource.plain, /What each host measured/);
+  const panel = read('src/components/ResourcePanel.svelte');
+  assert.ok(panel.indexOf('<HelpNote id="resource" />') < panel.indexOf('{resourceCopy.intro}'));
 });
 
 // S2 (review 1): run the real load() text from lite/App.svelte with the page state as plain variables.

@@ -32,6 +32,7 @@
   const ExportPanel = lazyComponent(() => import('./components/ExportPanel.svelte'));
   const ImportPopup = lazyComponent(() => import('./lib/components/importPopup/ImportPopup.svelte'));
   const BlackboxPanel = lazyComponent(() => import('./components/BlackboxPanel.svelte'));
+  const McpAccessPanel = lazyComponent(() => import('./components/McpAccessPanel.svelte'));
   const CaseHome = lazyComponent(() => import('./lib/components/CaseHome.svelte'));
   const analysisViews = [
     () => import('./components/Pulse.svelte'), () => import('./components/RollupView.svelte'), () => import('./components/WhereView.svelte'), () => import('./components/EvidenceView.svelte'),
@@ -52,6 +53,11 @@
   const analysis = $derived(results.analysis);
   const loading = $derived(results.loading);
   const depth = $derived(navigation.depth);
+  const pageHeading = $derived.by(() => {
+    if (app.initError || app.screen === 'loading') return 'Unravis';
+    if (app.screen === 'case') return 'Case home';
+    return screenTitle(app.screen, depth) || 'Unravis';
+  });
   // Each screen names the tab ("All cases - Unravis"); the case page names itself. When the app moves to another screen (or climbs a level of the
   // analysis) the new heading takes the keyboard focus unless a screen has already placed it, so Tab does not start again at the skip link.
   $effect(() => {
@@ -105,6 +111,8 @@
 <svelte:window onkeydown={onWindowKey} />
 
 <div class="app-shell">
+  <!-- The page heading comes first in the document (before the header and the filter panel), so the outline starts at h1 and a screen reader meets the page name first. It is hidden, so nothing moves. -->
+  <h1 class="visually-hidden">{pageHeading}</h1>
   <AppHeader />
   <UpdateBanner />
 
@@ -126,6 +134,7 @@
     {#if panels.sidePanel === 'export'}<ExportPanel query={scope.query} {zone} {sourceLabels} onClose={closeSidePanel} />{/if}
     {#if panels.importPopup}<ImportPopup caseId={panels.importPopup.caseId} caseTitle={panels.importPopup.caseTitle} query={scope.query} {zone} retryServerName={panels.importPopup.retryServerName} onClose={() => void closeImportPopup()} onOpenTimeline={openTimeline} />{/if}
     {#if panels.sidePanel === 'blackbox'}<BlackboxPanel onClose={closeSidePanel} />{/if}
+    {#if panels.sidePanel === 'mcp'}<McpAccessPanel onClose={closeSidePanel} />{/if}
 
     <main id="main-content" tabindex="-1" class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
       <div class="stage-inner">
