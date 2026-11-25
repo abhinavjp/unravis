@@ -74,6 +74,8 @@ type handler struct {
 	links sourceLinkStore
 	// reconn is the state of the reopening pass (see reconnect.go).
 	reconn reconnectState
+	// mcp is where the AI access screen's handler hangs once the grant store is open (nil: grants do not apply, see mcp_admin.go).
+	mcp *MCPMount
 
 	casesState
 

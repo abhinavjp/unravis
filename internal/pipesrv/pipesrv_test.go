@@ -58,7 +58,9 @@ func TestUITokenPassesThroughUnchanged(t *testing.T) {
 func TestAGOnlyBridgeRoutesAndPrefixes(t *testing.T) {
 	ag := RoleAG
 	h := Handler(echoToken())
-	for _, p := range []string{"/api/cases", "/", "/api/shutdown", "/mcp/v1", "/cli/v1", "/api/info/x", "/mcp/v1/../api/cases", "/mcp/v1//x", "/api/keeper/x"} {
+	for _, p := range []string{"/api/cases", "/", "/api/shutdown", "/mcp/v1", "/cli/v1", "/api/info/x", "/mcp/v1/../api/cases", "/mcp/v1//x", "/api/keeper/x",
+		// BL-347: the person's approval routes are never reachable by a host (the ag pipe), whatever the token
+		"/api/mcp/profiles", "/api/mcp/profiles/claude/approve", "/api/mcp/stop", "/api/mcp/resume"} {
 		if w := do(h, &ag, p, tok); w.Code != 404 {
 			t.Errorf("%s: code %d, want 404", p, w.Code)
 		}

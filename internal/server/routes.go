@@ -409,6 +409,10 @@ var routes = []route{
 		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.putHosts(w, r) },
 	}},
 	{pattern: "/api/importers", match: exactPath("/api/importers"), methods: get((*handler).listImporters)},
+	{pattern: mcpProfilesPath, match: exactPath(mcpProfilesPath), methods: get((*handler).serveMCP)},
+	{pattern: "/api/mcp/profiles/{id}/{action}", match: mcpActionPath, methods: post((*handler).serveMCP)},
+	{pattern: mcpStopPath, match: exactPath(mcpStopPath), methods: post((*handler).serveMCP)},
+	{pattern: mcpResumePath, match: exactPath(mcpResumePath), methods: post((*handler).serveMCP)},
 }
 
 // lookup returns the first route that owns path.

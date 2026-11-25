@@ -88,6 +88,9 @@ type WireError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	Action  string `json:"action,omitempty"`
+	// Reason is why a profile may not call (pending, denied, revoked, expired, stopped, changed): the bridge re-enrolls when it reads
+	// "pending" (the person reissued the host). It is the state the refusal text already states, so it tells a caller nothing new.
+	Reason string `json:"reason,omitempty"`
 }
 
 // Answer is the body of POST /mcp/v1/call. OK says the tool ran and Result is its envelope (IsError: an error answer of the tool
@@ -155,7 +158,9 @@ func fromAuthError(err error) (int, Answer) {
 	var d *Denied
 	switch {
 	case errors.As(err, &d):
-		return refuse(http.StatusUnauthorized, d.Code, d.Message, d.Action)
+		st, a := refuse(http.StatusUnauthorized, d.Code, d.Message, d.Action)
+		a.Error.Reason = d.Reason
+		return st, a
 	case errors.Is(err, ErrUnauthenticated):
 		return refuse(http.StatusUnauthorized, mcp.WirePermissionRequired, "This host's credential was not accepted.", "Open Unravis > AI access and check this host.")
 	}

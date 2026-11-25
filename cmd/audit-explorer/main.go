@@ -330,7 +330,15 @@ func run(args []string, getenv func(string) string) error {
 			}
 		}
 	}
+	// The AI access screen (BL-347): the routes are in the table of every run; they answer for real only once the grant store is open
+	// (pipe mode below, or the screenshot demo with UNRAVIS_DEMO_MCP), and say "legacy" in a browser-mode run, which has no grants.
+	mcpMount := server.NewMCPMount()
+	serverOptions = append(serverOptions, server.WithMCPMount(mcpMount))
 	served := server.New(wired.repo, explorer.Assets(), token, f.demo, serverOptions...)
+	if f.demo && !pipeMode {
+		closeDemoMCP := openDemoMCP(appCtx, getenv, wired.repo, mcpMount)
+		defer closeDemoMCP()
+	}
 	if updater != nil {
 		updaterDone := make(chan struct{})
 		go func() { defer close(updaterDone); updater.Run(signalContext) }()
@@ -369,7 +377,7 @@ func run(args []string, getenv func(string) string) error {
 	}
 	if pipes != nil {
 		pipeOpts := []pipesrv.Option{pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel))}
-		mcpHandler, closeMCP := openMCPEndpoint(appCtx, getenv, served, token, f.demo, sealedfile.CurrentUser)
+		mcpHandler, closeMCP := openMCPEndpoint(appCtx, getenv, served, token, f.demo, sealedfile.CurrentUser, withMCPMount(mcpMount))
 		defer closeMCP() // runs after the servers have stopped (awaitShutdownWithin below)
 		if mcpHandler != nil {
 			pipeOpts = append(pipeOpts, pipesrv.WithMCP(mcpHandler))
