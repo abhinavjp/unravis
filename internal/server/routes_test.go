@@ -166,6 +166,10 @@ var routeCases = []routeCase{
 	{"/api/mcp/profiles/{id}/{action}", "/api/mcp/profiles/claude/approve", "POST"},
 	{"/api/mcp/stop", "/api/mcp/stop", "POST"},
 	{"/api/mcp/resume", "/api/mcp/resume", "POST"},
+	{"/api/code/types", "/api/code/types", "GET"},
+	{"/api/code/settings", "/api/code/settings", "GET, PUT"},
+	{"/api/code/run", "/api/code/run", "POST"},
+	{"/api/code/runs/{id}/cancel", "/api/code/runs/r1/cancel", "POST"},
 }
 
 var routeTestMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}
