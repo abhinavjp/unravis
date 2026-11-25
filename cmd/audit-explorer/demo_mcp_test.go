@@ -1,16 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/mcpaudit"
 	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
 )
@@ -121,5 +125,50 @@ func TestDemoRunHasItsOwnGrantStoreOnlyWhenAsked(t *testing.T) {
 	defer closeAgain()
 	if again := screenGet(t, dash, token); len(again["profiles"].([]any)) != 5 || !strings.Contains(stateOf(again, "vscode"), "active") {
 		t.Errorf("second start: %v", again)
+	}
+}
+
+// BL-353: a store written by a newer version (this build was rolled back) is left untouched, and the screen says why.
+func TestARolledBackBuildLeavesTheNewerStoreAloneAndSaysSo(t *testing.T) {
+	const token = "tok-0123456789abcdef0123456789abcdef"
+	dir := filepath.Join(t.TempDir(), "mcp")
+	getenv := func(k string) string {
+		if k == "UNRAVIS_MCP_DIR" {
+			return dir
+		}
+		return ""
+	}
+	seal := func() (sealedfile.Protector, error) { return testSeal{}, nil }
+	m := server.NewMCPMount()
+	dash := server.New(audit.NewDemo(time.Now()), nil, token, true, server.WithMCPMount(m))
+	_, closeFn := openMCPEndpoint(context.Background(), getenv, dash, token, false, seal, withMCPMount(m))
+	closeFn()
+	path := filepath.Join(dir, mcpaudit.FileName)
+	raw, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec("PRAGMA user_version=99"); err != nil {
+		t.Fatal(err)
+	}
+	_ = raw.Close()
+	before, _ := os.ReadFile(path) //nolint:gosec // the test's own file
+
+	m2 := server.NewMCPMount()
+	d2 := server.New(audit.NewDemo(time.Now()), nil, token, true, server.WithMCPMount(m2))
+	h, c2 := openMCPEndpoint(context.Background(), getenv, d2, token, false, seal, withMCPMount(m2))
+	c2()
+	if h != nil {
+		t.Fatal("an endpoint on a store of a newer version")
+	}
+	if got := screenGet(t, d2, token); got["mode"] != "off" || got["reason"] != server.MCPOffNewer {
+		t.Errorf("screen: %v", got)
+	}
+	after, _ := os.ReadFile(path) //nolint:gosec // the test's own file
+	if !bytes.Equal(before, after) {
+		t.Error("the newer store was modified")
+	}
+	if m, _ := filepath.Glob(path + ".bad-*"); len(m) != 0 {
+		t.Errorf("set aside: %v", m)
 	}
 }

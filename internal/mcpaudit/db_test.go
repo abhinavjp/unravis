@@ -336,6 +336,123 @@ func TestLifecycleKindsAreAcceptedAndOthersStillRefused(t *testing.T) {
 	}
 }
 
+// downgradeStoreToV4 rewrites a closed store into what a build of an older schema version left: version 4 has no profiles.code column.
+func downgradeStoreToV4(t *testing.T, dir string) {
+	t.Helper()
+	raw, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(filepath.Join(dir, mcpaudit.FileName)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = raw.Close() }()
+	for _, q := range []string{"ALTER TABLE profiles DROP COLUMN code", "PRAGMA user_version=4"} {
+		if _, err := raw.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func userVersionOf(t *testing.T, path string) int {
+	t.Helper()
+	raw, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(path)+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = raw.Close() }()
+	var v int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// BL-353: the first open by a newer build keeps a copy of the older store, once, as the older build left it.
+func TestUpgradeKeepsACopyOfTheOlderStore(t *testing.T) {
+	dir := t.TempDir()
+	db, _, err := mcpaudit.Open(ctx, dir, prot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Insert(ctx, mcpaudit.Profile{ID: "h1", State: "pending", Rev: 3, Tools: []string{"a"}, Sources: []string{"s"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "*.bak")); len(m) != 0 {
+		t.Fatalf("a store of the current version was copied: %v", m)
+	}
+	downgradeStoreToV4(t, dir)
+	db, _, err = mcpaudit.Open(ctx, dir, prot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bak := filepath.Join(dir, mcpaudit.BackupName(4))
+	if got := userVersionOf(t, bak); got != 4 {
+		t.Fatalf("the copy is at version %d, want the older store's 4", got)
+	}
+	if got := userVersionOf(t, filepath.Join(dir, mcpaudit.FileName)); got != 5 {
+		t.Fatalf("the store is at version %d after the open, want 5", got)
+	}
+	if _, err := db.Get(ctx, "h1"); err != nil {
+		t.Fatalf("the upgraded store lost the grant: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "*.tmp")); len(m) != 0 {
+		t.Fatalf("a temporary copy was left: %v", m)
+	}
+	// A later open of the same store makes no second copy, and a copy that exists is never replaced.
+	if err := os.WriteFile(bak, []byte("kept"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	downgradeStoreToV4(t, dir)
+	db, _, err = mcpaudit.Open(ctx, dir, prot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	if b, _ := os.ReadFile(bak); string(b) != "kept" { //nolint:gosec // the test's own file
+		t.Fatal("the first copy was overwritten")
+	}
+}
+
+// BL-353: when the copy cannot be made the store is neither upgraded nor set aside, and the open says why.
+func TestAFailedCopyLeavesTheOlderStoreAlone(t *testing.T) {
+	dir := t.TempDir()
+	db, _, err := mcpaudit.Open(ctx, dir, prot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	downgradeStoreToV4(t, dir)
+	// A folder where the temporary copy goes (with a file in it, so it cannot be removed) makes the copy fail.
+	blocker := filepath.Join(dir, mcpaudit.BackupName(4)+".tmp")
+	if err := os.MkdirAll(blocker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(blocker, "x"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, mcpaudit.FileName)
+	before, _ := os.ReadFile(path) //nolint:gosec // the test's own file
+	if _, rec, err := mcpaudit.Open(ctx, dir, prot{}, nil); !errors.Is(err, mcpaudit.ErrBackup) || rec != "" {
+		t.Fatalf("%q %v", rec, err)
+	}
+	if m, _ := filepath.Glob(path + ".bad-*"); len(m) != 0 {
+		t.Fatalf("set aside: %v", m)
+	}
+	if got := userVersionOf(t, path); got != 4 {
+		t.Fatalf("the store was upgraded to %d without a copy", got)
+	}
+	after, _ := os.ReadFile(path) //nolint:gosec // the test's own file
+	if !bytes.Equal(before, after) {
+		t.Fatal("the store was modified")
+	}
+}
+
 func TestGlobalRowsUseTheGlobalMarkerAndOnlyThey(t *testing.T) {
 	db, _, err := mcpaudit.Open(ctx, t.TempDir(), prot{}, nil)
 	if err != nil {

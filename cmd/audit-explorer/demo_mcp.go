@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 	"time"
@@ -44,6 +45,10 @@ func openDemoMCP(ctx context.Context, getenv func(string) string, repo audit.Rep
 	}
 	db, _, err := mcpaudit.Open(ctx, dir, prot, time.Now)
 	if err != nil {
+		if errors.Is(err, mcpaudit.ErrNewerVersion) {
+			mount.SetOff(server.MCPOffNewer)
+			return noop
+		}
 		mount.SetOff(server.MCPOffStore)
 		return noop
 	}

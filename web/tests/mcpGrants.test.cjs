@@ -32,6 +32,7 @@ test('the list is read strictly: an unknown mode or a row with no id or a made-u
   assert.deepEqual(list.profiles.map((p) => p.id), ['a']);
   assert.deepEqual(g.parseList({ mode: 'legacy' }).profiles, []);
   assert.equal(g.parseList({ mode: 'off', reason: 'sealing' }).reason, 'sealing');
+  assert.equal(g.parseList({ mode: 'off', reason: 'newer' }).reason, 'newer');
   assert.equal(g.parseList({ mode: 'off', reason: '<b>x</b>' }).reason, '', 'a reason the screen has no words for is dropped');
   // host text is kept as a string and never changed
   assert.equal(g.parseProfile({ id: 'a', state: 'pending', hostName: '<img src=x onerror=alert(1)>' }).hostName, '<img src=x onerror=alert(1)>');

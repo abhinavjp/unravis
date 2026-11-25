@@ -47,6 +47,7 @@ func WithMCPMount(m *MCPMount) Option { return func(h *handler) { h.mcp = m } }
 const (
 	MCPOffSealing = "sealing" // this PC cannot protect the grant key for the current user
 	MCPOffStore   = "store"   // the grant store could not be opened or read
+	MCPOffNewer   = "newer"   // a newer version of Unravis wrote the store (this build was rolled back): its approvals wait for that version
 )
 
 func mcpActionPath(path string) (string, bool) { return "", mcpActionRe.MatchString(path) }
