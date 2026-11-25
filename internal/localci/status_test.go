@@ -675,6 +675,28 @@ func TestServiceRequiredModePostsTheRealGateAndPrefixedJobs(t *testing.T) {
 	}
 }
 
+// A status tick reads the progress snapshot, the run ends and posts its result, and only then the tick goes on:
+// it must not put "running" back on top of the result (found as a flaky agent test in the race job).
+func TestServiceALateProgressTickDoesNotUndoTheResult(t *testing.T) {
+	r := newSvcRig(t, testNaming(false))
+	run := r.claimNew(quickPR(2, shaA))
+	r.svc.Started(run)
+	w := r.progress(run)
+	w.Event(RunEvent{Kind: EventPlan, Total: 2})
+	w.Event(jobEv(EventJobStart, "lint", "lint", "", "", r.now, time.Time{}))
+	done, _ := r.q.Complete(run.ID, "x", "success", "")
+	r.svc.Finished(run, r.now, nil, done)
+	n := len(r.lines())
+	// the snapshot the tick had already read is back (the file was removed by Finished)
+	w = r.progress(run)
+	w.Event(RunEvent{Kind: EventPlan, Total: 2})
+	w.Event(jobEv(EventJobStart, "lint", "lint", "", "", r.now, time.Time{}))
+	r.svc.Progress(run)
+	if got := r.lines(); len(got) != n {
+		t.Fatalf("a late tick posted after the result: %v", got[n:])
+	}
+}
+
 func TestServiceForgetPostsNothing(t *testing.T) {
 	r := newSvcRig(t, testNaming(false))
 	run := r.claimNew(quickPR(2, shaA))

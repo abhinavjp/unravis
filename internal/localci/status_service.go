@@ -407,6 +407,12 @@ func (s *StatusService) progress(r Request, gate bool) {
 	}
 	s.mu.Lock()
 	st := s.runs[r.ID]
+	if st == nil && gate {
+		// A tick that read the snapshot just before the run finished arrives here after Finished posted the end and
+		// dropped the run: it must not post "running" again on top of the result (it would stay there for good).
+		s.mu.Unlock()
+		return
+	}
 	if st == nil {
 		st = &runStatus{jobs: map[string]bool{}}
 		if s.runs == nil {
