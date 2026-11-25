@@ -30,3 +30,22 @@ func ToolsForTier(tier string) []string {
 	}
 	return nil
 }
+
+// GrantTools are the tools a grant may call: its own list (Profile.Tools) within its tier, in catalog order. The tier is the ceiling
+// even if a stored list names more, and an unknown tier has none. An empty list has none here: Approve fills the list with the whole
+// tier before it is stored, so an empty stored list never means "all".
+func GrantTools(tier string, tools []string) []string {
+	var out []string
+	for _, t := range ToolsForTier(tier) {
+		if ToolAllowed(tier, tools, t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// ToolAllowed is the one rule of "may this grant call this tool": the tool is in the grant's list and in the grant's tier. The
+// dispatcher checks every call with it, and the code-mode broker builds the tool list of a run from the same rule (GrantTools).
+func ToolAllowed(tier string, tools []string, tool string) bool {
+	return slices.Contains(tools, tool) && slices.Contains(ToolsForTier(tier), tool)
+}

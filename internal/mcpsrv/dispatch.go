@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"slices"
 	"sync"
 	"time"
 
@@ -238,7 +237,7 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 	class := toolClass[req.Tool]
 	ev := mcpaudit.Event{ProfileID: pr.ProfileID, ProfileRev: pr.Rev, Tool: req.Tool, OpClass: class, CorrID: req.CallID}
 	// The tool must be in the grant's list and in the grant's tier: the tier is the ceiling even if a stored list names more.
-	if class == "" || !slices.Contains(p.Tools, req.Tool) || !slices.Contains(ToolsForTier(p.Tier), req.Tool) {
+	if class == "" || !ToolAllowed(p.Tier, p.Tools, req.Tool) {
 		// A tool outside the grant (or outside the catalog) never reaches the backend. The ledger row is best effort: nothing ran.
 		ev.Kind, ev.Outcome, ev.Code = mcpaudit.KindDenied, mcpaudit.OutcomeDenied, mcp.WirePermissionRequired
 		if class == "" {

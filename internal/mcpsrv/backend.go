@@ -114,19 +114,14 @@ func (l *LocalBackend) bridgeFor(p Profile, identifiers bool) *mcp.Bridge {
 	if e := l.bridges[p.ID]; e != nil && e.rev == p.Rev && e.identifiers == identifiers && e.tier == p.Tier && slices.Equal(e.sources, p.Sources) {
 		return e.b
 	}
-	// The source scope of the grant is part of the bridge: it can reach no other source, whatever a tool is asked.
-	// The tier decides what a count looks like: an aggregate host never sees a count of fewer than MinCohort events, and no host without
-	// the identifiers grant sees the audit record id of a row.
+	// The grant's identifiers switch, source scope and tier are part of the bridge (BridgeOptions, shared with code mode): it can reach no
+	// other source, and no host without the identifiers grant sees the audit record id of a row or a count under the cohort floor.
 	// The cursors it hands out are signed for this profile at this revision, this scope, tier and identifiers state, and for this bridge
 	// only; the references it hands out are aliases of this profile at this revision.
 	codec := &cursorCodec{sign: l.sign, now: l.now, profile: p.ID, rev: p.Rev, binding: newBinding(p.Sources, p.Tier, identifiers, newGen())}
-	opts := []mcp.Option{mcp.WithIdentifiers(identifiers), mcp.WithSources(p.Sources), mcp.WithHiddenRecordIDs(!identifiers),
-		mcp.WithCursors(codec), mcp.WithResultCap(l.maxOne), mcp.WithClock(l.now)}
+	opts := append(BridgeOptions(identifiers, p.Sources, p.Tier), mcp.WithCursors(codec), mcp.WithResultCap(l.maxOne), mcp.WithClock(l.now))
 	if l.aliases != nil {
 		opts = append(opts, mcp.WithEvidenceRefs(l.aliases.Minter(p)))
-	}
-	if p.Tier != TierEvidence {
-		opts = append(opts, mcp.WithMinCohort(MinCohort)) // any tier but evidence, an unknown one included: fail closed
 	}
 	b := mcp.NewLocal(l.dashboard, l.token, opts...)
 	l.bridges[p.ID] = &profileBridge{rev: p.Rev, identifiers: identifiers, sources: slices.Clone(p.Sources), tier: p.Tier, b: b}

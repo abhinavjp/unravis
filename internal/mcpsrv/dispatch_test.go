@@ -91,6 +91,7 @@ type rig struct {
 	led     *ledger
 	srv     *httptest.Server
 	backend *LocalBackend
+	disp    *Dispatcher
 	aliases *Aliases
 	now     time.Time
 }
@@ -117,11 +118,12 @@ func newRigClock(t *testing.T, b Budgets, backendNow func() time.Time) *rig {
 	r.aliases = NewAliases(e.db, e.g, e.clk.Now, nil)
 	r.backend = NewLocalBackend(r.dash, dashToken, WithAliases(r.aliases), WithCursorKey(e.db.MAC), WithBackendClock(backendNow))
 	deps := Deps{Grants: e.g, Backend: r.backend, Recorder: r.led, Now: e.clk.Now, Budgets: b}
-	h, err := Handler(deps)
+	disp, err := NewDispatcher(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.srv = httptest.NewServer(h)
+	r.disp = disp
+	r.srv = httptest.NewServer(disp.Handler())
 	t.Cleanup(r.srv.Close)
 	return r
 }
