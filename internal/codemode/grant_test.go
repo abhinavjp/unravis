@@ -19,14 +19,25 @@ import (
 
 func grantRun(t *testing.T, tools []string, script fakeScript, opts ...envOpt) (*env, RunResult, **fakeWorker) {
 	t.Helper()
+	// The script runs on the worker's own goroutine: the worker is handed over under a lock, so the test reads it
+	// without a data race (found by the race job on master, rc promotion Nov 2026).
+	var mu sync.Mutex
 	var worker *fakeWorker
-	e := newEnv(t, func(w *fakeWorker) { worker = w; script(w) }, opts...)
+	e := newEnv(t, func(w *fakeWorker) {
+		mu.Lock()
+		worker = w
+		mu.Unlock()
+		script(w)
+	}, opts...)
 	res, err := e.runReq(RunRequest{Code: "1", Surface: "mcp", Scoped: true, Tier: mcpsrv.TierEvidence, Sources: []string{"demo-west"},
 		Tools: tools, ProfileID: "host-a", ProfileRev: 3, Reason: "grant test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return e, res, &worker
+	mu.Lock()
+	got := worker
+	mu.Unlock()
+	return e, res, &got
 }
 
 // An evidence grant that names two tools cannot reach the others (raw rows included) through a script.
