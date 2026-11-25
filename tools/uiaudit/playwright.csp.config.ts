@@ -6,7 +6,7 @@ import { defineConfig } from '@playwright/test';
 const exe = process.env.PW_CHROMIUM || undefined;
 export default defineConfig({
   testDir: './csp',
-  testMatch: '*.spec.ts',
+  testMatch: ['csp.spec.ts', 'tooltips.spec.ts'], // tt.spec.ts is the BL-324 trial, run by playwright.tt.config.ts
   globalSetup: './lib/global-setup.ts',
   workers: 1,
   fullyParallel: false,
