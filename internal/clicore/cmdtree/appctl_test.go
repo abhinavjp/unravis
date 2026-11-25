@@ -67,7 +67,7 @@ func runWith2(t *testing.T, a clicore.Attacher, st clicore.Starter, stdin string
 	var out, errb strings.Builder
 	code := Run(context.Background(), args, IO{In: strings.NewReader(stdin), Out: &out, Err: &errb,
 		Getenv:        func(n string) string { return env[n] },
-		Exe:           func() (string, error) { return "/opt/unravis/bin/unravis.exe", nil },
+		Exe:           func() (string, error) { return testExe, nil },
 		Attach:        a.Attach,
 		StartHeadless: st})
 	return result{code, out.String(), errb.String()}
@@ -336,7 +336,7 @@ func runWithGone(t *testing.T, a clicore.Attacher, gone func(int, time.Time) boo
 	t.Helper()
 	var out, errb strings.Builder
 	code := Run(context.Background(), args, IO{In: strings.NewReader(""), Out: &out, Err: &errb, Getenv: func(string) string { return "" },
-		Exe: func() (string, error) { return "/opt/unravis/bin/unravis.exe", nil }, Attach: a.Attach, ProcessGone: gone})
+		Exe: func() (string, error) { return testExe, nil }, Attach: a.Attach, ProcessGone: gone})
 	return result{code, out.String(), errb.String()}
 }
 

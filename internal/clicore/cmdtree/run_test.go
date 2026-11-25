@@ -27,6 +27,22 @@ import (
 	"api-audit-explorer/internal/version"
 )
 
+// The path the command line pretends to run from. It goes through filepath.Abs so it is absolute on Windows too (with a drive), where a
+// bare "/opt/..." is not absolute and the code under test rightly refuses it.
+var (
+	testExe        = mustAbs("/opt/unravis/bin/unravis.exe")
+	testInstallDir = filepath.Dir(filepath.Dir(testExe))
+	testApp        = filepath.Join(testInstallDir, "unravis.exe")
+)
+
+func mustAbs(p string) string {
+	a, err := filepath.Abs(filepath.FromSlash(p))
+	if err != nil {
+		panic(err)
+	}
+	return a
+}
+
 type result struct {
 	code     int
 	out, err string
@@ -39,7 +55,7 @@ func run(t *testing.T, env map[string]string, args ...string) result {
 	code := Run(context.Background(), args, IO{
 		In: strings.NewReader(""), Out: &out, Err: &errb,
 		Getenv: func(n string) string { return env[n] },
-		Exe:    func() (string, error) { return "/opt/unravis/bin/unravis.exe", nil },
+		Exe:    func() (string, error) { return testExe, nil },
 	})
 	return result{code, out.String(), errb.String()}
 }
@@ -81,7 +97,7 @@ func TestVersion(t *testing.T) {
 	}
 	m := decode(t, r.out)
 	d := m["data"].(map[string]any)
-	if m["operation"] != "version" || m["schemaVersion"] != "1" || d["role"] != "cli" || d["cliSchema"] != "1" || d["exe"] != "/opt/unravis/bin/unravis.exe" || d["app"] != version.Short() {
+	if m["operation"] != "version" || m["schemaVersion"] != "1" || d["role"] != "cli" || d["cliSchema"] != "1" || d["exe"] != testExe || d["app"] != version.Short() {
 		t.Errorf("%v", m)
 	}
 	if p := d["proto"].(map[string]any); p["major"] != float64(1) || p["minor"] != float64(0) {
@@ -470,12 +486,13 @@ func TestLegacyOptionsAnywhere(t *testing.T) {
 			t.Errorf("%v: %+v", args, r)
 			continue
 		}
-		if !strings.Contains(r.err, "/opt/unravis/unravis.exe") {
+		// the JSON error carries the path escaped, so it is read back from the message
+		if msg, _ := decode(t, r.err)["error"].(map[string]any)["message"].(string); !strings.Contains(msg, testApp) {
 			t.Errorf("%v: the path of the app program is missing: %s", args, r.err)
 		}
 	}
 	// the app path in the table text is one line plus the code
-	if r := run(t, nil, "--mcp"); r.code != 2 || strings.Count(r.err, "\n") != 2 || !strings.Contains(r.err, "/opt/unravis/unravis.exe") {
+	if r := run(t, nil, "--mcp"); r.code != 2 || strings.Count(r.err, "\n") != 2 || !strings.Contains(r.err, testApp) {
 		t.Errorf("table: %+v", r)
 	}
 	// --version is answered wherever it stands, but not with a value or a third dash; and nothing after "--" is read

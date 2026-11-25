@@ -76,7 +76,8 @@ func TestInstallDirRule(t *testing.T) {
 		"/opt/unravis/bin/unravis.exe": "/opt/unravis", "/opt/unravis/BIN/unravis.exe": "/opt/unravis", "/opt/unravis/unravis.exe": "/opt/unravis",
 		"/Tools/unravis.exe": "/Tools",
 	} {
-		if got := clicore.InstallDir(in); got != want {
+		// the rule works on the path style of the platform, so the table is written with slashes and converted
+		if got := clicore.InstallDir(filepath.FromSlash(in)); got != filepath.FromSlash(want) {
 			t.Errorf("%s: %s", in, got)
 		}
 	}
