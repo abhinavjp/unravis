@@ -157,7 +157,7 @@ func decode[T any](t *testing.T, w *httptest.ResponseRecorder) T {
 
 func TestCIRoutesAreReadOnlyLoopbackAndCSP(t *testing.T) {
 	f := newCIFixture(t)
-	for _, p := range []string{"/api/projects", "/api/runs", "/api/run?id=" + f.passID, "/api/run/log?id=" + f.passID + "&job=build&step=2", "/api/overview"} {
+	for _, p := range []string{"/api/projects", "/api/runs", "/api/run?id=" + f.passID, "/api/run/log?id=" + f.passID + "&job=build&step=2", "/api/overview", "/api/machines"} {
 		if c := f.do(t, "POST", "127.0.0.1:80", p, "tok").Code; c != 405 {
 			t.Errorf("POST %s: %d", p, c)
 		}

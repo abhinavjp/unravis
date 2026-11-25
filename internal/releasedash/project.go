@@ -27,6 +27,8 @@ type Project struct {
 	Steps []string `json:"steps,omitempty"`
 	// Branches are the branches the Overview shows the latest run of, first the ones people merge into.
 	Branches []string `json:"branches,omitempty"`
+	// Machines asks for the Machines tab even before a second PC has been seen.
+	Machines bool `json:"machines,omitempty"`
 	// ShadowGate is how many pull requests in a row must agree with GitHub before the local result may replace it (0: 20).
 	ShadowGate int `json:"shadowGate,omitempty"`
 }
