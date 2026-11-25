@@ -2,6 +2,7 @@ package localci
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -16,13 +17,54 @@ type Trust struct {
 	Reason string
 }
 
-// splitRepo splits "owner/name".
+var repoSlugRe = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
+
+// splitRepo splits "owner/name". The slug ends up in host calls and in a clone URL, so it is strict: letters,
+// digits and "-" for the owner, plus "." and "_" for the name ("." and ".." are not names).
 func splitRepo(repo string) (owner, name string, ok bool) {
-	owner, name, ok = strings.Cut(strings.TrimSpace(repo), "/")
-	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+	if !repoSlugRe.MatchString(repo) {
+		return "", "", false
+	}
+	owner, name, _ = strings.Cut(repo, "/")
+	if name == "." || name == ".." {
 		return "", "", false
 	}
 	return owner, name, true
+}
+
+// webFlowLogin is the committer GitHub records for a commit made in its web editor or by a squash merge
+// button: the content is the author's, so it counts as the author's own commit.
+const webFlowLogin = "web-flow"
+
+// CommitsByOwner reports whether every commit of a pull request was written AND committed by owner. A commit
+// whose login is unknown (empty) counts as not the owner's, and an empty list proves nothing.
+func CommitsByOwner(owner string, commits []PRCommit) bool {
+	owner = strings.TrimSpace(owner)
+	if len(commits) == 0 || owner == "" {
+		return false
+	}
+	for _, c := range commits {
+		if !strings.EqualFold(strings.TrimSpace(c.AuthorLogin), owner) {
+			return false
+		}
+		committer := strings.TrimSpace(c.CommitterLogin)
+		if !strings.EqualFold(committer, owner) && !strings.EqualFold(committer, webFlowLogin) {
+			return false
+		}
+	}
+	return true
+}
+
+// TrustedBase reports whether base is one of the branches whose content the runner may take the runner
+// definition from. A pull request of a non-owner may only be run into such a branch: any other branch can be
+// created or rewritten by whoever has push access, so it proves nothing.
+func TrustedBase(base string, trusted []string) bool {
+	for _, t := range trusted {
+		if t != "" && t == base {
+			return true
+		}
+	}
+	return false
 }
 
 // Trusted decides whether the code of a pull request may run on this PC. It is a pure function.

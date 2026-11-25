@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -43,10 +44,12 @@ func cmdRunPR(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	workflow := fs.String("workflow", "", "run this workflow file whatever the base branch is")
 	keep := fs.Bool("keep", false, "keep the worktree after the run")
 	slots := fs.Int("slots", 2, "jobs at once")
-	var wfFor, protect, vars multiFlag
+	var wfFor, protect, vars, trustedBase, allowEnv multiFlag
 	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
 	fs.Var(&protect, "protect", "extra path read from the base branch for pull requests of non-owners (repeatable; added to the defaults)")
 	fs.Var(&vars, "var", "vars context value k=v (repeatable)")
+	fs.Var(&trustedBase, "trusted-base", "extra base branch a pull request of a non-owner may run into (repeatable; the bases of --workflow-for are always trusted)")
+	fs.Var(&allowEnv, "allow-env", "NAME of an environment variable steps may see (repeatable; the default is a short allow-list)")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return exitUsage
@@ -91,18 +94,19 @@ func cmdRunPR(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		_, _ = fmt.Fprintln(stderr, "run-pr:", err)
 		return exitUsage
 	}
+	redact := newRedactor(secrets(environ))
 	res, err := localci.RunPR(ctx, localci.PROptions{
 		Store: store, Host: newHost(environ), Repo: *repo, Number: number, OriginURL: *origin,
 		Workflows: workflows, Workflow: *workflow, Protect: append(append([]string{}, defaultProtect...), protect...),
-		Keep: *keep, Env: scrubEnv(environ), Vars: varMap, Slots: *slots,
-		Redact: newRedactor(secretValues(environ)), Log: stdout,
+		Keep: *keep, Env: scrubEnv(environ, allowEnv), Vars: varMap, Slots: *slots,
+		TrustedBases: trustedBases(workflows, trustedBase), Redact: redact, Log: stdout,
 	})
 	if res != nil && res.Run != nil {
 		printSummary(stdout, res.Run)
 		_, _ = fmt.Fprintf(stdout, "run id: %s\nstore:  %s\nlogs:   unravis-ci log %s [job]\n", res.RunID, store.Dir, res.RunID)
 	}
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "run-pr:", newRedactor(secretValues(environ))(err.Error()))
+		_, _ = fmt.Fprintln(stderr, "run-pr:", redact(err.Error()))
 		if strings.Contains(err.Error(), "unsupported:") {
 			return exitUnsupported
 		}
@@ -112,6 +116,17 @@ func cmdRunPR(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return exitOK
 	}
 	return exitFailed
+}
+
+// trustedBases are the bases whose own workflow decides how pull requests into them run: the bases of the
+// workflow map plus the ones named with --trusted-base.
+func trustedBases(workflows map[string]string, extra []string) []string {
+	var out []string
+	for b := range workflows {
+		out = append(out, b)
+	}
+	sort.Strings(out)
+	return append(out, extra...)
 }
 
 // ---------------------------------------------------------------- runs
@@ -221,6 +236,13 @@ func listLogs(store *localci.Store, id string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stdout, "  %-30s unravis-ci log %s %s\n", localci.CheckoutLogName, id, localci.CheckoutLogName)
 	}
 	for _, j := range rec.Jobs {
+		if localci.IsPseudoJob(j) {
+			// a stage of the runner itself: its log is the checkout log above; a stage with no log says why it stopped
+			if j.Key != localci.CheckoutLogName {
+				_, _ = fmt.Fprintf(stdout, "  %-30s (runner stage, %s) %s\n", j.Key, j.Status, j.Reason)
+			}
+			continue
+		}
 		_, _ = fmt.Fprintf(stdout, "  %-30s unravis-ci log %s %s   (%s)\n", j.Key, id, j.Key, j.Status)
 	}
 	return exitOK

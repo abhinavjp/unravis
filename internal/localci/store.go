@@ -55,8 +55,27 @@ func (s *Store) RunsPath() string { return filepath.Join(s.Dir, "runs") }
 // WorkPath holds the worktrees.
 func (s *Store) WorkPath() string { return filepath.Join(s.Dir, "work") }
 
-// CachesPath holds the persistent caches.
+// CachesPath holds the persistent caches of runs of the owner's own code.
 func (s *Store) CachesPath() string { return filepath.Join(s.Dir, "caches") }
+
+// UntrustedCachesPath holds the persistent caches of runs whose code was not all written by the owner. They are
+// kept apart so such a run cannot plant anything (a poisoned build or module cache, a tool in GOPATH/bin) that
+// a later run of the owner's own code would use.
+func (s *Store) UntrustedCachesPath() string { return filepath.Join(s.Dir, "caches-untrusted") }
+
+// HomesPath holds the throw-away profile folder of each running run (see StepEnv).
+func (s *Store) HomesPath() string { return filepath.Join(s.Dir, "homes") }
+
+// GitHomePath is the profile the runner's own git commands run with: an empty global config and an empty
+// hooks folder, so neither the user's git setup nor anything a step wrote reaches the runner's git.
+func (s *Store) GitHomePath() string { return filepath.Join(s.Dir, "githome") }
+
+func (s *Store) cachesFor(untrusted bool) string {
+	if untrusted {
+		return s.UntrustedCachesPath()
+	}
+	return s.CachesPath()
+}
 
 // IndexPath is the append-only list of runs.
 func (s *Store) IndexPath() string { return filepath.Join(s.RunsPath(), "index.jsonl") }
@@ -188,7 +207,9 @@ var cacheVars = []struct{ env, dir string }{
 
 // CacheEnv returns base with GOCACHE, GOMODCACHE and npm_config_cache set to folders of the store (created),
 // replacing any value base had, so every run starts warm and no run writes into the user's own caches.
-func (s *Store) CacheEnv(base []string) ([]string, error) {
+func (s *Store) CacheEnv(base []string) ([]string, error) { return s.cacheEnv(base, false) }
+
+func (s *Store) cacheEnv(base []string, untrusted bool) ([]string, error) {
 	drop := map[string]bool{}
 	for _, c := range cacheVars {
 		drop[strings.ToUpper(c.env)] = true
@@ -201,7 +222,7 @@ func (s *Store) CacheEnv(base []string) ([]string, error) {
 		out = append(out, kv)
 	}
 	for _, c := range cacheVars {
-		d := filepath.Join(s.CachesPath(), c.dir)
+		d := filepath.Join(s.cachesFor(untrusted), c.dir)
 		if err := os.MkdirAll(d, 0o750); err != nil {
 			return nil, err
 		}
@@ -235,11 +256,20 @@ type LogPart struct {
 	Path  string
 }
 
-// CheckoutLogName is the log of the fetch, merge and worktree work of a run, and the job name it is read by.
-const CheckoutLogName = "checkout"
+// The runner's own records of a run that stopped before any job ran are pseudo jobs. Their keys start with "_",
+// which the workflow parser refuses for a real job id, so they can never collide with one.
+const (
+	// CheckoutLogName is the log of the fetch, merge and worktree work of a run, and the name it is read by.
+	CheckoutLogName = "_checkout"
+	// TrustJobKey is the pseudo job of a pull request that was refused.
+	TrustJobKey = "_trust"
+)
+
+// IsPseudoJob reports whether j is a record of the runner, not a job of the workflow.
+func IsPseudoJob(j *JobResult) bool { return j.Pseudo || strings.HasPrefix(j.Key, "_") }
 
 // JobLogs returns the log files of the job instances that match job (a job key or a job id), in order. The
-// name "checkout" returns the checkout log.
+// name "_checkout" returns the checkout log.
 func (s *Store) JobLogs(id, job string) ([]LogPart, error) {
 	d, err := s.RunDir(id)
 	if err != nil {

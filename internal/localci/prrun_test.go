@@ -16,8 +16,21 @@ type fakeHost struct {
 	prErr      error
 	collabs    []string
 	collabsErr error
+	// commits are what the host lists for the pull request; nil means one commit written by the author.
+	commits    []PRCommit
+	commitsErr error
 	url        string
 	asked      int
+}
+
+func (f *fakeHost) Commits(context.Context, string, int) ([]PRCommit, error) {
+	if f.commitsErr != nil {
+		return nil, f.commitsErr
+	}
+	if f.commits != nil {
+		return f.commits, nil
+	}
+	return []PRCommit{{SHA: strings.Repeat("a", 40), AuthorLogin: f.pr.Author, CommitterLogin: f.pr.Author}}, nil
 }
 
 func (f *fakeHost) PullRequest(context.Context, string, int) (PullRequest, error) {
@@ -190,7 +203,7 @@ func TestRunPRMergeConflictIsAFailedRun(t *testing.T) {
 	if res.Run.Conclusion != "failure" || res.Entry.Reason != "merge conflict" {
 		t.Fatalf("%+v", res.Entry)
 	}
-	if len(res.Run.Jobs) != 1 || res.Run.Jobs[0].Key != "checkout" {
+	if len(res.Run.Jobs) != 1 || res.Run.Jobs[0].Key != CheckoutLogName || !res.Run.Jobs[0].Pseudo {
 		t.Fatalf("only the pseudo job of the checkout: %+v", res.Run.Jobs)
 	}
 	if entries, _ := os.ReadDir(opts.Store.WorkPath()); len(entries) != 0 {
@@ -274,5 +287,99 @@ func TestRunPRRunsGetDistinctIDs(t *testing.T) {
 	}
 	if idx, _ := opts.Store.ReadIndex(); len(idx) != 2 {
 		t.Fatalf("%d index lines", len(idx))
+	}
+}
+
+func TestRunPROwnerPRWithAForeignCommitRunsTheBaseDefinition(t *testing.T) {
+	needBash(t)
+	o := newOrigin(t)
+	for name, commits := range map[string][]PRCommit{
+		"another author":    {{SHA: strings.Repeat("a", 40), AuthorLogin: "acme", CommitterLogin: "acme"}, {SHA: strings.Repeat("b", 40), AuthorLogin: "alice", CommitterLogin: "acme"}},
+		"another committer": {{SHA: strings.Repeat("a", 40), AuthorLogin: "acme", CommitterLogin: "alice"}},
+		"unknown login":     {{SHA: strings.Repeat("a", 40), AuthorLogin: "", CommitterLogin: "acme"}},
+		"truncated list":    {{SHA: strings.Repeat("a", 40), AuthorLogin: "acme", CommitterLogin: "acme"}, {SHA: "(more commits than the host lists)"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := &fakeHost{pr: okPR(o, 3, o.evil, "acme"), commits: commits}
+			opts, console := prOptions(t, o, h)
+			res, err := RunPR(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("%v\n%s", err, console.String())
+			}
+			log := logOf(t, opts.Store, res.RunID, "go")
+			if !strings.Contains(log, "workflow=base") || strings.Contains(log, "workflow=PR") {
+				t.Fatalf("a branch with somebody else's commit must run the base definition:\n%s", log)
+			}
+			if !exists(filepath.Join(opts.Store.UntrustedCachesPath(), "go-build")) || exists(filepath.Join(opts.Store.CachesPath(), "go-build")) {
+				t.Fatal("such a run must use the caches kept apart from the owner's")
+			}
+		})
+	}
+	// every commit by the owner: the owner's own definition and the owner's caches
+	h := &fakeHost{pr: okPR(o, 3, o.evil, "acme"), commits: []PRCommit{{SHA: strings.Repeat("a", 40), AuthorLogin: "ACME", CommitterLogin: "acme"}}}
+	opts, _ := prOptions(t, o, h)
+	res, err := RunPR(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logOf(t, opts.Store, res.RunID, "go"), "workflow=PR") {
+		t.Fatal("the owner's own branch keeps its own definition")
+	}
+	if !exists(filepath.Join(opts.Store.CachesPath(), "go-build")) || exists(opts.Store.UntrustedCachesPath()) && exists(filepath.Join(opts.Store.UntrustedCachesPath(), "go-build")) {
+		t.Fatal("the owner's run uses the owner's caches")
+	}
+}
+
+func TestRunPRCommitListErrorIsAnError(t *testing.T) {
+	o := newOrigin(t)
+	h := &fakeHost{pr: okPR(o, 1, o.feature, "acme"), commitsErr: errors.New("gh: 502")}
+	opts, _ := prOptions(t, o, h)
+	res, err := RunPR(context.Background(), opts)
+	if err == nil || res == nil || res.Run.Conclusion != "error" {
+		t.Fatalf("%v %+v", err, res)
+	}
+	if exists(opts.Store.RepoPath()) {
+		t.Fatal("nothing may be fetched when the commits cannot be read")
+	}
+}
+
+func TestRunPRNonOwnerCodeNeedsATrustedBase(t *testing.T) {
+	needBash(t)
+	o := newOrigin(t)
+	ctx := context.Background()
+	// --workflow without any trusted base: a collaborator's pull request is refused, whatever the base is
+	h := &fakeHost{pr: okPR(o, 3, o.evil, "alice"), collabs: []string{"alice"}}
+	opts, _ := prOptions(t, o, h)
+	opts.Workflows, opts.Workflow = nil, "fast-gate.yml"
+	res, err := RunPR(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Run.Conclusion != "failure" || !strings.Contains(res.Entry.Reason, "trusts") || res.Run.Jobs[0].Key != TrustJobKey || !res.Run.Jobs[0].Pseudo {
+		t.Fatalf("%+v", res.Entry)
+	}
+	if exists(opts.Store.RepoPath()) {
+		t.Fatal("a refused pull request must not be fetched")
+	}
+	// an owner pull request with a foreign commit is no better
+	h = &fakeHost{pr: okPR(o, 3, o.evil, "acme"), commits: []PRCommit{{AuthorLogin: "alice", CommitterLogin: "alice"}}}
+	opts, _ = prOptions(t, o, h)
+	opts.Workflows, opts.Workflow = nil, "fast-gate.yml"
+	if res, err = RunPR(ctx, opts); err != nil || res.Run.Conclusion != "failure" {
+		t.Fatalf("%v %+v", err, res)
+	}
+	// naming the base in TrustedBases lets it run, with the base definition
+	h = &fakeHost{pr: okPR(o, 3, o.evil, "alice"), collabs: []string{"alice"}}
+	opts, _ = prOptions(t, o, h)
+	opts.Workflows, opts.Workflow, opts.TrustedBases = nil, "fast-gate.yml", []string{"develop"}
+	if res, err = RunPR(ctx, opts); err != nil || res.Run.Conclusion != "success" {
+		t.Fatalf("%v %+v", err, res)
+	}
+	// the owner's own pull request needs no trusted base
+	h = &fakeHost{pr: okPR(o, 1, o.feature, "acme")}
+	opts, _ = prOptions(t, o, h)
+	opts.Workflows, opts.Workflow = nil, "fast-gate.yml"
+	if res, err = RunPR(ctx, opts); err != nil || res.Run.Conclusion != "success" {
+		t.Fatalf("%v %+v", err, res)
 	}
 }

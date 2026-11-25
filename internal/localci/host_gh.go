@@ -58,13 +58,53 @@ func (h *GHHost) PullRequest(ctx context.Context, repo string, number int) (Pull
 		HeadSHA: v.HeadRefOid, Author: v.Author.Login, HeadRepoOwner: v.HeadRepositoryOwner.Login, IsFork: v.IsCrossRepository}, nil
 }
 
-// Collaborators implements Host with the repository's collaborator list.
+// Collaborators implements Host with the repository's collaborators who can push (read-only and triage
+// collaborators never run code here).
 func (h *GHHost) Collaborators(ctx context.Context, repo string) ([]string, error) {
-	out, err := h.gh(ctx, "api", "--paginate", "repos/"+repo+"/collaborators", "--jq", ".[].login")
+	out, err := h.gh(ctx, "api", "--paginate", "repos/"+repo+"/collaborators", "--jq", ".[] | select(.permissions.push == true) | .login")
 	if err != nil {
 		return nil, err
 	}
 	return strings.Fields(string(out)), nil
+}
+
+// ghCommitListMax is the most commits GitHub lists for one pull request.
+const ghCommitListMax = 250
+
+// Commits implements Host with repos/{repo}/pulls/{n}/commits (paginated). GitHub lists at most 250 commits
+// of a pull request: when the list is that long, a commit without logins ends it, so the caller cannot
+// believe it has seen everything.
+func (h *GHHost) Commits(ctx context.Context, repo string, number int) ([]PRCommit, error) {
+	out, err := h.gh(ctx, "api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/commits", repo, number),
+		"--jq", `.[] | [.sha, (.author.login // ""), (.committer.login // "")] | @tsv`)
+	if err != nil {
+		return nil, err
+	}
+	return parseCommitList(string(out)), nil
+}
+
+// parseCommitList reads the tab separated lines Commits asks gh for.
+func parseCommitList(out string) []PRCommit {
+	var commits []PRCommit
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		c := PRCommit{SHA: f[0]}
+		if len(f) > 1 {
+			c.AuthorLogin = f[1]
+		}
+		if len(f) > 2 {
+			c.CommitterLogin = f[2]
+		}
+		commits = append(commits, c)
+	}
+	if len(commits) >= ghCommitListMax {
+		commits = append(commits, PRCommit{SHA: "(more commits than the host lists)"})
+	}
+	return commits
 }
 
 // CloneURL implements Host.

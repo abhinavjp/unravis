@@ -237,3 +237,86 @@ func TestJobLogsStayInsideTheRun(t *testing.T) {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
+
+func TestCommitsByOwner(t *testing.T) {
+	c := func(a, m string) PRCommit { return PRCommit{SHA: "x", AuthorLogin: a, CommitterLogin: m} }
+	cases := []struct {
+		name    string
+		owner   string
+		commits []PRCommit
+		want    bool
+	}{
+		{"all the owner's", "acme", []PRCommit{c("acme", "acme"), c("ACME", "Acme")}, true},
+		{"edited in the web editor", "acme", []PRCommit{c("acme", "web-flow")}, true},
+		{"somebody else's web edit", "acme", []PRCommit{c("alice", "web-flow")}, false},
+		{"another author", "acme", []PRCommit{c("acme", "acme"), c("alice", "acme")}, false},
+		{"another committer", "acme", []PRCommit{c("acme", "alice")}, false},
+		{"unknown author", "acme", []PRCommit{c("", "acme")}, false},
+		{"unknown committer", "acme", []PRCommit{c("acme", "")}, false},
+		{"no commits prove nothing", "acme", nil, false},
+		{"no owner", "", []PRCommit{c("", "")}, false},
+		{"the list was cut", "acme", []PRCommit{c("acme", "acme"), {SHA: "(more commits than the host lists)"}}, false},
+	}
+	for _, tc := range cases {
+		if got := CommitsByOwner(tc.owner, tc.commits); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestTrustedBase(t *testing.T) {
+	if !TrustedBase("develop", []string{"master", "develop"}) || TrustedBase("feature", []string{"master", "develop"}) ||
+		TrustedBase("", []string{""}) || TrustedBase("develop", nil) || TrustedBase("Develop", []string{"develop"}) {
+		t.Fatal("TrustedBase must be an exact match against a non-empty list")
+	}
+}
+
+func TestSplitRepoIsStrict(t *testing.T) {
+	for _, ok := range []string{"acme/widgets", "a-b/c.d_e", "Acme/Widgets-2"} {
+		if _, _, good := splitRepo(ok); !good {
+			t.Errorf("%q should be valid", ok)
+		}
+	}
+	for _, bad := range []string{"", "acme", "acme/", "/x", "a/b/c", "a b/c", "a/b c", "a/b;rm", "a/b\n", "-x/y;z", "a_b/c", "a/..", "a/.", "../x", "a/b?x=1", "a/b#f", "a/b%2f", "acme/wid gets", "a/b$(x)"} {
+		if _, _, good := splitRepo(bad); good {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+}
+
+func TestPseudoJobsCannotCollideWithRealJobs(t *testing.T) {
+	if CheckoutLogName[0] != '_' || TrustJobKey[0] != '_' {
+		t.Fatal("pseudo job names must start with _")
+	}
+	for _, j := range []*JobResult{{Key: "_checkout"}, {Key: "x", Pseudo: true}} {
+		if !IsPseudoJob(j) {
+			t.Errorf("%+v is a pseudo job", j)
+		}
+	}
+	if IsPseudoJob(&JobResult{Key: "checkout"}) || IsPseudoJob(&JobResult{Key: "trust"}) {
+		t.Fatal("a real job named checkout or trust is a real job")
+	}
+	src := "on: push\njobs:\n  _checkout:\n    runs-on: x\n    steps:\n      - run: x\n"
+	if _, _, err := ParseWorkflow("w.yml", []byte(src)); err == nil || !strings.Contains(err.Error(), "_") {
+		t.Fatalf("a job id starting with _ must be refused: %v", err)
+	}
+	src = "on: push\njobs:\n  checkout:\n    runs-on: x\n    steps:\n      - run: x\n  trust:\n    runs-on: x\n    steps:\n      - run: x\n"
+	if _, _, err := ParseWorkflow("w.yml", []byte(src)); err != nil {
+		t.Fatalf("real jobs named checkout and trust are fine now: %v", err)
+	}
+}
+
+func TestParseCommitList(t *testing.T) {
+	got := parseCommitList("aaa\tacme\tacme\r\nbbb\t\tweb-flow\n\nccc\n")
+	want := []PRCommit{{"aaa", "acme", "acme"}, {"bbb", "", "web-flow"}, {"ccc", "", ""}}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("%+v", got)
+	}
+	var many strings.Builder
+	for i := 0; i < ghCommitListMax; i++ {
+		many.WriteString("sha\tacme\tacme\n")
+	}
+	if got := parseCommitList(many.String()); len(got) != ghCommitListMax+1 || CommitsByOwner("acme", got) {
+		t.Fatal("a list as long as the host's limit must not count as complete")
+	}
+}

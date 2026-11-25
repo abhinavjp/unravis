@@ -20,7 +20,7 @@ func TestCorePurity(t *testing.T) {
 		if f == "purity_test.go" {
 			continue
 		}
-		b, err := os.ReadFile(f)
+		b, err := os.ReadFile(f) //nolint:gosec // the test lists its own package files
 		if err != nil {
 			t.Fatal(err)
 		}

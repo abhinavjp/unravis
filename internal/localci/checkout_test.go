@@ -377,3 +377,156 @@ func TestCommitWorktreeAndRemoveGuards(t *testing.T) {
 		t.Fatalf("second remove: %v", err)
 	}
 }
+
+func TestMirrorRewritesTamperedConfigAndHooks(t *testing.T) {
+	o := newOrigin(t)
+	c, s := mirrored(t, o)
+	repo := s.RepoPath()
+	// what a step of an earlier run could have written through the worktree's commondir
+	f, err := os.OpenFile(filepath.Join(repo, "config"), os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // the test tampers with its own store
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString("[core]\n\tfsmonitor = evil.exe\n\thooksPath = /tmp/evil\n\tsymlinks = true\n[url \"https://evil.invalid/\"]\n\tinsteadOf = https://github.com/\n[alias]\n\tcheckout = !evil\n")
+	_ = f.Close()
+	writeT(t, repo, "hooks/post-checkout", "#!/bin/sh\necho owned\n")
+	writeT(t, repo, "info/attributes", "* filter=evil\n")
+	writeT(t, repo, "objects/info/alternates", "/tmp/evil/objects\n")
+	if err := c.Mirror(context.Background(), o.bare); err != nil {
+		t.Fatal(err)
+	}
+	cfg := readT(t, filepath.Join(repo, "config"))
+	for _, bad := range []string{"evil", "insteadOf", "alias"} {
+		if strings.Contains(cfg, bad) {
+			t.Fatalf("config still has %q:\n%s", bad, cfg)
+		}
+	}
+	for _, want := range []string{"symlinks = false", "fsmonitor = false", "bare = true"} {
+		if !strings.Contains(cfg, want) {
+			t.Fatalf("config lacks %q:\n%s", want, cfg)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(repo, "hooks")); len(entries) != 0 {
+		t.Fatalf("hooks must be emptied: %v", entries)
+	}
+	for _, gone := range []string{"info/attributes", "objects/info/alternates"} {
+		if exists(filepath.Join(repo, filepath.FromSlash(gone))) {
+			t.Fatalf("%s must be removed", gone)
+		}
+	}
+}
+
+func TestRunnerGitIgnoresHooksAndTheUsersGlobalConfig(t *testing.T) {
+	needBash(t)
+	o := newOrigin(t)
+	c, s := mirrored(t, o)
+	marker := filepath.Join(t.TempDir(), "hook-ran")
+	hook := "#!/bin/sh\necho ran > '" + filepath.ToSlash(marker) + "'\n"
+	// a hook in the mirror, in the runner's own hooks folder, and one set by the user's global config
+	writeT(t, s.RepoPath(), "hooks/post-checkout", hook)
+	writeT(t, s.RepoPath(), "hooks/reference-transaction", hook)
+	userHooks := t.TempDir()
+	writeT(t, userHooks, "post-checkout", hook)
+	global := filepath.Join(t.TempDir(), "global")
+	writeT(t, filepath.Dir(global), "global", "[core]\n\thooksPath = "+filepath.ToSlash(userHooks)+"\n[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /nonexistent/gpg\n[user]\n\tsigningkey = DEADBEEF\n")
+	c.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+global)
+	wt, err := c.PullRequest(context.Background(), PRSpec{RunID: "hooks1", BaseRef: "develop", HeadSHA: o.feature})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists(marker) {
+		t.Fatal("a hook ran during the runner's git commands")
+	}
+	// the merge commit is not signed, although the user's config asks for it
+	if out := gitT(t, s.RepoPath(), "cat-file", "-p", wt.Commit); strings.Contains(out, "gpgsig") {
+		t.Fatalf("the merge commit must be unsigned:\n%s", out)
+	}
+	if err := c.Remove(context.Background(), wt.Path); err != nil {
+		t.Fatal(err)
+	}
+	if exists(marker) {
+		t.Fatal("a hook ran during the removal")
+	}
+}
+
+func TestMirrorPrunesWorktreesOfRunsThatAreGone(t *testing.T) {
+	o := newOrigin(t)
+	c, s := mirrored(t, o)
+	wt, err := c.Commit(context.Background(), "gone1", o.develop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(wt.Path); err != nil { // a crash, or somebody deleting the folder
+		t.Fatal(err)
+	}
+	if out := gitT(t, s.RepoPath(), "worktree", "list", "--porcelain"); !strings.Contains(out, "gone1") {
+		t.Fatalf("the test needs the stale record:\n%s", out)
+	}
+	if err := c.Mirror(context.Background(), o.bare); err != nil {
+		t.Fatal(err)
+	}
+	if out := gitT(t, s.RepoPath(), "worktree", "list", "--porcelain"); strings.Contains(out, "gone1") {
+		t.Fatalf("Mirror must prune stale worktree records:\n%s", out)
+	}
+}
+
+func TestAddWorktreeFailureLeavesNothingBehind(t *testing.T) {
+	o := newOrigin(t)
+	c, s := mirrored(t, o)
+	// the target is a file, so git cannot make the worktree
+	writeT(t, s.WorkPath(), "blocked", "in the way")
+	if _, err := c.Commit(context.Background(), "blocked", o.develop); err == nil {
+		t.Fatal("expected the worktree to fail")
+	}
+	if exists(filepath.Join(s.WorkPath(), "blocked")) {
+		t.Fatal("the half-made worktree must be removed")
+	}
+	if out := gitT(t, s.RepoPath(), "worktree", "list", "--porcelain"); strings.Contains(out, "blocked") {
+		t.Fatalf("the worktree record must be pruned:\n%s", out)
+	}
+	// and the next run with the same store works
+	if _, err := c.Commit(context.Background(), "after", o.develop); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// linkDir makes link point at target: a symlink, or a junction when symlinks need a privilege this user lacks.
+func linkDir(t *testing.T, link, target string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err == nil {
+		return
+	}
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil { //nolint:gosec // test helper
+		t.Skipf("cannot make a symlink or junction here: %v %s", err, out)
+	}
+}
+
+func TestRemoveNoFollowNeverDeletesThroughALink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeT(t, outside, "ci/keep.txt", "must survive")
+	writeT(t, outside, "other.txt", "must survive")
+	linkDir(t, filepath.Join(root, "tools"), outside)
+	if err := removeNoFollow(root, "tools/ci"); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(outside, "ci", "keep.txt")) || !exists(filepath.Join(outside, "other.txt")) {
+		t.Fatal("a protected path below a link deleted what the link points to")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "tools")); err == nil {
+		t.Fatal("the link itself should be gone")
+	}
+	// a link as the protected path itself
+	linkDir(t, filepath.Join(root, "ci"), outside)
+	if err := removeNoFollow(root, "ci"); err != nil || !exists(filepath.Join(outside, "ci", "keep.txt")) {
+		t.Fatalf("removing a link must not touch its target: %v", err)
+	}
+	// plain folders and missing paths still work
+	writeT(t, root, "plain/sub/x.txt", "x")
+	if err := removeNoFollow(root, "plain/sub"); err != nil || exists(filepath.Join(root, "plain", "sub")) {
+		t.Fatalf("plain: %v", err)
+	}
+	if err := removeNoFollow(root, "nothing/here"); err != nil {
+		t.Fatalf("missing: %v", err)
+	}
+}

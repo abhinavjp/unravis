@@ -68,10 +68,10 @@ func usage(w io.Writer) {
   unravis-ci lint [--workflows dir] [--allow a.yml,b.yml]
   unravis-ci run <workflow.yml> --event push|pull_request|workflow_dispatch|schedule [--local DIR] [--state DIR]
         [--ref REF] [--sha SHA] [--base-ref B] [--head-ref H] [--input k=v]... [--var k=v]... [--job id]...
-        [--slots N] [--config FILE] [--dry-run]
-  unravis-ci run-pr <number> --repo owner/name [--state DIR] [--workflow-for base=file.yml]... [--protect PATH]... [--keep] [--slots N]
+        [--slots N] [--config FILE] [--allow-env NAME]... [--dry-run]
+  unravis-ci run-pr <number> --repo owner/name [--state DIR] [--workflow-for base=file.yml]... [--protect PATH]... [--trusted-base B]... [--allow-env NAME]... [--keep] [--slots N]
   unravis-ci runs [--state DIR] [--limit N]
-  unravis-ci log <runid> [job|checkout] [--state DIR]
+  unravis-ci log <runid> [job|_checkout|_trust] [--state DIR]
   unravis-ci version
 exit codes: 0 pass, 1 workflow failed, 2 usage or I/O error, 3 unsupported
 `)
@@ -192,10 +192,11 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer, enviro
 	slots := fs.Int("slots", 2, "jobs at once")
 	cfgPath := fs.String("config", "", "local-ci.yml (default .github/local-ci.yml of the checkout, when present)")
 	dry := fs.Bool("dry-run", false, "print the plan and run nothing")
-	var inputs, vars, only multiFlag
+	var inputs, vars, only, allowEnv multiFlag
 	fs.Var(&inputs, "input", "workflow_dispatch input k=v (repeatable)")
 	fs.Var(&vars, "var", "vars context value k=v (repeatable)")
 	fs.Var(&only, "job", "run only this job id (repeatable)")
+	fs.Var(&allowEnv, "allow-env", "NAME of an environment variable steps may see (repeatable; the default is a short allow-list)")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return exitUsage
@@ -284,8 +285,8 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer, enviro
 	gh := githubContext(workdir, wf, *event, *ref, *sha, *baseRef, *headRef, inMap, now, environ)
 	opts := localci.RunOptions{
 		Workflow: wf, Config: cfg, Workdir: workdir, StateDir: stateDir, GitHub: gh, Inputs: inMap, Vars: varMap,
-		Env: scrubEnv(environ), Only: only, Slots: *slots, Log: stdout, DryRun: *dry,
-		Redact: newRedactor(secretValues(environ)),
+		Env: scrubEnv(environ, allowEnv), Only: only, Slots: *slots, Log: stdout, DryRun: *dry,
+		Redact: newRedactor(secrets(environ)),
 	}
 	if !*dry {
 		_, _ = fmt.Fprintf(stdout, "running %s (%s) in %s\nstate: %s\n", wf.Name, *event, workdir, stateDir)
@@ -420,17 +421,52 @@ func firstNonEmpty(ss ...string) string {
 	return ""
 }
 
-// scrubEnv drops every variable that may hold a secret.
-func scrubEnv(environ []string) []string {
+// allowedEnvNames are the variables steps keep (compared upper case). Everything else is dropped unless the
+// caller adds it with --allow-env: an allow-list, because a deny-list can never know the name of the next secret.
+var allowedEnvNames = map[string]bool{
+	// locating programs and the system
+	"PATH": true, "PATHEXT": true, "SYSTEMROOT": true, "SYSTEMDRIVE": true, "WINDIR": true, "COMSPEC": true,
+	"OS": true, "NUMBER_OF_PROCESSORS": true, "PROCESSOR_ARCHITECTURE": true, "PROCESSOR_IDENTIFIER": true,
+	"PROCESSOR_LEVEL": true, "PROCESSOR_REVISION": true, "COMPUTERNAME": true, "USERDOMAIN": true, "USERNAME": true,
+	"USER": true, "LOGNAME": true, "SHELL": true, "TERM": true, "TZ": true, "LANG": true, "LANGUAGE": true,
+	"PROGRAMFILES": true, "PROGRAMFILES(X86)": true, "PROGRAMW6432": true, "COMMONPROGRAMFILES": true,
+	"COMMONPROGRAMFILES(X86)": true, "COMMONPROGRAMW6432": true, "PROGRAMDATA": true, "ALLUSERSPROFILE": true,
+	"PUBLIC": true, "DRIVERDATA": true,
+	// the profile and temp folders (the runner's own fetch needs the user's; steps get a throw-away profile)
+	"HOME": true, "USERPROFILE": true, "HOMEDRIVE": true, "HOMEPATH": true, "APPDATA": true, "LOCALAPPDATA": true,
+	"TEMP": true, "TMP": true, "TMPDIR": true,
+	// toolchains and their caches (no credentials)
+	"GOROOT": true, "GOPATH": true, "GOCACHE": true, "GOMODCACHE": true, "GOTOOLCHAIN": true, "GOPROXY": true,
+	"GOSUMDB": true, "GOFLAGS": true, "NVM_HOME": true, "NVM_SYMLINK": true, "JAVA_HOME": true, "CARGO_HOME": true,
+	"RUSTUP_HOME": true,
+	// network: a proxy the machine needs (a proxy URL with a password is masked in logs by its name only when it
+	// matches the secret rules, so keep credentials out of it)
+	"HTTP_PROXY": true, "HTTPS_PROXY": true, "NO_PROXY": true, "ALL_PROXY": true,
+}
+
+// allowedEnvPrefixes are name prefixes kept as well.
+var allowedEnvPrefixes = []string{"LC_", "XDG_"}
+
+// scrubEnv keeps only the variables a step may see: the allow-list above plus the names in extra
+// (--allow-env). A name that looks like a secret is dropped even when the allow-list would keep it, except when
+// the caller names it in extra on purpose.
+func scrubEnv(environ, extra []string) []string {
+	allow := map[string]bool{}
+	for _, n := range extra {
+		allow[strings.ToUpper(strings.TrimSpace(n))] = true
+	}
 	var out []string
 	for _, kv := range environ {
-		name := kv
-		if len(kv) > 0 {
-			if i := strings.Index(kv[1:], "="); i >= 0 {
-				name = kv[:i+1]
-			}
-		}
-		if secretName(name) {
+		name := envName(kv)
+		u := strings.ToUpper(name)
+		switch {
+		case allow[u]:
+		case secretName(name):
+			continue
+		case strings.HasPrefix(kv, "="): // Windows per-drive folders such as =C:
+		case allowedEnvNames[u]:
+		case hasAnyPrefix(u, allowedEnvPrefixes):
+		default:
 			continue
 		}
 		out = append(out, kv)
@@ -438,12 +474,32 @@ func scrubEnv(environ []string) []string {
 	return out
 }
 
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// envName is the name of an "NAME=value" entry. Windows has entries such as "=C:=C:\" whose name starts with "=".
+func envName(kv string) string {
+	if kv == "" {
+		return ""
+	}
+	if i := strings.Index(kv[1:], "="); i >= 0 {
+		return kv[:i+1]
+	}
+	return kv
+}
+
 // minSecretLen is the shortest value that is masked: shorter ones ("1", "true") would blank ordinary text.
 const minSecretLen = 6
 
-// secretValues returns the values of the variables scrubEnv drops (taken before the scrub), longest first.
+// secretValues returns the values of the variables whose names look like secrets (taken before the scrub),
+// longest first.
 func secretValues(environ []string) []string {
-	seen := map[string]bool{}
 	var vals []string
 	for _, kv := range environ {
 		if kv == "" {
@@ -453,14 +509,45 @@ func secretValues(environ []string) []string {
 		if i < 0 {
 			continue
 		}
-		name, val := kv[:i+1], kv[i+2:]
-		if secretName(name) && len(val) >= minSecretLen && !seen[val] {
-			seen[val] = true
-			vals = append(vals, val)
+		if secretName(kv[:i+1]) {
+			vals = append(vals, kv[i+2:])
 		}
 	}
-	sort.SliceStable(vals, func(a, b int) bool { return len(vals[a]) > len(vals[b]) })
-	return vals
+	return longestFirst(vals)
+}
+
+// longestFirst drops short and repeated values and orders the rest longest first, so a secret that contains
+// another one is masked whole.
+func longestFirst(vals []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range vals {
+		if len(v) >= minSecretLen && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.SliceStable(out, func(a, b int) bool { return len(out[a]) > len(out[b]) })
+	return out
+}
+
+// ghAuthToken asks the `gh` login of the runner's user for its token, so that the value is masked even when no
+// environment variable holds it. Failure (no gh, not logged in) gives "". Tests replace it.
+var ghAuthToken = func(environ []string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token")
+	cmd.Env = environ
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// secrets is everything the runner masks: the secret-looking variables and the gh login token.
+func secrets(environ []string) []string {
+	return longestFirst(append(secretValues(environ), ghAuthToken(environ)))
 }
 
 // newRedactor returns the one redactor the runner applies to every sink (step logs, console, summary.md,
@@ -474,12 +561,15 @@ func newRedactor(vals []string) func(string) string {
 	}
 }
 
+// secretName reports whether a variable name looks like it holds a credential.
 func secretName(name string) bool {
 	u := strings.ToUpper(name)
 	switch {
-	case u == "GH_TOKEN", u == "GITHUB_TOKEN",
-		strings.HasSuffix(u, "_TOKEN"), strings.HasSuffix(u, "_SECRET"), strings.HasSuffix(u, "_PASSWORD"),
-		strings.Contains(u, "PASSPHRASE"),
+	case strings.HasSuffix(u, "_TOKEN"), u == "GH_TOKEN", u == "GITHUB_TOKEN",
+		strings.Contains(u, "SECRET"), strings.Contains(u, "PASSWORD"), strings.Contains(u, "PASSWD"),
+		strings.Contains(u, "PASSPHRASE"), strings.Contains(u, "CREDENTIAL"),
+		strings.Contains(u, "APIKEY"), strings.Contains(u, "API_KEY"), strings.Contains(u, "PRIVATE_KEY"),
+		strings.Contains(u, "ACCESS_KEY"), strings.Contains(u, "AUTH_TOKEN"),
 		strings.HasPrefix(u, "PROTON"), strings.HasPrefix(u, "SIGNPATH"), strings.HasPrefix(u, "UNRAVIS_RELEASE"):
 		return true
 	}

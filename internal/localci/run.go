@@ -68,6 +68,8 @@ type JobResult struct {
 	Outputs map[string]string `json:"outputs,omitempty"`
 	Start   time.Time         `json:"start"`
 	End     time.Time         `json:"end"`
+	// Pseudo marks a record of the runner itself (the stage a run stopped at), not a job of the workflow.
+	Pseudo bool `json:"pseudo,omitempty"`
 
 	coe bool // continue-on-error, evaluated for this instance
 }

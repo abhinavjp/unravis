@@ -27,9 +27,16 @@ type PROptions struct {
 	Workflow string
 	// Protect are paths (besides DefaultProtected) read from the base branch when the author is not the owner.
 	Protect []string
+	// TrustedBases are the base branches whose content may supply the runner definition of a pull request that
+	// is not all the owner's. A pull request of anybody else into another base is refused, whatever Workflow
+	// says. When empty, the keys of Workflows are the trusted bases.
+	TrustedBases []string
 	// Keep leaves the worktree in place after the run.
-	Keep  bool
-	Env   []string // environment of the steps and of git, already scrubbed by the caller; nil means the current one
+	Keep bool
+	// Env is the environment the caller allows steps to see (already an allow-list; nil means the current one).
+	// The runner replaces its profile, git and cache variables (see Store.StepEnv); the runner's own fetch
+	// keeps the git setup in it.
+	Env   []string
 	Vars  map[string]string
 	Slots int
 	// Redact masks every text the store writes (logs, run.json, index.jsonl, summary.md).
@@ -82,9 +89,21 @@ func (o *PROptions) workflowFor(base string) (string, error) {
 	return f, nil
 }
 
-// failedRun is the record of a run that stopped before any job ran. The pseudo job names the stage.
+func (o *PROptions) trustedBases() []string {
+	if len(o.TrustedBases) > 0 {
+		return o.TrustedBases
+	}
+	bases := make([]string, 0, len(o.Workflows))
+	for b := range o.Workflows {
+		bases = append(bases, b)
+	}
+	return bases
+}
+
+// failedRun is the record of a run that stopped before any job ran. The pseudo job names the stage; its key
+// starts with "_", which a real job id cannot, and Pseudo is set.
 func failedRun(workflow, stage, reason, logFile string, start, end time.Time) *RunResult {
-	jr := &JobResult{Key: stage, ID: stage, Label: stage, Status: "failure", Reason: reason, Start: start, End: end}
+	jr := &JobResult{Key: stage, ID: stage, Label: stage, Pseudo: true, Status: "failure", Reason: reason, Start: start, End: end}
 	if logFile != "" {
 		jr.Steps = []StepResult{{Index: 1, Name: stage, Outcome: "failure", Conclusion: "failure", Start: start, End: end, LogFile: logFile, Err: reason}}
 	}
@@ -146,12 +165,12 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 	finish := func(run *RunResult, commit, reason string, hard error) (*PRResult, error) {
 		end := o.now()
 		if hard != nil {
-			run = failedRun(file, "checkout", hard.Error(), logPath, start, end)
+			run = failedRun(file, CheckoutLogName, hard.Error(), logPath, start, end)
 			run.Conclusion = "error"
 			reason = hard.Error()
 		}
 		for _, j := range run.Jobs {
-			if j.Key == "checkout" || j.Key == "trust" {
+			if IsPseudoJob(j) {
 				j.Reason = o.mask(j.Reason)
 				for i := range j.Steps {
 					j.Steps[i].Err = o.mask(j.Steps[i].Err)
@@ -186,7 +205,25 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 	note("pull request %d of %s: author %s, %s -> %s, head %s", pr.Number, o.Repo, pr.Author, pr.HeadRef, pr.BaseRef, pr.HeadSHA)
 	if !trust.Run {
 		note("not run: %s", trust.Reason)
-		return finish(failedRun(file, "trust", trust.Reason, logPath, start, o.now()), "", trust.Reason, nil)
+		return finish(failedRun(file, TrustJobKey, trust.Reason, logPath, start, o.now()), "", trust.Reason, nil)
+	}
+	if !trust.FromBase {
+		// The owner opened it, but a commit on the branch may be somebody else's (a collaborator pushed to the
+		// owner's branch). Only a branch written start to end by the owner gets the owner's trust.
+		commits, cerr := o.Host.Commits(ctx, o.Repo, pr.Number)
+		if cerr != nil {
+			note("cannot read the commits of pull request %d: %v", pr.Number, cerr)
+			return finish(nil, "", "", fmt.Errorf("cannot read the commits of pull request %d: %w", pr.Number, cerr))
+		}
+		if !CommitsByOwner(owner, commits) {
+			trust.FromBase = true
+			note("not every commit of the branch was written and committed by %s: treated like a collaborator's pull request", owner)
+		}
+	}
+	if trust.FromBase && !TrustedBase(pr.BaseRef, o.trustedBases()) {
+		reason := fmt.Sprintf("the code is not all the owner's and %q is not a base branch this PC trusts for that", pr.BaseRef)
+		note("not run: %s", reason)
+		return finish(failedRun(file, TrustJobKey, reason, logPath, start, o.now()), "", reason, nil)
 	}
 	note("trusted (workflow files from %s)", map[bool]string{true: "the base branch", false: "the pull request"}[trust.FromBase])
 
@@ -206,7 +243,7 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 	}
 	if wt.Conflict {
 		note("merge conflict:\n%s", wt.Detail)
-		return finish(failedRun(file, "checkout", "merge conflict", logPath, start, o.now()), "", "merge conflict", nil)
+		return finish(failedRun(file, CheckoutLogName, "merge conflict", logPath, start, o.now()), "", "merge conflict", nil)
 	}
 	res.Workdir = wt.Path
 	defer func() {
@@ -252,10 +289,11 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 	if err != nil {
 		return finish(nil, wt.Commit, "", fmt.Errorf("local-ci.yml: %w", err))
 	}
-	env, err := o.Store.CacheEnv(o.Env)
+	env, cleanupHome, err := o.Store.StepEnv(o.Env, runID, trust.FromBase)
 	if err != nil {
 		return finish(nil, wt.Commit, "", err)
 	}
+	defer cleanupHome()
 
 	// 4. run
 	o.logf("running %s on the merge of %s into %s (%s)", file, shortSHA(wt.HeadSHA), pr.BaseRef, shortSHA(wt.Commit))

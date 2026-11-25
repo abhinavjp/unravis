@@ -14,15 +14,23 @@ import (
 
 // fakeHost answers from memory: no gh, no network.
 type fakeHost struct {
-	pr  localci.PullRequest
-	url string
+	pr      localci.PullRequest
+	url     string
+	commits []localci.PRCommit // nil: one commit by the author of the pull request
+	collabs []string
 }
 
 func (f *fakeHost) PullRequest(context.Context, string, int) (localci.PullRequest, error) {
 	return f.pr, nil
 }
-func (f *fakeHost) Collaborators(context.Context, string) ([]string, error) { return nil, nil }
-func (f *fakeHost) CloneURL(string) string                                  { return f.url }
+func (f *fakeHost) Collaborators(context.Context, string) ([]string, error) { return f.collabs, nil }
+func (f *fakeHost) Commits(context.Context, string, int) ([]localci.PRCommit, error) {
+	if f.commits != nil {
+		return f.commits, nil
+	}
+	return []localci.PRCommit{{SHA: f.pr.HeadSHA, AuthorLogin: f.pr.Author, CommitterLogin: f.pr.Author}}, nil
+}
+func (f *fakeHost) CloneURL(string) string { return f.url }
 
 func gitC(t *testing.T, dir string, args ...string) string {
 	t.Helper()
@@ -157,14 +165,14 @@ func TestRunPRRunsLogsAndRuns(t *testing.T) {
 		t.Fatalf("runs: %d\n%s", code, listing)
 	}
 	code, jobs, _ := cli(t, nil, "log", runID, "--state", state)
-	if code != exitOK || !strings.Contains(jobs, "go") || !strings.Contains(jobs, "checkout") {
+	if code != exitOK || !strings.Contains(jobs, "go") || !strings.Contains(jobs, "_checkout") {
 		t.Fatalf("log <run>: %d\n%s", code, jobs)
 	}
 	code, goLog, _ := cli(t, nil, "log", runID, "go", "--state", state)
 	if code != exitOK || !strings.Contains(goLog, "marker=feature token=[]") || strings.Contains(goLog, "hunter2secret") {
 		t.Fatalf("the secret variable must not reach the step: %d\n%s", code, goLog)
 	}
-	code, coLog, _ := cli(t, nil, "log", runID, "checkout", "--state", state)
+	code, coLog, _ := cli(t, nil, "log", runID, "_checkout", "--state", state)
 	if code != exitOK || !strings.Contains(coLog, "merge-tree") {
 		t.Fatalf("checkout log: %d\n%s", code, coLog)
 	}
@@ -202,5 +210,48 @@ func TestRunsOnAnEmptyStore(t *testing.T) {
 	code, out, _ := cli(t, nil, "runs", "--state", filepath.Join(t.TempDir(), "nothing"))
 	if code != exitOK || !strings.Contains(out, "no runs") {
 		t.Fatalf("%d %q", code, out)
+	}
+}
+
+func TestRunPRNonOwnerRunsOnlyIntoATrustedBase(t *testing.T) {
+	bare, clean, _ := prSetup(t)
+	gitC(t, bare, "branch", "staging", "develop") // a branch anybody with push access could have made
+	state := filepath.Join(t.TempDir(), "store")
+	h := &fakeHost{url: bare, collabs: []string{"bob"},
+		pr: localci.PullRequest{Number: 1, State: "OPEN", BaseRef: "develop", HeadRef: "feature", HeadSHA: clean, Author: "bob", HeadRepoOwner: "acme"}}
+	withHost(t, h)
+	run := func(extra ...string) (int, string) {
+		code, out, errOut := cli(t, os.Environ(), append([]string{"run-pr", "1", "--repo", "acme/widgets", "--state", state, "--origin", bare}, extra...)...)
+		return code, out + errOut
+	}
+
+	// into a base of the workflow map: runs, with the definition of the base
+	if code, out := run(); code != exitOK {
+		t.Fatalf("a collaborator into develop: exit %d\n%s", code, out)
+	}
+	// into any other base: refused, whatever --workflow says
+	h.pr.BaseRef = "staging"
+	code, out := run("--workflow", "fast-gate.yml")
+	if code != exitFailed || !strings.Contains(out, "trusts") {
+		t.Fatalf("staging is not trusted: exit %d\n%s", code, out)
+	}
+	runID := ""
+	for _, l := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(l, "run id: "); ok {
+			runID = strings.TrimSpace(v)
+		}
+	}
+	// the refusal is a runner stage, listed as such by `log`, not a job of the workflow
+	if _, listing, _ := cli(t, nil, "log", runID, "--state", state); !strings.Contains(listing, "_trust") || !strings.Contains(listing, "runner stage") {
+		t.Fatalf("log must list the stage:\n%s", listing)
+	}
+	// --trusted-base names it on purpose
+	if code, out := run("--workflow", "fast-gate.yml", "--trusted-base", "staging"); code != exitOK {
+		t.Fatalf("--trusted-base staging: exit %d\n%s", code, out)
+	}
+	// the owner's own pull request is not restricted
+	h.pr.Author, h.pr.BaseRef = "acme", "staging"
+	if code, out := run("--workflow", "fast-gate.yml"); code != exitOK {
+		t.Fatalf("the owner into staging: exit %d\n%s", code, out)
 	}
 }
