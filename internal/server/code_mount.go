@@ -106,13 +106,13 @@ func (m *CodeMount) let(id casestore.CaseID) {
 	m.mu.Unlock()
 }
 
-// stop ends the live runs of one case (id "": all) and waits, up to codeStopGrace, until none holds it.
-func (m *CodeMount) stop(id casestore.CaseID) {
+// stop ends the live runs of one case (id "": all) and waits, up to codeStopGrace, until none holds it. It reports whether none does.
+func (m *CodeMount) stop(id casestore.CaseID) bool {
 	m.mu.Lock()
 	stopper := m.stopper
 	m.mu.Unlock()
 	if stopper == nil {
-		return
+		return true
 	}
 	stopper(string(id))
 	timer := time.NewTimer(codeStopGrace)
@@ -128,7 +128,7 @@ func (m *CodeMount) stop(id casestore.CaseID) {
 		}
 		if !busy {
 			m.mu.Unlock()
-			return
+			return true
 		}
 		if m.changed == nil {
 			m.changed = make(chan struct{})
@@ -140,23 +140,27 @@ func (m *CodeMount) stop(id casestore.CaseID) {
 		case <-tick.C:
 			stopper(string(id))
 		case <-timer.C:
-			return
+			return false
 		}
 	}
 }
 
-// stopCodeRunsFor ends the code runs recorded in case id before a route moves the case (close, key change, archive, erase), and waits for
-// them to let go of it. The route holds the case's gate, which keeps a new run out (OpenCase refuses while the slot is held).
-func (h *handler) stopCodeRunsFor(id casestore.CaseID) {
-	if h.code != nil {
-		h.code.stop(id)
+// stopCodeRunsFor ends the code runs recorded in case id before a route moves the case (close, key set or remove, archive, erase), and waits
+// for them to let go of it. It returns errCaseInUse when a run is still live after the grace period, so a route that needs the case free can
+// refuse (M4) instead of moving it under a run. A route that holds the case's exclusive slot keeps a new run out (OpenCase refuses while it is
+// held); the erase route stops the runs only after it has set `erasing` (see acquireEraseWithin), and the case-key lock route holds no slot, so
+// a run can start between its stop and the lock (the lock still closes the handle and drops the key, and the run's end record fails).
+func (h *handler) stopCodeRunsFor(id casestore.CaseID) error {
+	if h.code != nil && !h.code.stop(id) {
+		return errCaseInUse
 	}
+	return nil
 }
 
 // stopCodeRunsAll ends every code run, before the master key locks.
 func (h *handler) stopCodeRunsAll() {
 	if h.code != nil {
-		h.code.stop("")
+		_ = h.code.stop("") // the lock goes on either way: a run that opens late gets a handle the closing step shuts
 	}
 }
 

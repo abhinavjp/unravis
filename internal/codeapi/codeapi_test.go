@@ -1121,10 +1121,30 @@ func TestRunRoute423WhileMasterKeyLocked(t *testing.T) {
 	}
 }
 
+// CancelCase ends the live runs of the named case only; another case's id (and an id nobody uses) end none.
 func TestCancelCaseEndsOnlyThatCase(t *testing.T) {
-	r := newRig(t, rigOpts{spawner: &spawn{}})
-	_ = r
+	sp := &spawn{gate: make(chan struct{}), entered: make(chan struct{}, 2)}
+	t.Cleanup(func() {
+		select {
+		case <-sp.gate:
+		default:
+			close(sp.gate)
+		}
+	})
+	r := newRig(t, rigOpts{spawner: sp})
+	id := r.newCase("Cancel only this")
+	r.enable()
+	done := startBlockedRun(t, r, sp, id)
 	if n := r.broker.CancelCase("nothing"); n != 0 {
-		t.Fatalf("CancelCase on an idle broker ended %d runs", n)
+		t.Fatalf("CancelCase of another case ended %d runs", n)
 	}
+	select {
+	case <-done:
+		t.Fatal("the run of the case ended when another case was named")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if n := r.broker.CancelCase(id); n != 1 {
+		t.Fatalf("CancelCase of its own case ended %d runs, want 1", n)
+	}
+	endsWithin(t, "CancelCase", done)
 }
