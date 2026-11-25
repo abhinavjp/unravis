@@ -1,0 +1,119 @@
+/* The release detail panel (detail.js). Its classes all start with "lg-" (see legacy-core.js), so nothing here can touch the
+   page's own components. Colours, fonts, sizes and radii come from the same tokens as the rest of the page. */
+@layer components{
+#detail{min-width:0}
+.lg-dtitle{margin:0;font:600 var(--fs-xl)/1.2 var(--font-mono)}
+.lg-meta{margin:4px 0 14px;color:var(--text-2)}
+#detail h3{margin:20px 0 8px;font-size:var(--fs-xs);font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.06em}
+.lg-note{max-width:72ch;color:var(--text-2);margin:12px 0 0}
+.lg-note.lg-bad{color:var(--bad)}.lg-note.lg-warn{color:var(--warn)}
+.lg-empty{color:var(--text-2);padding:24px 0}
+.lg-mono,.lg-hash{font-family:var(--font-mono);font-size:var(--fs-sm);overflow-wrap:anywhere}
+.lg-runchips{margin:0 0 10px;color:var(--text-2)}
+.lg-runchips .chip{text-decoration:none}
+.lg-runchips a.chip:hover{background:var(--line-soft)}
+
+/* tags */
+.lg-tag{font-size:var(--fs-sm);white-space:nowrap}
+.lg-tag.lg-ok{color:var(--ok)}.lg-tag.lg-bad{color:var(--bad)}.lg-tag.lg-warn{color:var(--warn)}.lg-tag.lg-run{color:var(--run)}.lg-tag.lg-mut{color:var(--text-2)}
+.lg-meta .lg-tag{font-weight:600}
+
+/* tabs */
+.lg-tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:0 0 6px;overflow-x:auto}
+.lg-tab{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:7px 12px;color:var(--text-2);white-space:nowrap;font-weight:500;cursor:pointer}
+.lg-tab:hover{background:var(--line-soft);color:var(--text)}
+.lg-tab[aria-selected=true]{color:var(--text);border-bottom-color:var(--accent)}
+.lg-panel{min-width:0}
+
+/* the simple step list (a release with no version yet) */
+.lg-steps{list-style:none;margin:0;padding:0}
+.lg-steps>li{display:grid;grid-template-columns:22px 110px 1fr;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--line-soft)}
+.lg-steps .lg-g{font-weight:700}
+.lg-steps .lg-at{color:var(--text-2);text-align:right}
+.lg-steps>li.lg-sub{grid-template-columns:22px 1fr;border:0;color:var(--bad);padding-top:0}
+.lg-g.lg-ok{color:var(--ok)}.lg-g.lg-bad{color:var(--bad)}.lg-g.lg-run{color:var(--run)}.lg-g.lg-mut{color:var(--pending)}
+
+/* facts */
+.lg-facts{display:grid;grid-template-columns:130px 1fr;gap:4px 12px;margin:0}
+.lg-facts dt{color:var(--text-2)}.lg-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
+
+/* steps with logs */
+.lg-stepl{border-top:1px solid var(--line)}
+.lg-step{border-bottom:1px solid var(--line)}
+.lg-srow{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:0 8px;align-items:baseline;padding:8px 0;list-style:none;cursor:default}
+details>summary.lg-srow{cursor:pointer}
+details>summary.lg-srow::-webkit-details-marker{display:none}
+details>summary.lg-srow:hover{background:var(--line-soft)}
+.lg-srow .lg-g{font-weight:700}
+.lg-srow .lg-g.lg-ok{color:var(--ok)}.lg-srow .lg-g.lg-bad{color:var(--bad)}.lg-srow .lg-g.lg-run{color:var(--run)}.lg-srow .lg-g.lg-mut{color:var(--pending)}
+.lg-srow .lg-nm{display:flex;flex-direction:column;min-width:0}
+.lg-srow .lg-n{font-weight:600}
+.lg-srow .lg-help{color:var(--text-2);font-size:var(--fs-sm)}
+.lg-srow .lg-at{color:var(--text-2);text-align:right;white-space:nowrap}
+details>summary.lg-srow .lg-at::after,.lg-logd>summary .lg-at::after{content:"  ▸";color:var(--accent)}
+details[open]>summary.lg-srow .lg-at::after{content:"  ▾"}
+.lg-step .lg-reason{color:var(--bad);padding:0 0 8px 30px}
+.lg-vhold{padding:0 0 10px 30px}
+.lg-logd{border-bottom:1px solid var(--line)}
+.lg-logd .lg-srow{grid-template-columns:minmax(0,1fr) auto}
+
+/* where it stopped */
+.lg-fail{border:1px solid var(--bad);border-left-width:4px;border-radius:var(--r-ctl);padding:10px 14px;margin:6px 0 4px;background:var(--surface)}
+.lg-fail .lg-ft{font-weight:600;color:var(--bad)}.lg-fail .lg-fm{margin:2px 0 6px}
+.lg-fail .lg-fnext{margin:8px 0 0;color:var(--text)}
+.lg-fctx{font-family:var(--font-mono);font-size:var(--fs-sm);background:var(--log-bg);color:var(--log-tx);border-radius:var(--r-ctl);padding:6px 8px;margin:0 0 8px;overflow-x:auto}
+.lg-fctx div{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--log-mu)}.lg-fctx .lg-last{color:var(--log-err);font-weight:600}
+
+/* log viewer */
+.lg-viewer{border:1px solid var(--line);border-radius:var(--r-ctl);background:var(--surface);overflow:hidden}
+.lg-vbar{display:flex;gap:8px;align-items:center;padding:6px;border-bottom:1px solid var(--line)}
+.lg-vbar input{flex:1;min-width:0;height:var(--ctl-h);background:var(--surface);border:1px solid var(--line);border-radius:var(--r-ctl);padding:0 8px}
+.lg-vinfo{color:var(--text-2);font-size:var(--fs-sm);white-space:nowrap}
+.lg-vbody{max-height:420px;overflow:auto;background:var(--log-bg);color:var(--log-tx);font-family:var(--font-mono);font-size:var(--fs-sm);line-height:1.5;padding:4px 0}
+.lg-ln{display:flex;gap:10px;padding:0 10px;white-space:pre-wrap;overflow-wrap:anywhere}
+.lg-ln:hover{background:color-mix(in srgb,var(--log-tx) 8%,transparent)}
+.lg-ln .lg-t{color:var(--log-mu);flex:none}.lg-ln .lg-x{min-width:0}
+.lg-ln.lg-bad .lg-x{color:var(--log-err)}.lg-ln.lg-warn .lg-x{color:var(--log-warn)}.lg-ln.lg-hd .lg-x{font-weight:700}
+.lg-ln.lg-mark{background:var(--log-err-bg);box-shadow:inset 3px 0 0 var(--log-err)}.lg-ln.lg-mark .lg-x{color:var(--log-err);font-weight:600}
+.lg-vnone{color:var(--text-2);padding:8px 10px;font-family:var(--font-body)}
+.lg-vmore{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:0 6px}
+.lg-vmore:not(:empty){padding:6px;border-top:1px solid var(--line)}
+.lg-vcut{color:var(--text-2);font-size:var(--fs-sm)}
+
+/* tests */
+.lg-tsum{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;margin:4px 0 10px}
+.lg-tsum .lg-big{font-weight:600}.lg-tsum .lg-big.lg-bad{color:var(--bad)}
+.lg-tsum .lg-tag{font-weight:600}
+.lg-trun{margin-bottom:22px}
+.lg-suite{border-bottom:1px solid var(--line)}
+.lg-suite.lg-bad{border-left:3px solid var(--bad);padding-left:8px}
+.lg-suite .lg-srow{grid-template-columns:auto minmax(0,1fr) auto}
+.lg-sbody{padding:0 0 10px 30px}
+.lg-tf{margin:6px 0}
+.lg-tfn{font-weight:600;color:var(--bad);font-family:var(--font-mono);font-size:var(--fs-sm);overflow-wrap:anywhere}
+.lg-tfo{margin:4px 0 0;padding:6px 8px;background:var(--log-bg);color:var(--log-tx);border-radius:var(--r-ctl);font:var(--fs-sm)/1.5 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}
+.lg-cases ul{list-style:none;margin:6px 0 0;padding:0;max-height:300px;overflow:auto}
+.lg-cases li{display:flex;gap:8px;padding:1px 0;font-size:var(--fs-sm)}.lg-cases .lg-cn{overflow-wrap:anywhere}
+.lg-cases summary{cursor:pointer;color:var(--accent)}
+
+/* checks and changes */
+.lg-rows{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.lg-rows>li{display:grid;grid-template-columns:90px minmax(0,1fr) auto auto;gap:10px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line-soft)}
+.lg-rows.lg-chg>li{grid-template-columns:76px minmax(0,1fr) auto}
+.lg-rows .lg-at{color:var(--text-2)}
+
+/* files */
+.lg-files{border-collapse:collapse;width:100%;margin-bottom:6px}
+.lg-files th{text-align:left;font-size:var(--fs-xs);color:var(--text-2);text-transform:uppercase;letter-spacing:.06em;font-weight:600;padding:4px 10px 4px 0;border-bottom:1px solid var(--line)}
+.lg-files td{padding:6px 10px 6px 0;border-bottom:1px solid var(--line-soft);vertical-align:top}
+.lg-files td.lg-hash{max-width:380px}
+
+/* plain buttons the panel makes without a class (Copy, Try again, Show more) */
+#detail button:not([class]){display:inline-flex;align-items:center;height:var(--ctl-h);padding:0 10px;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-ctl);cursor:pointer;color:var(--text);font-weight:500}
+#detail button:not([class]):hover{background:var(--surface-2)}
+#detail a{color:var(--accent)}
+.lg-fail button{margin-top:2px}
+
+@media (forced-colors:active){.lg-tab[aria-selected=true]{border-bottom-color:Highlight}.lg-ln.lg-mark{outline:1px solid Highlight}}
+@media (max-width:760px){.lg-facts{grid-template-columns:1fr}.lg-steps>li{grid-template-columns:22px 1fr}.lg-steps .lg-at{grid-column:2;text-align:left}.lg-rows>li{grid-template-columns:1fr auto}}
+}

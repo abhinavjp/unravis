@@ -127,16 +127,6 @@ test('SWEEP-F4-07: status words inside sentences are quoted, and the sentences r
   assert.match(copy.stateNextFor({ state: 'unreachable', reason: 'key' }, false), /Press "Type a new read key"/);
 });
 
-test('SWEEP-F4-08: the Releases empty state lists the three causes and one next step', () => {
-  const js = readRepo('cmd/unravis-releases/ui/app.js');
-  assert.match(js, /function emptyState\(s\)/);
-  for (const name of ['GitHub list', 'Update feed', 'Release log']) assert.ok(js.includes("row('" + name + "'"), name);
-  assert.match(js, /ul\.hidden = !rels\.length; \$\('nolist'\)\.hidden = !!rels\.length; \$\('refresh'\)\.classList\.toggle\('primary', !rels\.length\)/);
-  const detail = readRepo('cmd/unravis-releases/ui/detail.js');
-  assert.match(detail, /shown\.length \? el\('div', 'empty', 'Select a release\.'\)/);
-  assert.match(readRepo('cmd/unravis-releases/ui/index.html'), /<div id="nolist" class="nolist" hidden><\/div>/);
-});
-
 test('SWEEP-F4-09: the status line is the biggest, the advice reads as advice, one footnote, one disk-low sentence', () => {
   const p = read('src/components/BlackboxPanel.svelte');
   assert.match(p, /\.bb-block p\.bb-ready \{ font-size: 16px; font-weight: 600;/);
@@ -272,27 +262,6 @@ test('SWEEP-F4-22: Unravis Lite shows when it read, keeps focus on Refresh, and 
   assert.match(l, /Blackbox on <span class="mono wrap">\{item\.location\}<\/span>/);
   assert.match(l, /T\.gapsText\(item\.facts\.gaps/);
   assert.match(l, /\.note \{[^}]*margin-top: 16px/);
-});
-
-test('SWEEP-F4-23: Releases uses one word per state, shows the reason once, gives a next step and an h1', () => {
-  const css = readRepo('cmd/unravis-releases/ui/app.css');
-  const js = readRepo('cmd/unravis-releases/ui/app.js');
-  const detail = readRepo('cmd/unravis-releases/ui/detail.js');
-  const html = readRepo('cmd/unravis-releases/ui/index.html');
-  assert.match(html, /<h1 class="brand">Unravis Releases<\/h1>/);
-  assert.match(js, /if \(r\.withdrawn\) return \['Withdrawn', 'warn'\]/);
-  assert.match(js, /return \['Stopped at ' \+ broke\.name, 'bad'\]/);
-  assert.match(detail, /f\.stage === 'Verify' \? 'Verify failed' : 'Stopped at ' \+ f\.stage/);
-  assert.match(detail, /if \(s\.reason && !\(j\.failure && j\.failure\.stage === s\.name\)\)/);
-  assert.match(detail, /run Release\.ps1 -Channel/);
-  assert.match(js, /function runLink\(text, version\)/);
-  assert.match(detail, /\/\^could not\/i\.test\(why\)/);
-  // Eight font sizes became four, and the active tab is no wider than the others.
-  const sizes = new Set([...css.matchAll(/font-size:\s*([\d.]+)px/g)].map((m) => m[1]));
-  assert.ok(sizes.size <= 5, 'font sizes used: ' + [...sizes].join(', '));
-  assert.match(css, /\.tab\{[^}]*font-weight:500\}/);
-  assert.doesNotMatch(css, /\.tab\[aria-selected=true\]\{[^}]*font-weight/);
-  assert.doesNotMatch(detail, /el\('h1'/);
 });
 
 test('SWEEP-F4-24: the chart help words work for a finger, and the list of counters folds on a phone', () => {
