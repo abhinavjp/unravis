@@ -106,12 +106,12 @@ func setProcessInformation(class, first, control, state uint32) error {
 	var size uintptr
 	if class == processMemoryPriority {
 		value := first
-		info, size = unsafe.Pointer(&value), unsafe.Sizeof(value)
+		info, size = unsafe.Pointer(&value), unsafe.Sizeof(value) //nolint:gosec // fixed-size local value required by the Windows syscall ABI
 	} else {
 		value := struct {
 			version, control, state uint32
 		}{first, control, state}
-		info, size = unsafe.Pointer(&value), unsafe.Sizeof(value)
+		info, size = unsafe.Pointer(&value), unsafe.Sizeof(value) //nolint:gosec // fixed-size local value required by the Windows syscall ABI
 	}
 	result, _, callErr := procSetProcessInformation.Call(uintptr(windows.CurrentProcess()), uintptr(class), uintptr(info), size)
 	if result != 0 {

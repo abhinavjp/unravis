@@ -228,7 +228,7 @@ func TestPowerOnlyCurrentProcess(t *testing.T) {
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		body, err := os.ReadFile(name)
+		body, err := os.ReadFile(name) //nolint:gosec // name comes from the package directory listing
 		if err != nil {
 			t.Fatal(err)
 		}
