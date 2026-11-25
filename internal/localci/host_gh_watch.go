@@ -21,14 +21,28 @@ type ghResponse struct {
 // ghAPI runs `gh api -i` so the status and the ETag are visible. gh exits 1 for any status of 300 and up, a 304
 // included, but still prints the headers, so the exit code is only an error when there is no response at all.
 func (h *GHHost) ghAPI(ctx context.Context, etag, endpoint string) (*ghResponse, error) {
+	return h.ghCall(ctx, "GET", endpoint, etag, nil)
+}
+
+// ghCall is ghAPI for any method: a body, when there is one, goes to gh on its standard input as the raw request.
+func (h *GHHost) ghCall(ctx context.Context, method, endpoint, etag string, body []byte) (*ghResponse, error) {
 	args := []string{"api", "-i"}
+	if method != "" && method != "GET" {
+		args = append(args, "-X", method)
+	}
 	if etag != "" {
 		args = append(args, "-H", "If-None-Match: "+etag)
 	}
+	if body != nil {
+		args = append(args, "--input", "-")
+	}
 	args = append(args, endpoint)
-	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd := exec.CommandContext(ctx, "gh", args...) //nolint:gosec // fixed binary, arguments built by this package
 	if h.Env != nil {
 		cmd.Env = h.Env
+	}
+	if body != nil {
+		cmd.Stdin = bytes.NewReader(body)
 	}
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut

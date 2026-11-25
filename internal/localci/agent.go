@@ -53,6 +53,8 @@ type Heartbeat struct {
 	Jobs     []AgentJob `json:"jobs"`
 	// Status is how posting commit statuses goes; nil when this agent posts none.
 	Status *StatusHealth `json:"status,omitempty"`
+	// FleetID is the opaque id this agent has on the other PCs' screens; empty when claims are off.
+	FleetID string `json:"fleetId,omitempty"`
 }
 
 // AgentsDir is where heartbeats and drain marks live.
@@ -130,6 +132,11 @@ type Agent struct {
 	// Status, when set, posts commit statuses for what the agent sees and does (shadow phase). A posting problem
 	// never reaches a run.
 	Status *StatusService
+	// Fleet, when set, makes the agent claim every request on the host before it runs it, so that several PCs
+	// that watch one repository run each (commit, workflow) once. Nil: this PC runs everything it is asked to.
+	Fleet *Fleet
+	// FleetEvery is how often the lease is refreshed and the agent record published; default a minute.
+	FleetEvery time.Duration
 
 	// Paused, when it says true, stops the agent from claiming; what runs keeps running.
 	Paused func() bool
@@ -163,6 +170,7 @@ type agentJob struct {
 	since  time.Time
 	cancel context.CancelFunc
 	asked  bool
+	lost   bool // the claim went to another PC while this one ran
 }
 
 func (a *Agent) now() time.Time {
@@ -256,10 +264,19 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.wake = make(chan struct{}, 1)
 	a.started = a.now()
 	a.mu.Unlock()
+	fctx, fcancel := context.WithCancel(ctx)
+	fleetDone := make(chan struct{})
 	defer func() {
 		a.setAwake(false)
+		fcancel()
+		<-fleetDone
+		a.fleetStop()
 		_ = os.Remove(heartbeatPath(a.Dir, a.Name))
 		_ = os.Remove(drainPath(a.Dir, a.Name))
+	}()
+	go func() {
+		defer close(fleetDone)
+		a.fleetLoop(fctx)
 	}()
 	_ = os.Remove(drainPath(a.Dir, a.Name)) // a mark left from before this start is stale
 	a.requeueStale(false)
@@ -380,6 +397,9 @@ func (a *Agent) claim(ctx context.Context) {
 		if r == nil {
 			return
 		}
+		if !a.acquire(ctx, *r) {
+			continue
+		}
 		a.start(ctx, *r)
 	}
 }
@@ -437,7 +457,24 @@ func (a *Agent) runSafely(ctx context.Context, r Request) (out Outcome, err erro
 
 func (a *Agent) finish(agentCtx context.Context, r Request, since time.Time, out Outcome, err error) {
 	_, _, marked := a.Queue.CancelRequested(r.ID)
+	a.mu.Lock()
+	lost := a.jobs[r.ID] != nil && a.jobs[r.ID].lost
+	a.mu.Unlock()
+	if !marked && lost {
+		// Another PC took the claim over while this one ran (this PC was asleep or offline): it stopped the run and
+		// leaves the result to the other PC. The request goes back to the queue and is looked at again later.
+		if a.Status != nil {
+			a.Status.Forget(r)
+		}
+		if rerr := a.Queue.Requeue(r.ID); rerr != nil {
+			a.logf("%s: could not put it back: %v", r.ID, rerr)
+			return
+		}
+		a.logf("%s: stopped, another PC holds the claim now", r.ID)
+		return
+	}
 	if !marked && agentCtx.Err() != nil {
+		a.fleetRelease(r)
 		if a.Status != nil {
 			a.Status.Forget(r)
 		}
@@ -460,6 +497,7 @@ func (a *Agent) finish(agentCtx context.Context, r Request, since time.Time, out
 		a.logf("%s: could not record the end: %v", r.ID, cerr)
 		return
 	}
+	a.fleetFinish(r, done)
 	if a.Status != nil {
 		a.Status.Finished(r, since, err, done)
 	}
@@ -538,6 +576,9 @@ func (a *Agent) Snapshot() Heartbeat {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	hb := Heartbeat{Name: a.Name, PID: os.Getpid(), Slots: a.slots(), Labels: a.Labels, State: st, Started: a.started, LastSeen: a.now(), Jobs: []AgentJob{}, Status: a.Status.Health()}
+	if a.Fleet != nil {
+		hb.FleetID = a.Fleet.ID
+	}
 	for _, j := range a.jobs {
 		hb.Jobs = append(hb.Jobs, AgentJob{ID: j.req.ID, Label: j.req.Label(), Since: j.since})
 	}
