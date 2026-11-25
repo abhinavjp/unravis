@@ -265,3 +265,47 @@ func TestPruneByAgeAndCount(t *testing.T) {
 		t.Errorf("second prune: %d %v", n, err)
 	}
 }
+
+// A version 4 store (no code column) is upgraded in place: the old grant reads as not given code mode, and the column then stores a change.
+func TestVersionFourStoreReadsCodeAsOff(t *testing.T) {
+	dir := t.TempDir()
+	db, _, err := mcpaudit.Open(ctx, dir, prot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Insert(ctx, mcpaudit.Profile{ID: "h1", State: "active", Rev: 2, Tools: []string{"a"}, Sources: []string{"s"}, Code: true}); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := db.Get(ctx, "h1"); err != nil || !p.Code {
+		t.Fatalf("a new store must keep Code: %+v %v", p, err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(filepath.Join(dir, mcpaudit.FileName)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"ALTER TABLE profiles DROP COLUMN code", "PRAGMA user_version=4"} {
+		if _, err := raw.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = raw.Close()
+	db, rec, err := mcpaudit.Open(ctx, dir, prot{}, nil)
+	if err != nil || rec != "" {
+		t.Fatalf("%q %v", rec, err)
+	}
+	defer func() { _ = db.Close() }()
+	p, err := db.Get(ctx, "h1")
+	if err != nil || p.Rev != 2 || p.Code {
+		t.Fatalf("an old grant must read as code off: %+v %v", p, err)
+	}
+	p, err = db.Update(ctx, "h1", func(p *mcpaudit.Profile) error { p.Code = true; return nil })
+	if err != nil || !p.Code {
+		t.Fatalf("%+v %v", p, err)
+	}
+	if p, err = db.Get(ctx, "h1"); err != nil || !p.Code {
+		t.Fatalf("Code did not persist: %+v %v", p, err)
+	}
+}

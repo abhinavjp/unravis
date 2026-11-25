@@ -29,7 +29,7 @@ func TestCodeToolsReachTheDispatcherThroughTheAgent(t *testing.T) {
 	if e := call(t, a, mcp.ToolTypes); !e.isError || code(e) != "permission_required" {
 		t.Fatalf("before approval: %.300s", e.body)
 	}
-	r.approve("code-1")
+	r.approveWith("code-1", map[string]any{"code": true})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -70,6 +70,20 @@ func TestCodeToolsAreOffWhenThereIsNoBackend(t *testing.T) {
 	for _, tool := range []string{mcp.ToolTypes, mcp.ToolExecute} {
 		e := call(t, a, tool)
 		if !e.isError || code(e) != "code_mode_off" {
+			t.Errorf("%s: %.300s", tool, e.body)
+		}
+	}
+}
+
+// A grant approved with the card's defaults (no code mode) is refused both tools, though a broker is mounted (BL-574 M1).
+func TestCodeToolsNeedTheGrantsOwnCodePermission(t *testing.T) {
+	r := newRigWith(t, echoCode{})
+	a := r.agent("code-3")
+	_ = call(t, a, mcp.ToolTypes)
+	r.approve("code-3")
+	for _, tool := range []string{mcp.ToolTypes, mcp.ToolExecute} {
+		e := call(t, a, tool)
+		if !e.isError || code(e) != "denied" {
 			t.Errorf("%s: %.300s", tool, e.body)
 		}
 	}

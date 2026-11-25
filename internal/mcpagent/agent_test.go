@@ -152,7 +152,10 @@ func (r *rig) rev(id string) int {
 	return 0
 }
 
-func (r *rig) approve(id string) {
+func (r *rig) approve(id string) { r.t.Helper(); r.approveWith(id, nil) }
+
+// approveWith approves from the screen with extra fields in the approve body (for example "code": true).
+func (r *rig) approveWith(id string, extra map[string]any) {
 	r.t.Helper()
 	req, _ := http.NewRequest("GET", r.ui.URL+"/api/sources", nil)
 	req.Header.Set("X-Audit-Token", dashToken)
@@ -167,7 +170,11 @@ func (r *rig) approve(id string) {
 	for _, s := range list {
 		ids = append(ids, s.ID)
 	}
-	code, m := r.screen("POST", "/api/mcp/profiles/"+id+"/approve", map[string]any{"expectRev": r.rev(id), "tier": "aggregate", "sources": ids})
+	body := map[string]any{"expectRev": r.rev(id), "tier": "aggregate", "sources": ids}
+	for k, v := range extra {
+		body[k] = v
+	}
+	code, m := r.screen("POST", "/api/mcp/profiles/"+id+"/approve", body)
 	if code != 200 {
 		r.t.Fatalf("approve: %d %v", code, m)
 	}

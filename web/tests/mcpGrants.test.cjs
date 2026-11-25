@@ -18,7 +18,7 @@ const tiers = [{ id: 'aggregate', tools: AGG }, { id: 'evidence', tools: EVI }];
 const limits = { ...g.EMPTY_LIMITS };
 const profile = (extra = {}) => ({
   id: 'claude', state: 'pending', expired: false, rev: 3, enrolled: true, contested: 0, hostName: 'Claude Desktop', hostVersion: '1.4', exe: 'C:\\a\\claude.exe', ppid: 5,
-  tier: '', tools: [], sources: [], identifiers: false, identifiersUntil: '', requestedIdentifiers: false, idleMinutes: 0, expiresAt: '', approvedAt: '', createdAt: '2026-11-24T10:00:00Z', lastCallAt: '', claimed: false, ...extra
+  tier: '', tools: [], sources: [], identifiers: false, identifiersUntil: '', requestedIdentifiers: false, code: false, idleMinutes: 0, expiresAt: '', approvedAt: '', createdAt: '2026-11-24T10:00:00Z', lastCallAt: '', claimed: false, ...extra
 });
 const text = { notConnected: 'nc', noTools: 'nt', noSources: 'ns', contested: 'ct', notWaiting: 'nw' };
 
@@ -183,6 +183,48 @@ test('approve posts the card revision to that host and no other', async () => {
   assert.equal(calls[0].method, 'POST');
   assert.equal(calls[0].headers['Content-Type'], 'application/json');
   assert.equal(JSON.parse(calls[0].body).expectRev, 4);
+  assert.equal(JSON.parse(calls[0].body).code, false, 'the default approval sends code mode off');
+});
+
+test('code mode is its own permission: off by default, sent exactly as ticked, read strictly from the server', async () => {
+  const d = g.defaultDraft(tiers, limits, ['s1']);
+  assert.equal(d.code, false);
+  assert.equal(g.approveBody(profile(), d, tiers).code, false);
+  assert.equal(g.approveBody(profile(), { ...d, code: true }, tiers).code, true);
+  assert.equal(g.approveBody(profile(), { ...d, code: undefined }, tiers).code, false, 'a missing tick is off, never on');
+  assert.equal(g.approveBody(profile(), { ...d, code: 'yes' }, tiers).code, false, 'only a real true turns it on');
+  // ticking it changes nothing else: not the tier, the tools, or the identifiers choice
+  const on = g.approveBody(profile(), { ...d, code: true }, tiers);
+  const off = g.approveBody(profile(), d, tiers);
+  assert.deepEqual({ ...on, code: false }, off);
+  // the tier change and the identifiers tick keep the code tick as it was
+  assert.equal(g.withTier({ ...d, code: true }, tiers, 'evidence').code, true);
+  assert.equal(g.approveBody(profile(), { ...d, identifiers: true, code: false }, tiers).code, false);
+  // the server's answer
+  assert.equal(g.parseProfile({ id: 'a', state: 'active', code: true }).code, true);
+  assert.equal(g.parseProfile({ id: 'a', state: 'active' }).code, false, 'an answer without the field reads as off');
+  assert.equal(g.parseProfile({ id: 'a', state: 'active', code: 'true' }).code, false);
+  // and the call really posts it
+  const calls = fake(200, { ok: true, profile: { id: 'claude', state: 'active', code: true } });
+  const got = await api.mcpApi.approve('claude', g.approveBody(profile({ rev: 4 }), { ...d, code: true }, tiers));
+  assert.equal(got.code, true);
+  assert.equal(JSON.parse(calls[0].body).code, true);
+});
+
+test('code mode has its own checkbox on the card, outside the identifiers choice, with a plain sentence, and a line on an approved row', () => {
+  const card = read('src/components/McpApprovalCard.svelte');
+  assert.match(card, /<input type="checkbox" data-testid="mcp-code" checked=\{draft\.code\}/);
+  assert.match(card, /\.\.\.draft, code: e\.currentTarget\.checked/);
+  const fieldsets = card.match(/<fieldset[\s\S]*?<\/fieldset>/g) || [];
+  const mine = fieldsets.filter((f) => f.includes('data-testid="mcp-code"'));
+  assert.equal(mine.length, 1);
+  assert.ok(!mine[0].includes('draft.identifiers'), 'the code tick is not inside the identifiers fieldset');
+  const ids = fieldsets.find((f) => f.includes('draft.identifiers'));
+  assert.ok(ids && !ids.includes('mcp-code') && !ids.includes('draft.code'));
+  assert.equal(MCP_TEXT.codeLabel, 'Allow code mode');
+  assert.ok(MCP_TEXT.codeNote.split(/[.!?]\s/).length <= 3 && /off/i.test(MCP_TEXT.codeNote), 'a short plain note that says it is off by default');
+  const panel = read('src/components/McpAccessPanel.svelte');
+  assert.match(panel, /\{#if p\.code\}<p class="scope" data-testid="mcp-row-code">/);
 });
 
 test('every other action sends the revision it showed, and a host name that is not a plain id never reaches a URL', async () => {

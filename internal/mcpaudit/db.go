@@ -35,7 +35,7 @@ const (
 	metaServerKey = "serverKey"
 	metaRevFloor  = "revFloor" // the highest revision any removed profile had: a new profile starts above it (S3)
 	keyLen        = 32
-	schemaVersion = 4 // 2: profiles.contested; 3: audit_events; 4: aliases
+	schemaVersion = 5 // 2: profiles.contested; 3: audit_events; 4: aliases; 5: profiles.code
 )
 
 // ErrNewerVersion means the file was written by a later version of Unravis (a downgrade). It is not set aside: the grants in it are
@@ -187,7 +187,8 @@ CREATE TABLE IF NOT EXISTS profiles(
   claimed INTEGER NOT NULL DEFAULT 0,
   secret_digest BLOB,
   claim_digest BLOB,
-  contested INTEGER NOT NULL DEFAULT 0
+  contested INTEGER NOT NULL DEFAULT 0,
+  code INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS audit_events(
   id INTEGER PRIMARY KEY,
@@ -230,6 +231,15 @@ func (d *DB) init(ctx context.Context, prot sealedfile.Protector) error {
 	}
 	if has == 0 {
 		if _, err := d.sql.ExecContext(ctx, "ALTER TABLE profiles ADD COLUMN contested INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return errors.New("mcpaudit: upgrading the schema failed")
+		}
+	}
+	// Version 5 added the code column (code mode as the grant's own permission): an older grant has none, which reads as not granted.
+	if err := d.sql.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('profiles') WHERE name='code'").Scan(&has); err != nil {
+		return errors.New("mcpaudit: the store is unreadable")
+	}
+	if has == 0 {
+		if _, err := d.sql.ExecContext(ctx, "ALTER TABLE profiles ADD COLUMN code INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return errors.New("mcpaudit: upgrading the schema failed")
 		}
 	}

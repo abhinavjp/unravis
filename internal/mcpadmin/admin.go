@@ -76,6 +76,7 @@ type ProfileView struct {
 	Identifiers          bool       `json:"identifiers"`
 	IdentifiersUntil     *time.Time `json:"identifiersUntil"`
 	RequestedIdentifiers bool       `json:"requestedIdentifiers"`
+	Code                 bool       `json:"code"` // the grant may run scripts (unravis_execute, unravis_types); ticked by the person, off by default
 	IdleMinutes          int        `json:"idleMinutes"`
 	ExpiresAt            *time.Time `json:"expiresAt"`
 	ApprovedAt           *time.Time `json:"approvedAt"`
@@ -130,7 +131,7 @@ func View(p mcpsrv.Profile, now time.Time) ProfileView {
 		Enrolled: len(p.ClaimDigest) > 0, Contested: p.Contested,
 		HostName: p.HostName, HostVersion: p.HostVersion, Exe: p.Exe, PPID: p.PPID,
 		Tier: p.Tier, Tools: nonNil(p.Tools), Sources: nonNil(p.Sources),
-		Identifiers: p.Identifiers && mcpsrv.IdentifiersAllowed(p, now), IdentifiersUntil: opt(p.IdentifiersUntil), RequestedIdentifiers: p.RequestedIdentifiers,
+		Identifiers: p.Identifiers && mcpsrv.IdentifiersAllowed(p, now), IdentifiersUntil: opt(p.IdentifiersUntil), RequestedIdentifiers: p.RequestedIdentifiers, Code: p.Code,
 		IdleMinutes: int(p.IdleTTL / time.Minute), ExpiresAt: opt(p.ExpiresAt), ApprovedAt: opt(p.ApprovedAt), CreatedAt: opt(p.CreatedAt),
 		LastCallAt: opt(p.LastCallAt), Claimed: p.Claimed,
 	}
@@ -144,6 +145,7 @@ type approveReq struct {
 	Sources            []string `json:"sources"`
 	Identifiers        bool     `json:"identifiers"`
 	IdentifiersMinutes int      `json:"identifiersMinutes"`
+	Code               bool     `json:"code"`
 	IdleMinutes        int      `json:"idleMinutes"`
 	AcceptContested    bool     `json:"acceptContested"`
 }
@@ -209,7 +211,7 @@ func (a *admin) act(w http.ResponseWriter, r *http.Request, id, action string) {
 			return
 		}
 		p, err := a.g.Approve(r.Context(), id, mcpsrv.Approval{
-			Tier: req.Tier, Tools: req.Tools, Sources: req.Sources, Identifiers: req.Identifiers,
+			Tier: req.Tier, Tools: req.Tools, Sources: req.Sources, Identifiers: req.Identifiers, Code: req.Code,
 			IdentifiersFor: time.Duration(req.IdentifiersMinutes) * time.Minute, IdleTTL: time.Duration(req.IdleMinutes) * time.Minute,
 			ExpectRev: req.ExpectRev, AcceptContested: req.AcceptContested,
 		})

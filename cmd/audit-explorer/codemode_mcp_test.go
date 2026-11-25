@@ -87,7 +87,7 @@ func TestMCPCodeToolsReachTheBrokerMainBuilds(t *testing.T) {
 	if _, err := grants.Enroll(ctx, mcpsrv.EnrollReq{Profile: "wired", HostName: "h", HostVersion: "1", Exe: `C:\h.exe`, PPID: 1, ClaimNonce: nonce}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := grants.Approve(ctx, "wired", mcpsrv.Approval{Tier: mcpsrv.TierAggregate, Tools: []string{"audit_get_guide"}, Sources: []string{"demo-west"}, IdleTTL: mcpsrv.DefaultIdleTTL}); err != nil {
+	if _, err := grants.Approve(ctx, "wired", mcpsrv.Approval{Tier: mcpsrv.TierAggregate, Tools: []string{"audit_get_guide"}, Sources: []string{"demo-west"}, IdleTTL: mcpsrv.DefaultIdleTTL, Code: true}); err != nil {
 		t.Fatal(err)
 	}
 	secret, _, err := grants.Claim(ctx, "wired", nonce)
