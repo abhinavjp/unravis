@@ -73,9 +73,12 @@ for (const trial of trials) {
       await page.mouse.move(2, 2);
       if (screen.after) await runSteps(page, screen.after, env);
       await frames(page);
+      // A chunk that fails to load is shown by LazyHost as a quiet notice, with no page error: count it, or a screen whose steps never reach the missing part would pass.
+      const lazyFailed = await page.locator('.lazy-error').count();
 
       const lines = [
         ...found.map((v) => `${v.directive} (${v.disposition}) ${v.blocked || '(no uri)'} at ${v.source} ${v.sample ? 'sample "' + v.sample + '"' : ''}`),
+        ...(lazyFailed ? ['a part of the page failed to load (LazyHost notice shown), ' + lazyFailed + ' time(s)'] : []),
         ...errors
       ];
       if (process.env.TT_REPORT) appendFileSync(process.env.TT_REPORT, JSON.stringify({ trial, screen: screen.id, lines }) + '\n');
