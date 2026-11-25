@@ -10,7 +10,7 @@ Status: spec, written 2026-11-25 (BL-TBD, see BACKLOG). Owner decision (nachi, 2
 2. **No second pipeline definition.** The files in `.github/workflows/` stay the single source; the runner reads them.
 3. Build **agents and a queue** (several PCs may serve one queue), per-stage logs and results, shown in the **Releases app** (`unravis-releases`).
 4. The runner posts **commit statuses** to GitHub, so branch protection (`fast-build` on develop, `build` on master) is satisfied by the PC. GitHub workflows then stop running on pushes and pull requests.
-5. **Not replaced**: `release.yml` (build with build attestation needs GitHub's own signer) and `verify-release.yml` (a clean GitHub machine proves the update path). They are release steps, not CI gates; the release manager keeps driving them. A release still needs GitHub. Everything that gates a merge or a promotion moves to the PC.
+5. **Scope is CI only** (nachi, 2026-11-25). Releases stay on GitHub and are not touched in this work: `Release.ps1`, `release.yml`, `verify-release.yml` and the release lock keep working exactly as today. Making releases an abstraction too is **future work** (see the end of this document). **Not replaced**: `release.yml` (build with build attestation needs GitHub's own signer) and `verify-release.yml` (a clean GitHub machine proves the update path). They are release steps, not CI gates; the release manager keeps driving them. A release still needs GitHub. Everything that gates a merge or a promotion moves to the PC.
 
 ## What moves where
 
@@ -79,8 +79,7 @@ Branch protection today: `develop` requires `fast-build`, source **any** (`app_i
 | 0. Shadow | The agent runs fast gate and full CI on every PR and push and posts `local/fast-build` and `local/build` (not required). GitHub still gates. A page compares the two answers per commit. | none |
 | 1. Develop | After at least 20 consecutive PRs where local and GitHub agree (and every disagreement explained), a PR changes `fast-gate.yml`: job renamed `fast-build-github`, triggers reduced to `workflow_dispatch`. The agent posts `fast-build`. | **none** (`fast-build` already accepts any source) |
 | 2. Master | Same for `ci.yml` and the master workflows: agent posts `build`. | **nachi changes one thing**: required check `build` on `master`: source from "GitHub Actions" to "Any source". |
-| 3. Release manager | `Release.ps1` waits for the commit status `build` of the pinned commit (statuses API) instead of the `ci.yml` run; `release.yml` already skips tests when that check is green. | none |
-| 4. Clean-up | `pull_request` / `push` / `schedule` triggers removed from the moved workflows; Actions stays enabled for `release.yml`. | none |
+| 3. Clean-up | `pull_request` / `schedule` triggers removed from the moved workflows. **`ci.yml` keeps its `push` trigger on `master`**: `Release.ps1` and `release.yml` read that GitHub run as release evidence and are not changed (owner scope, 2026-11-25: CI only). | none |
 
 Rollback at any phase: revert the trigger PR (the workflows are intact); phase 2 rollback sets the source back to GitHub Actions.
 
@@ -88,7 +87,7 @@ Rollback at any phase: revert the trigger PR (the workflows are intact); phase 2
 
 **The weakness that comes with "Any source".** Any token with `repo:status` on the repository can post `fast-build`. Today only the owner and one collaborator have push access; the status token is fine-grained and kept out of steps. If outside collaborators are added, switch the source to a GitHub App that only the agent holds.
 
-## Slices (each: tests, Sonnet review, Opus only for section 6 and the release-manager change, UI audit for screens)
+## Slices (each: tests, Sonnet review, Opus only for section 6, UI audit for screens)
 
 1. **Runner core**: workflow parser, expression subset, job graph and matrix, step runner, outputs, `uses:` shims, unsupported-is-loud test over every workflow, `unravis-ci run <workflow> --event ... --local <dir>`. Verified on real data by running `fast-gate.yml` on this repository.
 2. **Checkout and store**: PR merge-ref worktrees, scrubbed environment, per-step logs and run records, caches, cancel by Job Object.
@@ -96,7 +95,7 @@ Rollback at any phase: revert the trigger PR (the workflows are intact); phase 2
 4. **Statuses and shadow phase**: status poster, `local/*` contexts, comparison page data.
 5. **Releases app Pipelines page**: read-only runs, jobs, steps, live log, queue, agents; UI audit.
 6. **Many PCs**: ref-based claim, lease, agent list.
-7. **Cutover pieces**: workflow trigger PRs, `Release.ps1` status wait, fallback command, optional buttons in the app.
+7. **Cutover pieces** (CI only): workflow trigger PRs (`ci.yml` keeps its `push` trigger on master for the release manager), fallback command, optional buttons in the app.
 
 Backlog items and the checklist live in [../BACKLOG.md](../BACKLOG.md); an item is ticked only when it works on the real data path (a real PR of this repository ran, was posted and was read back).
 
@@ -105,3 +104,7 @@ Backlog items and the checklist live in [../BACKLOG.md](../BACKLOG.md); an item 
 - Windows-host runs of `ubuntu` jobs: the `go-race` job needs a C compiler on Windows; if the PC has none, that job is `skip` with the reason shown until one is installed.
 - macOS entries of `desktop-sidecar` cannot run on a Windows PC; they stay on GitHub as a manual job and are listed as not run locally.
 - Disk: worktree plus caches about 3 to 6 GB per active run; the agent prunes work areas older than 24 h and caches over a size limit.
+
+## Future work (not in scope now)
+
+Releases on an abstraction, like CI: `Release.ps1` waiting for the commit status `build` of the pinned commit instead of the `ci.yml` run on master; `release.yml` skipping its tests from that status; then dropping the `push` trigger of `ci.yml` on master; a local equivalent of `verify-release.yml` and of build attestation. Only on the owner's go, as a separate spec.
