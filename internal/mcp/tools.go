@@ -200,7 +200,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		page["groupsWithoutReliableRatio"] = limited
 		page["recordedEvents"] = b.recorded(&result, args.Query)
 		page["approximate"] = result.Approximate
-		withProvenance(page, result.Provenance)
+		b.withProvenance(page, result.Provenance)
 		page["expiresInSeconds"] = int(resultTTL.Seconds())
 		page["interpretation"] = fmt.Sprintf("Statistics are approximate; groups with fewer than %d usable timings in either period have no reliable slowdown ratio. Source failures mean incomplete coverage. Counts/rates reflect these filters, not all server traffic. Read audit_get_guide before drawing conclusions.", audit.MinSampleCount)
 		return page, nil
@@ -296,7 +296,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 			rows = append(rows, b.projectRecord(record))
 		}
 		out := map[string]any{"resultId": args.ResultID, "sourceId": row.SourceID, "controller": row.Controller, "action": row.Action, "kind": row.Kind, "outcome": row.Outcome, "query": echoQuery(result.Query), "rows": rows, "nextCursor": page.NextCursor, "sources": page.Sources, "truncated": page.Truncated, "note": "Newest-first metadata page; not a random sample or a complete ranking of slow requests. AuditCreateTime plus ApiTime make up total latency; PayloadRecordTime happens after the response and is not latency. Do not infer database, network or queue wait from them without checking their instrumentation in code."}
-		withProvenance(out, page.Provenance)
+		b.withProvenance(out, page.Provenance)
 		return out, nil
 	case "audit_get_slowest":
 		return b.slowest(ctx, raw)

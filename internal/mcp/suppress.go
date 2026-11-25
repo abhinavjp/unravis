@@ -220,6 +220,31 @@ func (b *Bridge) points(g audit.Comparison, q audit.Query, points []audit.Point)
 	return out, true
 }
 
+// provenanceView is a provenance entry as a suppressing bridge shows it: the same keys, with the three record counts null (the shape of
+// "not measured") and countsHidden set. The outer fields shadow the embedded ones in the JSON.
+type provenanceView struct {
+	audit.Provenance
+	DocsReturned *int64 `json:"docsReturned"`
+	DocsExamined *int64 `json:"docsExamined"`
+	SampleSize   *int64 `json:"sampleSize"`
+	CountsHidden bool   `json:"countsHidden"`
+}
+
+// provenance is the provenance of an answer as it may be shown. "sampleSize" is the number of records behind a source's figures in a
+// window, "docsReturned" the number of groups it made and "docsExamined" the size of the scan: next to the listed groups, the first minus
+// their counts is the count of a hidden group (and a small selection would show itself whole). They stay with the window, the mode,
+// completeness and timing, which say how far to trust the answer and give no count.
+func (b *Bridge) provenance(p []audit.Provenance) any {
+	if !b.suppressing() {
+		return p
+	}
+	out := make([]provenanceView, len(p))
+	for i, e := range p {
+		out[i] = provenanceView{Provenance: e, CountsHidden: true}
+	}
+	return out
+}
+
 // hiddenCount is the text that stands for a count the host may not see.
 func (b *Bridge) hiddenCount() string { return fmt.Sprintf("<%d", b.minCohort) }
 
