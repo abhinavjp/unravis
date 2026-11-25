@@ -1,0 +1,44 @@
+name: Compat upgrade
+
+# BL-573: the upgrade path of the audit store. Builds `develop` (the last promoted build), has the branch under test
+# write a case (audit runs, calls, chain, code.hash_key), and checks that the develop build opens it, runs the integrity
+# check, imports into it, closes and reopens it. See tools/ci/compat-upgrade.sh and internal/casestore/sqlite/compat_test.go.
+#
+# ADVISORY: this is NOT the required `fast-build` check of docs/ci/RELEASE-TRAIN.md and fast-gate.yml does not wait for it.
+# It runs only when a pull request into `develop` touches the case store, the code mode or the script itself.
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'internal/casestore/**'
+      - 'internal/codemode/**'
+      - 'tools/ci/compat-upgrade.sh'
+      - '.github/workflows/compat-upgrade.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-upgrade-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compat-upgrade:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Third-party actions are pinned to a full commit SHA (see ci.yml for how to update one).
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base build is origin/develop, so the whole history and its branches are needed for the worktree.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: The develop build opens a case written by this branch
+        run: bash tools/ci/compat-upgrade.sh origin/develop

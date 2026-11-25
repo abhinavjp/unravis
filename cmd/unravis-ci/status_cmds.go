@@ -173,6 +173,7 @@ func compareReport(ctx context.Context, repo, dir string, naming localci.StatusN
 // compareTimer saves the comparison every `every` until ctx ends, so the Overview headline stays fresh while the
 // agent runs. A failure (GitHub unreachable, rate limit) is logged once per streak and the timer keeps going.
 func compareTimer(ctx context.Context, every time.Duration, repo, dir string, naming localci.StatusNaming, limit int, environ []string, log func(string)) {
+	// idle-ok: runs only inside the unravis-ci agent process (not the desktop app); the period is the caller's setting.
 	t := time.NewTicker(every)
 	defer t.Stop()
 	failed := false

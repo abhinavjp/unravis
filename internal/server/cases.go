@@ -239,6 +239,33 @@ func (g *caseGates) acquireRead(id casestore.CaseID) (func(), bool) {
 	}, true
 }
 
+// acquireReadIdle is acquireRead for a reader that must not start while the case is being moved: it also fails while the exclusive slot is
+// held (an import, close, key change or erase is running). onAcquire runs under the gate's lock once the share is taken, so a caller that
+// counts its readers (the code-mode routes) is counted before any mover that takes the slot afterwards can look.
+func (g *caseGates) acquireReadIdle(id casestore.CaseID, onAcquire func()) (func(), bool) {
+	g.mu.Lock()
+	if gate := g.m[id]; gate != nil && (gate.erasing || len(gate.ch) > 0) {
+		g.mu.Unlock()
+		return nil, false
+	}
+	gate := g.ref(id)
+	gate.readers++
+	if onAcquire != nil {
+		onAcquire()
+	}
+	g.mu.Unlock()
+	return func() {
+		g.mu.Lock()
+		gate.readers--
+		if gate.readers == 0 && gate.idle != nil {
+			close(gate.idle)
+			gate.idle = nil
+		}
+		g.unref(id, gate)
+		g.mu.Unlock()
+	}, true
+}
+
 // acquireErase takes the exclusive slot, then blocks new reads and waits for
 // the reads in flight to finish before it returns. It waits as long as it takes.
 func (g *caseGates) acquireErase(ctx context.Context, id casestore.CaseID) (func(), error) {
@@ -253,6 +280,12 @@ var errCaseInUse = errors.New("the case is in use")
 // slot is given back and errCaseInUse is returned. Nothing was marked or erased. A nil
 // timeout waits for ever.
 func (g *caseGates) acquireEraseWithin(ctx context.Context, id casestore.CaseID, timeout <-chan time.Time) (func(), error) {
+	return g.acquireEraseStopping(ctx, id, timeout, nil)
+}
+
+// acquireEraseStopping is acquireEraseWithin with onClaim, which runs once the slot is taken and new readers are refused, before the wait for
+// the readers in flight: the erase route ends the live code runs there, so none can be admitted between the stop and the drain.
+func (g *caseGates) acquireEraseStopping(ctx context.Context, id casestore.CaseID, timeout <-chan time.Time, onClaim func()) (func(), error) {
 	g.mu.Lock()
 	gate := g.ref(id)
 	g.mu.Unlock()
@@ -282,6 +315,9 @@ func (g *caseGates) acquireEraseWithin(ctx context.Context, id casestore.CaseID,
 		wait = gate.idle
 	}
 	g.mu.Unlock()
+	if onClaim != nil {
+		onClaim()
+	}
 	done := func() {
 		g.mu.Lock()
 		gate.erasing = false
@@ -908,6 +944,10 @@ func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) 
 	// A sampler recording into this case is stopped once the move is allowed (a stale tab that gets M2 must not stop a live sampler), and
 	// before the case closes, so its last batch is saved first.
 	h.stopSamplerFor(id, false, stopCaseClosed)
+	if err := h.stopCodeRunsFor(id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	if err := h.cases.CloseCase(r.Context(), id); err != nil {
 		writeStoreError(w, err)
 		return
@@ -967,7 +1007,9 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 	}()
 	h.stopSamplerFor(id, true, stopCaseClosed)
 	stopCancelling := h.jobs.cancelCaseUntilStopped(id)
-	release, err := h.gates.acquireEraseWithin(r.Context(), id, h.eraseTimer())
+	// The runs are ended once the slot is taken and new readers are refused, so none slips in before the drain (a run holds a read share the
+	// erase would wait on until it gave up, M4).
+	release, err := h.gates.acquireEraseStopping(r.Context(), id, h.eraseTimer(), func() { _ = h.stopCodeRunsFor(id) })
 	stopCancelling()
 	if err != nil {
 		writeStoreError(w, err)
