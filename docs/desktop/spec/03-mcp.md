@@ -201,7 +201,7 @@ aliases(alias TEXT PRIMARY KEY, profile_id TEXT, source_id TEXT, record_id TEXT,
 meta(k TEXT PRIMARY KEY, v BLOB);
 CREATE INDEX audit_ts ON audit_events(ts); CREATE INDEX audit_profile ON audit_events(profile_id, ts);
 ```
-- `kind`: `admit`, `end`, `denied`, `enroll`, `approve`, `scope_change`, `revoke`, `stop`, `expire`. `outcome`: `ok|denied|error|cancelled|timeout`. `op_class`: `guide|list|live_compare|cached|live_evidence|live_aggregate`.
+- `kind`: `admit`, `end`, `denied`, `enroll`, `approve`, `scope_change`, `revoke`, `expire`, `stop`, `resume`. Decided 2026-11-25 (BL-351): `stop` and `resume` are global, so their `profile_id` is the marker `*` (not a valid id) with revision 0, and only those two kinds may use it; one row is written per real change (a stop while stopped, or a resume while running, writes nothing). `expire` is a host row written once per expiry, when the first call after the access ran out is refused (later refused calls are `denied` rows); a renewal and a second expiry write a second row. There is no hash chain: the ledger is append-only by row number, and the global marker keeps its rows readable in the same order. `outcome`: `ok|denied|error|cancelled|timeout`. `op_class`: `guide|list|live_compare|cached|live_evidence|live_aggregate`.
 - `source_aliases`: `S1,S2` assigned per call by position; the table `case_alias` is a per-profile counter label, never a name. `fingerprint` is `HMAC-SHA256(serverKey, canonical-args-json)`; raw args and results are never stored.
 - Fields bounded: strings cut at 64 bytes. Event insert is one prepared statement.
 

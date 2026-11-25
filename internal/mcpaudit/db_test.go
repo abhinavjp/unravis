@@ -335,3 +335,28 @@ func TestLifecycleKindsAreAcceptedAndOthersStillRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestGlobalRowsUseTheGlobalMarkerAndOnlyThey(t *testing.T) {
+	db, _, err := mcpaudit.Open(ctx, t.TempDir(), prot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	for _, k := range []string{mcpaudit.KindStop, mcpaudit.KindResume} {
+		if err := db.Record(ctx, mcpaudit.Event{ProfileID: mcpaudit.GlobalProfile, Kind: k, Outcome: mcpaudit.OutcomeOK, Code: "x"}); err != nil {
+			t.Errorf("%s with the global marker: %v", k, err)
+		}
+		if err := db.Record(ctx, mcpaudit.Event{ProfileID: "p", Kind: k}); !errors.Is(err, mcpaudit.ErrBadEvent) {
+			t.Errorf("%s with a profile id must be refused: %v", k, err)
+		}
+	}
+	for _, k := range []string{mcpaudit.KindAdmit, mcpaudit.KindEnd, mcpaudit.KindDenied, mcpaudit.KindEnroll, mcpaudit.KindApprove,
+		mcpaudit.KindScopeChange, mcpaudit.KindRevoke, mcpaudit.KindExpire} {
+		if err := db.Record(ctx, mcpaudit.Event{ProfileID: mcpaudit.GlobalProfile, Kind: k}); !errors.Is(err, mcpaudit.ErrBadEvent) {
+			t.Errorf("a host row (%s) must not claim the global marker: %v", k, err)
+		}
+	}
+	if err := db.Record(ctx, mcpaudit.Event{ProfileID: "p", ProfileRev: 1, Kind: mcpaudit.KindExpire, Outcome: mcpaudit.OutcomeOK}); err != nil {
+		t.Errorf("expire: %v", err)
+	}
+}
