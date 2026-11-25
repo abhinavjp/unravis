@@ -94,9 +94,10 @@ func (c *Carry) bracketLine(line, mask string) string {
 	closeAt := -1
 	for i := 0; i < len(line); i++ {
 		if quote != 0 {
-			if line[i] == '\\' {
+			switch line[i] {
+			case '\\':
 				i++
-			} else if line[i] == quote {
+			case quote:
 				quote = 0
 			}
 			continue

@@ -74,7 +74,7 @@ func writeSeriesBinary(w http.ResponseWriter, res casestore.SeriesResult) {
 	}
 	body := make([]byte, 8+padded+int(payloadBytes))
 	copy(body, seriesBinaryMagic)
-	binary.LittleEndian.PutUint32(body[4:8], uint32(padded))
+	binary.LittleEndian.PutUint32(body[4:8], uint32(padded)) //nolint:gosec // padded <= maxResponseBytes (16 MiB), checked above
 	copy(body[8:], metadata)
 	for i := len(metadata); i < padded; i++ {
 		body[8+i] = ' '

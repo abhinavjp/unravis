@@ -40,7 +40,7 @@ func writeBBSeriesBinary(w http.ResponseWriter, answer bbSeriesAnswer) {
 		return
 	}
 	body := make([]byte, 4+len(metadata)+int(payloadBytes))
-	binary.LittleEndian.PutUint32(body, uint32(len(metadata)))
+	binary.LittleEndian.PutUint32(body, uint32(len(metadata))) //nolint:gosec // len(metadata) <= seriesBinaryHeadCap (1 MiB), checked above
 	copy(body[4:], metadata)
 	at := 4 + len(metadata)
 	putPoint := func(point [bbSeriesBinaryColumns]float64) {

@@ -736,9 +736,10 @@ func bracketEnd(s string, i int) int {
 func bracketEndState(s string, i int) (end, depth int, quote byte) {
 	for k := i; k < len(s); k++ {
 		if quote != 0 {
-			if s[k] == '\\' {
+			switch s[k] {
+			case '\\':
 				k++
-			} else if s[k] == quote {
+			case quote:
 				quote = 0
 			}
 			continue
