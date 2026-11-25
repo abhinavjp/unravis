@@ -41,7 +41,7 @@ func cleanPathEntry(s string) string {
 		return ""
 	}
 	s = filepath.Clean(s)
-	if strings.HasSuffix(s, `\`) && !(len(s) == 3 && s[1] == ':') {
+	if strings.HasSuffix(s, `\`) && (len(s) != 3 || s[1] != ':') {
 		s = strings.TrimSuffix(s, `\`)
 	}
 	return s
