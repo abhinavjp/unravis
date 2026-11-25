@@ -113,3 +113,51 @@ func TestProvenanceCountsStayWithoutSuppression(t *testing.T) {
 		t.Errorf("countsHidden on an unscoped answer: %v", p)
 	}
 }
+
+// "distinct" minus the listed rows is the number of values folded into Other; next to other.count it bounds their counts (five folded
+// values behind other.count 5 had one request each). A suppressing bridge reports the listed rows plus one for Other instead.
+func distinctOf(t *testing.T, bd audit.Breakdown, suppress bool) (distinct float64, rows int) {
+	t.Helper()
+	group := audit.Comparison{Key: "g", CurrentEvents: 100, Current: audit.Stats{Count: 100}}
+	b := bridgeWithResult(t, bd, group)
+	if !suppress {
+		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(bd)
+		})
+		b = NewLocal(h, "tok-0123456789abcdef0123456789abcdef", WithSources([]string{"s"}))
+		b.result = &audit.Analysis{Query: audit.Query{SourceIDs: []string{"s"}}, APIs: []audit.Comparison{group}}
+		b.resultID, b.created = "r", time.Now()
+	}
+	got, err := b.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"r","dim":"statusCode"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := asJSON(t, got)
+	list, _ := m["rows"].([]any)
+	d, _ := m["distinct"].(float64)
+	return d, len(list)
+}
+
+func foldedBreakdown() audit.Breakdown {
+	return audit.Breakdown{Dim: audit.BreakdownStatusCode, Total: 105, Distinct: 6, Rows: []audit.BreakdownRow{row("200", 100), row("400", 1), row("401", 1), row("403", 1), row("404", 1), row("500", 1)}}
+}
+
+func TestBreakdownDistinctHidesFoldedValuesUnderSuppression(t *testing.T) {
+	d, rows := distinctOf(t, foldedBreakdown(), true)
+	if rows != 1 || d != float64(rows+1) || d == 6 {
+		t.Errorf("distinct = %v with %d rows (want rows+1, not the true 6)", d, rows)
+	}
+}
+
+func TestBreakdownDistinctStaysWithoutSuppression(t *testing.T) {
+	if d, _ := distinctOf(t, foldedBreakdown(), false); d != 6 {
+		t.Errorf("distinct = %v (want the true 6)", d)
+	}
+}
+
+func TestBreakdownDistinctWithoutOtherIsTheRowCount(t *testing.T) {
+	bd := audit.Breakdown{Dim: audit.BreakdownStatusCode, Total: 100, Distinct: 1, Rows: []audit.BreakdownRow{row("200", 100)}}
+	if d, rows := distinctOf(t, bd, true); rows != 1 || d != 1 {
+		t.Errorf("distinct = %v with %d rows (want 1)", d, rows)
+	}
+}
