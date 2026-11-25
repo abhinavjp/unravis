@@ -122,11 +122,11 @@ var (
 type Dispatcher struct {
 	d Deps
 
-	lim      *limiter
-	mu       sync.Mutex
-	perProf  map[string]int
-	total    int
-	byCall   map[string]context.CancelFunc // profile id + "\x00" + call id
+	lim     *limiter
+	mu      sync.Mutex
+	perProf map[string]int
+	total   int
+	byCall  map[string]context.CancelFunc // profile id + "\x00" + call id
 }
 
 // NewDispatcher checks the parts and builds the dispatcher. It also tells the backend to forget a profile whose access ended
