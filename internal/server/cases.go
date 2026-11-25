@@ -239,6 +239,33 @@ func (g *caseGates) acquireRead(id casestore.CaseID) (func(), bool) {
 	}, true
 }
 
+// acquireReadIdle is acquireRead for a reader that must not start while the case is being moved: it also fails while the exclusive slot is
+// held (an import, close, key change or erase is running). onAcquire runs under the gate's lock once the share is taken, so a caller that
+// counts its readers (the code-mode routes) is counted before any mover that takes the slot afterwards can look.
+func (g *caseGates) acquireReadIdle(id casestore.CaseID, onAcquire func()) (func(), bool) {
+	g.mu.Lock()
+	if gate := g.m[id]; gate != nil && (gate.erasing || len(gate.ch) > 0) {
+		g.mu.Unlock()
+		return nil, false
+	}
+	gate := g.ref(id)
+	gate.readers++
+	if onAcquire != nil {
+		onAcquire()
+	}
+	g.mu.Unlock()
+	return func() {
+		g.mu.Lock()
+		gate.readers--
+		if gate.readers == 0 && gate.idle != nil {
+			close(gate.idle)
+			gate.idle = nil
+		}
+		g.unref(id, gate)
+		g.mu.Unlock()
+	}, true
+}
+
 // acquireErase takes the exclusive slot, then blocks new reads and waits for
 // the reads in flight to finish before it returns. It waits as long as it takes.
 func (g *caseGates) acquireErase(ctx context.Context, id casestore.CaseID) (func(), error) {
@@ -908,6 +935,7 @@ func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) 
 	// A sampler recording into this case is stopped once the move is allowed (a stale tab that gets M2 must not stop a live sampler), and
 	// before the case closes, so its last batch is saved first.
 	h.stopSamplerFor(id, false, stopCaseClosed)
+	h.stopCodeRunsFor(id)
 	if err := h.cases.CloseCase(r.Context(), id); err != nil {
 		writeStoreError(w, err)
 		return
@@ -966,6 +994,7 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		}
 	}()
 	h.stopSamplerFor(id, true, stopCaseClosed)
+	h.stopCodeRunsFor(id) // before the drain: a run holds a read share the erase would wait on until it gave up (M4)
 	stopCancelling := h.jobs.cancelCaseUntilStopped(id)
 	release, err := h.gates.acquireEraseWithin(r.Context(), id, h.eraseTimer())
 	stopCancelling()

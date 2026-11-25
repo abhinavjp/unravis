@@ -386,6 +386,7 @@ func (h *handler) caseKeyLock(w http.ResponseWriter, r *http.Request, raw string
 		return
 	}
 	h.stopSamplerFor(id, true, stopCaseClosed)
+	h.stopCodeRunsFor(id)
 	stop := h.jobs.cancelCaseUntilStopped(id)
 	stop()
 	// A running archive or check reads with a copy of the key: it stops first, with the
@@ -427,6 +428,7 @@ func (h *handler) caseKeySet(w http.ResponseWriter, r *http.Request, raw string)
 	h.keyOp.Lock()
 	defer h.keyOp.Unlock()
 	h.stopSamplerFor(id, true, stopCaseClosed)
+	h.stopCodeRunsFor(id)
 	pc := bytes.Clone(b.secret("passphrase"))
 	defer clear(pc)
 	if err := ck.SetCaseKey(r.Context(), id, pc); err != nil {
@@ -521,6 +523,7 @@ func (h *handler) caseKeyRemove(w http.ResponseWriter, r *http.Request, raw stri
 		return
 	}
 	h.stopSamplerFor(id, true, stopCaseClosed)
+	h.stopCodeRunsFor(id)
 	pc := bytes.Clone(b.secret("passphrase"))
 	defer clear(pc)
 	err = ck.RemoveCaseKey(r.Context(), id, pc)

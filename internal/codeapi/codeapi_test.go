@@ -71,6 +71,7 @@ type rigOpts struct {
 	noMount    bool // build the server without any mount
 	allowIdent bool
 	settingsIn string // folder of code-mode.json; default is a fresh temp folder
+	masterKey  *server.MasterKeySession
 }
 
 type rig struct {
@@ -104,6 +105,9 @@ func newRig(t *testing.T, o rigOpts) *rig {
 	}
 	r := &rig{t: t, store: o.store, mount: server.NewCodeMount(), ctx: context.Background()}
 	opts := []server.Option{server.WithCases(o.store, hostMap, importer.NewRegistry())}
+	if o.masterKey != nil {
+		opts = append(opts, server.WithMasterKey(o.masterKey))
+	}
 	if !o.noMount {
 		opts = append(opts, server.WithCodeMount(r.mount))
 	}
@@ -1027,4 +1031,100 @@ func TestSettingsSaveIsRefusedWhenTheFileCannotBeRead(t *testing.T) {
 		t.Skipf("this OS reports the path as missing or damaged, not as unreadable: %v", err)
 	}
 	wantProblem(t, r.call(http.MethodPut, "/api/code/settings", `{"keepResults":true}`), http.StatusInternalServerError, codemode.CodeInternal)
+}
+
+/* ------------------------------------------------------------ case lifecycle */
+
+// startBlockedRun starts a run whose worker never comes up (the fake waits on its gate) and returns once it is recorded as running.
+func startBlockedRun(t *testing.T, r *rig, sp *spawn, caseID string) chan *httptest.ResponseRecorder {
+	t.Helper()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- r.call(http.MethodPost, "/api/code/run", runBodyOf("while(true){}")) }()
+	select {
+	case <-sp.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run did not start")
+	}
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		for _, run := range r.runsOf(caseID) {
+			if run.Status == "running" {
+				return done
+			}
+		}
+	}
+	t.Fatal("the live run is not in the case")
+	return nil
+}
+
+func endsWithin(t *testing.T, what string, done chan *httptest.ResponseRecorder) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("%s: the live run was not ended", what)
+	}
+}
+
+// The route that moves a case ends the case's live runs first and does not hang on them (the gate of the fake is never opened).
+func TestCaseRoutesEndLiveRuns(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(r *rig, id string) *httptest.ResponseRecorder
+	}{
+		{"close", func(r *rig, id string) *httptest.ResponseRecorder {
+			return r.call(http.MethodPost, "/api/cases/"+id+"/close", "", "X-Expect-State", "open")
+		}},
+		{"erase", func(r *rig, id string) *httptest.ResponseRecorder {
+			return r.call(http.MethodDelete, "/api/cases/"+id, `{"confirm":"`+id+`"}`, "X-Expect-State", "open")
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sp := &spawn{gate: make(chan struct{}), entered: make(chan struct{}, 2)}
+			t.Cleanup(func() { select { case <-sp.gate: default: close(sp.gate) } })
+			r := newRig(t, rigOpts{spawner: sp})
+			id := r.newCase("Lifecycle " + c.name)
+			r.enable()
+			done := startBlockedRun(t, r, sp, id)
+			start := time.Now()
+			res := c.call(r, id)
+			if res.Code != http.StatusOK && res.Code != http.StatusNoContent {
+				t.Fatalf("%s = %d %s", c.name, res.Code, res.Body)
+			}
+			if time.Since(start) > 8*time.Second {
+				t.Fatalf("%s waited out the grace period for a run that was not ended", c.name)
+			}
+			endsWithin(t, c.name, done)
+		})
+	}
+}
+
+// While the master key is locked the run route answers 423; a run that is live when it locks is ended.
+func TestRunRoute423WhileMasterKeyLocked(t *testing.T) {
+	sp := &spawn{gate: make(chan struct{}), entered: make(chan struct{}, 2)}
+	t.Cleanup(func() { select { case <-sp.gate: default: close(sp.gate) } })
+	mk := server.NewMasterKeySession(t.TempDir())
+	r := newRig(t, rigOpts{spawner: sp, masterKey: mk})
+	pass := "correct horse battery staple 42"
+	if res := r.call(http.MethodPost, "/api/master-key/setup", `{"passphrase":"`+pass+`","confirm":"`+pass+`","acknowledged":true}`); res.Code != http.StatusOK {
+		t.Fatalf("setup = %d %s", res.Code, res.Body)
+	}
+	id := r.newCase("Locked")
+	r.enable()
+	done := startBlockedRun(t, r, sp, id)
+	if res := r.call(http.MethodPost, "/api/master-key/lock", ""); res.Code != http.StatusOK {
+		t.Fatalf("lock = %d %s", res.Code, res.Body)
+	}
+	endsWithin(t, "master key lock", done)
+	if res := r.call(http.MethodPost, "/api/code/run", runBodyOf("1")); res.Code != http.StatusLocked {
+		t.Fatalf("run while locked = %d %s, want 423", res.Code, res.Body)
+	}
+}
+
+func TestCancelCaseEndsOnlyThatCase(t *testing.T) {
+	r := newRig(t, rigOpts{spawner: &spawn{}})
+	_ = r
+	if n := r.broker.CancelCase("nothing"); n != 0 {
+		t.Fatalf("CancelCase on an idle broker ended %d runs", n)
+	}
 }

@@ -248,6 +248,7 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 		run.sampler, run.hadSamp = p, true
 		h.stopSamplerFor(id, false, stopCaseClosed)
 	}
+	h.stopCodeRunsFor(id) // a run writes its audit record into the case; none may run while the file is made
 	injectAt("before-begin", "", "")
 	_, err = ar.BeginArchive(r.Context(), id, believed, casestore.ArchivePending{
 		Folder: folder, Name: name, Started: now.UTC(), SamplerWas: run.hadSamp,
