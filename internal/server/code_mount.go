@@ -118,6 +118,7 @@ func (m *CodeMount) stop(id casestore.CaseID) bool {
 	timer := time.NewTimer(codeStopGrace)
 	defer timer.Stop()
 	// A run that was accepted a moment before the first cancel is not yet known to the broker; the cancel is sent again until none holds the case.
+	// idle-ok: lives only while a case close, key change, archive, erase or lock waits for its code runs to end (bounded by codeStopGrace).
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	for {
