@@ -87,6 +87,32 @@ Rollback at any phase: revert the trigger PR (the workflows are intact); phase 2
 
 **The weakness that comes with "Any source".** Any token with `repo:status` on the repository can post `fast-build`. Today only the owner and one collaborator have push access; the status token is fine-grained and kept out of steps. If outside collaborators are added, switch the source to a GitHub App that only the agent holds.
 
+## Modules, config and extraction (owner direction 2026-11-25: modular, reusable for other projects)
+
+Research behind this: [research-ci-structure.md](research-ci-structure.md) (TeamCity, Buildkite, Jenkins, the GitHub runner, act, Woodpecker/Drone, Dagger, Gitea; sources listed there, gaps marked "unverified"). What we take and what we leave out on purpose is the table in its section 10; in short: take pull-based agents with outbound-only traffic, label routing, repo-side workflow files, quiet period plus branch filter, commit statuses, host execution, own-repos-only; leave out plugin systems, containers per step, a database server, pools, templates, priorities, dynamic pipelines. One deliberate difference: our "server" is GitHub itself (claims by ref, statuses by API), so one PC needs no daemon besides the agent and a second PC needs no new server.
+
+**Two products in one Releases app, side by side.** The Releases app keeps showing releases exactly as today (release list, detail, lock, logs). The Pipelines area is added next to it and shares only the shell (loopback, one-time code, `redact.go`). Neither imports the other; both read their own store.
+
+**Core (no project names, extractable):** each module is a Go package with one small interface; the Unravis-specific parts are config or adapters.
+
+| Module | Interface (sketch) | Unravis-specific part (config, not code) |
+|---|---|---|
+| `localci` pipeline reader and runner | `Load(workflowFile)`, `Run(ctx, workflow, RunOptions)` | `.github/local-ci.yml` (`runs-on` map, per-job `skip`/`accepted`, per-step `step-env`), scrub-list names |
+| checkout and run store | `Checkout(ref) Workspace`, `SaveRun`, `AppendLog`, `ListRuns` | repo slug, state dir |
+| host adapter | `Host` (pull request, head sha, author, collaborators) with a `gh` implementation | which repo, who is trusted |
+| agent and queue (slice 3) | `Enqueue`, `Claim(agent, labels)`, `Complete`, `Cancel`; quiet period; cron | branch filter, labels, which workflow serves which base branch |
+| status reporter (slice 4) | `Report(sha, context, state, desc)` | context names `fast-build`, `build`, `local/<job>` |
+| pipelines UI (slice 5) | JSON over the store, read-only first | page text, tooltips |
+| `release` (separate, future) | `Publish(run, artifacts)`; reads run results from the store; the core never imports it | everything about `Release.ps1`, signing, `release-lock` |
+
+Rule for every slice: the core packages must not contain the words Unravis, Brain Payroll, `D:\secret`, or hard-coded context or branch names; a test greps the core packages for them. Process split (from the GitHub runner): the agent only schedules; each job runs in a child process, so a crash or kill of a job never takes the agent down.
+
+**Extraction plan (when a second project, such as the small side project, wants it).**
+- Moves to a new repository as is: `internal/localci` (reader, runner, shims), `cmd/unravis-ci` (renamed), the store and checkout, the queue and agent, the status reporter, the host interface with its `gh` implementation, the Windows process and Job Object code, the Pipelines UI components.
+- Stays in this repository: `.github/local-ci.yml` and the label map (they are config), the Releases app shell and release module (`tools/release`, `cmd/unravis-releases`), Unravis scrub-list and trust lists, the status context names.
+- Needs change at extraction: the Go module path and the binary and package names; the scrub list and secret-name patterns read from config instead of defaults; the state directory and port defaults; the `gh` host replaced or complemented (another forge) behind the same interface; the UI shell taken from a small shared package instead of the Releases app; docs moved with it.
+- Cost control now: no abstraction is built before a second project exists beyond the interfaces above; the grep test and the config file are the whole price.
+
 ## Slices (each: tests, Sonnet review, Opus only for section 6, UI audit for screens)
 
 1. **Runner core**: workflow parser, expression subset, job graph and matrix, step runner, outputs, `uses:` shims, unsupported-is-loud test over every workflow, `unravis-ci run <workflow> --event ... --local <dir>`. Verified on real data by running `fast-gate.yml` on this repository.
