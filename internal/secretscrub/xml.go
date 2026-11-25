@@ -69,12 +69,11 @@ func maskXML(s, mask string, w *work) (string, int) {
 			if first >= 0 && first < to {
 				edits = append(edits, edit{first, to})
 			}
-			if possibleSecretTag(s[i:to]) {
-				// A line reader can see only an unfinished tag. Mask secret attributes already present and carry its name
-				// to the next line.
-				pending = pendTag
-				w.carry = carryHint{tag: s[i:to]}
-			}
+			// A line reader can see only an unfinished tag, and what the next line adds (a key="password" attribute, a value) decides what
+			// it is, so every unfinished tag is carried: the secret attributes already present are masked above and the tag is read again
+			// with the next line. Carry stops carrying a tag at maxTagLines lines, so a stray "<a" costs no more than that.
+			pending = pendTag
+			w.carry = carryHint{tag: s[i:to]}
 			pos = n
 			continue
 		}
@@ -111,6 +110,12 @@ func maskXML(s, mask string, w *work) (string, int) {
 				spans = append(spans, edit{from, to})
 				if to > pos {
 					pos = to
+				}
+				if onlySpace(s, to) {
+					// The text runs to the end of the line (a key, a certificate, a long value): it goes on in the next line, up to
+					// the close tag.
+					pending = pendXMLText
+					w.carry = carryHint{tag: name}
 				}
 			} else if onlySpace(s, end) {
 				pending = pendXMLText
@@ -157,31 +162,6 @@ func tagSpans(s, name string, attrs []attr) (spans []edit, keyHit, elementHit bo
 		}
 	}
 	return spans, keyHit, elementHit
-}
-
-func possibleSecretTag(s string) bool {
-	if len(s) < 2 || s[0] != '<' {
-		return false
-	}
-	name := s[1:]
-	if i := strings.IndexAny(name, " \t\r\n/>"); i >= 0 {
-		name = name[:i]
-	}
-	if name == "" || IsSecretKey(name) {
-		return name != ""
-	}
-	low := lowerASCII(name)
-	for start := 0; start < len(low); start++ {
-		if !isNameStart(low[start]) {
-			continue
-		}
-		for _, word := range secretWords {
-			if strings.HasPrefix(word, low[start:]) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // plainName says whether v reads as the name of a setting ("db.password", "Admin Password"), not as a value.

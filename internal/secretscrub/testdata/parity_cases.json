@@ -1,0 +1,355 @@
+{
+ "about": "Shared by the Go tests (internal/secretscrub, internal/releasedash) and the PowerShell test (tools/release/Test-ReleaseManager.ps1). Each case is the lines of one log, read in order by one reader. No string in secrets may appear in any output line. Lines of expectUnchanged must come out as they went in.",
+ "cases": [
+  {
+   "name": "F1 attribute value holds a key (1)",
+   "lines": [
+    "<add key=\"password\" value=\"password=\"FAKEPW"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "F1 attribute value holds a key (2)",
+   "lines": [
+    "<add key=\"DbPassword\" value=\"DB_PASSWORD=\" FAKEPW"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "F1 attribute value holds a key (3)",
+   "lines": [
+    "<setting name=\"password\" value=\"secret=\" FAKEPW"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "F2 block after a quote closes",
+   "lines": [
+    "        DB_PASSWORD=\"FAKE1",
+    "FAKE2\" password: |",
+    "  FAKEPW",
+    "  FAKEPW2"
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKE2",
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "F2 block after a bracket closes",
+   "lines": [
+    "        {\"password\":[",
+    "\"FAKE1\"], \"secret\": |",
+    "  FAKEPW",
+    "  FAKEPW2"
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "F3 split tag then colon key, element text",
+   "lines": [
+    "<Password client_secret:",
+    ">FAKEPW</Password>"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "F3 split tag then colon key, attribute",
+   "lines": [
+    "<Password token:",
+    "value=\"FAKEPW\">FAKEPW</Password>"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "F4 close tag in another case",
+   "lines": [
+    "<Password>",
+    "FAKEPW</password>",
+    "after"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "F5 escaped quote in a JSON value",
+   "lines": [
+    "{\"password\":\"a\\\"b FAKEPW\"}"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N2 quote beats a tag opened inside the value",
+   "lines": [
+    "DB_PASSWORD=\"FAKE1 <a",
+    "FAKE2\" tail"
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKE2"
+   ]
+  },
+  {
+   "name": "N2 quote beats a tag, JSON string",
+   "lines": [
+    "{\"password\": \"FAKE1 <s",
+    "FAKE2\"}"
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKE2"
+   ]
+  },
+  {
+   "name": "N2 bracket beats a tag",
+   "lines": [
+    "{\"credential\":[\"FAKE1 <p",
+    "\"FAKE2\"]}"
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKE2"
+   ]
+  },
+  {
+   "name": "N3 block under an open tag",
+   "lines": [
+    "see <a",
+    "password: |",
+    "  FAKEPW",
+    "  FAKEPW2"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N3 quote under an open tag",
+   "lines": [
+    "see <a",
+    "password: \"FAKE1",
+    "FAKE2\""
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKE2"
+   ]
+  },
+  {
+   "name": "N3 next line under an open tag",
+   "lines": [
+    "see <a",
+    "DB_PASSWORD=",
+    "FAKEPW"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N4 second key opens a quote",
+   "lines": [
+    "{\"token\":\"FAKE0\",\"password\":\"FAKE1",
+    "FAKE2\"}"
+   ],
+   "secrets": [
+    "FAKE0",
+    "FAKE1",
+    "FAKE2"
+   ]
+  },
+  {
+   "name": "N4 second key has the value on the next line",
+   "lines": [
+    "token=FAKE0 DB_PASSWORD=",
+    "FAKEPW"
+   ],
+   "secrets": [
+    "FAKE0",
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N4 second key opens a block",
+   "lines": [
+    "secret=FAKE0 password: |",
+    "  FAKEPW"
+   ],
+   "secrets": [
+    "FAKE0",
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N5 key attribute then value on the next line",
+   "lines": [
+    "<add key=\"password\"",
+    "value=\"FAKEPW\" />"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N5 key attribute, upper case name",
+   "lines": [
+    "<add key=\"DB_PASSWORD\"",
+    "  value=\"FAKEPW\"/>"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N5 attribute value open over the line",
+   "lines": [
+    "<add key=\"password\" value=\"FAKE1",
+    "FAKE2\" />"
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKE2"
+   ]
+  },
+  {
+   "name": "N5 connection string open over the line",
+   "lines": [
+    "<connectionStrings><add name=\"x\" connectionString=\"Server=a;Password=FAKE1",
+    "FAKE2;\" />"
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKE2"
+   ]
+  },
+  {
+   "name": "N5 .NET settings form",
+   "lines": [
+    "<setting name=\"Password\"",
+    "         serializeAs=\"String\">",
+    "  <value>FAKEPW</value>",
+    "</setting>"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N5 bare tag name, key on the next line",
+   "lines": [
+    "<add",
+    "  key=\"ApiToken\"",
+    "  value=\"FAKEPW\" />"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N6 element text goes on",
+   "lines": [
+    "<Password>FAKE1",
+    "FAKE2</Password>"
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKE2"
+   ]
+  },
+  {
+   "name": "N6 element text over three lines",
+   "lines": [
+    "<PrivateKey>FAKE1",
+    "FAKE2",
+    "FAKE3</PrivateKey>",
+    "after"
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKE2",
+    "FAKE3"
+   ]
+  },
+  {
+   "name": "N7 text sticks to the closing quote",
+   "lines": [
+    "DB_PASSWORD=\"FAKE1",
+    "FAKE2\"FAKEPW"
+   ],
+   "secrets": [
+    "FAKE1",
+    "FAKE2",
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N3 block opens beside a stray tag",
+   "lines": [
+    "<a x=\"1\" <b> password: |",
+    "  FAKEPW",
+    "  FAKEPW2"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "N3 next-line value opens beside a stray tag",
+   "lines": [
+    "<a x=\"1\" <b> DB_PASSWORD=",
+    "FAKEPW"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  }
+ ],
+ "expectUnchanged": [
+  {
+   "name": "sentence after a bare key",
+   "lines": [
+    "Password:",
+    "sudo: 3 incorrect password attempts"
+   ]
+  },
+  {
+   "name": "test runner line after a key",
+   "lines": [
+    "Password:",
+    "--- FAIL: TestLogin"
+   ]
+  },
+  {
+   "name": "ordinary link",
+   "lines": [
+    "see <a href=\"x\">link</a>"
+   ]
+  },
+  {
+   "name": "stray tag opener then ordinary lines",
+   "lines": [
+    "x <a",
+    "ordinary line 0",
+    "ordinary line 1",
+    "ordinary line 2"
+   ]
+  }
+ ]
+}

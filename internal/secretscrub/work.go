@@ -33,8 +33,10 @@ type carryHint struct {
 	quote   byte
 	nest    int
 	literal bool
+	class   int // the class of the key whose quote is open
 	depth   int
 	tag     string
+	sub     int // a block or next-line state that came with a split tag
 }
 
 func newWork(n int) *work { return &work{left: workFactor*n + workFloor, eolFrom: -1} }

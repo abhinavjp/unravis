@@ -984,7 +984,8 @@ $script:LogRx = @{
     StampPfx = [regex]::new('^\d{4}-\d\d-\d\dT[\d:.]+Z ?', 'Compiled')
     KeyFile = [regex]::new('(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b', 'Compiled')
     UserDir = [regex]::new('(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"'']+', 'Compiled')
-    SecretValue = [regex]::new('(?i)([A-Za-z0-9_.-]*(?:password|passwd|passphrase|pwd|secret|token|credential|api[-_]?key|access[-_]?key|private[-_]?key)(?:key|value|hash|string|str|text|data)?)(["'']?\s*[:=]\s*)(.*)$', 'Compiled')
+    # A secret key and its separator; the value after it is read by Open-LogCarry, which goes on to the next key on the line.
+    SecretKey = [regex]::new('(?i)([A-Za-z0-9_.-]*(?:password|passwd|passphrase|pwd|secret|token|credential|api[-_]?key|access[-_]?key|private[-_]?key)(?:key|value|hash|string|str|text|data)?)(["'']?\s*[:=]\s*)', 'Compiled')
     SecretWord  = [regex]::new('(?i)password|passphrase|passwd|shared[-_]?access[-_]?key|private[-_]?key|access[-_]?key|account[-_]?key|api[-_]?key|auth[-_]?key|credential|secret|token|pwd|pass|pin', 'Compiled')
 }
 
@@ -1002,7 +1003,7 @@ $script:LogBenignSecretTails = @{
 # are hidden too; names shorter than three characters are ignored.
 function New-LogRedactor([string[]]$Names = @()) {
     $n = @(@($Names) + @([Environment]::MachineName, [Environment]::UserName) | Where-Object { $_ -and $_.Trim().Length -ge 3 } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
-    $carry = [pscustomobject]@{ Mode = ''; Indent = 0; Lines = 0; Comments = 0; Quote = ''; Nest = 0; Literal = $false; Depth = 0; Tag = ''; Colon = $false; Bare = $false }
+    $carry = [pscustomobject]@{ Mode = ''; Indent = 0; Lines = 0; Comments = 0; Quote = ''; Nest = 0; Literal = $false; Depth = 0; Tag = ''; Colon = $false; Bare = $false; Class = ''; TagLines = 0; Sub = $null }
     return [pscustomobject]@{ InKey = $false; KeyLines = 0; Names = $n; Carry = $carry }
 }
 
@@ -1277,9 +1278,10 @@ function Protect-LogXml([string]$Line, $Redactor) {
         if ($c.Lines -gt 200) { $c.Mode = ''; $c.Tag = '' }   # one stray tag does not hide the rest of a log
         return $Line.Substring(0, $indent) + '<hidden>'
     }
-    $prefix = ''
+    $prefix = ''; $prevLines = 0
     if ($c.Mode -eq 'Tag') {
-        $prefix = $c.Tag; $c.Mode = ''; $c.Tag = ''
+        $prefix = $c.Tag; $prevLines = $c.TagLines; $c.Mode = ''; $c.Tag = ''; $c.TagLines = 0
+        # The byte limit of a split tag (2 * 4096); a tag that goes on is not a tag, and the line that crosses it is hidden whole.
         if ($prefix.Length + $Line.Length + 1 -gt 8192) { return '<hidden>' }
     }
     if ($prefix.Length -eq 0 -and $Line.IndexOf('<') -lt 0) { return $Line }
@@ -1321,7 +1323,13 @@ function Protect-LogXml([string]$Line, $Redactor) {
                 for ($k = $firstEdit; $k -lt $edits.Count; $k++) { if ($edits[$k].To -gt $edits[$k].From -and $edits[$k].From -lt $from) { $from = $edits[$k].From } }
                 if ($from -lt $to) { [void]$edits.Add([pscustomobject]@{ From = $from; To = $to }) }
             }
-            if (($found.KeyHit -or $found.SecretHit -or $found.KeyAttr -or (Test-SecretName $local) -or (Test-SecretTagPrefix $name)) -and $name.Length -gt 0) { $pending = 'Tag'; $pendingTag = $combined.Substring($i) }
+            # A line reader can see only an unfinished tag, and what the next line adds (a key="password" attribute, a value) decides what it
+            # is, so every unfinished tag is carried (the same rule as the Go reader); the tag stops being carried after 16 lines.
+            if ($name.Length -gt 0) {
+                $stop = $combined.IndexOf('<', $n)
+                if ($stop -lt 0) { $stop = $combined.Length }
+                $pending = 'Tag'; $pendingTag = $combined.Substring($i, $stop - $i)
+            }
             $pos = $n
             continue
         }
@@ -1356,6 +1364,8 @@ function Protect-LogXml([string]$Line, $Redactor) {
             if ($node.Found) {
                 [void]$edits.Add([pscustomobject]@{ From = $node.From; To = $node.To })
                 if ($node.To -gt $pos) { $pos = $node.To }
+                # The text runs to the end of the line: it goes on in the next line, up to the close tag.
+                if (Test-OnlyXmlSpace $combined $node.To) { $pending = 'Xml'; $pendingTag = $name }
             } elseif ((Test-OnlyXmlSpace $combined $tag.End)) {
                 $budget -= $combined.Length - $tag.End
                 $pending = 'Xml'; $pendingTag = $name
@@ -1364,21 +1374,213 @@ function Protect-LogXml([string]$Line, $Redactor) {
         if ($resume -gt 0 -and $resume -lt $pos) { $pos = $resume }
     }
     if ($pending -eq 'Xml') { $c.Mode = 'Xml'; $c.Tag = $pendingTag; $c.Lines = 0 }
-    elseif ($pending -eq 'Tag') { $c.Mode = 'Tag'; $c.Tag = $pendingTag }
+    elseif ($pending -eq 'Tag') {
+        $c.Mode = 'Tag'; $c.Tag = $pendingTag; $c.TagLines = 0
+        # The same tag going on counts its lines; a tag that ended and another one that opened on this line starts at none.
+        if ($prefix.Length -gt 0 -and $pendingTag.StartsWith($prefix, [StringComparison]::Ordinal)) {
+            $c.TagLines = $prevLines + 1
+            if ($c.TagLines -ge 16) { $c.Mode = ''; $c.Tag = ''; $c.TagLines = 0 }
+        }
+    }
     else { $c.Mode = ''; $c.Tag = '' }
     return Apply-LogXmlEdits $Line $edits $base
+}
+
+# ---- the key=value carry: the helpers below are the PowerShell form of readValue and its helpers in internal/secretscrub/scrub.go ----
+
+$script:LogSepChars = " `t`r`n;,}])><&/:|`"'"
+
+# Whether the text at $I can follow a finished value: the end of the text, a space, or a mark that ends a setting.
+function Test-LogValueSeparator([string]$S, [int]$I) {
+    return $I -ge $S.Length -or $script:LogSepChars.IndexOf($S[$I]) -ge 0
+}
+
+# Whether the ";" at $I ends an XML entity that starts after $J (&quot; &apos; &amp; &lt; &gt; &#34; &#x22;).
+function Test-LogEntityEnd([string]$S, [int]$I, [int]$J) {
+    for ($k = $I - 1; $k -ge $J -and $I - $k -le 7; $k--) {
+        $ch = $S[$k]
+        if ($ch -eq '&') {
+            $e = $S.Substring($k + 1, $I - $k - 1)
+            if ($e -ieq 'quot' -or $e -ieq 'apos' -or $e -ieq 'amp' -or $e -ieq 'lt' -or $e -ieq 'gt') { return $true }
+            return $e.Length -gt 1 -and $e[0] -eq '#'
+        }
+        if (-not (($ch -ge 'a' -and $ch -le 'z') -or ($ch -ge 'A' -and $ch -le 'Z') -or ($ch -ge '0' -and $ch -le '9') -or $ch -eq '#')) { return $false }
+    }
+    return $false
+}
+
+# Whether the text at $I starts another "name=" setting.
+function Test-LogNextSetting([string]$S, [int]$I) {
+    $j = $I
+    while ($j -lt $S.Length -and $j - $I -lt 128 -and (Test-IdentChar $S[$j])) { $j++ }
+    if ($j -le $I -or $j -ge $S.Length -or $S[$j] -ne '=') { return $false }
+    $f = $S[$I]
+    return ($f -ge 'a' -and $f -le 'z') -or ($f -ge 'A' -and $f -le 'Z') -or $f -eq '_'
+}
+
+# Whether the quote at $I closes a text the value sits in: an XML attribute or a JSON string.
+function Test-LogQuoteEndsText([string]$S, [int]$I) {
+    $j = $I + 1
+    while ($j -lt $S.Length -and ($S[$j] -eq ' ' -or $S[$j] -eq "`t")) { $j++ }
+    if ($j -ge $S.Length) { return $true }
+    if (',}]>/`r`n;)'.IndexOf($S[$j]) -ge 0) { return $true }
+    return $j -gt $I + 1 -and (Test-LogNextSetting $S $j)
+}
+
+# Where an unquoted value that starts at $J ends. $Password: a password may hold spaces, the others are one word.
+function Get-LogUnquotedEnd([string]$S, [int]$J, [bool]$Password, [bool]$JsonKey, [bool]$InQuery) {
+    $i = $J
+    if (-not $Password) {
+        while ($i -lt $S.Length -and " `t`r`n`f`v;,&`"'})<".IndexOf($S[$i]) -lt 0) { $i++ }
+    } elseif ($InQuery -or $JsonKey) {
+        $depth = 0
+        while ($i -lt $S.Length) {
+            $ch = $S[$i]
+            if (" `t`r`n`f`v;,&}`"'".IndexOf($ch) -ge 0) { break }
+            if ($ch -eq '[') { $depth++ } elseif ($ch -eq ']') { if ($depth -eq 0) { break }; $depth-- }
+            $i++
+        }
+    } else {
+        while ($i -lt $S.Length) {
+            $ch = $S[$i]
+            if (($ch -eq ';' -and -not (Test-LogEntityEnd $S $i $J)) -or $ch -eq "`r" -or $ch -eq "`n") { break }
+            if (($ch -eq '"' -or $ch -eq "'") -and (Test-LogQuoteEndsText $S $i)) { break }
+            if ($ch -eq '<' -and $i + 1 -lt $S.Length -and $S[$i + 1] -eq '/') { break }
+            if ($ch -eq ' ' -and $i -gt $J -and (Test-LogNextSetting $S ($i + 1))) { break }
+            $i++
+        }
+        while ($i -gt $J -and ($S[$i - 1] -eq ' ' -or $S[$i - 1] -eq "`t")) { $i-- }
+    }
+    return $i
+}
+
+# A Block or Next state: the lines that follow a key whose value is on the next line (or a YAML block scalar).
+function New-LogNextState {
+    return [pscustomobject]@{ Mode = ''; Indent = 0; Lines = 0; Comments = 0; Colon = $false; Bare = $false }
+}
+
+# Reads one line for a Block or Next state held by $St. Returns the line as it is to be shown when the state handled it, or $null when
+# it did not (the state is over then, and the line is read as new text).
+function Step-LogNext([string]$Line, $St, [int]$Indent) {
+    $text = $Line.TrimEnd([char[]]@(' ', "`t", "`r"))
+    if ($text.Length -eq 0) {
+        if ($St.Mode -ne 'Block') { $St.Mode = '' }   # a blank line ends the search for a value on the next line; inside a block it is part of it
+        return $Line
+    }
+    if ($St.Mode -eq 'Block') {
+        if ($Indent -gt $St.Indent -and $St.Lines -lt 200) { $St.Lines++; return $Line.Substring(0, $Indent) + '<hidden>' }
+        $St.Mode = ''
+        return $null
+    }
+    $rest = $text.Substring($Indent)
+    $quoted = $rest[0] -eq '"' -or $rest[0] -eq "'"
+    $plausible = $rest.Length -gt 0 -and $rest.Length -le 512 -and ($quoted -or $rest -notmatch '[ \t]')
+    $value = $false
+    if ($rest.StartsWith('#') -and $St.Comments -lt 4) { $St.Comments++; return $Line }
+    if ($St.Colon -and $Indent -le $St.Indent -and (Test-LogKeyLike $rest)) { $value = $false }
+    elseif ($St.Mode -eq 'NextQuoted') { $value = $quoted }
+    elseif ($St.Mode -eq 'NextIndented') { $value = $Indent -gt 0 }
+    elseif ($St.Mode -eq 'NextStrong') { $value = $Indent -gt 0 -or $quoted -or $rest -eq '-' -or $rest.StartsWith('- ') -or $rest.Length -gt 512 -or $plausible }
+    else { $value = $plausible }
+    $St.Mode = ''
+    if ($value) { return $Line.Substring(0, $Indent) + '<hidden>' }
+    return $null
+}
+
+# Finds the secret keys of a line, in order, and opens the carry of the first one whose value goes on into the next line. A key whose value
+# ends on the line is passed and the next key is read (the Go reader walks every key too). $XmlMode is the XML state the line left open
+# ('', 'Tag' or 'Xml'): a quote or bracket left open wins over it (it swallows the lines that follow); a block or a next-line value is
+# kept beside a split tag ($c.Sub) and dropped beside element text. Returns the line, with the start of an open value hidden.
+function Open-LogCarry([string]$Line, $c, [int]$Indent, [string]$XmlMode) {
+    $from = 0; $guard = 0
+    while ($from -lt $Line.Length -and $guard -lt 64) {   # a line of more than 64 keys is not read further: nothing is carried from it
+        $guard++
+        $m = $script:LogRx.SecretKey.Match($Line, $from)
+        if (-not $m.Success) { break }
+        $key = $m.Groups[1].Value; $sep = $m.Groups[2].Value
+        $vs = $m.Index + $m.Length
+        $v = $Line.Substring($vs)
+        $jsonKey = $sep.StartsWith('"') -or $sep.StartsWith("'")
+        $password = $key -match '(?i)password|passwd|passphrase|pwd'
+        $target = $c
+        if ($XmlMode -eq 'Tag') { $target = New-LogNextState } elseif ($XmlMode -eq 'Xml') { $target = New-LogNextState }
+        if ($sep.Contains(':') -and $v -match '^(?:[!&][^\s]+\s+)?[|>][+-]?[1-9]?\s*(?:#.*)?$') {
+            $target.Mode = 'Block'; $target.Indent = $Indent; $target.Lines = 0; $target.Comments = 0
+            if ($XmlMode -eq 'Tag') { $c.Sub = $target }
+            return $Line
+        }
+        if ($v.Trim().Length -eq 0) {
+            $bare = $key -notmatch '[_.:-]'
+            $strong = $key -match '(?i)(?:password|passwd|passphrase|pwd)$'
+            if ($jsonKey) { $target.Mode = 'NextStrong' }
+            elseif ($bare -and $key -match '(?i)^(?:token|secret)$') { $target.Mode = 'NextQuoted' }
+            elseif ($sep.Contains(':') -and -not $strong) { $target.Mode = 'NextIndented' }
+            elseif (-not $bare) { $target.Mode = 'NextStrong' }
+            else { $target.Mode = 'Next' }
+            $target.Indent = $Indent; $target.Colon = $sep.Contains(':'); $target.Bare = $bare; $target.Comments = 0
+            if ($XmlMode -eq 'Tag') { $c.Sub = $target }
+            return $Line
+        }
+        $q = 0
+        while ($q -lt $v.Length -and $v[$q] -eq '\') { $q++ }
+        $end = -1
+        if ($q -lt $v.Length -and ($v[$q] -eq '"' -or $v[$q] -eq "'")) {
+            $nest = $q; $literal = -not $jsonKey
+            $cq = Find-ClosingQuote $v $q $v[$q] $nest $literal
+            if ($cq -lt 0) {
+                $c.Mode = 'Quote'; $c.Quote = $v[$q]; $c.Nest = $nest; $c.Literal = $literal; $c.Lines = 0
+                $c.Class = if ($password) { 'Password' } else { 'Token' }
+                $c.Tag = ''; $c.TagLines = 0; $c.Sub = $null   # an open quote wins over a tag opened on the same line
+                $at = $vs + $q
+                return $Line.Substring(0, $at) + $v[$q] + '<hidden>'
+            }
+            $end = $cq + 1
+            if ($nest -eq 0 -and -not (Test-LogValueSeparator $v $end)) {
+                # "x"y: text sticks to the closing quote, so the quote was not the end of the value (fail closed: take the rest of it).
+                $end = Get-LogUnquotedEnd $v $end $password $false $false
+            }
+        } else {
+            $first = 0
+            while ($first -lt $v.Length -and ($v[$first] -eq ' ' -or $v[$first] -eq "`t")) { $first++ }
+            if ($jsonKey -and $first -lt $v.Length -and ($v[$first] -eq '[' -or $v[$first] -eq '{')) {
+                $depth = 0; $quote = [char]0; $close = -1
+                for ($i = $first; $i -lt $v.Length; $i++) {
+                    if ($quote) { if ($v[$i] -eq '\') { $i++ } elseif ($v[$i] -eq $quote) { $quote = [char]0 }; continue }
+                    if ($v[$i] -eq '[' -or $v[$i] -eq '{') { $depth++ }
+                    elseif ($v[$i] -eq ']' -or $v[$i] -eq '}') { $depth--; if ($depth -eq 0) { $close = $i; break } }
+                    elseif ($v[$i] -eq '"' -or $v[$i] -eq "'") { $quote = $v[$i] }
+                }
+                if ($depth -gt 0) {
+                    $c.Mode = 'Bracket'; $c.Depth = $depth; $c.Quote = $quote; $c.Lines = 0
+                    $c.Tag = ''; $c.TagLines = 0; $c.Sub = $null
+                    return $Line.Substring(0, $vs + $first) + '<hidden>'
+                }
+                $end = $close + 1
+            } else {
+                $inQuery = $m.Groups[1].Index -gt 0 -and ($Line[$m.Groups[1].Index - 1] -eq '?' -or $Line[$m.Groups[1].Index - 1] -eq '&')
+                $end = Get-LogUnquotedEnd $v $first $password $jsonKey $inQuery
+            }
+        }
+        $from = $vs + [Math]::Max($end, 1)
+    }
+    return $Line
 }
 
 function Protect-LogCarry([string]$Line, $Redactor) {
     $c = $Redactor.Carry
     $indent = 0
     while ($indent -lt $Line.Length -and ($Line[$indent] -eq ' ' -or $Line[$indent] -eq "`t")) { $indent++ }
-    if ($c.Mode -eq 'Xml' -or $c.Mode -eq 'Tag') { return Protect-LogXml $Line $Redactor }
+    if ($c.Mode -eq 'Xml') { return Protect-LogXml $Line $Redactor }
     if ($c.Mode -eq 'Quote') {
         $at = Find-ClosingQuote $Line -1 $c.Quote $c.Nest $c.Literal
         if ($at -lt 0) { $c.Lines++; if ($c.Lines -gt 200) { $c.Mode = '' }; return $Line.Substring(0, $indent) + '<hidden>' }
         $c.Mode = ''
-        return $Line.Substring(0, $indent) + '<hidden>' + (Protect-LogCarry $Line.Substring($at) $Redactor)
+        $tail = $Line.Substring($at)
+        if ($c.Nest -eq 0 -and -not (Test-LogValueSeparator $Line ($at + 1))) {
+            # "x"y: text sticks to the closing quote, so the quote was not the end of the value: it runs on to the end of the word.
+            $tail = $Line.Substring((Get-LogUnquotedEnd $Line ($at + 1) ($c.Class -eq 'Password') $false $false))
+        }
+        return $Line.Substring(0, $indent) + '<hidden>' + (Protect-LogCarry $tail $Redactor)
     }
     if ($c.Mode -eq 'Bracket') {
         $depth = $c.Depth; $quote = $c.Quote; $closeAt = -1
@@ -1395,76 +1597,25 @@ function Protect-LogCarry([string]$Line, $Redactor) {
         $c.Mode = ''
         return $Line.Substring(0, $indent) + '<hidden>' + (Protect-LogCarry $Line.Substring($closeAt) $Redactor)
     }
-    if ($c.Mode -eq 'Block' -or $c.Mode -like 'Next*') {
-        $text = $Line.TrimEnd([char[]]@(' ', "`t", "`r"))
-        if ($text.Length -eq 0) {
-            if ($c.Mode -ne 'Block') { $c.Mode = '' }
-            return $Line
-        }
-        if ($c.Mode -eq 'Block') {
-            if ($indent -gt $c.Indent -and $c.Lines -lt 200) { $c.Lines++; return $Line.Substring(0, $indent) + '<hidden>' }
-            $c.Mode = ''
-        } else {
-            $rest = $text.Substring($indent)
-            $quoted = $rest[0] -eq '"' -or $rest[0] -eq "'"
-            $plausible = $rest.Length -gt 0 -and $rest.Length -le 512 -and ($quoted -or $rest -notmatch '[ \t]')
-            $value = $false
-            if ($rest.StartsWith('#') -and $c.Comments -lt 4) { $c.Comments++; return $Line }
-            if ($c.Colon -and $indent -le $c.Indent -and (Test-LogKeyLike $rest)) { $value = $false }
-            elseif ($c.Mode -eq 'NextQuoted') { $value = $quoted }
-            elseif ($c.Mode -eq 'NextIndented') { $value = $indent -gt 0 }
-            elseif ($c.Mode -eq 'NextStrong') { $value = $indent -gt 0 -or $quoted -or $rest -eq '-' -or $rest.StartsWith('- ') -or $rest.Length -gt 512 -or $plausible }
-            else { $value = $plausible }
-            $c.Mode = ''
-            if ($value) { return $Line.Substring(0, $indent) + '<hidden>' }
-        }
+    # A split tag keeps a block or a next-line value of its own beside it ($c.Sub): the key=value reader runs under the tag too.
+    $handled = $null
+    if ($c.Mode -eq 'Tag') {
+        if ($null -ne $c.Sub) { $handled = Step-LogNext $Line $c.Sub $indent; if (-not $c.Sub.Mode) { $c.Sub = $null } }
+    } elseif ($c.Mode -eq 'Block' -or $c.Mode -like 'Next*') {
+        $r = Step-LogNext $Line $c $indent
+        if ($null -ne $r) { return $r }
     }
 
-    $Line = Protect-LogXml $Line $Redactor
-    if ($c.Mode) { return $Line }
-
-    foreach ($m in $script:LogRx.SecretValue.Matches($Line)) {
-        $key = $m.Groups[1].Value; $sep = $m.Groups[2].Value; $v = $m.Groups[3].Value
-        if ($sep.Contains(':') -and $v -match '^(?:[!&][^\s]+\s+)?[|>][+-]?[1-9]?\s*(?:#.*)?$') { $c.Mode = 'Block'; $c.Indent = $indent; $c.Lines = 0; $c.Comments = 0; return $Line }
-        if ($v.Trim().Length -eq 0) {
-            $bare = $key -notmatch '[_.:-]'
-            $password = $key -match '(?i)(?:password|passwd|passphrase|pwd)$'
-            if ($sep.StartsWith('"') -or $sep.StartsWith("'")) { $c.Mode = 'NextStrong' }
-            elseif ($bare -and $key -match '(?i)^(?:token|secret)$') { $c.Mode = 'NextQuoted' }
-            elseif ($sep.Contains(':') -and -not $password) { $c.Mode = 'NextIndented' }
-            elseif (-not $bare) { $c.Mode = 'NextStrong' }
-            else { $c.Mode = 'Next' }
-            $c.Indent = $indent; $c.Colon = $sep.Contains(':'); $c.Bare = $bare; $c.Comments = 0
-            return $Line
+    $out = Protect-LogXml $Line $Redactor
+    if ($c.Mode -ne 'Tag' -or $c.TagLines -eq 0) {
+        if ($null -ne $handled -and $c.Mode -eq '' -and $null -ne $c.Sub) {
+            # The tag ended on this line and its block (or next-line value) goes on as a carry of its own.
+            $s = $c.Sub; $c.Mode = $s.Mode; $c.Indent = $s.Indent; $c.Lines = $s.Lines; $c.Comments = $s.Comments; $c.Colon = $s.Colon; $c.Bare = $s.Bare
         }
-        $q = 0
-        while ($q -lt $v.Length -and $v[$q] -eq '\') { $q++ }
-        if ($q -lt $v.Length -and ($v[$q] -eq '"' -or $v[$q] -eq "'")) {
-            $nest = $q; $literal = -not ($sep.StartsWith('"') -or $sep.StartsWith("'"))
-            if ((Find-ClosingQuote $v $q $v[$q] $nest $literal) -lt 0) {
-                $c.Mode = 'Quote'; $c.Quote = $v[$q]; $c.Nest = $nest; $c.Literal = $literal; $c.Lines = 0
-                $at = $m.Groups[3].Index + $q
-                return $Line.Substring(0, $at) + $v[$q] + '<hidden>'
-            }
-        }
-        $first = 0
-        while ($first -lt $v.Length -and ($v[$first] -eq ' ' -or $v[$first] -eq "`t")) { $first++ }
-        if (($sep.StartsWith('"') -or $sep.StartsWith("'")) -and $first -lt $v.Length -and ($v[$first] -eq '[' -or $v[$first] -eq '{')) {
-            $depth = 0; $quote = [char]0
-            for ($i = $first; $i -lt $v.Length; $i++) {
-                if ($quote) { if ($v[$i] -eq '\') { $i++ } elseif ($v[$i] -eq $quote) { $quote = [char]0 }; continue }
-                if ($v[$i] -eq '[' -or $v[$i] -eq '{') { $depth++ }
-                elseif ($v[$i] -eq ']' -or $v[$i] -eq '}') { $depth--; if ($depth -eq 0) { break } }
-                elseif ($v[$i] -eq '"' -or $v[$i] -eq "'") { $quote = $v[$i] }
-            }
-            if ($depth -gt 0) {
-                $c.Mode = 'Bracket'; $c.Depth = $depth; $c.Quote = $quote; $c.Lines = 0
-                return $Line.Substring(0, $m.Groups[3].Index + $first) + '<hidden>'
-            }
-        }
+        if ($c.Mode -ne 'Tag' -or $c.TagLines -eq 0) { $c.Sub = $null }
     }
-
-    return $Line
+    if ($null -ne $handled) { return $handled }
+    return Open-LogCarry $out $c $indent $c.Mode
 }
 
 # Pure apart from the redactor's key-block memory. -KeepTabs keeps the tab separators of a "gh run view --log" line.

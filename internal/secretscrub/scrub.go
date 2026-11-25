@@ -257,10 +257,14 @@ func maskPend(s, mask string) (string, int, carryHint) {
 	s, p2 := maskKV(s, mask, w)
 	hint := xmlCarry
 	// A split XML tag or an XML element text hides the next line's value already; the key=value state must not replace it
-	// ("<Password client_secret:" then ">FAKEPW</Password>"). A quote or bracket left open still wins: it swallows the lines.
+	// ("<Password client_secret:" then ">FAKEPW</Password>"). A quote or bracket left open still wins: it swallows the lines. They are
+	// told apart by kind: their numbers are below the XML ones, so comparing numbers would never let them win ("DB_PASSWORD=\"x <a").
 	xmlOpen := p1 == pendTag || p1 == pendXMLText
-	if p2 > p1 && !(xmlOpen && p2 != pendQuote && p2 != pendBracket) {
+	if p2 == pendQuote || p2 == pendBracket || (!xmlOpen && p2 > p1) {
 		p1, hint = p2, w.carry
+	} else if p1 == pendTag && p2 != pendNone && p2&^pendColon >= pendBlock && p2&^pendColon <= pendNextText {
+		// A block or a next-line value that opens beside a split tag is kept next to it, so the key=value reader runs under the tag.
+		hint.sub = p2
 	}
 	return s, p1, hint
 }
@@ -483,7 +487,7 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 		see(after)
 		if end == len(s) && after == len(s) {
 			*pend = pendQuote
-			w.carry = carryHint{quote: s[q], nest: nest, literal: !jsonKey}
+			w.carry = carryHint{quote: s[q], nest: nest, literal: !jsonKey, class: class}
 		}
 		if nest == 0 && after <= len(s) && end < len(s) && !valueSeparator(s, after) {
 			// "x"y: text sticks to the closing quote, so the quote was not the end of the value (fail closed: take the rest of it).

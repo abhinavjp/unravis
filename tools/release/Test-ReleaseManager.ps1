@@ -720,6 +720,41 @@ try {
         Assert-That "log redaction: a stray open state ends at the line cap ($open)" ($last -eq 'ordinary line') "got '$last'"
     }
 
+    # The shared case table of both scrubbers (internal/secretscrub/testdata/parity_cases.json, also read by the Go tests): no secret of a case
+    # may be in any output line, and the lines of an expectUnchanged entry must come back as they went in.
+    $parityFile = Join-Path $PSScriptRoot '../../internal/secretscrub/testdata/parity_cases.json'
+    $parity = Get-Content -Raw -LiteralPath $parityFile | ConvertFrom-Json
+    Assert-That 'log redaction: the shared case table is not empty' (@($parity.cases).Count -ge 20 -and @($parity.expectUnchanged).Count -ge 3)
+    foreach ($case in @($parity.cases)) {
+        $r = New-LogRedactor
+        $out = @(@($case.lines) | ForEach-Object { Protect-LogLine ([string]$_) $r })
+        $joined = $out -join "`n"
+        $leaked = @(@($case.secrets) | Where-Object { $joined.Contains([string]$_) })
+        Assert-That "log redaction (shared cases): $($case.name)" ($leaked.Count -eq 0) "leaked '$($leaked -join ',')' in: $($out -join ' | ')"
+    }
+    foreach ($case in @($parity.expectUnchanged)) {
+        $r = New-LogRedactor
+        $out = @(@($case.lines) | ForEach-Object { Protect-LogLine ([string]$_) $r })
+        $same = $out.Count -eq @($case.lines).Count
+        for ($k = 0; $same -and $k -lt $out.Count; $k++) { if ($out[$k] -ne [string]@($case.lines)[$k]) { $same = $false } }
+        Assert-That "log redaction (shared cases): kept as it is: $($case.name)" $same ($out -join ' | ')
+    }
+
+    # A stray tag opener ("x <a") is carried for a few lines only: every carried line is read again together with the lines before it, so
+    # an unlimited carry makes the cost grow with the square of the lines. The time of the lines after it is compared with the same lines
+    # without it (a generous factor: the check is for the growth, not the speed of the machine).
+    $plainLines = @(1..600 | ForEach-Object { 'o' })
+    $rBase = New-LogRedactor
+    $swBase = [System.Diagnostics.Stopwatch]::StartNew()
+    foreach ($l in $plainLines) { $null = Protect-LogLine $l $rBase }
+    $swBase.Stop()
+    $rTag = New-LogRedactor
+    $null = Protect-LogLine 'x <a' $rTag
+    $swTag = [System.Diagnostics.Stopwatch]::StartNew()
+    foreach ($l in $plainLines) { $null = Protect-LogLine $l $rTag }
+    $swTag.Stop()
+    Assert-That 'log redaction: a stray tag opener costs a few lines, not the square of the lines after it' ($swTag.Elapsed.TotalSeconds -lt (6 * $swBase.Elapsed.TotalSeconds + 0.5)) ("plain {0:N3}s, after '<a' {1:N3}s" -f $swBase.Elapsed.TotalSeconds, $swTag.Elapsed.TotalSeconds)
+
     # A reason of several lines (what Run throws) keeps its lines apart; one hidden line hides only itself; a key block is hidden whole.
     $multi = "git fetch failed: fatal: unable to reach host`r`nremote: Support for password authentication was removed.`nAuthorization: token hunter2hunter2`nhint: run gh auth refresh`n-----BEGIN CERTIFICATE-----`nMIIBkTCB+wIJAKHBfpegPjMCMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnVu`n-----END CERTIFICATE-----`nthe real cause is here"
     $mr = Protect-ReasonText $multi
