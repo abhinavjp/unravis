@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Unravis Releases</title>
-<link rel="icon" href="favicon.ico"><link rel="stylesheet" href="app.css"></head>
+<link rel="icon" href="favicon.ico"><link rel="stylesheet" href="app.css"><link rel="stylesheet" href="ci.css"></head>
 <body>
 <div class="app">
   <header class="top">
@@ -10,11 +10,20 @@
     <div class="chan" id="chan-stable"></div>
     <button id="refresh" type="button" title="Read again (R)">Refresh</button>
   </header>
+  <nav class="mainnav" id="mainnav" aria-label="Pages">
+    <a class="mt" id="mt-overview" href="#/overview" title="The latest result on each branch, what is running, and how the checks on this PC compare with GitHub.">Overview</a>
+    <a class="mt" id="mt-runs" href="#/runs" title="Every check run, newest first. Open one to see its jobs, steps and logs.">Runs</a>
+    <a class="mt" id="mt-machines" href="#/machines" hidden title="The PCs that check this repository, what each is doing and when it was last heard from.">Machines</a>
+    <a class="mt" id="mt-releases" href="#/releases" title="Every release, its channel and the release steps.">Releases</a>
+    <div class="proj" id="proj" hidden><label for="proj-sel">Project</label><select id="proj-sel"></select></div>
+  </nav>
   <div id="run" role="status"></div>
   <div class="body">
     <nav class="list"><ul id="list" role="listbox" tabindex="0" aria-label="Releases"></ul><div id="nolist" class="nolist" hidden></div></nav>
     <section class="detail" id="detail"></section>
   </div>
+  <section class="ci" id="ci" hidden aria-live="off"><div class="cimain" id="ci-main"></div></section>
   <footer class="foot" id="foot"></footer>
+  <footer class="foot" id="ci-foot" hidden></footer>
 </div>
-<script src="app.js"></script><script src="detail.js"></script></body></html>
+<script src="app.js"></script><script src="detail.js"></script><script src="ci.js"></script></body></html>

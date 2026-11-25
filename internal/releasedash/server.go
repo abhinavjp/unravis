@@ -26,6 +26,7 @@ func Handler(d *Dash, token string, ui fs.FS) http.Handler {
 		_ = json.NewEncoder(w).Encode(s)
 	})
 	d.registerDetail(mux)
+	d.registerCI(mux)
 	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/api/bye", func(w http.ResponseWriter, r *http.Request) {
 		// The page is closing (or reloading). The program stops after a short wait unless the page comes back.

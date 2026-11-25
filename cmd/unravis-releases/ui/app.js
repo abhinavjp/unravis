@@ -31,7 +31,9 @@ function status(r) {
   return ['', 'mut'];
 }
 
-const STEPS = ['Preflight', 'Tag', 'Build', 'Sign', 'Publish', 'Feed', 'Verify'];
+let STEPS = ['Preflight', 'Tag', 'Build', 'Sign', 'Publish', 'Feed', 'Verify']; // replaced by the project's own list (ci.js)
+let CHANNELS = ['rc', 'stable']; // the project's channel names, in the order of the two boxes at the top
+let section = 'releases'; // which page is showing: overview, runs or releases (ci.js sets it)
 const NEXT = 'next'; // list key of the release that has no version yet (the script is still waiting for CI)
 let shown = [], snap = null, selected = '', timer = 0, busy = false, failed = false, liveKey = '';
 try { selected = sessionStorage.getItem('rd.sel') || ''; } catch (e) { /* the choice just is not kept */ }
@@ -87,8 +89,9 @@ function channelBox(id, name, f) {
 function render() {
   const s = snap;
   const feed = (c) => (s.feeds || []).find((f) => f.channel === c);
-  channelBox('chan-rc', 'rc', feed('rc'));
-  channelBox('chan-stable', 'stable', feed('stable'));
+  channelBox('chan-rc', CHANNELS[0], feed(CHANNELS[0]));
+  if (CHANNELS.length > 1) channelBox('chan-stable', CHANNELS[1], feed(CHANNELS[1]));
+  $('chan-stable').hidden = CHANNELS.length < 2 || section !== 'releases';
   const run = $('run'); run.replaceChildren();
   const lv = s.live;
   if (lv) {
@@ -100,7 +103,7 @@ function render() {
     else if (s.run.status === 'stopped') run.append(el('span', 'off', 'Release ' + s.run.version + ' stopped'), ' after ' + (s.run.stage || 'the start') + (s.run.reason ? ': ' + s.run.reason : '.'));
   }
   const rels = (s.releases || []).slice();
-  if (lv && !lv.version) rels.unshift({ version: NEXT, label: 'Next release', channel: 'rc or stable', withdrawn: false, verify: 'unknown', onFeed: false, onGitHub: false, recorded: true, steps: STEPS.map((n) => ({ name: n, state: n === lv.step ? 'running' : 'pending' })) });
+  if (lv && !lv.version) rels.unshift({ version: NEXT, label: 'Next release', channel: CHANNELS.join(' or '), withdrawn: false, verify: 'unknown', onFeed: false, onGitHub: false, recorded: true, steps: STEPS.map((n) => ({ name: n, state: n === lv.step ? 'running' : 'pending' })) });
   shown = rels;
   const key = lv ? (lv.version || NEXT) : '';
   if (key && key !== liveKey) selected = key; // a release just started: show it
@@ -129,12 +132,13 @@ function render() {
 
 function pick(v) {
   selected = v; try { sessionStorage.setItem('rd.sel', v); } catch (e) { /* not kept */ }
+  if (typeof ci !== 'undefined' && ci.ready && section === 'releases') history.replaceState(null, '', hashFor('releases', v)); // keeps the address in step with the choice
   if (snap) render();
   const li = document.getElementById('r-' + v); if (li) li.scrollIntoView({ block: 'nearest' });
 }
 $('list').addEventListener('click', (e) => { const li = e.target.closest('li[data-v]'); if (li) pick(li.dataset.v); });
 document.addEventListener('keydown', (e) => {
-  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || section !== 'releases') return;
   const t = e.target; // typing in a search box, or scrolling a log, must not change the release or refresh
   if (t && t.closest && t.closest('input, textarea, select, .vbody, .tabs')) return;
   if (e.key === 'r' || e.key === 'R') { load(true); return; }
@@ -147,7 +151,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'Home') n = 0; else if (e.key === 'End') n = list.length - 1;
   if (n >= 0) { e.preventDefault(); pick(list[n].version); }
 });
-$('refresh').addEventListener('click', () => load(true));
+$('refresh').addEventListener('click', () => { if (section === 'releases') load(true); else load(false); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) load(false); });
 load(false);
 window.addEventListener('pagehide', () => { try { fetch('/api/bye', { keepalive: true, cache: 'no-store' }); } catch (e) { /* closing anyway */ } });
