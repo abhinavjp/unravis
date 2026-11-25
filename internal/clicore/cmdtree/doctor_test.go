@@ -22,10 +22,10 @@ func TestDoctorWithTheAppRunning(t *testing.T) {
 	if be["reachable"] != true || be["state"] != "ready" || be["proto"].(map[string]any)["major"] != float64(1) {
 		t.Errorf("backend: %v", be)
 	}
-	if d["cli"].(map[string]any)["role"] != "cli" || d["installDir"] != "/opt/unravis" || d["mcpCommand"] != "/opt/unravis/unravis.exe --mcp" {
+	if d["cli"].(map[string]any)["role"] != "cli" || d["installDir"] != testInstallDir || d["mcpCommand"] != testApp+" --mcp" {
 		t.Errorf("paths: %v", d)
 	}
-	if d["appExe"].(map[string]any)["path"] != "/opt/unravis/unravis.exe" || d["appExe"].(map[string]any)["exists"] != false {
+	if d["appExe"].(map[string]any)["path"] != testApp || d["appExe"].(map[string]any)["exists"] != false {
 		t.Errorf("appExe: %v", d["appExe"])
 	}
 	if len(o.opsSeen()) != 0 {

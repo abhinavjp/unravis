@@ -38,7 +38,7 @@ func TestOffWindowsNothingIsFound(t *testing.T) {
 
 func TestInstallDir(t *testing.T) {
 	for in, want := range map[string]string{"/p/Unravis/bin/unravis.exe": "/p/Unravis", "/p/Unravis/BIN/unravis.exe": "/p/Unravis", "/p/Unravis/unravis.exe": "/p/Unravis"} {
-		if got := InstallDir(in); got != want {
+		if got := InstallDir(filepath.FromSlash(in)); got != filepath.FromSlash(want) { // paths use the style of the platform
 			t.Errorf("%s: %s", in, got)
 		}
 	}
