@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -78,5 +79,32 @@ func TestCLICodeCommandsReachTheBrokerMainBuilds(t *testing.T) {
 		if code, msg := errOf(out); out["ok"] != false || code != "ENDPOINT_UNAVAILABLE" || msg == "" {
 			t.Errorf("%s without a broker: %v", c.op, out)
 		}
+	}
+}
+
+// main builds the code broker once and gives that same one to the owner pipe's command line handler. A nil passed there would leave
+// "unravis code run" answering "no broker" in a build that has code mode, and the test above would stay green (it builds its own handler).
+func TestMainGivesTheCodeBrokerToTheCLIHandler(t *testing.T) {
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := strings.ReplaceAll(string(b), "\r\n", "\n")
+	if n := strings.Count(src, "cliHandlerFor("); n != 1 {
+		t.Fatalf("want exactly one cliHandlerFor call in main.go, found %d", n)
+	}
+	if n := strings.Count(src, ":= mountCodeMode("); n != 1 {
+		t.Fatalf("want exactly one mountCodeMode call in main.go, found %d", n)
+	}
+	at := strings.Index(src, "cliHandlerFor(")
+	call := src[at:]
+	if nl := strings.IndexByte(call, '\n'); nl >= 0 {
+		call = call[:nl]
+	}
+	if !strings.Contains(call, "codeBroker))") {
+		t.Fatalf("main.go does not pass the code broker to the CLI handler: %q", call)
+	}
+	if !strings.Contains(src, "codeBroker := mountCodeMode(") {
+		t.Fatal("main.go does not name the mounted broker codeBroker")
 	}
 }

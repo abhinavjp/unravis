@@ -81,7 +81,7 @@ func (s *Store) Load() (codemode.Settings, error) {
 	if err != nil {
 		return codemode.Settings{}, err
 	}
-	if !hfi.Mode().IsRegular() || hfi.Size() > MaxBytes || !os.SameFile(fi, hfi) || !ownerOnly(hfi) {
+	if !hfi.Mode().IsRegular() || hfi.Size() > MaxBytes || !os.SameFile(fi, hfi) || !ownerOnly(f, hfi) {
 		return codemode.Settings{}, ErrCorrupt
 	}
 	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
