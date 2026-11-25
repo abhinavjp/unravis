@@ -182,14 +182,14 @@ func FromHTTPStatus(status int) (Code, bool) {
 }
 
 // FromSidecarExit maps an exit code of `unravis.exe --pipe-server` (spec 01): 11 elevation refused, 12 another owner exists, 13 the
-// pipe could not start. Any other non-zero code is INTERNAL.
+// pipe could not start, 14 an owner runs in another sign-in session (it has to be quit there). Any other non-zero code is INTERNAL.
 func FromSidecarExit(code int) Code {
 	switch code {
 	case 11:
 		return CodeElevationRefused
 	case 12:
 		return CodeOwnerBusy
-	case 13:
+	case 13, 14:
 		return CodeUpstreamUnavailable
 	}
 	return CodeInternal

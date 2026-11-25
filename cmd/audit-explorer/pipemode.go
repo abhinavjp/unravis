@@ -14,6 +14,7 @@ import (
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/locator"
+	"api-audit-explorer/internal/ownerlease"
 	"api-audit-explorer/internal/pipesec"
 	"api-audit-explorer/internal/pipesrv"
 	"api-audit-explorer/internal/version"
@@ -27,6 +28,8 @@ var (
 	afterServing = func(context.CancelFunc) {}
 	// pipeGateDepsFn builds the singleton gate of pipe mode; tests swap it for fakes.
 	pipeGateDepsFn = pipeGateDeps
+	// ownerLeaseFn takes the per-profile owner lease; tests swap it for fakes.
+	ownerLeaseFn = ownerlease.Acquire
 	// selfStart is this process's creation time for the locator; tests swap it off Windows.
 	selfStart = locator.SelfStart
 	// instanceListen receives Open and Quit signals from other copies; tests swap it.
@@ -150,7 +153,17 @@ func enterPipeSingleton(demo bool, getenv func(string) string) (release func(), 
 	if !gate.proceed {
 		return nil, "", instance.Names{}, errors.New("pipe mode: the singleton gate neither proceeded nor attached")
 	}
-	return gate.release, runDir, gate.names, nil
+	// The Local\ mutex is per session; the lease also stops an owner in another sign-in session of the same profile.
+	leaseRelease, err := ownerLeaseFn(runDir, demo)
+	if err != nil {
+		gate.release()
+		if errors.Is(err, ownerlease.ErrBusy) {
+			return nil, "", instance.Names{}, &exitCodeError{code: exitOtherSession, msg: "Unravis is already running for this user in another sign-in session"}
+		}
+		return nil, "", instance.Names{}, fmt.Errorf("pipe mode: owner lease: %w", err)
+	}
+	// Lease first, then the gate, the reverse of how they were taken.
+	return func() { leaseRelease(); gate.release() }, runDir, gate.names, nil
 }
 
 // ownerName is the owner that hello reports: the --owner value, or "app" for a copy that was not told.

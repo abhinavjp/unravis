@@ -121,6 +121,9 @@ func (st *state) startHeadless() (startData, *clicore.Error) {
 		select {
 		case code := <-child.Exit:
 			c := clicore.FromSidecarExit(code) // 0 and any other code are INTERNAL
+			if code == sidecarExitOtherSession {
+				return startData{}, clicore.NewError(c, "Unravis is already running for you in another Windows sign-in session.", "Quit it there (from the tray), then run 'unravis app start --headless' again.")
+			}
 			if c != clicore.CodeOwnerBusy {
 				return startData{}, clicore.NewError(c, sidecarText(c), sidecarAction(c))
 			}
@@ -147,6 +150,9 @@ func (st *state) startHeadless() (startData, *clicore.Error) {
 		}
 	}
 }
+
+// sidecarExitOtherSession is the exit of `--pipe-server` when the owner lease is held in another sign-in session (spec 05, D19).
+const sidecarExitOtherSession = 14
 
 func sidecarText(c clicore.Code) string {
 	switch c {
