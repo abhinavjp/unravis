@@ -37,12 +37,14 @@ type ItemRunner struct {
 func (ir *ItemRunner) Run(ctx context.Context, r Request) (Outcome, error) {
 	var res *PRResult
 	var err error
+	pw := &ProgressWriter{StateDir: ir.Store.Dir, ID: r.ID, Now: ir.Now}
+	pw.Reset()
 	switch r.Kind {
 	case KindPR:
 		res, err = RunPR(ctx, PROptions{
 			Store: ir.Store, Host: ir.Host, Repo: r.Repo, Number: r.Number, ExpectHead: r.SHA, OriginURL: ir.OriginURL,
 			Workflow: r.Workflow, Protect: ir.Protect, TrustedBases: ir.TrustedBases, Keep: ir.Keep, Env: ir.Env, Vars: ir.Vars, Slots: ir.Slots,
-			Redact: ir.Redact, Log: ir.Log, Now: ir.Now,
+			Redact: ir.Redact, Log: ir.Log, Now: ir.Now, Progress: pw.Event,
 		})
 	case KindPush, KindSchedule:
 		event := "push"
@@ -51,7 +53,7 @@ func (ir *ItemRunner) Run(ctx context.Context, r Request) (Outcome, error) {
 		}
 		res, err = RunRef(ctx, RefOptions{
 			Store: ir.Store, Host: ir.Host, Repo: r.Repo, Ref: r.Ref, SHA: r.SHA, Workflow: r.Workflow, Event: event, Cron: r.Cron,
-			OriginURL: ir.OriginURL, Keep: ir.Keep, Env: ir.Env, Vars: ir.Vars, Slots: ir.Slots, Redact: ir.Redact, Log: ir.Log, Now: ir.Now,
+			OriginURL: ir.OriginURL, Keep: ir.Keep, Env: ir.Env, Vars: ir.Vars, Slots: ir.Slots, Redact: ir.Redact, Log: ir.Log, Now: ir.Now, Progress: pw.Event,
 		})
 	default:
 		return Outcome{}, fmt.Errorf("request kind %q is not known", r.Kind)

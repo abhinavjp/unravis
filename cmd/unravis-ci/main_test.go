@@ -77,6 +77,7 @@ func TestSecretsIncludeTheGhLoginToken(t *testing.T) {
 func TestMain(m *testing.M) {
 	// the tests never run the real gh
 	ghAuthToken = func([]string) string { return "" }
+	installStatusFakes() // nor post to, read from or start anything on GitHub
 	os.Exit(m.Run())
 }
 

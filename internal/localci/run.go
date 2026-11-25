@@ -34,6 +34,9 @@ type RunOptions struct {
 	Now      func() time.Time
 	// DryRun resolves and prints the plan and runs nothing.
 	DryRun bool
+	// Progress, when set, is told when the plan is known and when each job instance starts and ends. Calls are
+	// serialised; the callback must return quickly.
+	Progress func(RunEvent)
 
 	// stepTimeoutOverride replaces every step timeout (test hook).
 	stepTimeoutOverride time.Duration
@@ -119,6 +122,7 @@ func (a *jobAgg) needsResult() string {
 }
 
 type runState struct {
+	progMu sync.Mutex
 	o      RunOptions
 	wf     *Workflow
 	file   string // workflow base name (for config overrides)
@@ -289,6 +293,15 @@ func Run(ctx context.Context, o RunOptions) (*RunResult, error) {
 		res.Conclusion = "success"
 		res.End = r.now()
 		return res, nil
+	}
+	if o.Progress != nil {
+		total := 0
+		for _, j := range w.Jobs {
+			if len(only) == 0 || only[j.ID] {
+				total += len(r.comboList(j))
+			}
+		}
+		r.emit(RunEvent{Kind: EventPlan, Total: total})
 	}
 	for _, level := range levels {
 		var wg sync.WaitGroup
@@ -533,6 +546,7 @@ func (r *runState) runInstance(ctx context.Context, job *Job, combo map[string]a
 	fin := func(status, reason string) *JobResult {
 		jr.Status, jr.Reason, jr.End = status, reason, r.now()
 		r.logf("[%s] job %s%s", key, status, map[bool]string{true: ": " + reason}[reason != ""])
+		r.emitEnd(jr)
 		return jr
 	}
 	vars := r.baseVars(job, combo)
@@ -587,9 +601,11 @@ func (r *runState) runInstance(ctx context.Context, job *Job, combo map[string]a
 	}
 	in := &instance{r: r, job: job, jr: jr, combo: combo, key: key, label: label, runsOn: runsOn,
 		runnerOS: runnerOSFor(runsOn), vars: vars, wfEnv: wfEnv, ghEnv: map[string]string{}, status: "success"}
+	r.emit(RunEvent{Kind: EventJobStart, Key: key, JobID: job.ID, Label: label, Start: r.now()})
 	in.run(ctx)
 	jr.End = r.now()
 	r.logf("[%s] job %s (%s)", key, jr.Status, fmtDur(jr.End.Sub(jr.Start)))
+	r.emitEnd(jr)
 	return jr
 }
 

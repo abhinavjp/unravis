@@ -51,6 +51,8 @@ type PROptions struct {
 	Redact func(string) string
 	Log    io.Writer // progress for the person at the console
 	Now    func() time.Time
+	// Progress is told how the jobs of the run go (see RunOptions.Progress).
+	Progress func(RunEvent)
 }
 
 // PRResult is what RunPR returns once a run folder exists.
@@ -316,7 +318,7 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 	o.logf("running %s on the merge of %s into %s (%s)", file, shortSHA(wt.HeadSHA), pr.BaseRef, shortSHA(wt.Commit))
 	run, err := Run(ctx, RunOptions{
 		Workflow: wf, Config: cfg, Workdir: wt.Path, StateDir: runDir, GitHub: prGitHubContext(o.Repo, pr, wt, wf.Name, start),
-		Vars: o.Vars, Env: env, Slots: o.Slots, Log: o.Log, Redact: o.Redact, Now: o.Now,
+		Vars: o.Vars, Env: env, Slots: o.Slots, Log: o.Log, Redact: o.Redact, Now: o.Now, Progress: o.Progress,
 	})
 	if err != nil {
 		return finish(nil, wt.Commit, "", err)
