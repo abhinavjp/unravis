@@ -14,4 +14,10 @@ r = run('go-test-build-fail.json');
 assert.equal(r.status, 1); assert.match(r.stdout, /NEW FAILURE pkg\.p\/d/);
 r = run('go-test-panic.json');
 assert.equal(r.status, 1); assert.match(r.stdout, /NEW FAILURE pkg\.p\/e/);
+// A Windows host uses the sibling baseline.windows.txt when it exists; any other host keeps the Linux baseline.
+const runOS = (os) => spawnSync('node', [path.join(here, 'compare-go-failures.mjs'), '--json', fx('go-test-new-failure.json'), '--baseline', fx('win/baseline.txt'), '--os', os], { encoding: 'utf8' });
+r = runOS('linux');
+assert.equal(r.status, 1); assert.match(r.stdout, /NEW FAILURE p\/b\.TestBrandNew/);
+r = runOS('win32');
+assert.equal(r.status, 0, r.stdout); assert.match(r.stdout, /Windows host: comparing with .*baseline\.windows\.txt/);
 console.log('compare-go-failures: ok');
