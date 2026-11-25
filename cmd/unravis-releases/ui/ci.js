@@ -395,7 +395,9 @@ function showMachines() {
   main().append(el('p', 'note', 'Reading...'));
   tick(true);
 }
-function machineCell(label, cls) { const td = el('td', cls || ''); td.dataset.label = label; return td; }
+// A cell is a td holding one value box, so the stacked phone layout is a two-column grid of label and value.
+// It returns the value box; the td is on its .cell.
+function machineCell(label, cls) { const td = el('td', cls || ''); td.dataset.label = label; const v = el('div', 'mv'); td.append(v); v.cell = td; return v; }
 function machineRow(x) {
   const tr = el('tr', 'mrow' + (x.state === 'Quiet' || x.state === 'Stopped' ? ' off' : ''));
   const who = machineCell('Machine', 'mwho');
@@ -413,7 +415,7 @@ function machineRow(x) {
   const heard = machineCell('Last heard');
   const h = el('span', '', x.lastHeard ? ago(x.lastHeard) : 'never'); if (x.lastHeard) h.title = when(x.lastHeard);
   heard.append(h);
-  tr.append(who, labels, st, cur, heard);
+  tr.append(who.cell, labels.cell, st.cell, cur.cell, heard.cell);
   return tr;
 }
 function drawMachines(m, p) {

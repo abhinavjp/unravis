@@ -120,6 +120,7 @@
 .mtable .mid{font-family:"Cascadia Mono",Consolas,monospace;font-weight:600;margin-right:8px}
 .mtable .chip{margin:0 4px 4px 0;display:inline-block}
 .mtable .dim{color:var(--mut)}
+.mtable .mv{min-width:0}
 @media (max-width:720px){
   .mtable,.mtable tbody,.mtable tr,.mtable td{display:block}
   .mtable thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
