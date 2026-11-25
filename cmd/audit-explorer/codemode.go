@@ -32,17 +32,21 @@ func mountCodeMode(getenv func(string) string, served http.Handler, token string
 	// AllowIdentifiers (the operator's --mcp-allow-identifiers) is left false here on purpose, also now that the MCP entrance exists: it is
 	// the safe default, the settings screen shows false, and no code run is ever given record ids. A later slice wires the flag through.
 	files := settingsfile.New(dir)
+	// The command-line window (BL-371): "unravis code run" is refused unless the person in the app has allowed it for a while. It is the
+	// broker's Authorize hook, so it holds on every path to Run, and the settings route (cliMinutes) is the only thing that opens it.
+	cliGate := codemode.NewCLIGate(nil)
 	broker, err := codemode.New(codemode.Config{
-		Hosts:    codemode.DashboardHosts(served, token),
-		Cases:    codeapi.Resolver(mount),
-		Settings: files.Settings,
+		Hosts:     codemode.DashboardHosts(served, token),
+		Cases:     codeapi.Resolver(mount),
+		Settings:  files.Settings,
+		Authorize: cliGate.Authorize,
 	})
 	if err != nil {
 		// A fixed line: the error text is not needed to act on, and the routes stay at 503.
 		log.Print("Code mode is off: the broker could not be built")
 		return nil
 	}
-	codeapi.Install(codeapi.Options{Mount: mount, Broker: broker, Settings: files})
+	codeapi.Install(codeapi.Options{Mount: mount, Broker: broker, Settings: files, CLIGate: cliGate})
 	return broker
 }
 

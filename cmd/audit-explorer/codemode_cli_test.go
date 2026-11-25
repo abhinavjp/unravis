@@ -67,6 +67,22 @@ func TestCLICodeCommandsReachTheBrokerMainBuilds(t *testing.T) {
 	if err := settingsfile.New(cfg).Save(codemode.Settings{Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
+	// A plain pipe client (the program on its own, nothing but the code) is still turned away: the command line may run scripts only
+	// while the person in the app has allowed it for a while (BL-371). Switching code mode on does not do that.
+	out = do(h, "code.run", `{"code":"1"}`)
+	if code, msg := errOf(out); out["ok"] != false || code != "PERMISSION_DENIED" || !strings.Contains(msg, "not allowed to run scripts") {
+		t.Fatalf("run with the command line shut: %v", out)
+	}
+	// The app's page opens the window (the session token is what only the app holds) and the broker's own answer comes through.
+	put := httptest.NewRequest("PUT", "/api/code/settings", strings.NewReader(`{"cliMinutes":5}`))
+	put.Host = "127.0.0.1:8765"
+	put.Header.Set("X-Audit-Token", token)
+	put.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	dash.ServeHTTP(w, put)
+	if w.Code != 200 {
+		t.Fatalf("opening the window: %d %s", w.Code, w.Body)
+	}
 	out = do(h, "code.run", `{"code":"1"}`)
 	if code, msg := errOf(out); out["ok"] != false || code != "ENDPOINT_UNAVAILABLE" || !strings.Contains(msg, "safe runner") {
 		t.Fatalf("run with no worker: %v", out)

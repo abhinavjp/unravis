@@ -204,7 +204,7 @@ func TestCLILimitsAndTextsMatchTheBroker(t *testing.T) {
 		codemode.CodeImportNotAllowed, codemode.CodeSandboxUnavailable, codemode.CodeSandboxDegradedNope, codemode.CodeCallBudget,
 		codemode.CodeResultTooLarge, codemode.CodeOutputTooLarge, codemode.CodeScriptError, codemode.CodeTicks, codemode.CodeWall, codemode.CodeRunCap,
 		codemode.CodeOOM, codemode.CodeStack, codemode.CodeWorkerCrashed, codemode.CodeBadFrame, codemode.CodeCancelled, codemode.CodeIdentifierLimit,
-		codemode.CodeAuditFailed, codemode.CodeBadRequest, codemode.CodeInternal, clicore.CodeModeManyCases,
+		codemode.CodeAuditFailed, codemode.CodeBadRequest, codemode.CodeInternal, codemode.CodeCLIClosed, clicore.CodeModeManyCases,
 	} {
 		e := clicore.CodeModeError(code)
 		if e.Message == unknown || e.Message == "" {

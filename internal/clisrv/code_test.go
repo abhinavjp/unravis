@@ -100,7 +100,7 @@ func TestCodeRunFailedScriptIsStillAResult(t *testing.T) {
 
 func TestCodeRunRefusalsMapToCommandLineCodes(t *testing.T) {
 	for code, want := range map[string]string{
-		"code_mode_off": "ENDPOINT_UNAVAILABLE", "sandbox_unavailable": "ENDPOINT_UNAVAILABLE", "denied": "PERMISSION_DENIED", "no_case": "NOT_FOUND",
+		"code_mode_off": "ENDPOINT_UNAVAILABLE", "sandbox_unavailable": "ENDPOINT_UNAVAILABLE", "denied": "PERMISSION_DENIED", "cli_closed": "PERMISSION_DENIED", "no_case": "NOT_FOUND",
 		clicore.CodeModeManyCases: "INVALID_ARGUMENT", "busy": "OWNER_BUSY", "source_too_large": "REQUEST_TOO_LARGE", "syntax_error": "INVALID_ARGUMENT",
 		"bad_request": "INVALID_ARGUMENT", "audit_failed": "INTERNAL", "internal_error": "INTERNAL", "a_code_from_the_future": "INTERNAL",
 	} {
@@ -111,7 +111,7 @@ func TestCodeRunRefusalsMapToCommandLineCodes(t *testing.T) {
 		}
 	}
 	// the refusals a person can fix say what to do next
-	for _, code := range []string{"code_mode_off", "sandbox_unavailable", "denied", "no_case", clicore.CodeModeManyCases, "busy", "source_too_large", "syntax_error"} {
+	for _, code := range []string{"code_mode_off", "sandbox_unavailable", "denied", "cli_closed", "no_case", clicore.CodeModeManyCases, "busy", "source_too_large", "syntax_error"} {
 		h := codeHandler(fakeCode{run: func(context.Context, CodeRunInput) (any, error) { return nil, &CodeRefusal{Code: code} }})
 		if r := op(t, h, "code.run", `{"code":"1"}`); r.Error.Action == "" {
 			t.Errorf("%s says nothing about what to do next: %+v", code, r)
