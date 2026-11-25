@@ -58,13 +58,12 @@ func (s *Dispatcher) callCode(ctx context.Context, pr Principal, req *callReq) (
 	defer cancelCall()
 	execute := req.Tool == mcp.ToolExecute
 	if execute {
-		if ok, dup := s.takeCodeSlot(pr.ProfileID, req.CallID, cancelCall); !ok {
-			if dup {
-				return refuse(http.StatusBadRequest, mcp.WireInvalidArguments, "That call id is already running.", "")
-			}
-			return refuse(http.StatusTooManyRequests, mcp.WireBudgetExceeded, "A code run of this host is already running.", "Wait for it to finish, then retry. Do not loop.")
+		// A run takes no call slot (see above) and is counted by the budget limiter below, once it has passed the gates; here it only
+		// registers its call id, so the cancel route reaches it and an id is never running twice.
+		if !s.registerCall(pr.ProfileID, req.CallID, cancelCall) {
+			return refuse(http.StatusBadRequest, mcp.WireInvalidArguments, "That call id is already running.", "")
 		}
-		defer s.releaseCodeSlot(pr.ProfileID, req.CallID)
+		defer s.unregisterCall(pr.ProfileID, req.CallID)
 	} else {
 		if ok, dup := s.admit(pr.ProfileID, req.CallID, cancelCall); !ok {
 			if dup {
@@ -101,6 +100,22 @@ func (s *Dispatcher) callCode(ctx context.Context, pr Principal, req *callReq) (
 	}
 	ev.Fingerprint = s.d.Recorder.Fingerprint(compact(req.Args))
 
+	// BL-574 L1: a code run is charged to the same limiter as every other call of the host (runs at once per host and in all, runs per
+	// hour, bytes per ten minutes), after the gates above so a refused call does not use up a run.
+	budgetBytes := 0
+	if execute {
+		budgetDone, over := s.lim.admit(pr.ProfileID, ClassCode, s.d.Now())
+		if over != nil {
+			if over.busy {
+				return refuse(http.StatusTooManyRequests, mcp.WireBudgetExceeded, "A code run of this host is already running or Unravis is busy.", "Wait for it to finish, then retry. Do not loop.")
+			}
+			ev.Kind, ev.Outcome, ev.Code = mcpaudit.KindDenied, mcpaudit.OutcomeDenied, mcp.WireBudgetExceeded
+			_ = s.d.Recorder.Record(context.WithoutCancel(runCtx), ev)
+			return refuse(http.StatusTooManyRequests, mcp.WireBudgetExceeded, "This host reached its limit for "+over.what+".", "Wait and retry later, or ask the person to review the limits in Unravis > AI access. Do not loop.")
+		}
+		defer func() { budgetDone(budgetBytes, s.d.Now()) }()
+	}
+
 	start := s.d.Now()
 	admit := ev
 	admit.Kind, admit.Time = mcpaudit.KindAdmit, start
@@ -135,38 +150,33 @@ func (s *Dispatcher) callCode(ctx context.Context, pr Principal, req *callReq) (
 		return refuse(http.StatusUnauthorized, d.Code, d.Message, d.Action)
 	}
 	end.Bytes = len(result)
+	budgetBytes = len(result) // charged where delivered, as in CallAs
 	end.Outcome, end.Code = outcomeOf(result, isError, tctx)
 	s.recordEnd(ctx, end)
 	return http.StatusOK, Answer{OK: true, IsError: isError, ProfileRev: pr.Rev, Result: json.RawMessage(result), Ms: end.DurMs}
 }
 
-// takeCodeSlot allows one running unravis_execute per profile, and registers its call id so the cancel route reaches it.
-func (s *Dispatcher) takeCodeSlot(profile, callID string, cancel context.CancelFunc) (ok, dup bool) {
+// registerCall makes a running call reachable by the cancel route under its id. It says false when that id is already running for the
+// profile. An empty id is not registered.
+func (s *Dispatcher) registerCall(profile, callID string, cancel context.CancelFunc) bool {
+	if callID == "" {
+		return true
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.codeRuns == nil {
-		s.codeRuns = map[string]bool{}
+	key := profile + "\x00" + callID
+	if _, found := s.byCall[key]; found {
+		return false
 	}
-	if callID != "" {
-		if _, found := s.byCall[profile+"\x00"+callID]; found {
-			return false, true
-		}
-	}
-	if s.codeRuns[profile] {
-		return false, false
-	}
-	if callID != "" {
-		s.byCall[profile+"\x00"+callID] = cancel
-	}
-	s.codeRuns[profile] = true
-	return true, false
+	s.byCall[key] = cancel
+	return true
 }
 
-func (s *Dispatcher) releaseCodeSlot(profile, callID string) {
+func (s *Dispatcher) unregisterCall(profile, callID string) {
+	if callID == "" {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.codeRuns, profile)
-	if callID != "" {
-		delete(s.byCall, profile+"\x00"+callID)
-	}
+	delete(s.byCall, profile+"\x00"+callID)
 }
