@@ -563,7 +563,7 @@ func watchBudget(ctx context.Context, conn driver.Conn) func() {
 type pinnedQueryer struct{ conn driver.Conn }
 
 func (p pinnedQueryer) Query(ctx context.Context, text string) ([]Row, error) {
-	if !IsAllowed(text) {
+	if !isAllowedCtx(ctx, text) {
 		return nil, errNotAllowed
 	}
 	var stmt driver.Stmt
@@ -716,7 +716,7 @@ type DBQueryer struct {
 }
 
 func (d DBQueryer) Query(ctx context.Context, text string) ([]Row, error) {
-	if !IsAllowed(text) {
+	if !isAllowedCtx(ctx, text) {
 		return nil, errNotAllowed
 	}
 	limit := d.MaxRows
@@ -786,7 +786,7 @@ func fixedQueryError(ctx context.Context, err error) error {
 // per-query C4 timeout. The runner owns the whole-tick budget and
 // skip-if-running; no goroutines or tickers here.
 func Query(ctx context.Context, q Queryer, text string, timeout time.Duration) ([]Row, error) {
-	if !IsAllowed(text) {
+	if !isAllowedCtx(ctx, text) {
 		return nil, errNotAllowed
 	}
 	qctx, cancel := context.WithTimeout(ctx, timeout)

@@ -211,6 +211,22 @@ func (t *Txn) CreateKey(root Root, key, sddl string) error {
 	return t.sys.Reg.CreateKey(root, key, sddl)
 }
 
+// AddPathEntry puts a folder on the PATH. The entry is journalled only when it was not there, so an upgrade or a repair never removes
+// an entry that was there before; the add still runs then, to drop copies of the entry that are listed twice.
+func (t *Txn) AddPathEntry(root Root, entry string) error {
+	has, err := t.sys.Env.HasPathEntry(root, entry)
+	if err != nil {
+		return err
+	}
+	if !has {
+		if err := t.record(Undo{Kind: UndoPathEntry, Root: root, Key: envKeyFor(root), Name: EnvPathName, Path: entry, Note: "PATH entry added: remove " + entry}); err != nil {
+			return err
+		}
+	}
+	_, err = t.sys.Env.AddPathEntry(root, entry)
+	return err
+}
+
 // SetString sets a REG_SZ value, journalling the old one.
 func (t *Txn) SetString(root Root, key, name, value string) error {
 	u := Undo{Kind: UndoRegValue, Root: root, Key: key, Name: name, Note: fmt.Sprintf("registry value set: restore %s\\%s\\%s", root, key, name)}

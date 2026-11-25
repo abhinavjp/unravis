@@ -45,6 +45,10 @@ const (
 	TierEverything ExtraTier = iota + 1
 	// TierDeep is reserved for heavier samples that only the deep profile adds.
 	TierDeep
+	// TierText is the query-text unlock. No profile includes it: ExtrasForProfile
+	// never lists it, Extras never builds it, and only ExtrasWithText does, when
+	// the owner has turned query text on (Runner.QueryTextMaxChars > 0).
+	TierText
 )
 
 // Cadences an extra may use. The Standard registry allows only 15 s and 60 s;
@@ -86,6 +90,8 @@ type extraEntry struct {
 	kind string
 	tier ExtraTier
 	new  func() Sampler
+	// newText builds a TierText sampler with its scrub size cap; nil otherwise.
+	newText func(maxChars int) Sampler
 }
 
 var (
@@ -103,6 +109,9 @@ var (
 	// extraColumnKeys is the extras' column -> JSON key table, consulted after
 	// columnKeys. A column may not be mapped two different ways.
 	extraColumnKeys = map[string]string{}
+	// extraLintFrags are the per-statement lint carve-outs (the text statement
+	// only), so lintStatement(id, text) applies the same rule at init and in tests.
+	extraLintFrags = map[string][]string{}
 )
 
 // RegisterExtraFactory registers an extra sampler. It is called from an init()
@@ -133,6 +142,26 @@ func RegisterExtraFactory(tier ExtraTier, new func() Sampler) {
 	extraRegistry = append(extraRegistry, extraEntry{kind: probe.Kind(), tier: tier, new: new})
 }
 
+// registerTextFactory registers the query-text sampler (TierText). Same startup
+// checks as RegisterExtraFactory; it is the ONLY way to register a TierText kind.
+func registerTextFactory(newText func(maxChars int) Sampler) {
+	if newText == nil {
+		panic("bbsql: nil text factory")
+	}
+	probe := newText(0)
+	if probe == nil || !extraCadenceOK[probe.Interval()] {
+		panic("bbsql: text extra has no sampler or a cadence outside the allowed set")
+	}
+	extraMu.Lock()
+	defer extraMu.Unlock()
+	for _, e := range extraRegistry {
+		if e.kind == probe.Kind() {
+			panic("bbsql: extra kind registered twice: " + probe.Kind())
+		}
+	}
+	extraRegistry = append(extraRegistry, extraEntry{kind: probe.Kind(), tier: TierText, newText: newText})
+}
+
 // topRowRe finds the TOP n an extra statement carries.
 var topRowRe = regexp.MustCompile(`(?i)\bTOP ([0-9]+)\b`)
 
@@ -141,6 +170,12 @@ var topRowRe = regexp.MustCompile(`(?i)\bTOP ([0-9]+)\b`)
 // with no TOP and no GROUP BY), approves the single FROM source it reads, and
 // panics on any violation or duplicate. Called from an init().
 func registerExtraStatement(id, text string, rowCap int, source string) {
+	registerExtraStatementFrags(id, text, rowCap, source, nil)
+}
+
+// registerExtraStatementFrags is registerExtraStatement with the lint carve-out
+// of lintStatementFrags; only the text statement (extras_qtext.go) passes frags.
+func registerExtraStatementFrags(id, text string, rowCap int, source string, frags []string) {
 	if !strings.HasPrefix(id, "bb:") {
 		panic("bbsql: extra statement id must start with bb: " + id)
 	}
@@ -168,7 +203,8 @@ func registerExtraStatement(id, text string, rowCap int, source string) {
 	}
 	lintApprovedFrom[source] = true
 	extraSources[source] = true
-	if err := lintStatement(id, text); err != nil {
+	extraLintFrags[id] = frags
+	if err := lintStatementFrags(id, text, frags); err != nil {
 		panic("bbsql: extra statement " + id + " fails the C2 grammar: " + err.Error())
 	}
 	statements[id] = text
@@ -199,12 +235,16 @@ func registerExtraRowSpec(typ reflect.Type, spec rowSpec) {
 	rowSpecs[typ] = spec
 }
 
-// ExtraKinds lists every registered extra kind, sorted.
+// ExtraKinds lists every selectable extra kind, sorted. The text sampler is
+// not selectable and is not listed.
 func ExtraKinds() []string {
 	extraMu.Lock()
 	defer extraMu.Unlock()
 	out := make([]string, 0, len(extraRegistry))
 	for _, e := range extraRegistry {
+		if e.tier == TierText {
+			continue // never selectable by kind: only the owner's text flag builds it
+		}
 		out = append(out, e.kind)
 	}
 	sort.Strings(out)
@@ -239,6 +279,14 @@ func ExtrasForProfile(profile string) []string {
 // kind. Unknown kinds and kinds that collide with a Standard kind are ignored,
 // so a config typo or a stale list can never change what is sent.
 func Extras(kinds []string) []Sampler {
+	return ExtrasWithText(kinds, 0)
+}
+
+// ExtrasWithText is Extras plus the query-text unlock. A TierText kind is built
+// ONLY when textMaxChars > 0 (the owner chose query text and a size cap); with
+// 0 it is skipped even if the kind is listed, so a config typo or a stale list
+// can never send a text statement.
+func ExtrasWithText(kinds []string, textMaxChars int) []Sampler {
 	if len(kinds) == 0 {
 		return nil
 	}
@@ -255,12 +303,19 @@ func Extras(kinds []string) []Sampler {
 	entries := make([]extraEntry, 0, len(want))
 	for _, e := range extraRegistry {
 		if want[e.kind] {
+			if e.tier == TierText && textMaxChars <= 0 {
+				continue
+			}
 			entries = append(entries, e)
 		}
 	}
 	extraMu.Unlock()
 	out := make([]Sampler, 0, len(entries))
 	for _, e := range entries {
+		if e.tier == TierText {
+			out = append(out, e.newText(textMaxChars))
+			continue
+		}
 		out = append(out, e.new())
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Kind() < out[j].Kind() })
@@ -343,7 +398,13 @@ func (r *Runner) dueExtras(now time.Time) []Sampler {
 // failure (already routed through fail) or a filesystem write failure.
 func (r *Runner) tickExtras(ctx, parent context.Context, now time.Time) error {
 	if !r.extrasReady {
-		r.extras = Extras(r.EnabledExtras)
+		wanted := r.EnabledExtras
+		if r.QueryTextMaxChars > 0 {
+			// The owner chose query text (deep profile only, decided by the host
+			// config): this is the one place the text sampler is requested.
+			wanted = append(append([]string(nil), wanted...), qtextKind)
+		}
+		r.extras = ExtrasWithText(wanted, r.QueryTextMaxChars)
 		r.extrasReady = true
 	}
 	if len(r.extras) == 0 {
@@ -384,7 +445,18 @@ func (r *Runner) tickExtras(ctx, parent context.Context, now time.Time) error {
 			r.logf("extra %s: %s", kind, "not-allowed")
 			continue
 		}
-		rows, err := Query(ctx, r.q, text, timeout)
+		qctx := ctx
+		if isTextStatement(text) {
+			// Second guard behind the construction gate: a text statement is sent
+			// only while the unlock is on, and only with the unlock in the context.
+			if r.QueryTextMaxChars <= 0 {
+				run.off = true
+				r.logf("extra %s: %s", kind, "not-allowed")
+				continue
+			}
+			qctx = withTextUnlock(ctx)
+		}
+		rows, err := Query(qctx, r.q, text, timeout)
 		if err != nil {
 			if herr := r.extraFailed(parent, s, run, now, err, clamped); herr != nil {
 				return herr
@@ -401,7 +473,11 @@ func (r *Runner) tickExtras(ctx, parent context.Context, now time.Time) error {
 			}
 			continue
 		}
-		if err := r.appendSample(SamplePath(r.Dir, now), SampleDoc{
+		path := SamplePath(r.Dir, now)
+		if kind == qtextKind {
+			path = TextSamplePath(r.Dir, now) // statement text never shares a file with the numbers the read key can fetch
+		}
+		if err := r.appendSample(path, SampleDoc{
 			V: 1, T: now.UTC(), Kind: kind, Truncated: truncated, Rows: payload,
 		}); err != nil {
 			r.fsWriteFailures++
