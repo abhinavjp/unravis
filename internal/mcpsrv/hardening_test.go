@@ -285,19 +285,16 @@ func TestStoreFilesAndFolderAreOwnerOnly(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	g, _ := NewGrants(ctx, db, nil)
 	_, _ = g.Enroll(ctx, req("h1", nonce(t))) // a write, so the -wal exists
-	if st, err := os.Stat(dir); err != nil || st.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("folder %v %v", st, err)
-	}
+	// On Windows the folder and mcp.db carry a protected DACL; -wal and -shm inherit the folder's two entries.
+	assertOwnerOnly(t, dir, true)
 	seen := 0
 	for _, name := range []string{mcpaudit.FileName, mcpaudit.FileName + "-wal", mcpaudit.FileName + "-shm"} {
-		st, err := os.Stat(filepath.Join(dir, name))
-		if err != nil {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err != nil {
 			continue
 		}
 		seen++
-		if st.Mode().Perm()&0o077 != 0 {
-			t.Errorf("%s mode %v", name, st.Mode())
-		}
+		assertOwnerOnly(t, p, name == mcpaudit.FileName)
 	}
 	if seen < 2 {
 		t.Fatalf("only %d store files seen", seen)

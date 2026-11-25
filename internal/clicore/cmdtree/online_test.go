@@ -224,7 +224,7 @@ func runCtx(t *testing.T, ctx context.Context, a clicore.Attacher, stdin string,
 	code := Run(ctx, args, IO{
 		In: strings.NewReader(stdin), Out: &out, Err: &errb,
 		Getenv: func(n string) string { return env[n] },
-		Exe:    func() (string, error) { return "/opt/unravis/bin/unravis.exe", nil },
+		Exe:    func() (string, error) { return testExe, nil },
 		Attach: a.Attach,
 	})
 	return result{code, out.String(), errb.String()}

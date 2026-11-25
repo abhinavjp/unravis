@@ -43,7 +43,8 @@ func golden(t *testing.T, name, got string) {
 	if err != nil {
 		t.Fatalf("missing golden %s (run with -update): %v", path, err)
 	}
-	if string(want) != got {
+	// The generator emits LF; a CRLF checkout (core.autocrlf on windows) has CRLF here, so compare at LF.
+	if strings.ReplaceAll(string(want), "\r\n", "\n") != got {
 		t.Errorf("%s differs from the generated text (run with -update after checking the change):\n%s", path, got)
 	}
 }

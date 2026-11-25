@@ -27,6 +27,18 @@ func utf16le(s string, bom bool) []byte {
 	return out
 }
 
+// logTempDir is a fresh folder spelled the way the log reader wants a path: with no 8.3 short names. On Windows the
+// reader refuses a path that differs from the file's final path, and the CI runner's temp folder is C:\Users\RUNNER~1\...,
+// so a log under t.TempDir() would read as unreadable there. A SQL Server log path from the registry is a long name.
+func logTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func writeFile(t *testing.T, path string, b []byte) {
 	t.Helper()
 	if err := os.WriteFile(path, b, 0o600); err != nil {
@@ -92,7 +104,7 @@ func TestClassifyLogLineUsesLocalTime(t *testing.T) {
 }
 
 func TestReadErrorLogFirstLookStartsAtTheEnd(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	r := readErrorLog(p, sqlLogCursor{}, 1<<20, utc)
 	if len(r.events) != 0 || !r.cur.Seen || r.cur.Offset != int64(len(utf16le(logBanner, true))) {
@@ -110,7 +122,7 @@ func TestReadErrorLogFirstLookStartsAtTheEnd(t *testing.T) {
 }
 
 func TestReadErrorLogLeavesAnUnfinishedLine(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
 	half := "2026-11-23 10:15:32.12 Logon       Error: 18456, Severity: 14, State: 8."
@@ -127,7 +139,7 @@ func TestReadErrorLogLeavesAnUnfinishedLine(t *testing.T) {
 }
 
 func TestReadErrorLogUTF8(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, []byte("2026-11-23 08:00:00.10 Server      hello\n"))
 	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
 	appendFile(t, p, []byte("2026-11-23 10:15:32.12 Logon       Error: 4060, Severity: 11, State: 1.\n\xff\xfe garbage\n"))
@@ -138,7 +150,7 @@ func TestReadErrorLogUTF8(t *testing.T) {
 }
 
 func TestReadErrorLogCycledFinishesTheOldTail(t *testing.T) {
-	dir := t.TempDir()
+	dir := logTempDir(t)
 	p := filepath.Join(dir, "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
@@ -163,7 +175,7 @@ func TestReadErrorLogCycledFinishesTheOldTail(t *testing.T) {
 }
 
 func TestReadErrorLogCycledWithoutOldFileCountsLost(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
 	writeFile(t, p, utf16le("2026-11-23 10:21:00.00 Logon       Error: 18456, Severity: 14, State: 5.\r\n", true))
@@ -174,7 +186,7 @@ func TestReadErrorLogCycledWithoutOldFileCountsLost(t *testing.T) {
 }
 
 func TestReadErrorLogBudgetTruncatesThenContinues(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, []byte("2026-11-23 08:00:00.10 Server      hello\n"))
 	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
 	line := "2026-11-23 10:15:32.12 Logon       Error: 4060, Severity: 11, State: 1.\n"
@@ -195,7 +207,7 @@ func TestReadErrorLogBudgetTruncatesThenContinues(t *testing.T) {
 }
 
 func TestReadErrorLogGiantLineDoesNotStall(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, []byte("x\n"))
 	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
 	appendFile(t, p, []byte(strings.Repeat("a", 5000)+"\n2026-11-23 10:15:32.12 Logon       Error: 4060, Severity: 11, State: 1.\n"))
@@ -211,7 +223,7 @@ func TestReadErrorLogGiantLineDoesNotStall(t *testing.T) {
 }
 
 func TestReadErrorLogRefusesNonRegularFiles(t *testing.T) {
-	dir := t.TempDir()
+	dir := logTempDir(t)
 	if r := readErrorLog(filepath.Join(dir, "missing"), sqlLogCursor{}, 1<<20, utc); !r.unreadable {
 		t.Fatal("a missing file must count as unreadable")
 	}
@@ -235,7 +247,7 @@ func TestReadErrorLogRefusesNonRegularFiles(t *testing.T) {
 // The ERRORLOG holds text that can name logins, hosts, files and statements. Only
 // numbers and fixed words may reach a sample.
 func TestSQLLogNeverKeepsText(t *testing.T) {
-	dir := t.TempDir()
+	dir := logTempDir(t)
 	p := filepath.Join(dir, "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	g := newTestLogGroup(p, true, false)
@@ -301,7 +313,7 @@ func TestSQLLogAggregatesAndCountsLatest(t *testing.T) {
 }
 
 func TestSQLLogAckMovesTheCursorOnlyAfterTheWrite(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	g := newTestLogGroup(p, true, false)
 	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
@@ -335,7 +347,7 @@ func TestSQLLogAckMovesTheCursorOnlyAfterTheWrite(t *testing.T) {
 }
 
 func TestSQLLogQuietBetweenPolls(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	reads := 0
 	g := newTestLogGroup(p, true, false)
@@ -359,7 +371,7 @@ func TestSQLLogQuietBetweenPolls(t *testing.T) {
 }
 
 func TestSQLLogUnreadableFileIsNamed(t *testing.T) {
-	g := newTestLogGroup(filepath.Join(t.TempDir(), "ERRORLOG"), true, false)
+	g := newTestLogGroup(filepath.Join(logTempDir(t), "ERRORLOG"), true, false)
 	v, err := g.Collect(time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC), 15)
 	if err != nil || v == nil || v.(*SQLLogGroup).Unreadable != 1 {
 		t.Fatalf("a file that cannot be read must show, not vanish: (%v, %v)", v, err)
@@ -367,7 +379,7 @@ func TestSQLLogUnreadableFileIsNamed(t *testing.T) {
 }
 
 func TestSQLLogInstanceChecks(t *testing.T) {
-	root := t.TempDir()
+	root := logTempDir(t)
 	good := filepath.Join(root, "ERRORLOG")
 	g := &sqlLogGroup{discover: func() []sqlLogInstance {
 		return []sqlLogInstance{
@@ -386,7 +398,7 @@ func TestSQLLogInstanceChecks(t *testing.T) {
 }
 
 func TestSQLLogSystemHealthNotAvailableIsNamedOnce(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	g := newTestLogGroup(p, false, true)
 	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
@@ -401,7 +413,7 @@ func TestSQLLogSystemHealthNotAvailableIsNamedOnce(t *testing.T) {
 }
 
 func TestSQLLogSystemHealthEventsAreCountedOnce(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
 	events := []rawHealth{
@@ -495,7 +507,7 @@ func TestSQLLogSampleRoundTripAndAck(t *testing.T) {
 }
 
 func TestSQLLogDropsLinesDatedInTheFuture(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	g := newTestLogGroup(p, true, false)
 	now := time.Date(2026, 11, 23, 10, 0, 0, 0, time.UTC)
@@ -520,7 +532,7 @@ func TestSQLLogPathOKRefusesNetworkAndDevicePaths(t *testing.T) {
 }
 
 func TestSQLLogUnknownHealthKindIsDropped(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
 	g := newTestLogGroup(p, false, true)
@@ -538,7 +550,7 @@ func TestSQLLogUnknownHealthKindIsDropped(t *testing.T) {
 }
 
 func TestSQLLogNotAvailableIsSaidWithSeveralInstances(t *testing.T) {
-	root := t.TempDir()
+	root := logTempDir(t)
 	a, b := filepath.Join(root, "a", "ERRORLOG"), filepath.Join(root, "b", "ERRORLOG")
 	for _, p := range []string{a, b} {
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -557,7 +569,7 @@ func TestSQLLogNotAvailableIsSaidWithSeveralInstances(t *testing.T) {
 }
 
 func TestSQLLogRepeatedFlagBatchesAreAckedOneByOne(t *testing.T) {
-	g := newTestLogGroup(filepath.Join(t.TempDir(), "ERRORLOG"), true, false) // missing file: Unreadable every poll
+	g := newTestLogGroup(filepath.Join(logTempDir(t), "ERRORLOG"), true, false) // missing file: Unreadable every poll
 	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
 	v1, _ := g.Collect(now, 15)
 	if v1 == nil {
@@ -579,7 +591,7 @@ func TestSQLLogRepeatedFlagBatchesAreAckedOneByOne(t *testing.T) {
 }
 
 func TestReadErrorLogTwoLogsStartedInTheSameMinuteAreTold(t *testing.T) {
-	dir := t.TempDir()
+	dir := logTempDir(t)
 	p := filepath.Join(dir, "ERRORLOG")
 	first := "2026-11-23 10:15:01.10 Server      Microsoft SQL Server 2019\r\n2026-11-23 10:15:01.11 Server      SQL Server is starting at normal priority base (=7).\r\n"
 	second := "2026-11-23 10:15:09.40 Server      Microsoft SQL Server 2019\r\n2026-11-23 10:15:09.41 Server      SQL Server is starting at normal priority base (=7).\r\n"
@@ -596,7 +608,7 @@ func TestReadErrorLogTwoLogsStartedInTheSameMinuteAreTold(t *testing.T) {
 }
 
 func TestReadErrorLogTruncatedInPlaceReadsFromTheTop(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner+logBanner, true))
 	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
 	writeFile(t, p, utf16le("2026-11-23 10:21:00.00 Logon       Error: 18456, Severity: 14, State: 5.\r\n", true))
@@ -607,7 +619,7 @@ func TestReadErrorLogTruncatedInPlaceReadsFromTheTop(t *testing.T) {
 }
 
 func TestReadErrorLogOddUTF16TailWaits(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	p := filepath.Join(logTempDir(t), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
 	line := utf16le("2026-11-23 10:15:32.12 Logon       Error: 18456, Severity: 14, State: 8.\r\n", false)

@@ -34,10 +34,12 @@ func TestGoldenDts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("missing %s: %v", goldenPath, err)
 	}
-	if string(want) != res.DTS {
+	// The generator emits LF; a CRLF checkout (core.autocrlf on windows) has CRLF here, so compare at LF.
+	wantText := strings.ReplaceAll(string(want), "\r\n", "\n")
+	if wantText != res.DTS {
 		t.Errorf("unravis.d.ts changed. Run `go test ./internal/codemode/bindings -update`, read the diff, and explain it in the PR.\nFirst line now: %s", strings.SplitN(res.DTS, "\n", 2)[0])
 	}
-	if !strings.HasPrefix(string(want), "// schema_sha256: "+res.SchemaSHA256+"\n") {
+	if !strings.HasPrefix(wantText, "// schema_sha256: "+res.SchemaSHA256+"\n") {
 		t.Error("golden hash line does not match the generated hash")
 	}
 }
