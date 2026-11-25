@@ -44,6 +44,7 @@ func cmdRunPR(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	workflow := fs.String("workflow", "", "run this workflow file whatever the base branch is")
 	keep := fs.Bool("keep", false, "keep the worktree after the run")
 	slots := fs.Int("slots", 2, "jobs at once")
+	trustOwner := fs.Bool("trust-owner-branch", false, "for a run you start by hand: trust the runner definition of your own pull request even when its commits carry no GitHub login")
 	var wfFor, protect, vars, trustedBase, allowEnv multiFlag
 	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
 	fs.Var(&protect, "protect", "extra path read from the base branch for pull requests of non-owners (repeatable; added to the defaults)")
@@ -98,7 +99,7 @@ func cmdRunPR(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	res, err := localci.RunPR(ctx, localci.PROptions{
 		Store: store, Host: newHost(environ), Repo: *repo, Number: number, OriginURL: *origin,
 		Workflows: workflows, Workflow: *workflow, Protect: append(append([]string{}, defaultProtect...), protect...),
-		Keep: *keep, Env: scrubEnv(environ, allowEnv), Vars: varMap, Slots: *slots,
+		TrustOwnerBranch: *trustOwner, Keep: *keep, Env: scrubEnv(environ, allowEnv), Vars: varMap, Slots: *slots,
 		TrustedBases: trustedBases(workflows, trustedBase), Redact: redact, Log: stdout,
 	})
 	if res != nil && res.Run != nil {

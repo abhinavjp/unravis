@@ -38,12 +38,12 @@ func TestStepEnvGivesTheRunAProfileOfItsOwn(t *testing.T) {
 	if !pathInside(s.CachesPath(), m["GOPATH"]) || !pathInside(s.CachesPath(), m["GOCACHE"]) {
 		t.Errorf("GOPATH %q GOCACHE %q must be inside the store's caches", m["GOPATH"], m["GOCACHE"])
 	}
-	for k, want := range map[string]string{"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "credential.helper", "GIT_CONFIG_VALUE_0": "", "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "KEEP": "yes"} {
+	for k, want := range map[string]string{"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "credential.helper", "GIT_CONFIG_VALUE_0": "", "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "KEEP": "yes", "GH_TOKEN": NoTokenPlaceholder, "GITHUB_TOKEN": NoTokenPlaceholder, "GH_PROMPT_DISABLED": "1"} {
 		if got, ok := m[k]; !ok || got != want {
 			t.Errorf("%s = %q (set %v), want %q", k, got, ok, want)
 		}
 	}
-	for _, k := range []string{"SSH_AUTH_SOCK", "GH_TOKEN"} {
+	for _, k := range []string{"SSH_AUTH_SOCK"} {
 		if _, ok := m[k]; ok {
 			t.Errorf("%s must be removed", k)
 		}
