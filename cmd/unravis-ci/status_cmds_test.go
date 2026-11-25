@@ -400,3 +400,30 @@ func TestFallbackCommandRefusesAndExplains(t *testing.T) {
 		}
 	}
 }
+
+func TestCompareSaveWritesTheReportTheDashboardReads(t *testing.T) {
+	f := withStatusFakes(t)
+	state := t.TempDir()
+	sha := strings.Repeat("c", 40)
+	now := time.Now()
+	seedIndex(t, state, localci.IndexEntry{RunID: "run1", Workflow: "fast-gate.yml", Event: "pull_request", Repo: "acme/widgets", PR: 4, BaseRef: "develop", HeadRef: "f",
+		HeadSHA: sha, Conclusion: "success", Start: now.Add(-time.Minute), End: now})
+	f.source.Results = map[string]localci.GHChecks{sha: {
+		Runs:     []localci.GHCheck{{Name: "fast-build", State: "success", Outcome: localci.OutcomePass}},
+		Statuses: []localci.GHCheck{{Name: "local/fast-build", State: "success", Outcome: localci.OutcomePass}},
+	}}
+	f.source.Tips = map[string]string{"develop": strings.Repeat("d", 40), "master": strings.Repeat("e", 40)}
+	if code, _, e := cli(t, nil, "compare", "--repo", "acme/widgets", "--state", state); code != exitOK {
+		t.Fatalf("%d %s", code, e)
+	}
+	if rep, err := localci.ReadCompare(state); err != nil || rep != nil {
+		t.Fatalf("without --save nothing is written: %v %v", rep, err)
+	}
+	if code, _, e := cli(t, nil, "compare", "--repo", "acme/widgets", "--state", state, "--save"); code != exitOK {
+		t.Fatalf("%d %s", code, e)
+	}
+	rep, err := localci.ReadCompare(state)
+	if err != nil || rep == nil || rep.Repo != "acme/widgets" || rep.Streak != 1 || rep.Agree != 1 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+}

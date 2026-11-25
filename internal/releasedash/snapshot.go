@@ -79,6 +79,8 @@ type Dash struct {
 	Keys      []update.Key
 	GH        *GH
 	FeedGap   time.Duration // zero: 5 minutes
+	// Projects is the per-project config record (see Project). Empty: one project with the default labels and no CI store.
+	Projects []Project
 	// OnRequest runs for every accepted request and OnBye when the page says it is closing. The desktop program uses them to
 	// stop itself when its window is closed.
 	OnRequest func()
