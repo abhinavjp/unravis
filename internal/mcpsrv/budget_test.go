@@ -239,7 +239,7 @@ func TestCodeRunCallsShareTheHostBudgets(t *testing.T) {
 		if refused != nil {
 			t.Fatalf("script comparison %d refused: %v", i+1, refused)
 		}
-		end([]byte(`{"ok":1}`), false)
+		_ = end([]byte(`{"ok":1}`), false)
 		r.clk.Add(time.Minute)
 	}
 	// The 13th is refused, from either door, and neither reaches the dashboard.
@@ -258,7 +258,7 @@ func TestCodeRunCallsShareTheHostBudgets(t *testing.T) {
 	if _, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`), false); refused != nil {
 		t.Errorf("guide: %v", refused)
 	} else {
-		end([]byte(`{}`), false)
+		_ = end([]byte(`{}`), false)
 	}
 	if c := r.call(other, "audit_compare", r.compareArgs()); !c.OK || c.IsError {
 		t.Errorf("another host: %.300s", c.Raw)
@@ -285,7 +285,7 @@ func TestCodeRunCallsShareTheHostBudgets(t *testing.T) {
 	if _, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", args, false); refused != nil {
 		t.Errorf("after the hour: %v", refused)
 	} else {
-		end([]byte(`{}`), false)
+		_ = end([]byte(`{}`), false)
 	}
 }
 

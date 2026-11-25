@@ -938,7 +938,7 @@ func (r *run) hostCall(ctx context.Context, tool string, args []byte) (body []by
 	if refused != nil {
 		return nil, false, &denial{status: casestore.CallDenied, wire: refused.Code, msg: refused.Message}
 	}
-	defer end(nil, true) // a panic: the slots are given back, the call counts as failed; a no-op after the real end
+	defer func() { _ = end(nil, true) }() // a panic: the slots are given back, the call counts as failed; a no-op after the real end
 	body, isErr = r.safeHostCall(callCtx, tool, args)
 	if ref := end(body, isErr); ref != nil {
 		return nil, false, &denial{status: casestore.CallDenied, wire: ref.Code, msg: ref.Message}

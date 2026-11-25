@@ -189,7 +189,7 @@ func TestCodeCallPanicBeforeHandOffLeaksNoSlot(t *testing.T) {
 			d := r.panicDisp(rec)
 			tc.set(rec, true)
 			for i := 0; i < MaxInFlight+1; i++ { // more than the host may have in flight
-				if !panics(func() { d.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`), false) }) {
+				if !panics(func() { _, _, _ = d.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`), false) }) {
 					t.Fatalf("attempt %d did not panic", i)
 				}
 			}
@@ -242,7 +242,8 @@ func TestCodeCallEndTwiceDoesNotGoNegative(t *testing.T) {
 	if refused != nil {
 		t.Fatal(refused)
 	}
-	if end(nil, false) != nil || end(nil, false) != nil {
+	first := end(nil, false)
+	if second := end(nil, false); first != nil || second != nil {
 		t.Error("end refused an unchanged grant")
 	}
 	if r.disp.total != 1 || r.disp.perProf["cc-twice"] != 1 {
