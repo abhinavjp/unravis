@@ -11,8 +11,9 @@
 //
 // Gated by bb:hadr exactly like bb:ag: an instance without availability groups
 // never has the DMV queried. Rows are grouped by database and by local/remote,
-// so a primary with several secondaries gets the biggest queue and the slowest
-// rate of its remotes in one row (two rows per database: 64 databases fit the
+// so a primary with several secondaries gets the biggest queue and the lowest reported
+// rate of its remotes in one row (a rate of 0 means an idle or caught-up replica, so a 0 beside a large queue is a stalled one, and a 0
+// beside an empty queue is normal; two rows per database: 64 databases fit the
 // cap); no replica id, server or availability group name is ever
 // selected (the lint refuses availability_replicas, and the replica id is not
 // in the select list).

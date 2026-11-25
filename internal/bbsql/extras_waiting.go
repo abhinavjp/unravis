@@ -32,7 +32,7 @@ const stmtWaiting = setPrefix + `SELECT TOP 65 wait_type,
 FROM sys.dm_os_waiting_tasks
 WHERE wait_type IS NOT NULL AND session_id > 50 AND session_id <> @@SPID
 GROUP BY wait_type
-ORDER BY COUNT(*) DESC /* unravis:bb:waiting */`
+ORDER BY COUNT(*) DESC, wait_type /* unravis:bb:waiting */`
 
 // Waiting is the bb:waiting payload: one row per wait type.
 type Waiting struct {

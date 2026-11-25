@@ -903,3 +903,18 @@ func TestAGDetailNullHealthIsAbsent(t *testing.T) {
 		t.Errorf("agdetail = %s", xbMarshal(t, got))
 	}
 }
+
+// The per-database counters sort after the server-wide ones, so a cut on a server with many databases drops database rows, never the
+// server-wide ones (docs/BACKLOG.md BL-555 says so).
+func TestPerfctrKeepsServerWideRowsFirst(t *testing.T) {
+	if !strings.Contains(stmtPerfctr, "ORDER BY pc_inst, pc_db") {
+		t.Fatal("perfctr no longer sorts server-wide rows ahead of per-database rows")
+	}
+}
+
+// Ties at the TOP 65 boundary are broken by name, so the kept wait types do not change from one sample to the next.
+func TestWaitingOrderIsDeterministic(t *testing.T) {
+	if !strings.Contains(stmtWaiting, "ORDER BY COUNT(*) DESC, wait_type") {
+		t.Fatal("waiting has no tiebreaker")
+	}
+}
