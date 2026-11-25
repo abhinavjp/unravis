@@ -184,11 +184,13 @@ func TestCodeRunDeadlineAndCancel(t *testing.T) {
 	h := codeHandler(fakeCode{run: func(ctx context.Context, _ CodeRunInput) (any, error) {
 		started <- struct{}{}
 		<-ctx.Done()
-		return map[string]any{"status": "cancelled", "error": map[string]any{"code": "cancelled"}}, nil // the broker's answer to an ended context
+		return map[string]any{"runId": "01RUNIDAAAAAAAAAAAAAAAAAAA", "status": "cancelled", "error": map[string]any{"code": "cancelled"}}, nil // the broker's answer to an ended context
 	}})
 	r := post(t, h, "/cli/v1/op", `{"op":"code.run","args":{"code":"while(1){}"},"requestId":"`+rid+`","deadlineMs":50}`)
 	if r.OK || r.Error.Code != "TIMEOUT" {
 		t.Errorf("deadline: %s", r.Raw)
+	} else if !strings.Contains(r.Error.Message, "01RUNIDAAAAAAAAAAAAAAAAAAA") {
+		t.Errorf("the answer does not name the run that was recorded: %q", r.Error.Message)
 	}
 	<-started
 
@@ -204,6 +206,8 @@ func TestCodeRunDeadlineAndCancel(t *testing.T) {
 	case r := <-done:
 		if r.OK || r.Error.Code != "CANCELED" {
 			t.Errorf("cancel mid-run: %s", r.Raw)
+		} else if !strings.Contains(r.Error.Message, "01RUNIDAAAAAAAAAAAAAAAAAAA") {
+			t.Errorf("the answer does not name the run that was recorded: %q", r.Error.Message)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("a cancelled run did not end")

@@ -96,12 +96,31 @@ func (s *server) codeRun(ctx context.Context, args json.RawMessage) (any, *clico
 		return nil, clicore.CodeModeError(ref.Code)
 	case ctx.Err() != nil:
 		// The call's own deadline or a cancel ended the run, and the broker has already ended the script. The record in the case says
-		// it was cancelled; the command line says why.
-		return nil, ctxError(ctx)
+		// it was cancelled; the command line says why, and names the run so its record and logs can be found.
+		e := ctxError(ctx)
+		if id := runIDOf(res); id != "" {
+			e.Message += " The run was recorded in the case as " + id + "."
+		}
+		return nil, e
 	case err != nil:
 		return nil, clicore.NewErrorAfterWork(clicore.CodeInternal, "The app hit an internal problem and stopped the run. The app is unaffected.", "Run the script again.")
 	}
 	return res, nil
+}
+
+// runIDOf is the id of the run that the broker answered with (the broker's RunResult), or "" when the answer has none.
+func runIDOf(res any) string {
+	raw, err := json.Marshal(res)
+	if err != nil {
+		return ""
+	}
+	var probe struct {
+		RunID string `json:"runId"`
+	}
+	if json.Unmarshal(raw, &probe) != nil {
+		return ""
+	}
+	return probe.RunID
 }
 
 // codeMeta is the meta of an accepted run. The run says itself whether identifiers were hidden; a result or a log cut at its limit
