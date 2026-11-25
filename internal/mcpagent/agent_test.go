@@ -258,7 +258,7 @@ func TestCredentialFileIsSealedAndPrivate(t *testing.T) {
 	// the plain secret is nowhere in the file or in the folder
 	entries, _ := os.ReadDir(r.credDr)
 	for _, e := range entries {
-		b, _ := os.ReadFile(filepath.Join(r.credDr, e.Name()))
+		b, _ := os.ReadFile(filepath.Join(r.credDr, e.Name())) //nolint:gosec // a test file in the test folder
 		if strings.Contains(string(b), c.Secret) && !bytes.HasPrefix(b, []byte("S:user:")) {
 			t.Errorf("%s holds the secret unsealed", e.Name())
 		}
@@ -588,7 +588,7 @@ func TestATransientClaimFailureKeepsTheNonce(t *testing.T) {
 	_ = call(t, a, "audit_get_guide") // enrolls, waits for approval
 	r.approve("agent-5")
 	path := filepath.Join(r.credDr, "bridge-agent-5.cred")
-	before, err := os.ReadFile(path)
+	before, err := os.ReadFile(path) //nolint:gosec // a test file in the test folder
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +597,7 @@ func TestATransientClaimFailureKeepsTheNonce(t *testing.T) {
 	if !e.isError || code(e) != "backend_unavailable" {
 		t.Fatalf("on a claim fault: %.300s", e.body)
 	}
-	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(before, after) {
+	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(before, after) { //nolint:gosec // a test file in the test folder
 		t.Fatalf("the nonce was not kept: %v", err)
 	}
 	// the next call claims with the same nonce and gets the secret
