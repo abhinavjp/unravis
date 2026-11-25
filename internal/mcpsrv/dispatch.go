@@ -71,8 +71,10 @@ type Deps struct {
 	Recorder Recorder
 	Info     func() Info
 	Budgets  Budgets // zero value: DefaultBudgets
-	Now      func() time.Time
-	Logf     func(format string, args ...any) // fixed text only
+	// Code runs unravis_types and unravis_execute (BL-574). Nil: both tools are refused as "code mode is off".
+	Code CodeBackend
+	Now  func() time.Time
+	Logf func(format string, args ...any) // fixed text only
 }
 
 // Info is what the owner says about itself in hello.
@@ -120,11 +122,12 @@ var (
 type Dispatcher struct {
 	d Deps
 
-	lim     *limiter
-	mu      sync.Mutex
-	perProf map[string]int
-	total   int
-	byCall  map[string]context.CancelFunc // profile id + "\x00" + call id
+	lim      *limiter
+	mu       sync.Mutex
+	perProf  map[string]int
+	total    int
+	byCall   map[string]context.CancelFunc // profile id + "\x00" + call id
+	codeRuns map[string]bool               // profiles with an unravis_execute running (codetools.go)
 }
 
 // NewDispatcher checks the parts and builds the dispatcher. It also tells the backend to forget a profile whose access ended
@@ -213,6 +216,9 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 	var req callReq
 	if status, a, ok := parseCall(body, &req); !ok {
 		return status, a
+	}
+	if mcp.IsCodeTool(req.Tool) {
+		return s.callCode(ctx, pr, &req) // before the call slot: see codetools.go
 	}
 	callCtx, cancelCall := context.WithCancel(ctx)
 	defer cancelCall()

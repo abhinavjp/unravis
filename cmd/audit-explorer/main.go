@@ -347,7 +347,7 @@ func run(args []string, getenv func(string) string) error {
 		serverOptions = append(serverOptions, server.WithPower(idlePower))
 	}
 	served := server.New(wired.repo, explorer.Assets(), token, f.demo, serverOptions...)
-	mountCodeMode(getenv, served, token, codeMount)
+	codeBroker := mountCodeMode(getenv, served, token, codeMount)
 	if f.demo && !pipeMode {
 		closeDemoMCP := openDemoMCP(appCtx, getenv, wired.repo, mcpMount)
 		defer closeDemoMCP()
@@ -395,7 +395,7 @@ func run(args []string, getenv func(string) string) error {
 	}
 	if pipes != nil {
 		pipeOpts := []pipesrv.Option{pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel))}
-		mcpHandler, closeMCP := openMCPEndpoint(appCtx, getenv, served, token, f.demo, sealedfile.CurrentUser, withMCPMount(mcpMount))
+		mcpHandler, closeMCP := openMCPEndpoint(appCtx, getenv, served, token, f.demo, sealedfile.CurrentUser, withMCPMount(mcpMount), withCodeBroker(codeBroker))
 		defer closeMCP() // runs after the servers have stopped (awaitShutdownWithin below)
 		if mcpHandler != nil {
 			pipeOpts = append(pipeOpts, pipesrv.WithMCP(mcpHandler))

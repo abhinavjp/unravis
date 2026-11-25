@@ -216,23 +216,31 @@ func oversized(id json.RawMessage) []byte {
 // newSDKServer builds the SDK server over bridge b. life is the loop's own context: a tool call ends with it (host closed the pipe, parent
 // cancelled, output failed) even if the SDK's per-request context were to outlive the session, and workers lets the loop wait for the
 // calls still running before it returns, as the hand-rolled loop did.
-func newSDKServer(b *Bridge, life context.Context, workers *sync.WaitGroup) *sdk.Server {
+func newSDKServer(b Caller, withCode bool, life context.Context, workers *sync.WaitGroup) *sdk.Server {
+	instructions := serverInstructions
+	if withCode {
+		instructions = serverInstructionsCode
+	}
 	srv := sdk.NewServer(&sdk.Implementation{Name: "unravis", Version: serverVersion()}, &sdk.ServerOptions{
-		Instructions: serverInstructions,
+		Instructions: instructions,
 		// Tools only: no logging (the SDK's default), and no list-changed notifications.
 		Capabilities: &sdk.ServerCapabilities{Tools: &sdk.ToolCapabilities{}},
 		// Nothing here is shared: the catalog and the results depend on who is connected. Never cacheable, never public.
 		SetCacheable: func(_ context.Context, _ sdk.Request, c *sdk.Cacheable) { c.TTLMs, c.CacheScope = 0, "private" },
 	})
 	order := map[string]int{}
-	for i, def := range tools() {
+	catalog := tools()
+	if withCode {
+		catalog = append(catalog, codeTools()...) // after the ten, in this order
+	}
+	for i, def := range catalog {
 		name, _ := def["name"].(string)
 		description, _ := def["description"].(string)
 		order[name] = i
 		hints, _ := def["annotations"].(map[string]any)
 		destructive, openWorld := hints["destructiveHint"] == true, hints["openWorldHint"] == true
 		srv.AddTool(&sdk.Tool{
-			Name: name, Description: description, InputSchema: def["inputSchema"], OutputSchema: outputSchema(name),
+			Name: name, Description: description, InputSchema: def["inputSchema"], OutputSchema: toolOutputSchema(name),
 			Annotations: &sdk.ToolAnnotations{ReadOnlyHint: hints["readOnlyHint"] == true, DestructiveHint: &destructive, IdempotentHint: hints["idempotentHint"] == true, OpenWorldHint: &openWorld},
 		}, func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
 			workers.Add(1)
@@ -273,8 +281,21 @@ func toolResult(body []byte, isError bool) *sdk.CallToolResult {
 	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: string(body)}}, StructuredContent: json.RawMessage(body), IsError: isError}
 }
 
+// toolOutputSchema is the output schema of a tool: the code tools have none (their answer is the run record or the declarations, not the
+// envelope of the audit tools).
+func toolOutputSchema(name string) any {
+	if IsCodeTool(name) {
+		return nil
+	}
+	return outputSchema(name)
+}
+
 // Serve runs newline-delimited MCP over input and output until the input ends or parent is cancelled. Logs must never go to output.
 func (b *Bridge) Serve(parent context.Context, input io.Reader, output io.Writer) error {
+	return serve(parent, b, false, input, output)
+}
+
+func serve(parent context.Context, b Caller, withCode bool, input io.Reader, output io.Writer) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	var pending inflight
@@ -317,7 +338,7 @@ func (b *Bridge) Serve(parent context.Context, input io.Reader, output io.Writer
 	var workers sync.WaitGroup
 	// The line cap is enforced above, on the line itself. The SDK counts bytes its decoder reads ahead too, so its own cap sits higher and
 	// only backs the first one up.
-	_ = newSDKServer(b, callsCtx, &workers).Run(ctx, &sdk.IOTransport{Reader: pr, Writer: out, MaxLineLength: 2 * maxMessage})
+	_ = newSDKServer(b, withCode, callsCtx, &workers).Run(ctx, &sdk.IOTransport{Reader: pr, Writer: out, MaxLineLength: 2 * maxMessage})
 	cancel()
 	_ = pr.Close()
 	workers.Wait()

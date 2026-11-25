@@ -98,10 +98,12 @@ type Broker struct {
 	learn func(tool string, answer []byte) privacy.IDs
 	// tamper, in tests only, edits what a Guard call returned (stage names the call), so a test can prove that the second nets that
 	// stand behind the Guard really stop an address the Guard let through. Nil in production.
-	tamper func(stage, text string) string
-	mu     sync.Mutex
-	active map[string]*run
-	swept  map[string]bool
+	tamper     func(stage, text string) string
+	mu         sync.Mutex
+	active     map[string]*run
+	swept      map[string]bool
+	admit      CallAdmitter // Config.Admit, or what SetAdmit bound later; guarded by mu
+	admitBound bool         // SetAdmit was called: b.admit is the answer even when it is nil
 }
 
 // New builds a Broker. It reads the tool catalog once (the same source tools/list and unravis.d.ts come from), so the tool names a
@@ -121,7 +123,7 @@ func New(cfg Config) (*Broker, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Broker{cfg: cfg, schema: types.SchemaSHA256, tools: names, slots: make(chan struct{}, MaxConcurrentRuns),
+	return &Broker{cfg: cfg, admit: cfg.Admit, schema: types.SchemaSHA256, tools: names, slots: make(chan struct{}, MaxConcurrentRuns),
 		runCap: RunCap, minTime: MinTimeout, helloWait: HelloTimeout, active: map[string]*run{}, swept: map[string]bool{}}, nil
 }
 
@@ -219,6 +221,45 @@ func (b *Broker) CancelCase(caseID string) int {
 	return len(hit)
 }
 
+// CancelGrant ends every live run that carries the grant's profile id (cancelled): the app calls it when the grant is revoked, so a run
+// that is already going does not outlive the access it was started under. An empty id ends none. It returns how many it told to stop.
+// A run that is still being registered when this runs is ended by the context it was started with (the grant's own call context), which
+// the revoke cancels too; this method catches the runs that are already live.
+func (b *Broker) CancelGrant(profileID string) int {
+	if profileID == "" {
+		return 0
+	}
+	b.mu.Lock()
+	var hit []*run
+	for _, r := range b.active {
+		if r.req.Scoped && r.req.ProfileID == profileID {
+			hit = append(hit, r)
+		}
+	}
+	b.mu.Unlock()
+	for _, r := range hit {
+		r.fail(CodeCancelled, "")
+	}
+	return len(hit)
+}
+
+// SetAdmit binds the call admitter of the host (Dispatcher.AdmitCodeCall) after the broker was built: the broker and the dispatcher are
+// made in different places and each needs the other. Until it is set (or when it is set to nil) every scoped run is refused.
+func (b *Broker) SetAdmit(a CallAdmitter) {
+	b.mu.Lock()
+	b.admit, b.admitBound = a, true
+	b.mu.Unlock()
+}
+
+func (b *Broker) admitter() CallAdmitter {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.admitBound {
+		return b.cfg.Admit // a broker made without New (a test) has only its Config
+	}
+	return b.admit
+}
+
 // OnCaseOpen closes the runs of a case that were left open by a crash (spec 3.5 step 9). The app calls it when a case is opened; Run
 // also calls it once per case before its first run, so a caller that forgets cannot leave an old open run behind. It only closes runs
 // older than casestore.OrphanGrace, so a live run in another window is left alone.
@@ -271,7 +312,7 @@ func (b *Broker) cleanRequest(req *RunRequest) *Refusal {
 		if len(mcpsrv.GrantTools(req.Tier, req.Tools)) == 0 || req.ProfileID == "" {
 			return refuse(CodeDenied, "A run with a source scope must carry the profile and the tool list of its grant.")
 		}
-		if b.cfg.Admit == nil {
+		if b.admitter() == nil {
 			return refuse(CodeDenied, "A run with a source scope needs the call budgets of its host, and none are set up.")
 		}
 	}

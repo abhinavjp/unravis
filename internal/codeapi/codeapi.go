@@ -415,3 +415,7 @@ func Resolver(m *server.CodeMount) codemode.CaseResolver {
 		return store, id, nil
 	}
 }
+
+// ManyOpen says whether the resolver, in a context from WithLeases, found more than one case open and none named (the reason of a
+// no_case refusal that the host can fix by naming one).
+func ManyOpen(ctx context.Context) bool { return leasesOf(ctx).many() }
