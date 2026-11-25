@@ -9,7 +9,6 @@ import { test, expect, type Page } from '../support/fixtures';
 type Prof = { id: string; state: string; rev: number; contested: number; tools: string[]; sources: string[]; tier: string; identifiers: boolean };
 
 async function openPanel(page: Page) {
-  await page.goto('/');
   await page.getByRole('button', { name: 'AI access', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'AI access', level: 2 })).toBeVisible();
   await expect(page.getByTestId('mcp-panel')).toBeVisible();
@@ -60,7 +59,7 @@ test('AIA-03: approve narrows to what the person picked, sends the revision of t
   page.on('request', (r) => { if (r.method() === 'POST' && r.url().includes('/api/mcp/profiles/claude-desktop/approve')) posted.push(JSON.parse(r.postData() ?? '{}')); });
   await card.getByTestId('mcp-approve').click();
   await expect(page.locator('[data-testid="mcp-row"][data-profile="claude-desktop"]')).toBeVisible();
-  await expect(page.getByTestId('mcp-card')).toHaveCount(1);
+  await expect(page.locator('[data-testid="mcp-card"][data-profile="claude-desktop"]')).toHaveCount(0);
   expect(posted).toHaveLength(1);
   expect(posted[0].expectRev).toBe(before.rev);
   const after = await get(api, 'claude-desktop');
@@ -106,6 +105,20 @@ test('AIA-05: Start over drops a contested entry back to nothing connected; the 
   await expect(page.locator('[data-testid="mcp-card"][data-profile="cursor"]').getByTestId('mcp-approve')).toHaveCount(0);
 });
 
+// AIA-08 runs before AIA-06 on purpose: the specs share one grant store and AIA-06 starts vscode over (it is no longer approved after that).
+test('AIA-08: Stop all AI access is one press, shows Resume, keeps the approvals, and Resume lifts it', async ({ page, api }) => {
+  await openPanel(page);
+  await page.getByRole('button', { name: 'Stop all AI access', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Resume AI access', exact: true })).toBeVisible();
+  await expect(page.getByText('AI access is stopped', { exact: true })).toBeVisible();
+  expect((await list(api)).stopped).toBe(true);
+  expect((await get(api, 'vscode')).state).toBe('active');
+  await expect(page.locator('[data-testid="mcp-row"][data-profile="vscode"] [data-testid="mcp-row-state"]')).toHaveText('Stopped');
+  await page.getByRole('button', { name: 'Resume AI access', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Stop all AI access', exact: true })).toBeVisible();
+  expect((await list(api)).stopped).toBe(false);
+});
+
 test('AIA-06: revoke ends an approved host, Allow again starts it over, Remove clears an ended entry', async ({ page, api }) => {
   await openPanel(page);
   const row = page.locator('[data-testid="mcp-row"][data-profile="vscode"]');
@@ -121,7 +134,8 @@ test('AIA-06: revoke ends an approved host, Allow again starts it over, Remove c
   expect((await get(api, 'vscode')).state).toBe('pending');
 });
 
-test('AIA-07: a card that changed in another window is refused and the list is read again', async ({ page, api }) => {
+test('AIA-07: a card that changed in another window is refused and the list is read again', async ({ page, api, allow }) => {
+  allow(/409.*\/api\/mcp\/profiles\/zed\/deny/, 'the stale card is refused on purpose');
   // The page keeps showing the list as it was (the other window's change is not read yet), so the card is still on screen when Deny is pressed.
   const frozen = JSON.stringify((await api('GET', '/api/mcp/profiles')).json);
   await page.route('**/api/mcp/profiles', (route) => (route.request().method() === 'GET' ? route.fulfill({ status: 200, contentType: 'application/json', body: frozen }) : route.continue()));
@@ -133,19 +147,6 @@ test('AIA-07: a card that changed in another window is refused and the list is r
   await card.getByTestId('mcp-deny').click();
   await expect(page.getByTestId('mcp-note')).toContainText('This entry changed while you were looking');
   expect((await get(api, 'zed')).state).toBe('pending');
-});
-
-test('AIA-08: Stop all AI access is one press, shows Resume, keeps the approvals, and Resume lifts it', async ({ page, api }) => {
-  await openPanel(page);
-  await page.getByRole('button', { name: 'Stop all AI access', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Resume AI access', exact: true })).toBeVisible();
-  await expect(page.getByText('AI access is stopped', { exact: true })).toBeVisible();
-  expect((await list(api)).stopped).toBe(true);
-  expect((await get(api, 'vscode')).state).toBe('active');
-  await expect(page.locator('[data-testid="mcp-row"][data-profile="vscode"] [data-testid="mcp-row-state"]')).toHaveText('Stopped');
-  await page.getByRole('button', { name: 'Resume AI access', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Stop all AI access', exact: true })).toBeVisible();
-  expect((await list(api)).stopped).toBe(false);
 });
 
 test('AIA-09: the routes need the session token and never answer another origin', async ({ demo, api }) => {
