@@ -1,0 +1,12 @@
+# Local pipeline, slice 3 (agent and queue): where it differs from the spec
+
+The spec is `LOCAL-PIPELINE.md` (sections 2-4, "Agents, queue, triggers"). Behaviour as built, in `internal/localci` and `cmd/unravis-ci`:
+
+- **Queue folder**: `<state>/queue/{queued,running,done}`, one JSON file per request. A claim is an exclusive `running/<id>.claim` file; a cancel of a running request is `running/<id>.cancel`, which the agent that runs it turns into a stop. A child process leaves its result in `queue/outcome/<id>.json`.
+- **Release pause**: there is no `release.lock` file. The agent pauses while `releasedash.ReleaseRunning` says a release is running (it reads the release manager's `lock-info.json` and checks the process is alive; folder from `--release-dir`, default the release data folder), or while the pause file exists (`<state>/PAUSE`, or `--pause-file`). `--no-release-pause` turns the release check off. Both are logged when they start and end.
+- **Catch-up on start**: "without a status from this agent" becomes "without a success or failure in the run index" (statuses arrive in slice 4). A cancelled or errored run does not count, so it is queued again.
+- **Pushes**: a push to develop queues one request per workflow that runs on push for that branch (default `fast-gate.yml` and `ci.yml`). A push is queued after a 60 s quiet period (`--quiet`), a pull request at once.
+- **Bases**: the defaults cover pull requests into develop and master. A pull request into any other base (a stacked pull request) needs `--workflow-for BASE=file.yml` on `serve`, `rerun` and `run-pr`; `--trusted-base` and `--allow-env` are passed on to the child processes.
+- **Schedules** (`--schedule file.yml`): the workflow file is read from the host at the tip of `--schedule-branch` (default master), not from the mirror. A cron expression this parser does not support stops `serve` at start with the reason. `status` does not show next fire times (they are printed by `serve` at start).
+- **Commands**: `cancel` and `rerun` take one argument. A number is a pull request; anything else is a request id (`cancel`) or a run id or its prefix (`rerun`). `rerun` of a pull request needs it to be open.
+- **Child processes**: each request runs as `unravis-ci run-item <id> --child` unless `serve --in-process` is given. Ctrl-C drains (running requests finish); a second Ctrl-C more than a second later stops them and puts them back in the queue.

@@ -155,7 +155,7 @@ function makeViewer(file, from) {
       const want = v.to != null ? v.to : (extra || v.live ? Infinity : v.from + PAGE);
       let guard = 0;
       while (v.lines.length < want && guard++ < 12) {
-        const j = await getJSON('/api/log?file=' + encodeURIComponent(file) + '&from=' + v.lines.length + '&n=' + PAGE);
+        const j = await getJSON(file.startsWith('ci:') ? ciLogUrl(file, v.lines.length, PAGE) : '/api/log?file=' + encodeURIComponent(file) + '&from=' + v.lines.length + '&n=' + PAGE);
         if (j.total < v.lines.length) { v.lines = []; v.markSeen = false; v.rev = j.rev; continue; } // the log was started again
         // A running log folds its older status blocks as new ones arrive, which rewrites lines already here: read it again from the top.
         if (v.lines.length && j.rev !== v.rev) { v.lines = []; v.markSeen = false; v.rev = j.rev; continue; }
@@ -187,7 +187,7 @@ function makeViewer(file, from) {
   end.addEventListener('click', () => { body.scrollTop = body.scrollHeight; });
   return v;
 }
-function stepHdr(s) { return /^\[\d\/7\] /.test(s); }
+function stepHdr(s) { return new RegExp('^\\[\\d+/' + STEPS.length + '\\] ').test(s); }
 function mountViewer(holder, v) { holder.replaceChildren(v.root); v.restore(); }
 
 // ---------- page skeleton ----------
@@ -229,6 +229,7 @@ function drawHead(r) {
   h.append(meta);
   const lv = snap && snap.live;
   if (lv && (lv.version || NEXT) === r.version) h.append(el('p', lv.gone ? 'note bad' : 'note', lv.label + (lv.gone ? '' : '. This page reads again every 5 seconds.')));
+  if (typeof releaseRunChips === 'function') releaseRunChips(h, r); // links to the check runs of this release's commit
 }
 
 function markTabs() { for (const [id] of TABS) { const b = $('tab-' + id); b.setAttribute('aria-selected', String(id === ui.tab)); b.tabIndex = id === ui.tab ? 0 : -1; } }
@@ -316,7 +317,7 @@ function panelSteps(p, j, r) {
       box.append(b);
     }
     // What to do next, so a stopped release is not a dead end. This page only reads; the script does the work.
-    box.append(el('p', 'fnext', 'To go on, fix the cause above, then run Release.ps1 -Channel ' + (r.channel === 'stable' ? 'stable' : 'rc') + ' on the release PC.'));
+    box.append(el('p', 'fnext', 'To go on, fix the cause above, then run Release.ps1 -Channel ' + (CHANNELS.indexOf(r.channel) >= 0 ? r.channel : CHANNELS[0]) + ' on the release PC.'));
     p.append(box);
   }
   if (j.note) p.append(el('p', 'note', j.note));

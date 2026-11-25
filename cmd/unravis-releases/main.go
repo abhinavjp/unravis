@@ -42,6 +42,8 @@ func run(args []string) error {
 	fl := flag.NewFlagSet("unravis-releases", flag.ContinueOnError)
 	data := fl.String("data", "", "release manager data folder (default: the one Release.ps1 uses)")
 	port := fl.Int("port", 0, "local port (0 picks a free one)")
+	projectsFile := fl.String("projects", "", "JSON file with the project list (name, repo, CI store folder, channel and step labels); default: Unravis")
+	ciStore := fl.String("ci-store", "", "folder of the local CI store that the Runs and Overview tabs read (default: the one unravis-ci writes)")
 	open := fl.Bool("open", false, "open the link in the default browser instead of the app window")
 	exitWhenClosed := fl.Bool("exit-when-closed", false, "stop when the page closes (always on in the app window; for tests)")
 	browserOnly := fl.Bool("print-link", false, "only print the link; open no window (for tests and servers)")
@@ -57,6 +59,10 @@ func run(args []string) error {
 	dir := *data
 	if dir == "" {
 		dir = releasedash.DataDir(os.Getenv)
+	}
+	projects, err := projectList(*projectsFile, *ciStore, os.Getenv)
+	if err != nil {
+		return err
 	}
 	keys, err := update.TrustedKeys()
 	if err != nil {
@@ -101,6 +107,7 @@ func run(args []string) error {
 		// closes (see /api/bye); no page at all within a minute also ends the program.
 	}
 	dash := releasedash.New(dir, state, keys)
+	dash.Projects = projects
 	if windowMode {
 		var mu sync.Mutex
 		var timer *time.Timer
