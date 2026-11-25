@@ -66,7 +66,10 @@ type Options struct {
 // sweep of runs a crash left open.
 func Install(o Options) {
 	api := &api{broker: o.Broker, files: o.Settings, allowIdentifiers: o.AllowIdentifiers}
-	o.Mount.Set(api, func(ctx context.Context, store casestore.CodeRunStore) error { _, err := o.Broker.OnCaseOpen(ctx, store); return err })
+	o.Mount.Set(api, func(ctx context.Context, store casestore.CodeRunStore) error {
+		_, err := o.Broker.OnCaseOpen(ctx, store)
+		return err
+	})
 }
 
 type api struct {

@@ -74,7 +74,7 @@ func (s *Store) Load() (codemode.Settings, error) {
 		}
 		return codemode.Settings{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
 	if err != nil {
 		return codemode.Settings{}, err
@@ -129,7 +129,7 @@ func (s *Store) Save(set codemode.Settings) error {
 		return err
 	}
 	name := tmp.Name()
-	defer os.Remove(name) // a no-op once the replace has moved it
+	defer func() { _ = os.Remove(name) }() // a no-op once the replace has moved it
 	// The owner-only rights are set while the file is still empty, so no reader ever sees the content under wider rights.
 	if err := casestore.SecureFile(name); err != nil {
 		_ = tmp.Close()

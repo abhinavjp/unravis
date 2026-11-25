@@ -181,7 +181,7 @@ func (r *rig) runsOf(id string) []casestore.CodeRun {
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	runs, err := c.(casestore.CodeRunStore).ListRuns(r.ctx, casestore.RunQuery{})
 	if err != nil {
 		r.t.Fatal(err)
@@ -556,7 +556,7 @@ func (r *rig) getRun(caseID, runID string) (casestore.CodeRun, error) {
 	if err != nil {
 		return casestore.CodeRun{}, err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	return c.(casestore.CodeRunStore).GetRun(r.ctx, runID)
 }
 
