@@ -454,8 +454,12 @@ func TestBadRequestsAreRefusedWithFixedText(t *testing.T) {
 	req, _ := http.NewRequest("POST", r.ui.URL+"/api/mcp/profiles/h1/approve", strings.NewReader("{}"))
 	req.Header.Set("X-Audit-Token", token)
 	req.Header.Set("Content-Type", "text/plain")
-	if res, err := http.DefaultClient.Do(req); err != nil || res.StatusCode != 415 {
-		t.Errorf("content type: %v %v", res, err)
+	res415, err := http.DefaultClient.Do(req)
+	if err != nil || res415.StatusCode != 415 {
+		t.Errorf("content type: %v %v", res415, err)
+	}
+	if res415 != nil {
+		_ = res415.Body.Close()
 	}
 	if res := r.screen("POST", "/api/mcp/profiles/H1!/approve", "{}"); res.code != 404 {
 		t.Errorf("bad id: %d", res.code)
@@ -528,9 +532,14 @@ func TestModesWithoutAStore(t *testing.T) {
 		req, _ = http.NewRequest("POST", ts.URL+"/api/mcp/stop", strings.NewReader("{}"))
 		req.Header.Set("X-Audit-Token", token)
 		req.Header.Set("Content-Type", "application/json")
-		if res, _ := http.DefaultClient.Do(req); res.StatusCode != 404 {
-			t.Errorf("%s: stop answered %d with no store", c.name, res.StatusCode)
+		stop, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
 		}
+		if stop.StatusCode != 404 {
+			t.Errorf("%s: stop answered %d with no store", c.name, stop.StatusCode)
+		}
+		_ = stop.Body.Close()
 		ts.Close()
 	}
 	m := server.NewMCPMount()

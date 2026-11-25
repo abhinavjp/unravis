@@ -240,13 +240,13 @@ func TestCredentialFileIsSealedAndPrivate(t *testing.T) {
 	a := r.agent("agent-2")
 	_ = call(t, a, "audit_get_guide")
 	path := filepath.Join(r.credDr, "bridge-agent-2.cred")
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // a test file in the test folder
 	if err != nil || !bytes.HasPrefix(raw, []byte("S:user:")) {
 		t.Fatalf("pending file: %v %.30s", err, raw)
 	}
 	r.approve("agent-2")
 	_ = call(t, a, "audit_get_guide")
-	raw, _ = os.ReadFile(path)
+	raw, _ = os.ReadFile(path) //nolint:gosec // a test file in the test folder
 	if !bytes.HasPrefix(raw, []byte("S:user:")) {
 		t.Fatal("the credential is not sealed")
 	}
@@ -376,7 +376,7 @@ func newRecorder(t *testing.T, pid int, gen string) *recorder {
 func (rc *recorder) serve(c net.Conn) {
 	defer func() { _ = c.Close() }()
 	tee := &teeConn{Conn: c, rc: rc}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		switch r.URL.Path {
 		case "/mcp/v1/hello":
@@ -524,7 +524,7 @@ func TestACancelledCallStopsWaiting(t *testing.T) {
 		if err != nil {
 			return
 		}
-		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/mcp/v1/hello" {
 				_ = json.NewEncoder(w).Encode(map[string]any{"v": 1, "pid": ownerPID, "gen": ownerGen})
 				return

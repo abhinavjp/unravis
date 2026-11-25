@@ -66,7 +66,7 @@ func (s Store) Load(profile string) (Cred, error) {
 	if err != nil {
 		return Cred{}, err
 	}
-	f, err := os.Open(p)
+	f, err := os.Open(p) //nolint:gosec // p comes from path(), which checks the profile name and stays in the credential folder
 	if errors.Is(err, os.ErrNotExist) {
 		return Cred{}, ErrNoCred
 	}
@@ -104,7 +104,7 @@ func (s Store) Save(c Cred) error {
 	if err != nil {
 		return err
 	}
-	plain, err := json.Marshal(c)
+	plain, err := json.Marshal(c) //nolint:gosec // the plain text is sealed with the user's OS protection before it is written
 	if err != nil {
 		return err
 	}
