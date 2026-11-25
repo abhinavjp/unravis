@@ -60,6 +60,16 @@ New Go package `internal/localci` and command `cmd/unravis-ci` (not shipped in t
 
 The Releases app (`cmd/unravis-releases`, `internal/releasedash`) gets a **Pipelines** area next to the release list: runs (queued, running, passed, failed, not run locally), per-job and per-step timings, live log tail with the existing search/copy/jump (same `redact.go`, same loopback and one-time-code rules), the queue and each agent (name, slots, last seen, current jobs), and the last status posted per commit. It reads the runner's store files; it stays **read-only** (GET and HEAD only) in the first slices. Actions (re-run, cancel, drain) are CLI commands first (`unravis-ci rerun`, `cancel`, `status`, `drain`); buttons come last and need their own POST rule and security review (slice 7).
 
+### 5a. One UI for runs and releases (decision from [research-ci-ui.md](research-ci-ui.md))
+
+Layout A: header with a **project switcher** (shown only when more than one project is configured), then top tabs **Overview | Runs | Releases | Machines** (Machines hidden until an agent reports). Other tools keep runs and releases as two linked lists (GitHub Actions and Releases, GitLab pipelines and environments, Vercel deployments), so we do the same and join them by commit: a run shows "This commit was released as 1.4.0-rc2", a release links to its run.
+- **Releases tab** = today's screen unchanged (list left, detail right, lock banner, logs), scoped by project. Releases keep working exactly as now.
+- **Runs tab** = the same two-pane shell: rows with status word, branch, short commit and message, trigger, start, duration, a mini step strip; detail tabs Steps / Tests / Files / Changes / Log reusing the current panels and log viewer (search, live tail, failing line marked; a failed step opens by itself).
+- **Overview** answers "is anything wrong right now?": what is running, latest result per branch, live versions per channel, last 20 runs, "Needs attention".
+- The lock banner stays visible on every tab. Hash routes (`#/unravis/runs/212`) give deep links and a working Back button. New routes are read-only (`/api/projects`, `/api/runs`, `/api/run`, `/api/run/tests`, `/api/run/changes`); the server stays GET-only, loopback, strict CSP.
+- Project-agnostic: a project is a small config record (id, name, repo, branches, step names and help text, whether releases exist, channel names). The "rc", "stable" and the 7 release steps now hard-coded in the app move into that record; a project without releases hides the Releases tab. Deferred: card grid across projects, notifications, write actions, parallel-job graph.
+- Copy rules (beginner-friendly): one status set (Passed, Failed, Running, Waiting, Stopped, Not recorded here); "Run" = one automatic check of the code, "Release" = a version people can install, defined in tooltips and empty states; every empty state says why, what was checked and the next action; relative times with exact on hover.
+
 ### 6. Trust and secrets (the part that needs the most care)
 
 The repository is public and the runner executes code from branches on a personal PC. So:
@@ -119,7 +129,7 @@ Rule for every slice: the core packages must not contain the words Unravis, Brai
 2. **Checkout and store**: PR merge-ref worktrees, scrubbed environment, per-step logs and run records, caches, cancel by Job Object.
 3. **Agent and queue**: poller (PRs, pushes, cron), queue, supersede rules, keep-awake, release-lock pause, catch-up after sleep; `status`, `cancel`, `rerun`, `drain`.
 4. **Statuses and shadow phase**: status poster, `local/*` contexts, comparison page data.
-5. **Releases app Pipelines page**: read-only runs, jobs, steps, live log, queue, agents; UI audit.
+5. **Releases app: Runs and Overview tabs** (layout in 5a): project config record, tab bar and hash routes, read-only run routes, Runs list and detail on the existing shell, Overview, commit links between runs and releases; Releases tab unchanged; UI audit of every screen.
 6. **Many PCs**: ref-based claim, lease, agent list.
 7. **Cutover pieces** (CI only): workflow trigger PRs (`ci.yml` keeps its `push` trigger on master for the release manager), fallback command, optional buttons in the app.
 
