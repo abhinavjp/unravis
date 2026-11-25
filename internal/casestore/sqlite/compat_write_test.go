@@ -20,7 +20,7 @@ func TestCompatWriteCase(t *testing.T) {
 		t.Skip(compatWriteEnv + " is not set: this test runs from tools/ci/compat-upgrade.sh")
 	}
 	ctx := context.Background()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil { //nolint:gosec // a test writing into the folder the CI script gave it
 		t.Fatal(err)
 	}
 	s, err := New(compatOptions(t, dir))
@@ -93,10 +93,10 @@ func TestCompatWriteCase(t *testing.T) {
 	}
 	// No CloseCase here: that starts the retention clock and the case then refuses imports, and the second build
 	// has to import into it. The reader calls CloseCase itself.
-	if err := os.WriteFile(filepath.Join(dir, compatExpect), compatEncode(facts), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, compatExpect), compatEncode(facts), 0o600); err != nil { //nolint:gosec // a test writing into the folder the CI script gave it
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, compatIDFile), []byte(info.ID), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, compatIDFile), []byte(info.ID), 0o600); err != nil { //nolint:gosec // a test writing into the folder the CI script gave it
 		t.Fatal(err)
 	}
 }

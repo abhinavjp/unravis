@@ -168,12 +168,12 @@ func TestCompatReadCase(t *testing.T) {
 		t.Skip(compatReadEnv + " is not set: this test runs from tools/ci/compat-upgrade.sh")
 	}
 	ctx := context.Background()
-	rawID, err := os.ReadFile(filepath.Join(dir, compatIDFile))
+	rawID, err := os.ReadFile(filepath.Join(dir, compatIDFile)) //nolint:gosec // a test reading the folder the CI script gave it
 	if err != nil {
 		t.Fatalf("the writer left no case id: %v", err)
 	}
 	id := casestore.CaseID(strings.TrimSpace(string(rawID)))
-	rawFacts, err := os.ReadFile(filepath.Join(dir, compatExpect))
+	rawFacts, err := os.ReadFile(filepath.Join(dir, compatExpect)) //nolint:gosec // a test reading the folder the CI script gave it
 	if err != nil {
 		t.Fatalf("the writer left no expectations: %v", err)
 	}
