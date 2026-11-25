@@ -63,6 +63,7 @@ type Approval struct {
 	Tools          []string      // subset of the tier's tools; empty means all of the tier
 	Sources        []string      // explicit source ids (the UI expands "all connected now"); at least one
 	Identifiers    bool          // the identifiers grant; never taken from the host's request
+	Code           bool          // code mode as its own permission (unravis_execute, unravis_types); false unless the person ticked it, never taken from the host
 	IdentifiersFor time.Duration // zero means DefaultIdentifiers; at most MaxIdentifiers
 	IdleTTL        time.Duration // zero means DefaultIdleTTL
 	// ExpectRev, when not zero, is the revision of the profile the person was looking at: if the profile changed since (reissued in
@@ -307,6 +308,7 @@ func (g *Grants) Approve(ctx context.Context, id string, a Approval) (Profile, e
 		}
 		p.State, p.Rev = mcpaudit.StateActive, p.Rev+1
 		p.Tier, p.Tools, p.Sources = a.Tier, a.Tools, a.Sources
+		p.Code = a.Code // always what this approval says: never carried over from an earlier approval
 		p.Identifiers = a.Identifiers
 		p.IdentifiersUntil = time.Time{}
 		if a.Identifiers {
@@ -354,6 +356,7 @@ func (g *Grants) end(ctx context.Context, id, state string) (Profile, error) {
 	p, err := g.db.Update(ctx, id, func(p *Profile) error {
 		p.State, p.Rev = state, p.Rev+1
 		p.SecretDigest, p.ClaimDigest, p.Claimed, p.Contested = nil, nil, false, 0
+		p.Code = false // a revoked or reissued grant has no code mode; the next approval says again
 		p.ExpiresAt = time.Time{}
 		return nil
 	})

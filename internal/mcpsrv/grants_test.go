@@ -875,3 +875,50 @@ func TestReEnrollWithChangedTextMakesTheCardStale(t *testing.T) {
 		}
 	}
 }
+
+// Code mode is a permission of the approval: off by default, stored when ticked, and never carried from one approval, reissue or revoke
+// into the next (BL-574 M1).
+func TestCodePermissionIsStoredAndNeverInherited(t *testing.T) {
+	e := newEnv(t)
+	if DefaultApproval([]string{"s"}).Code {
+		t.Fatal("the defaults must not give code mode")
+	}
+	n := nonce(t)
+	if _, err := e.g.Enroll(ctx, req("c1", n)); err != nil {
+		t.Fatal(err)
+	}
+	a := appr()
+	a.Code = true
+	p, err := e.g.Approve(ctx, "c1", a)
+	if err != nil || !p.Code {
+		t.Fatalf("approve with code mode: %+v %v", p, err)
+	}
+	if got, err := e.g.db.Get(ctx, "c1"); err != nil || !got.Code {
+		t.Fatalf("not stored: %+v %v", got, err)
+	}
+	// Reissue ends the grant, and with it the permission.
+	if p, err = e.g.Reissue(ctx, "c1"); err != nil || p.Code {
+		t.Fatalf("reissue kept code mode: %+v %v", p, err)
+	}
+	n2 := nonce(t)
+	if _, err := e.g.Enroll(ctx, req("c1", n2)); err != nil {
+		t.Fatal(err)
+	}
+	// A second approval without it never inherits the first.
+	if p, err = e.g.Approve(ctx, "c1", appr()); err != nil || p.Code {
+		t.Fatalf("second approval inherited code mode: %+v %v", p, err)
+	}
+	// Revoke clears it too.
+	if _, err = e.g.Reissue(ctx, "c1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.g.Enroll(ctx, req("c1", nonce(t))); err != nil {
+		t.Fatal(err)
+	}
+	if p, err = e.g.Approve(ctx, "c1", a); err != nil || !p.Code {
+		t.Fatalf("%+v %v", p, err)
+	}
+	if p, err = e.g.Revoke(ctx, "c1"); err != nil || p.Code {
+		t.Fatalf("revoke kept code mode: %+v %v", p, err)
+	}
+}

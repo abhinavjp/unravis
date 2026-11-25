@@ -108,7 +108,7 @@ func (r *mcpRig) grant(id string, a mcpsrv.Approval) mcpsrv.Principal {
 }
 
 func approval(tier string, tools ...string) mcpsrv.Approval {
-	return mcpsrv.Approval{Tier: tier, Tools: tools, Sources: []string{"demo-west"}, IdleTTL: mcpsrv.DefaultIdleTTL}
+	return mcpsrv.Approval{Tier: tier, Tools: tools, Sources: []string{"demo-west"}, IdleTTL: mcpsrv.DefaultIdleTTL, Code: true}
 }
 
 // invoke is a tools/call of the host: the body of POST /mcp/v1/call.

@@ -180,6 +180,7 @@
               {#if p.expiresAt}<span><span class="k">{T.expiresLabel}</span> {inFuture(now, p.expiresAt)}</span>{/if}
               {#if p.identifiers && p.identifiersUntil}<span><span class="k">{T.identifiersUntilLabel}</span> {inFuture(now, p.identifiersUntil)}</span>{/if}
             </p>
+            {#if p.code}<p class="scope" data-testid="mcp-row-code"><span class="k">{T.codeLegend}</span> {T.codeOnLine}</p>{/if}
             {#if p.expired}<p class="field-note">{T.expiredNote}</p>{:else if !p.claimed}<p class="field-note">{T.notCollectedNote}</p>{/if}
             <details>
               <summary>{T.details}</summary>

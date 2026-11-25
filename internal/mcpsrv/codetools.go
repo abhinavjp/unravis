@@ -19,7 +19,7 @@ import (
 //
 // Order inside callCode, and why it differs from CallAs:
 //
-//	BeginCall (a revoke ends the context from here on) -> Scope (the grant as it is now) -> slot -> ledger "admit"
+//	BeginCall (a revoke ends the context from here on) -> Scope (the grant as it is now) -> code mode granted to this grant? -> slot -> ledger "admit"
 //	-> Code.CallCode (the broker runs the script under the BeginCall context) -> RecheckIdentifiers (the revoke gate) -> ledger "end".
 //
 // The slot is not the per-profile call slot of CallAs: a run can last 280 seconds and its own tool calls are admitted through
@@ -32,6 +32,9 @@ const ClassCode = "code"
 
 // CodeModeOffMessage is the plain text of the refusal when code mode is off (the broker's own text for code_mode_off is this).
 const CodeModeOffMessage = "Code mode is switched off. Turn it on in Settings or run `unravis code enable`."
+
+// CodeNotGrantedMessage is the plain text of the refusal when the owner approved the grant without code mode.
+const CodeNotGrantedMessage = "This access was not given code mode. Use Start over on this entry in Unravis and approve it again with code mode on."
 
 // CodeBackend runs the two tools for a grant. The code-mode broker's adapter (internal/codemode) is the only one.
 type CodeBackend interface {
@@ -88,6 +91,13 @@ func (s *Dispatcher) callCode(ctx context.Context, pr Principal, req *callReq) (
 		ev.Kind, ev.Outcome, ev.Code = mcpaudit.KindDenied, mcpaudit.OutcomeDenied, "code_mode_off"
 		_ = s.d.Recorder.Record(context.WithoutCancel(runCtx), ev)
 		return http.StatusOK, Answer{OK: true, IsError: true, ProfileRev: pr.Rev, Result: CodeRefusalBody("code_mode_off", CodeModeOffMessage)}
+	}
+	if !p.Code {
+		// A broker is mounted but this grant was not approved with code mode (the owner's switch is checked later, inside the broker): nothing runs, the host is told how
+		// to get it (M1 of the review of 2b, spec 04 D7). The grant, not the host's request, decides: p is the stored profile.
+		ev.Kind, ev.Outcome, ev.Code = mcpaudit.KindDenied, mcpaudit.OutcomeDenied, "code_not_granted"
+		_ = s.d.Recorder.Record(context.WithoutCancel(runCtx), ev)
+		return http.StatusOK, Answer{OK: true, IsError: true, ProfileRev: pr.Rev, Result: CodeRefusalBody("denied", CodeNotGrantedMessage)}
 	}
 	ev.Fingerprint = s.d.Recorder.Fingerprint(compact(req.Args))
 

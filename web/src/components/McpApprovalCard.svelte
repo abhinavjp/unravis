@@ -99,6 +99,12 @@
         {/if}
       </fieldset>
 
+      <fieldset data-testid="mcp-code-fieldset">
+        <legend>{T.codeLegend}</legend>
+        <label class="check"><input type="checkbox" data-testid="mcp-code" checked={draft.code} disabled={!!busy} onchange={(e) => { onChange({ ...draft, code: e.currentTarget.checked }); }} /> <span>{T.codeLabel}</span></label>
+        <p class="field-note">{T.codeNote}</p>
+      </fieldset>
+
       <fieldset>
         <legend>{T.idleLegend}</legend>
         <label class="select"><span class="vh">{T.idleLegend}</span>
