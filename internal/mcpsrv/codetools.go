@@ -55,7 +55,10 @@ func (s *Dispatcher) callCode(ctx context.Context, pr Principal, req *callReq) (
 	defer cancelCall()
 	execute := req.Tool == mcp.ToolExecute
 	if execute {
-		if !s.takeCodeSlot(pr.ProfileID, req.CallID, cancelCall) {
+		if ok, dup := s.takeCodeSlot(pr.ProfileID, req.CallID, cancelCall); !ok {
+			if dup {
+				return refuse(http.StatusBadRequest, mcp.WireInvalidArguments, "That call id is already running.", "")
+			}
 			return refuse(http.StatusTooManyRequests, mcp.WireBudgetExceeded, "A code run of this host is already running.", "Wait for it to finish, then retry. Do not loop.")
 		}
 		defer s.releaseCodeSlot(pr.ProfileID, req.CallID)
@@ -128,23 +131,25 @@ func (s *Dispatcher) callCode(ctx context.Context, pr Principal, req *callReq) (
 }
 
 // takeCodeSlot allows one running unravis_execute per profile, and registers its call id so the cancel route reaches it.
-func (s *Dispatcher) takeCodeSlot(profile, callID string, cancel context.CancelFunc) bool {
+func (s *Dispatcher) takeCodeSlot(profile, callID string, cancel context.CancelFunc) (ok, dup bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.codeRuns == nil {
 		s.codeRuns = map[string]bool{}
 	}
-	if s.codeRuns[profile] {
-		return false
-	}
 	if callID != "" {
 		if _, found := s.byCall[profile+"\x00"+callID]; found {
-			return false
+			return false, true
 		}
+	}
+	if s.codeRuns[profile] {
+		return false, false
+	}
+	if callID != "" {
 		s.byCall[profile+"\x00"+callID] = cancel
 	}
 	s.codeRuns[profile] = true
-	return true
+	return true, false
 }
 
 func (s *Dispatcher) releaseCodeSlot(profile, callID string) {

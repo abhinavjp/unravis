@@ -647,6 +647,36 @@ func TestMCPExecuteNeedsACase(t *testing.T) {
 	}
 }
 
+// A key that is not spelled exactly (encoding/json would match it case-insensitively) is refused, and nothing runs.
+func TestMCPExecuteRefusesKeysThatAreNotExact(t *testing.T) {
+	r := newMCPRig(t, func(w *fakeWorker) { w.done(1) })
+	pr := r.grant("h-keys", approval(mcpsrv.TierAggregate))
+	for _, args := range []map[string]any{{"CODE": "1"}, {"code": "1", "Reason": "x"}, {"code": "1", "extra": 1}} {
+		_, ans := r.invoke(pr, mcp.ToolExecute, args)
+		r.wantRefusal("inexact key", http.StatusOK, ans, CodeBadRequest)
+	}
+	r.wantNothingRan("inexact keys")
+}
+
+// A second unravis_execute that reuses a running call id is told so (400), not that the host is busy (429).
+func TestMCPExecuteDuplicateCallID(t *testing.T) {
+	r := newMCPRig(t, func(w *fakeWorker) { <-w.killed })
+	pr := r.grant("h-dup", approval(mcpsrv.TierEvidence))
+	body, err := json.Marshal(map[string]any{"tool": mcp.ToolExecute, "args": map[string]any{"code": "for(;;){}"}, "callId": "aaaaaaaa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go r.disp.CallAs(context.Background(), pr, body)
+	eventually(t, func() bool { return r.sp.started() == 1 })
+	status, ans := r.disp.CallAs(context.Background(), pr, body)
+	if status != http.StatusBadRequest || ans.OK || ans.Error == nil || ans.Error.Code != mcp.WireInvalidArguments {
+		t.Errorf("duplicate call id: %d %+v", status, ans)
+	}
+	if _, err := r.g.Revoke(context.Background(), "h-dup"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A run's answer too big for one message is replaced by a short error that names the run, never cut.
 func TestMCPExecuteAnswerTooBigIsReplaced(t *testing.T) {
 	r := newMCPRig(t, func(w *fakeWorker) { w.done(strings.Repeat("x", maxExecuteAnswer+1000)) })

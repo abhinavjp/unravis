@@ -120,7 +120,7 @@ func (m *MCPCode) types(p mcpsrv.Profile, args []byte) ([]byte, bool) {
 // execute answers unravis_execute: it runs the script through the broker as the grant, with the grant's scope taken from the profile.
 func (m *MCPCode) execute(ctx context.Context, pr mcpsrv.Principal, p mcpsrv.Profile, raw []byte, now time.Time) ([]byte, bool, bool) {
 	var in executeArgs
-	if err := decodeStrict(raw, &in); err != nil || in.TimeoutMS < 0 || len(in.CaseID) > mcp.ExecuteMaxCaseID {
+	if err := decodeStrict(raw, &in); err != nil || !exactKeys(raw, "code", "timeout_ms", "reason", "case_id") || in.TimeoutMS < 0 || len(in.CaseID) > mcp.ExecuteMaxCaseID {
 		return refusalBody(CodeBadRequest, plain[CodeBadRequest]), true, false
 	}
 	// A grant that names no tool a script could call, or no source, runs nothing (the same refusal as unravis_types; the approval card
@@ -166,6 +166,24 @@ func (m *MCPCode) execute(ctx context.Context, pr mcpsrv.Principal, p mcpsrv.Pro
 		return big, true, withIdentifiers
 	}
 	return body, res.Error != nil, withIdentifiers
+}
+
+// exactKeys reports whether every top-level key of the JSON object is spelled exactly as one of want. encoding/json matches field names
+// case-insensitively, so {"CODE": ...} would decode; the tool schema names exact keys, so anything else is refused.
+func exactKeys(raw []byte, want ...string) bool {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return true
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return false
+	}
+	for k := range m {
+		if !slices.Contains(want, k) {
+			return false
+		}
+	}
+	return true
 }
 
 // decodeStrict decodes one JSON value into v: no unknown field and nothing after it. Empty input is an empty object.
