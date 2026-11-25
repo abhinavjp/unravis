@@ -1,6 +1,7 @@
 package codemode
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -328,27 +329,31 @@ func TestScopedRunGetsSealedCursorsThatPageTheRun(t *testing.T) {
 	if r.NextCursor == "" || r.NextCursor == f.NextCursor {
 		t.Errorf("the run's cursor is the dashboard's own: %q", f.NextCursor)
 	}
-	// a cursor made by hand does not open
-	if _, ok := forgedCursor(t); ok {
-		t.Error("a forged cursor opened")
+	// the run's cursor does not hold the dashboard's own cursor or the source it points at, at any decoding of its parts
+	for _, part := range strings.Split(f.NextCursor, ".") {
+		if strings.Contains(part, r.NextCursor) {
+			t.Error("the run's cursor holds the dashboard's own cursor")
+		}
+		if dec, err := base64.RawURLEncoding.DecodeString(part); err == nil && (strings.Contains(string(dec), r.NextCursor) || strings.Contains(string(dec), "demo-west")) {
+			t.Error("a decoded part of the run's cursor shows the dashboard's cursor or the source id")
+		}
 	}
-}
-
-func forgedCursor(t *testing.T) (string, bool) {
-	t.Helper()
-	var ans json.RawMessage
-	var id string
+	if string(first) == string(second) {
+		t.Error("the second page is the first page again")
+	}
+	// a cursor of another run (same scope, tier and query) does not open: each run has its own key
+	var replay json.RawMessage
 	tierRun(t, mcpsrv.TierEvidence, false, func(w *fakeWorker) {
 		cmp, _ := w.Call("audit_compare", map[string]any{"query": narrowQuery(), "limit": 5})
 		var m struct {
 			ResultID string `json:"resultId"`
 		}
 		_ = json.Unmarshal(cmp, &m)
-		id = m.ResultID
-		ans, _ = w.Call("audit_get_slowest", map[string]any{"resultId": id, "limit": 1, "cursor": "AAAA.BBBB"})
+		replay, _ = w.Call("audit_get_slowest", map[string]any{"resultId": m.ResultID, "limit": 1, "cursor": f.NextCursor})
 		w.done(1)
 	})
-	var s struct{ Error *struct{ Code string } }
-	_ = json.Unmarshal(ans, &s)
-	return "", s.Error == nil
+	var rp struct{ Error *struct{ Code string } }
+	if json.Unmarshal(replay, &rp) != nil || rp.Error == nil {
+		t.Errorf("a cursor of another run opened: %.300s", replay)
+	}
 }
