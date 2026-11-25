@@ -358,16 +358,24 @@ func TestPollerPushIgnoresABranchTheMapDoesNotName(t *testing.T) {
 	p, h, q, _, _ := newTestPoller(t)
 	p.PRWorkflows = map[string]string{"develop": "gate.yml"}
 	p.PushWorkflows = map[string][]string{"release": {"gate.yml"}}
-	h.files["*:.github/workflows/gate.yml"] = pushWF
+	// the workflow lets both branches push, so only the map keeps develop out
+	h.files["*:.github/workflows/gate.yml"] = strings.Replace(pushWF, "push:\n    branches: [develop]", "push:\n    branches: [develop, release]", 1)
 	h.setTip("develop", sha1)
 	h.setTip("release", sha1)
 	if err := p.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	var release bool
 	for _, r := range queuedOf(t, q) {
-		if r.Kind == KindPush && r.Ref == "develop" { // release is queued, develop is not
+		if r.Kind == KindPush && r.Ref == "develop" {
 			t.Fatalf("a push to a branch outside the push map was queued: %+v", r)
 		}
+		if r.Kind == KindPush && r.Ref == "release" {
+			release = true
+		}
+	}
+	if !release {
+		t.Fatalf("the mapped branch release was not queued: %+v", queuedOf(t, q))
 	}
 }
 
