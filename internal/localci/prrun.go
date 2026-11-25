@@ -22,6 +22,10 @@ type PROptions struct {
 	// ExpectHead, when set, is the head commit the run was asked for. A pull request whose head has moved on is
 	// not run: RunPR returns ErrHeadMoved, because a request for the newer head is (or soon will be) queued.
 	ExpectHead string
+	// Base, when set, is the base branch the run was asked for. A pull request that was retargeted since is not
+	// run: RunPR returns ErrBaseMoved, because the workflow and the trust of the other branch were never chosen
+	// for it (the poller queues a new request for the new base). Empty (a hand run) accepts any base.
+	Base string
 	// OriginURL is where the mirror fetches from; empty means Host.CloneURL(Repo).
 	OriginURL string
 	// Workflows maps a base branch to the workflow file (a name inside .github/workflows) that gates it.
@@ -113,6 +117,9 @@ func (o *PROptions) trustedBases() []string {
 // ErrHeadMoved is returned by RunPR when ExpectHead is no longer the head of the pull request.
 var ErrHeadMoved = errors.New("the pull request head moved on")
 
+// ErrBaseMoved is returned by RunPR when Base is no longer the base branch of the pull request.
+var ErrBaseMoved = errors.New("the pull request was pointed at another base branch")
+
 // ErrPRNotOpen is returned by RunPR for a pull request that is closed or merged.
 var ErrPRNotOpen = errors.New("the pull request is not open")
 
@@ -156,6 +163,9 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 	}
 	if o.ExpectHead != "" && !strings.EqualFold(pr.HeadSHA, o.ExpectHead) {
 		return nil, fmt.Errorf("run-pr: pull request %d moved from %s to %s: %w", o.Number, shortSHA(o.ExpectHead), shortSHA(pr.HeadSHA), ErrHeadMoved)
+	}
+	if o.Base != "" && pr.BaseRef != o.Base {
+		return nil, fmt.Errorf("run-pr: pull request %d was asked for into %q but now goes into %q: %w", o.Number, o.Base, pr.BaseRef, ErrBaseMoved)
 	}
 	file, err := o.workflowFor(pr.BaseRef)
 	if err != nil {
@@ -293,11 +303,15 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 		}
 		return finish(nil, wt.Commit, "", fmt.Errorf("unsupported: %s has items this runner does not support; nothing was run: %s", file, strings.Join(msgs, "; ")))
 	}
-	if len(wf.On) > 0 {
-		if _, ok := wf.On["pull_request"]; !ok {
-			return finish(nil, wt.Commit, "", fmt.Errorf("%s does not run on pull_request", file))
-		}
-	}
+	// The workflow's own on: is NOT a gate here (BL-586d, "Blocker R" in docs/ci/CUTOVER.md). The base-branch map
+	// (Workflows / --workflow-for, or the operator's --workflow), which workflowFor read above, already decides
+	// which workflow serves which base; a base with no entry never reaches this point. So a gate workflow that
+	// GitHub no longer starts by itself (on: workflow_dispatch only) runs exactly like one with pull_request.
+	// The github context stays that of a pull request (event_name pull_request, see prGitHubContext): the steps
+	// are written for the merge commit of a pull request, and the manual-run-only steps (event_name ==
+	// 'workflow_dispatch') must stay skipped because RunPR has already built that merge commit.
+	// Every other trust check above and in the checkout (fork and stranger refusal, FromBase files, protected
+	// paths, the environment allow-list) is unchanged.
 	var cfgData []byte
 	if p := filepath.Join(wt.Path, ".github", "local-ci.yml"); fileIsRegular(p) {
 		if cfgData, err = os.ReadFile(p); err != nil { //nolint:gosec // path inside the worktree

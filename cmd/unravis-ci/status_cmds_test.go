@@ -430,3 +430,17 @@ func TestCompareSaveWritesTheReportTheDashboardReads(t *testing.T) {
 		t.Fatalf("%+v %v", rep, err)
 	}
 }
+
+// After the cutover fast-gate.yml has workflow_dispatch and nothing else in on:; that is exactly what the
+// fallback needs, so a dry run accepts it and starts nothing.
+func TestFallbackCommandAcceptsADispatchOnlyFastGate(t *testing.T) {
+	f := withStatusFakes(t)
+	fallbackHost(t, "name: x\non:\n  workflow_dispatch:\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n")
+	code, out, e := cli(t, nil, "fallback", "9", "--repo", "acme/widgets", "--dry-run")
+	if code != exitOK || !strings.Contains(out, "dry run: would start fast-gate.yml on branch feature/x") {
+		t.Fatalf("%d\n%s\n%s", code, out, e)
+	}
+	if len(f.disp.Calls) != 0 {
+		t.Fatalf("a dry run starts nothing: %v", f.disp.Calls)
+	}
+}

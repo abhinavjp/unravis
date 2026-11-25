@@ -158,7 +158,7 @@ func needBash(t *testing.T) {
 func writeWF(t *testing.T, name, body string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil { //nolint:gosec // a file in the test's own temp folder
 		t.Fatal(err)
 	}
 	return p
@@ -227,6 +227,8 @@ func TestRunEventMustBeTriggered(t *testing.T) {
 	}
 }
 
+// TestRunDryRunFastGate plans the real fast-gate.yml as a pull request, whatever its on: block says: it holds
+// before and after the cutover (step 2 leaves workflow_dispatch only; TestRunDryRunDispatchOnlyFastGate pins that shape).
 func TestRunDryRunFastGate(t *testing.T) {
 	gate := filepath.Join(realWorkflows(), "fast-gate.yml")
 	if _, err := os.Stat(gate); err != nil {
@@ -245,6 +247,80 @@ func TestRunDryRunFastGate(t *testing.T) {
 	}
 	if _, err := os.Stat(state); err == nil {
 		t.Fatal("a dry run must not create the state folder")
+	}
+}
+
+// dispatchOnlyGate is the fast gate as the cutover leaves it: the real file with its on: block replaced by
+// workflow_dispatch alone (docs/ci/CUTOVER.md, step 2). It skips the test when the real file has no such block.
+func dispatchOnlyGate(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(realWorkflows(), "fast-gate.yml"))
+	if err != nil {
+		t.Skip("fast-gate.yml not found:", err)
+	}
+	src := strings.ReplaceAll(string(b), "\r\n", "\n")
+	start := strings.Index(src, "\non:\n")
+	end := strings.Index(src, "\npermissions:")
+	if start < 0 || end < start {
+		t.Skip("fast-gate.yml has no on: block followed by permissions:")
+	}
+	return writeWF(t, "fast-gate.yml", src[:start]+"\non:\n  workflow_dispatch:\n"+src[end:])
+}
+
+// A gate that only has workflow_dispatch in on: (what GitHub keeps after the cutover) plans exactly like one
+// with pull_request, for both events the local pipeline starts it for, and still refuses an event it cannot be.
+func TestRunDryRunDispatchOnlyFastGate(t *testing.T) {
+	gate := dispatchOnlyGate(t)
+	for _, event := range []string{"pull_request", "push", "workflow_dispatch"} {
+		t.Run(event, func(t *testing.T) {
+			state := filepath.Join(t.TempDir(), "st")
+			code, out, errOut := cli(t, os.Environ(), "run", gate, "--event", event, "--local", t.TempDir(), "--state", state,
+				"--base-ref", "develop", "--head-ref", "feature", "--dry-run")
+			if code != exitOK {
+				t.Fatalf("%d\n%s\n%s", code, out, errOut)
+			}
+			for _, want := range []string{"job go:", "job web:", "job lint:", "job fast-build:"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("plan lacks %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+	if code, _, e := cli(t, os.Environ(), "run", gate, "--event", "schedule", "--local", t.TempDir(), "--dry-run"); code != exitUsage || !strings.Contains(e, "does not run on schedule") {
+		t.Fatalf("a dispatch-only workflow is not a scheduled one: %d %q", code, e)
+	}
+}
+
+func TestRunEventTriggerRules(t *testing.T) {
+	body := "\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo\n"
+	for name, tc := range map[string]struct {
+		on, event string
+		want      int
+	}{
+		"the event is listed":                {"on:\n  push:", "push", exitOK},
+		"dispatch only, as a pull request":   {"on:\n  workflow_dispatch:", "pull_request", exitOK},
+		"dispatch only, as a push":           {"on:\n  workflow_dispatch:", "push", exitOK},
+		"dispatch only, as a schedule":       {"on:\n  workflow_dispatch:", "schedule", exitUsage},
+		"pull_request only, as a push":       {"on:\n  pull_request:", "push", exitUsage},
+		"schedule only, as a pull request":   {"on:\n  schedule:\n    - cron: '0 3 * * *'", "pull_request", exitUsage},
+		"schedule only, as a dispatch":       {"on:\n  schedule:\n    - cron: '0 3 * * *'", "workflow_dispatch", exitUsage},
+		"empty on: runs as any event":        {"on: {}", "pull_request", exitOK},
+		"no on: key runs as any event":       {"", "push", exitOK},
+		"dispatch plus push, as a dispatch":  {"on:\n  push:\n  workflow_dispatch:", "workflow_dispatch", exitOK},
+		"push only, as a manual dispatch":    {"on:\n  push:", "workflow_dispatch", exitUsage},
+		"dispatch plus push, as a schedule":  {"on:\n  push:\n  workflow_dispatch:", "schedule", exitUsage},
+		"dispatch plus schedule as schedule": {"on:\n  schedule:\n    - cron: '0 3 * * *'\n  workflow_dispatch:", "schedule", exitOK},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := writeWF(t, "w.yml", "name: w\n"+tc.on+body)
+			code, out, e := cli(t, os.Environ(), "run", p, "--event", tc.event, "--local", t.TempDir(), "--dry-run")
+			if code != tc.want {
+				t.Fatalf("want %d, got %d\n%s\n%s", tc.want, code, out, e)
+			}
+			if tc.want == exitUsage && !strings.Contains(e, "does not run on "+tc.event) {
+				t.Fatalf("the refusal must say why: %q", e)
+			}
+		})
 	}
 }
 

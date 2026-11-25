@@ -80,7 +80,7 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
   - [ ] **BL-586a** Phase 0: shadow agent running on a real PC, `compare` reaches 20 of 20 in a row with 0 unexplained disagree (today no agent, no store).
   - [ ] **BL-586b** Step 1 merged (`fast-gate.yml` gets `workflow_dispatch` and the merge-shape step, GitHub still gates); its own pull request is green on GitHub.
   - [ ] **BL-586c** `unravis-ci fallback <pr>` run once on a real pull request after step 1: the GitHub run is green and `fast-build` shows on the head.
-  - [ ] **BL-586d** Runner change: a configured gate workflow is not filtered by its own `on:` (needed before step 2; today a workflow with only `workflow_dispatch` exits 2), and `TestRunDryRunFastGate` updated to match. This is Go code and needs its own review.
+  - [x] **BL-586d** Runner change: a configured gate workflow is not filtered by its own `on:` (branch `claude/local-ci-runner-on-free`; verified 2026-11-25: unit tests, and `run-pr 289` on the real draft pull request #289 whose fast-gate.yml is `workflow_dispatch` only ran instead of being refused; `TestRunDryRunFastGate` kept and new tests added). Still Go trust code: the owner reviews the branch before it merges.
   - [ ] **BL-586e** `serve --post-required --context ci.yml=local/build` posts the real `fast-build` on a throwaway draft pull request into develop, and the check of what GitHub shows with two producers of one required name is written down.
   - [ ] **BL-586f** Step 2 merged (GitHub no longer starts `fast-gate.yml`); one real pull request into develop is gated by the agent alone.
   - [ ] **BL-586g** Optional phase 2: nachi changes the source of `build` on master to any source, verified with `gh api`, and the rollback was shown to work on a throwaway pull request.
