@@ -37,6 +37,13 @@ func Handler(d Deps) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	return disp.Handler(), nil
+}
+
+// Handler is the HTTP handler of the dispatcher's routes. The app builds the dispatcher itself when something else (the code-mode
+// broker, through AdmitCodeCall) must share its budgets.
+func (s *Dispatcher) Handler() http.Handler {
+	disp, d := s, s.d
 	mux := http.NewServeMux()
 	d.Grants.EnrollRoutes(mux)
 	mux.HandleFunc("GET /mcp/v1/hello", disp.serveHello)
@@ -49,7 +56,7 @@ func Handler(d Deps) (http.Handler, error) {
 			return
 		}
 		mux.ServeHTTP(w, r)
-	}), nil
+	})
 }
 
 func (s *Dispatcher) serveHello(w http.ResponseWriter, _ *http.Request) {
