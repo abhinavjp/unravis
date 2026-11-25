@@ -26,11 +26,16 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	workerBin = filepath.Join(dir, "unravis-sandbox.exe")
-	build := exec.Command("go", "build", "-o", workerBin, ".") //nolint:gosec // fixed arguments, the package under test
-	if out, err := build.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "build worker: %v\n%s", err, out)
-		_ = os.RemoveAll(dir)
-		os.Exit(1)
+	if prebuilt := os.Getenv("UNRAVIS_SANDBOX_TEST_BIN"); prebuilt != "" {
+		// Run the suite against an exe built with the release flags (for example -H=windowsgui) instead of a plain go build.
+		workerBin = prebuilt
+	} else {
+		build := exec.Command("go", "build", "-o", workerBin, ".") //nolint:gosec // fixed arguments, the package under test
+		if out, err := build.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "build worker: %v\n%s", err, out)
+			_ = os.RemoveAll(dir)
+			os.Exit(1)
+		}
 	}
 	code := m.Run()
 	_ = os.RemoveAll(dir)
