@@ -33,7 +33,7 @@ type fakeGHState struct {
 
 func loadFakeGH(dir string) fakeGHState {
 	var s fakeGHState
-	if b, err := os.ReadFile(filepath.Join(dir, "gh-state.json")); err == nil {
+	if b, err := os.ReadFile(filepath.Join(dir, "gh-state.json")); err == nil { //nolint:gosec // test helper reads its own temp folder
 		_ = json.Unmarshal(b, &s)
 	}
 	if s.Refs == nil {
@@ -47,7 +47,7 @@ func loadFakeGH(dir string) fakeGHState {
 
 func saveFakeGH(dir string, s fakeGHState) {
 	b, _ := json.Marshal(s)
-	_ = os.WriteFile(filepath.Join(dir, "gh-state.json"), b, 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "gh-state.json"), b, 0o600) //nolint:gosec // test helper writes its own temp folder
 }
 
 // fakeGHMain is the child process: it plays `gh api -i [-X M] [--input -] endpoint`.
@@ -159,11 +159,11 @@ func fakeGHHost(t *testing.T) (*GHClaimHost, string) {
 	if runtime.GOOS == "windows" {
 		name = "gh.exe"
 	}
-	b, err := os.ReadFile(exe)
+	b, err := os.ReadFile(exe) //nolint:gosec // the test binary itself, copied as the fake gh
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, name), b, 0o700); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, name), b, 0o700); err != nil { //nolint:gosec // the copy must be executable
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))

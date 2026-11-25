@@ -37,7 +37,7 @@ func (h *GHHost) ghCall(ctx context.Context, method, endpoint, etag string, body
 		args = append(args, "--input", "-")
 	}
 	args = append(args, endpoint)
-	cmd := exec.CommandContext(ctx, "gh", args...) //nolint:gosec // fixed binary, arguments built by this package
+	cmd := exec.CommandContext(ctx, "gh", args...)
 	if h.Env != nil {
 		cmd.Env = h.Env
 	}

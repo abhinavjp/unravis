@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -108,7 +109,7 @@ func TestLiveClaimsRace(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			f := &Fleet{Host: h, Repo: repo, ID: "m-live000" + string(rune('a'+i))}
+			f := &Fleet{Host: h, Repo: repo, ID: "m-live000" + strconv.Itoa(i)}
 			r := req
 			r.ID = "live-" + f.ID
 			d, err := f.Acquire(ctx, r)
