@@ -206,6 +206,9 @@ var routes = []route{
 	{pattern: "/api/sources/{id}", match: prefixPath("/api/sources/"), methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.deleteSource(w, r, id) },
 	}},
+	{pattern: "/api/mcp/evidence/{alias}", match: prefixPath("/api/mcp/evidence/"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, alias string) { h.mcpEvidence(w, r, alias) },
+	}},
 	{pattern: "/api/analyze", match: exactPath("/api/analyze"), methods: post((*handler).analyze)},
 	{pattern: "/api/requests", match: exactPath("/api/requests"), methods: post((*handler).requests)},
 	{pattern: "/api/activity", match: exactPath("/api/activity"), methods: post((*handler).activity)},

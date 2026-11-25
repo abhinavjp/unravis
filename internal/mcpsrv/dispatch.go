@@ -291,7 +291,7 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 		return fromAuthError(err)
 	}
 	if errors.Is(context.Cause(runCtx), ErrAccessEnded) {
-		// The call was cancelled by CancelAll (the case lock) and the profile itself is unchanged.
+		// The call was cancelled by CancelAll (the master-key lock, the shutdown) and the profile itself is unchanged.
 		d := denied(ReasonRevision)
 		end.Outcome, end.Code = mcpaudit.OutcomeDenied, mcp.WirePermissionRequired
 		s.recordEnd(ctx, end)
