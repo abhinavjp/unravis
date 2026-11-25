@@ -25,15 +25,16 @@ The local failure is the known Windows EBUSY in `tools/ci/test-promote-dist.mjs`
 
 - `--post-required` (fake reporter only; the real required names were never posted).
 - `fallback` real dispatch (fake dispatcher; never run against the real repo). `fallback --dry-run` was not run live either.
-- The success path of the gate context (the live run failed; per-job success was seen live).
+- The success path of the gate context: `local/fast-build` going to success was never seen on GitHub (the live run failed; per-job success was seen live).
 - Cancelled, crash and superseded statuses, restart dedup, retry on a real 5xx, the streak counting past 20 (tests with fakes).
 
 ## Surprises
 
-1. A failing non-required context still changes the PR. `gh pr view 282` reports `mergeStateStatus: UNSTABLE`, and the combined commit status is `failure`. The PR stays mergeable (the only required context on develop is `fast-build`), but the PR page shows red marks for `local/go` and `local/fast-build`. `gh pr checks` lists the `local/...` contexts next to the real ones. Shadow mode is therefore visible, not silent. Each job context adds a row, so four rows per PR.
+1. The statuses stay on the commit for good: `60df60d3` (PR #282 head) now carries eight `local/*` statuses that cannot be deleted. A failing non-required context still changes the PR. `gh pr view 282` reports `mergeStateStatus: UNSTABLE`, and the combined commit status is `failure`. The PR stays mergeable (the only required context on develop is `fast-build`), but the PR page shows red marks for `local/go` and `local/fast-build`. `gh pr checks` lists the `local/...` contexts next to the real ones. Shadow mode is therefore visible, not silent. Each job context adds a row, so four rows per PR.
 2. Per-job names sit in the same namespace as the gate (`local/go`, `local/lint`, `local/web`). When two workflows gate the same branch, the job name is qualified `local/<workflow>/<job>` to avoid collisions.
-3. `compare --limit 30` (the default) takes over 2 minutes against real GitHub (about one request per PR and per commit); `--limit 5` takes 8 seconds.
-4. The first "running" status has no job count; "job k of N" appears once the child reports its first job.
+3. `compare` at the default `--limit 30` took 39 seconds against real GitHub (about one request per PR and per commit); `--limit 5` took 8 seconds.
+4. A mistyped `--state` made `compare` quietly compare against an empty store (every row `github-only`). Found in this live run; fixed: `compare` now exits with an error when the store folder does not exist.
+5. The first "running" status has no job count; "job k of N" appears once the child reports its first job.
 
 ## Deviations from the spec or the brief
 

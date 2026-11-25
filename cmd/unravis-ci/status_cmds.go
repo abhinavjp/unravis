@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -129,6 +130,10 @@ func cmdCompare(ctx context.Context, args []string, stdout, stderr io.Writer, en
 		return code
 	}
 	dir := stateDirOf(*state, environ)
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		_, _ = fmt.Fprintf(stderr, "compare: the CI store folder %s does not exist (check --state); nothing to compare\n", dir)
+		return exitUsage
+	}
 	entries, err := (&localci.Store{Dir: dir}).ReadIndex()
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "compare:", err)

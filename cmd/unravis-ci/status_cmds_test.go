@@ -330,6 +330,15 @@ func TestCompareCommandPrintsTableAndJSON(t *testing.T) {
 	}
 }
 
+func TestCompareRefusesAStateFolderThatDoesNotExist(t *testing.T) {
+	f := withStatusFakes(t)
+	f.source.Tips = map[string]string{"develop": strings.Repeat("d", 40)}
+	code, out, e := cli(t, nil, "compare", "--repo", "acme/widgets", "--state", filepath.Join(t.TempDir(), "no-such-store"))
+	if code != exitUsage || !strings.Contains(e, "does not exist") || out != "" {
+		t.Fatalf("a mistyped --state must not compare against nothing: %d %q %q", code, out, e)
+	}
+}
+
 // ---------------------------------------------------------------- fallback
 
 func fallbackHost(t *testing.T, wf string) {
