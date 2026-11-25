@@ -45,3 +45,5 @@ api-audit-explorer/internal/setup.TestRecoverJournalOnRealNTFSRefusesWhatIsNotPr
 api-audit-explorer/internal/setup.TestSetSDDLStillWorksOnAFolder
 api-audit-explorer/internal/setup.TestTheRealJournalWriterMakesAFileTheRealReaderAccepts
 api-audit-explorer/internal/update.TestSilentNoUAC
+api-audit-explorer/cmd/audit-explorer.TestServerStartStopLeavesNoGoroutines
+api-audit-explorer/internal/pipesec.TestOtherLogonDenied
