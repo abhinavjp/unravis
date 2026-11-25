@@ -278,12 +278,30 @@ export function removeBestEffort(path, rm = rmSync) {
   return false;
 }
 
+/**
+ * Deletes a folder that must be gone before the commit clone exists, or stops the run (exit 1, nothing pushed). A process the build left
+ * running (a detached child whose current folder is inside the build clone) locks it on Windows: rmSync then throws EBUSY or EPERM after
+ * its retries; that is a stop with a clear message, not a stack trace. `rm` is a test hook.
+ */
+export function removeOrStop(path, what, rm = rmSync) {
+  let why = '';
+  try {
+    rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (e) {
+    why = ' (' + String(e && e.message).split('\n')[0] + ')';
+  }
+  if (existsSync(path)) throw new Stop(1, what + ' could not be deleted (' + path + ')' + why + '. A process the build left running may still be using it. Nothing was pushed.');
+}
+
 // git with line-ending conversion off, so the commit holds exactly the bytes the build wrote (the Windows default
-// core.autocrlf=true would otherwise rewrite the check-out and the commit).
+// core.autocrlf=true would otherwise rewrite the check-out and the commit). core.sharedRepository=false on every command, not only the clone
+// (CLONE_PINS): a person's global core.sharedRepository=group would otherwise apply to the later `git add` and `git commit` in the clone,
+// and git for Windows then fails to write the objects ("failed to insert into database"). The clone is a temporary folder: group
+// permissions mean nothing for it.
 function git(dir, args, opts = {}) {
   // Hooks and the file system monitor are switched off for every git command (a hook or core.fsmonitor is code that would run with
   // the environment of the command, which carries the token for clone and push).
-  const r = run('git', ['-c', 'core.hooksPath=' + devNull, '-c', 'core.fsmonitor=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', '-c', 'core.eol=lf', ...args], { ...opts, env: opts.env ?? gitBaseEnv(process.env), cwd: dir });
+  const r = run('git', ['-c', 'core.hooksPath=' + devNull, '-c', 'core.fsmonitor=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', '-c', 'core.eol=lf', '-c', 'core.sharedRepository=false', ...args], { ...opts, env: opts.env ?? gitBaseEnv(process.env), cwd: dir });
   if (r.status !== 0 && !opts.allowFail) {
     const why = String(r.stderr || '').trim().split('\n').slice(-3).join(' | ') || 'exit ' + r.status;
     throw new Stop(1, 'git ' + gitSubcommand(args) + ' failed: ' + why);
@@ -403,10 +421,9 @@ export function main(argv, env = process.env) {
     if (!sameRoots(out1, out2)) throw new Stop(1, 'The second build gave different bytes than the first: the build is not reproducible here. Nothing was pushed.');
 
     // The build clone, its environment folders and the second copy are gone before the commit clone exists.
-    rmSync(buildDir, { recursive: true, force: true, maxRetries: 3 });
-    rmSync(join(buildTmp, 'env'), { recursive: true, force: true, maxRetries: 3 });
-    rmSync(out2, { recursive: true, force: true, maxRetries: 3 });
-    if (existsSync(buildDir)) throw new Stop(1, 'The build clone could not be deleted (' + buildDir + '). Nothing was pushed.');
+    removeOrStop(buildDir, 'The build clone');
+    removeOrStop(join(buildTmp, 'env'), 'The build environment folder');
+    removeOrStop(out2, 'The second copy of the built files');
 
     tmp = mkdtempSync(join(tmpdir(), 'unravis-dist-'));
     console.log('> cloning ' + o.branch + ' to commit in ' + join(tmp, 'repo'));

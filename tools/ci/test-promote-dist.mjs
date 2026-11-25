@@ -6,7 +6,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { assertFreshClone, authEnv, buildEnv, dryRunCommitClone, gitSubcommand, pushArgs, copyRoots, gitBaseEnv, makeCommitClone, pushBranch, removeBestEffort, sameRoots } from '../release/promote-dist.mjs';
+import { assertFreshClone, authEnv, buildEnv, dryRunCommitClone, gitSubcommand, pushArgs, copyRoots, gitBaseEnv, makeCommitClone, pushBranch, removeBestEffort, removeOrStop, sameRoots } from '../release/promote-dist.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
@@ -60,9 +60,28 @@ function fixture(srcValue, { dist = srcValue, extra = {} } = {}) {
   git(work, 'commit', '-q', '-m', 'start');
   sh(base, 'git', ['init', '-q', '--bare', remoteName(bare)]);
   git(work, 'push', '-q', pathToFileURL(bare).href, 'promote/abc1234');
-  return { base, work, bare, url: pathToFileURL(bare).href, cleanup: () => rmSync(base, { recursive: true, force: true }) };
+  return { base, work, bare, url: pathToFileURL(bare).href, cleanup: () => rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 const remoteName = (p) => p;
+
+// A path written INTO a git config value that a helper plants: a Windows path has backslashes, which a quoted config value reads as escapes
+// (a backslash then U is "bad config line"). Forward slashes name the same file on Windows and change nothing elsewhere.
+const gitConfigPath = (p) => p.split('\\').join('/');
+
+// A detached helper the build leaves behind (the late-plant tests). Started with its working folder OUTSIDE everything the program
+// deletes: on Windows a process whose current folder is inside the build clone locks it (EBUSY), and a helper that is still alive when
+// the fixture is removed locks that too. The helper adds its pid to a file; stopLateHelper() ends it before the clean-up.
+const lateSpawnSource = (f, helper, pidFile) => `const c = require('node:child_process').spawn(process.execPath, [${JSON.stringify(join(f.base, helper))}], { detached: true, stdio: 'ignore', cwd: ${JSON.stringify(f.base)} }); require('node:fs').appendFileSync(${JSON.stringify(join(f.base, pidFile))}, c.pid + ' '); c.unref();`;
+function stopLateHelper(f, pidFile) {
+  // the build runs twice (reproducibility), so there can be two helpers: the file holds every pid, space separated
+  let pids = [];
+  try { pids = readFileSync(join(f.base, pidFile), 'utf8').split(' ').map(Number).filter(Boolean); } catch { return; }
+  for (const pid of pids) {
+    // the helper starts no children, but the whole tree is ended anyway on Windows (taskkill /T), where a lock outlives a plain kill by a moment
+    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    else try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+  }
+}
 
 // Each run gets its own temp folder (TMPDIR/TEMP/TMP): the plant scripts of some tests look for commit clones in the temp folder, and a
 // test run of somebody else (or a left-over detached helper of an earlier run) must never be inside what they can see.
@@ -300,7 +319,7 @@ test('a build that plants a git filter, attributes, proxy or config in any clone
     // temp folder) and plants a clean filter for every file, a proxy and sslVerify=false. Under the right order there is nothing to plant in.
     writeFileSync(join(f.base, 'plant3.cjs'), `
       const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
-      const marker = ${JSON.stringify(marker)};
+      const marker = ${JSON.stringify(gitConfigPath(marker))};
       const targets = new Set([path.resolve('..', '..', 'repo')]);
       for (const d of fs.readdirSync(os.tmpdir())) if (d.startsWith('unravis-dist-')) targets.add(path.join(os.tmpdir(), d, 'repo'));
       let planted = 0;
@@ -345,11 +364,11 @@ test('a process the build left running plants a filter in the commit clone after
         if (!hit) { if (Date.now() < end) setTimeout(tick, 2); return; }
         fs.mkdirSync(path.join(hit, '.git', 'info'), { recursive: true });
         fs.appendFileSync(path.join(hit, '.git', 'info', 'attributes'), '* filter=x\\n');
-        fs.appendFileSync(path.join(hit, '.git', 'config'), '[filter "x"]\\n\\tclean = \\"sh -c \\'echo token=$GH_TOKEN$GITHUB_TOKEN >> ' + ${JSON.stringify(marker)} + '; cat\\'\\"\\n[http]\\n\\tproxy = http://127.0.0.1:9\\n');
+        fs.appendFileSync(path.join(hit, '.git', 'config'), '[filter "x"]\\n\\tclean = \\"sh -c \\'echo token=$GH_TOKEN$GITHUB_TOKEN >> ' + ${JSON.stringify(gitConfigPath(marker))} + '; cat\\'\\"\\n[http]\\n\\tproxy = http://127.0.0.1:9\\n');
       };
       tick();
     `);
-    writeFileSync(join(f.base, 'spawn-late.cjs'), `require('node:child_process').spawn(process.execPath, [${JSON.stringify(join(f.base, 'late.cjs'))}], { detached: true, stdio: 'ignore' }).unref();`);
+    writeFileSync(join(f.base, 'spawn-late.cjs'), lateSpawnSource(f, 'late.cjs', 'late.pid'));
     const before = remoteHead(f);
     const r = promote(f, [], { env: { ...process.env, GH_TOKEN: 'tok-from-parent', GITHUB_TOKEN: 'tok-from-parent' }, build: 'node ' + JSON.stringify(join(f.base, 'spawn-late.cjs')) + ' && node build.cjs' });
     assert.equal(r.status, 1, r.stdout + r.stderr);
@@ -360,6 +379,7 @@ test('a process the build left running plants a filter in the commit clone after
     const lines = readFileSync(marker, 'utf8').trim().split('\n');
     assert.ok(lines.length > 0 && lines.every((l) => l === 'token='), 'the filter saw a token: ' + lines[0]);
   } finally {
+    stopLateHelper(f, 'late.pid');
     f.cleanup();
   }
 });
@@ -382,11 +402,11 @@ test('a late remote.origin.pushurl plus receivepack (planted after the first che
           if (txt.includes('new') && fs.existsSync(path.join(repo, '.git', 'config'))) hit = repo;
         }
         if (!hit) { if (Date.now() < end) setTimeout(tick, 2); return; }
-        fs.appendFileSync(path.join(hit, '.git', 'config'), '[remote "origin"]\\n\\tpushurl = ' + ${JSON.stringify(pathToFileURL(other).href)} + '\\n\\treceivepack = \\"sh -c \\'env > ' + ${JSON.stringify(leak)} + '\\'\\"\\n');
+        fs.appendFileSync(path.join(hit, '.git', 'config'), '[remote "origin"]\\n\\tpushurl = ' + ${JSON.stringify(pathToFileURL(other).href)} + '\\n\\treceivepack = \\"sh -c \\'env > ' + ${JSON.stringify(gitConfigPath(leak))} + '\\'\\"\\n');
       };
       tick();
     `);
-    writeFileSync(join(f.base, 'spawn-late2.cjs'), `require('node:child_process').spawn(process.execPath, [${JSON.stringify(join(f.base, 'late2.cjs'))}], { detached: true, stdio: 'ignore' }).unref();`);
+    writeFileSync(join(f.base, 'spawn-late2.cjs'), lateSpawnSource(f, 'late2.cjs', 'late2.pid'));
     const before = remoteHead(f);
     const r = promote(f, [], { env: { ...process.env, GH_TOKEN: 'tok-from-parent' }, build: 'node ' + JSON.stringify(join(f.base, 'spawn-late2.cjs')) + ' && node build.cjs' });
     assert.equal(r.status, 1, r.stdout + r.stderr);
@@ -395,6 +415,7 @@ test('a late remote.origin.pushurl plus receivepack (planted after the first che
     assert.equal(remoteHead(f), before, 'nothing was pushed');
     assert.equal(sh(other, 'git', ['for-each-ref', '--count=1']), '', 'the planted pushurl got nothing');
   } finally {
+    stopLateHelper(f, 'late2.pid');
     f.cleanup();
   }
 });
@@ -531,6 +552,50 @@ test('a dry commit clone that the freshness check refuses stops the run before a
     assert.ok(!/> install/.test(r.stdout), 'the install step did not start');
     assert.equal(remoteHead(f), before);
   } finally {
+    f.cleanup();
+  }
+});
+
+test('removeOrStop: a lock that goes away is retried; a folder that stays stops the run with a clear message, not a stack trace', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const dir = join(f.base, 'victim');
+    mkdirSync(dir);
+    const busy = () => { throw Object.assign(new Error('EBUSY: resource busy or locked\nsecond line'), { code: 'EBUSY' }); };
+    // the delete fails but the folder is gone anyway (something else removed it): no stop
+    removeOrStop(join(f.base, 'never-existed'), 'x', busy);
+    // the folder stays: a Stop (exit 1) that names it, says why, and says nothing was pushed
+    assert.throws(() => removeOrStop(dir, 'The build clone', busy), (e) => e.code === 1 && /The build clone could not be deleted/.test(e.message) && e.message.includes(dir) && /EBUSY/.test(e.message) && !e.message.includes('second line') && /Nothing was pushed/.test(e.message));
+    // a normal delete works and is given retries for a short lock
+    let seen;
+    removeOrStop(dir, 'x', (p, o) => { seen = o; rmSync(p, o); });
+    assert.equal(existsSync(dir), false);
+    assert.ok(seen.maxRetries >= 3 && seen.retryDelay > 0, 'retries with a delay');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a process the build left running in the build clone (its current folder is there): Windows cannot delete the folder and the run stops; elsewhere it is deleted and the run goes on', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    // A detached helper with the DEFAULT working folder, which is the web folder of the build clone: on Windows that folder cannot be
+    // deleted while the helper lives (EBUSY); on Linux and macOS a folder in use can be deleted and the promotion goes on.
+    writeFileSync(join(f.base, 'hold.cjs'), `setTimeout(() => {}, 60000);`);
+    writeFileSync(join(f.base, 'spawn-hold.cjs'), `const c = require('node:child_process').spawn(process.execPath, [${JSON.stringify(join(f.base, 'hold.cjs'))}], { detached: true, stdio: 'ignore' }); require('node:fs').appendFileSync(${JSON.stringify(join(f.base, 'hold.pid'))}, c.pid + ' '); c.unref();`);
+    const before = remoteHead(f);
+    const r = promote(f, [], { build: 'node ' + JSON.stringify(join(f.base, 'spawn-hold.cjs')) + ' && node build.cjs' });
+    if (process.platform === 'win32') {
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, /The build clone could not be deleted/);
+      assert.doesNotMatch(r.stderr, /\n\s+at /, 'a message, not a stack trace');
+      assert.equal(remoteHead(f), before, 'nothing was pushed');
+    } else {
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.notEqual(remoteHead(f), before, 'the commit was pushed');
+    }
+  } finally {
+    stopLateHelper(f, 'hold.pid');
     f.cleanup();
   }
 });
