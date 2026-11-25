@@ -11,6 +11,11 @@ const (
 	bbSeriesBinaryType    = "application/vnd.unravis.series+f64"
 	bbSeriesBinaryColumns = 6
 	bbSeriesBinaryCell    = bbSeriesBinaryColumns * 8
+	// The frame starts with a 4-byte magic and a u16 version, so a reader refuses a frame whose layout it does not know.
+	bbSeriesBinaryMagic   = "UBB1"
+	bbSeriesBinaryVersion = 1
+	// magic (4) + version (2) + header length (4)
+	bbSeriesBinaryPrefix = 10
 )
 
 func writeBBSeriesBinary(w http.ResponseWriter, answer bbSeriesAnswer) {
@@ -35,14 +40,16 @@ func writeBBSeriesBinary(w http.ResponseWriter, answer bbSeriesAnswer) {
 		cells += int64(len(proc.CPU) + len(proc.M4CPU) + len(proc.WS) + len(proc.M4WS) + len(proc.Priv) + len(proc.M4Priv))
 	}
 	payloadBytes := cells * bbSeriesBinaryCell
-	if int64(len(metadata)) > maxResponseBytes-4 || payloadBytes > maxResponseBytes-4-int64(len(metadata)) {
+	if int64(len(metadata)) > maxResponseBytes-bbSeriesBinaryPrefix || payloadBytes > maxResponseBytes-bbSeriesBinaryPrefix-int64(len(metadata)) {
 		writeError(w, http.StatusRequestEntityTooLarge, "Response exceeds a configured limit.")
 		return
 	}
-	body := make([]byte, 4+len(metadata)+int(payloadBytes))
-	binary.LittleEndian.PutUint32(body, uint32(len(metadata))) //nolint:gosec // len(metadata) <= seriesBinaryHeadCap (1 MiB), checked above
-	copy(body[4:], metadata)
-	at := 4 + len(metadata)
+	body := make([]byte, bbSeriesBinaryPrefix+len(metadata)+int(payloadBytes))
+	copy(body, bbSeriesBinaryMagic)
+	binary.LittleEndian.PutUint16(body[4:6], bbSeriesBinaryVersion)
+	binary.LittleEndian.PutUint32(body[6:10], uint32(len(metadata))) //nolint:gosec // len(metadata) <= seriesBinaryHeadCap (1 MiB), checked above
+	copy(body[bbSeriesBinaryPrefix:], metadata)
+	at := bbSeriesBinaryPrefix + len(metadata)
 	putPoint := func(point [bbSeriesBinaryColumns]float64) {
 		for _, value := range point {
 			binary.LittleEndian.PutUint64(body[at:at+8], math.Float64bits(value))

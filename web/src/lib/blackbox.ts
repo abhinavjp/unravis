@@ -2,6 +2,7 @@ import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
 import type { SqlAccessReport } from './types';
 import { utcToWall } from './zoneStamp';
 import { zoneAbbreviation } from './time';
+import { readBinaryBody } from './binaryBody';
 import { readSeriesBinary, SERIES_BINARY_TYPE, type SeriesRequest } from './blackboxSeries';
 
 /**
@@ -420,7 +421,9 @@ export const blackboxApi = {
     const path = '/' + encodeURIComponent(id) + '/series';
     const response = await send('POST', path, body, signal, binary ? SERIES_BINARY_TYPE : undefined);
     if (!response.headers.get('Content-Type')?.includes(SERIES_BINARY_TYPE)) return response.json();
-    const decoded = readSeriesBinary(await response.arrayBuffer());
+    // A body that is too big, cut short or not a frame this reader knows takes the one JSON retry, never an error.
+    const packed = await readBinaryBody(response, signal);
+    const decoded = packed && readSeriesBinary(packed);
     if (decoded) return decoded;
     const fallback = await send('POST', path, body, signal);
     return fallback.headers.get('Content-Type')?.includes(SERIES_BINARY_TYPE) ? null : fallback.json();

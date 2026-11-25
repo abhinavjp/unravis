@@ -163,6 +163,21 @@ test('Case home reads the case again quietly for each signal, with no loading sc
   assert.doesNotMatch(home, /drawerWas/, 'the read no longer waits for the pop-up to close');
 });
 
+test('a re-read writes nothing after a page load began or the case changed, and a locked files read goes back to the key page', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  const start = home.indexOf('async function rereadFiles');
+  const reread = home.slice(start, home.indexOf('function backOnPage', start));
+  const loadPage = home.slice(home.indexOf('async function loadPage'), home.indexOf('controller?.abort();', home.indexOf('async function loadPage')));
+  assert.match(loadPage, /pageLoads \+= 1;/, 'every read of the whole page is counted');
+  assert.match(reread, /const loadsBefore = pageLoads;/, 'the re-read notes how many page loads there were when it began');
+  const after = reread.slice(reread.indexOf('await Promise.allSettled'));
+  const guard = after.indexOf('loadsBefore !== pageLoads');
+  assert.ok(guard > 0 && /id !== caseId \|\| destroyed \|\| loadsBefore !== pageLoads\) return;/.test(after), 'the case and the page loads are checked again after the reads');
+  assert.ok(guard < after.indexOf('caseReads.accept('), 'the check comes before anything is written');
+  assert.match(after, /fileResult\.status === 'rejected' && lockedUnder\(fileResult\.reason\)\) return;/, 'a locked files read is routed as the old await path did');
+  assert.ok(after.indexOf('lockedUnder(fileResult.reason)') < after.indexOf('caseReads.accept('), 'a locked case is routed before anything is written');
+});
+
 test('the add paths signal once, after the case kept something', () => {
   assert.match(read('src/lib/components/importPopup/popupState.svelte.ts'), /outcome\.verdict !== 'rejected'\)\) noteCaseAdded\(s\.caseId\)/);
   assert.match(read('src/lib/wizardCreate.svelte.ts'), /createView\.appendOnly && result\.caseId && landedCount\(createView\.submit\) > landedBefore\) noteCaseAdded/);

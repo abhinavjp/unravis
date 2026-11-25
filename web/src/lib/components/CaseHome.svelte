@@ -83,6 +83,8 @@
   $effect(() => { if (phase === 'ready') return setDocTitle(timelineShown ? TRACING_TEXT.heading : info?.title || caseCode(caseId)); });
   let controller: AbortController | null = null;
   let rereadRun = 0;
+  // Counts the reads of the whole page (load). A re-read that began before one of them must not write over what that read decided, such as a locked or gone case.
+  let pageLoads = 0;
   // Set when the page goes away: a re-read that was held for a read of the page is not run for a page that is no longer there.
   let destroyed = false;
   let loadedFor = '';
@@ -197,6 +199,7 @@
   async function loadPage(id: string, quiet: boolean) {
     // The newest read wins: a quiet re-read that is still on its way (after an add) must not put its older answer over this one.
     rereadRun += 1;
+    pageLoads += 1;
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
@@ -330,6 +333,7 @@
     const id = caseId;
     if (!id || phase !== 'ready' || destroyed) return;
     const mine = ++rereadRun;
+    const loadsBefore = pageLoads;
     lastReadAt = Date.now();
     rereadsOpen += 1;
     const caseToken = caseReads.begin();
@@ -345,7 +349,11 @@
       if (id !== caseId) return;
       const [fileResult, healthResult] = await Promise.allSettled([reads ? listImports(id) : Promise.resolve([] as ImportRecord[]), reads ? fetchHealthRuns(id) : Promise.resolve(null)]);
       const theoriesRead = everything && reads ? refreshLedger().catch(() => { /* the theories keep what they show */ }) : Promise.resolve();
-      if (id !== caseId) return;
+      // Checked again after the reads: nothing is written when another case was opened, or when a read of the whole page began meanwhile (it
+      // may have ended locked or gone, and decides what the page shows). A newer re-read does not discard this one's answer; the per-kind
+      // turns below decide which successful answer is shown. A files read that says the case is locked goes back to the key page, as before.
+      if (id !== caseId || destroyed || loadsBefore !== pageLoads) return;
+      if (fileResult.status === 'rejected' && lockedUnder(fileResult.reason)) return;
       if (caseReads.accept(caseToken) && !sameRead(info, fresh)) info = fresh;
       if (fileResult.status === 'fulfilled' && fileReads.accept(fileToken) && !sameRead(imports, fileResult.value)) imports = fileResult.value;
       if (healthResult.status === 'fulfilled' && healthResult.value && healthReads.accept(healthToken) && !sameRead(health, healthResult.value)) health = healthResult.value;

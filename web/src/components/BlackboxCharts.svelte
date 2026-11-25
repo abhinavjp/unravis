@@ -12,7 +12,7 @@
   import { sqlNote } from '../lib/blackboxSqlNames';
   import {
     PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapRanges, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
-    alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own, niceBinaryMax, biggestPlotted,
+    alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own, niceBinaryMax, biggestPlotted, settleWidth,
     type SeriesAnswer, type SeriesLine, type SeriesPoint, type SeriesUnit, type WindowPreset
   } from '../lib/blackboxSeries';
   import { MAX_DRAWN, eventDots, eventRows, happenedItems, healthRows, statusChips, type HappenedItem, type Happened } from '../lib/blackboxHappened';
@@ -45,10 +45,15 @@
   let busy = $state(false);
   let problem = $state('');
   let attempt = $state(0);
-  let chartWidth = $state(800);
+  // 0 until the chart box has a real size: nothing is read before then (a hidden box would ask for a 1-point answer).
+  let chartWidth = $state(0);
   let readRun = 0;
+  // The window the current zoom belongs to: a new window clears the zoom, a new width does not.
+  let zoomWin: Win | null = null;
   let paintSample = $state.raw<{ answer: SeriesAnswer; startedAt: number } | null>(null);
-  const pixelWidth = $derived(Math.max(1, Math.floor(chartWidth)));
+  // The width the reads use: in steps of WIDTH_STEP, with some slack on a shrink, so a scrollbar or a nudge does not read again.
+  let pixelWidth = $state(0);
+  $effect(() => { const measured = chartWidth; untrack(() => { pixelWidth = settleWidth(pixelWidth, measured); }); });
   let log = $state(saved.log === true);
   let keys = $state<string[]>(Array.isArray(saved.keys) ? saved.keys : []);
   let tab = $state<'counters' | 'processes'>('counters');
@@ -94,15 +99,16 @@
     };
   });
 
-  // One debounced read per window or visible width. A newer read cancels the older request and rejects a late answer even if abort lost the race.
+  // One debounced read per window or visible width step. A newer read cancels the older request and rejects a late answer even if abort lost the race.
+  // A width that is not measured yet waits. The user's zoom is kept when only the width changed; a new window clears it.
   $effect(() => {
     const w = win, width = pixelWidth;
     void attempt;
     const mine = ++readRun;
-    if (!w) return;
+    if (!w || width <= 0) return;
     const ctl = new AbortController();
     paintSample = null;
-    untrack(() => { busy = true; problem = ''; zoom = null; });
+    untrack(() => { busy = true; problem = ''; if (w !== zoomWin) { zoom = null; zoomWin = w; } });
     const maxPoints = Math.max(1, Math.min(POINTS, width));
     const req = alignedRequest(w.startMs, w.endMs, facts?.effectiveIntervalSeconds || facts?.intervalSeconds || 15, maxPoints);
     const timer = setTimeout(() => {

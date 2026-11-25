@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/casestore"
 )
 
 type bbBinaryPointRef struct {
@@ -34,18 +35,21 @@ type bbBinaryHeader struct {
 
 func decodeBBSeriesBinary(t *testing.T, body []byte) bbM4Answer {
 	t.Helper()
-	if len(body) < 4 {
+	if len(body) < bbSeriesBinaryPrefix {
 		t.Fatalf("short binary body: %d", len(body))
 	}
-	head := int(binary.LittleEndian.Uint32(body))
-	if head > len(body)-4 || (len(body)-4-head)%bbSeriesBinaryCell != 0 {
+	if string(body[:4]) != "UBB1" || binary.LittleEndian.Uint16(body[4:6]) != 1 {
+		t.Fatalf("frame starts %q version %d, want UBB1 version 1", body[:4], binary.LittleEndian.Uint16(body[4:6]))
+	}
+	head := int(binary.LittleEndian.Uint32(body[6:10]))
+	if head > len(body)-bbSeriesBinaryPrefix || (len(body)-bbSeriesBinaryPrefix-head)%bbSeriesBinaryCell != 0 {
 		t.Fatalf("bad binary lengths: header %d, body %d", head, len(body))
 	}
 	var meta bbBinaryHeader
-	if err := json.Unmarshal(body[4:4+head], &meta); err != nil {
+	if err := json.Unmarshal(body[bbSeriesBinaryPrefix:bbSeriesBinaryPrefix+head], &meta); err != nil {
 		t.Fatal(err)
 	}
-	at := 4 + head
+	at := bbSeriesBinaryPrefix + head
 	read := func(n int) [][]float64 {
 		points := make([][]float64, n)
 		for i := range points {
@@ -123,6 +127,10 @@ func TestBlackboxSeriesBinaryRouteRequiresM4AndAccept(t *testing.T) {
 		{"binary m4", `,"width":60,"shape":"m4"`, bbSeriesBinaryType, bbSeriesBinaryType},
 		{"json without accept", `,"width":60,"shape":"m4"`, "", "application/json"},
 		{"json without m4", `,"width":60`, bbSeriesBinaryType, "application/json"},
+		{"json for a wildcard accept", `,"width":60,"shape":"m4"`, "*/*", "application/json"},
+		{"json for another type", `,"width":60,"shape":"m4"`, "application/json", "application/json"},
+		{"binary when the type is second in a list", `,"width":60,"shape":"m4"`, "application/json, " + bbSeriesBinaryType, bbSeriesBinaryType},
+		{"binary with a q-value", `,"width":60,"shape":"m4"`, bbSeriesBinaryType + ";q=0.9, */*;q=0.1", bbSeriesBinaryType},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := `{` + win + tc.extra + `}`
@@ -140,5 +148,50 @@ func TestBlackboxSeriesBinaryRouteRequiresM4AndAccept(t *testing.T) {
 				decodeBBSeriesBinary(t, rec.Body.Bytes())
 			}
 		})
+	}
+}
+
+func TestBlackboxSeriesBinaryRefusesAnAnswerOverTheLimit(t *testing.T) {
+	// (maxResponseBytes - prefix) / cell, plus one: the payload alone no longer fits.
+	cells := maxResponseBytes/bbSeriesBinaryCell + 1
+	rec := httptest.NewRecorder()
+	writeBBSeriesBinary(rec, bbSeriesAnswer{Lines: []bbSeriesLine{{Key: "cpu", M4: make([]bbSeriesPointM4, cells)}}})
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("too many points = %d %v", rec.Code, rec.Header())
+	}
+
+	// A header over its own 1 MiB cap is a server fault, still JSON, never a frame.
+	rec = httptest.NewRecorder()
+	writeBBSeriesBinary(rec, bbSeriesAnswer{Lines: []bbSeriesLine{{Key: strings.Repeat("k", seriesBinaryHeadCap+1)}}})
+	if rec.Code != http.StatusInternalServerError || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("oversize header = %d %v", rec.Code, rec.Header())
+	}
+
+	// Just under the limit still answers.
+	rec = httptest.NewRecorder()
+	writeBBSeriesBinary(rec, bbSeriesAnswer{Lines: []bbSeriesLine{{Key: "cpu", M4: make([]bbSeriesPointM4, 1000)}}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("small answer = %d", rec.Code)
+	}
+}
+
+func TestCaseSeriesBinaryRefusesAnAnswerOverTheLimit(t *testing.T) {
+	cells := maxResponseBytes/seriesBinaryCellSize + 1
+	rec := httptest.NewRecorder()
+	writeSeriesBinary(rec, casestore.SeriesResult{Series: []casestore.SeriesOut{{Sel: "kind=toy", Points: make([]casestore.SeriesPoint, cells)}}})
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("too many points = %d %v", rec.Code, rec.Header())
+	}
+
+	rec = httptest.NewRecorder()
+	writeSeriesBinary(rec, casestore.SeriesResult{Series: []casestore.SeriesOut{{Sel: strings.Repeat("k", seriesBinaryHeadCap+1)}}})
+	if rec.Code != http.StatusInternalServerError || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("oversize header = %d %v", rec.Code, rec.Header())
+	}
+
+	rec = httptest.NewRecorder()
+	writeSeriesBinary(rec, casestore.SeriesResult{Series: []casestore.SeriesOut{{Sel: "kind=toy", Points: make([]casestore.SeriesPoint, 10)}}})
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/octet-stream" {
+		t.Fatalf("small answer = %d %v", rec.Code, rec.Header())
 	}
 }

@@ -3,6 +3,7 @@
   import { CaseApiError, fetchSeries, isCaseGone } from '../../lib/cases';
   import { errorText } from '../../lib/copy/importCopy';
   import { logSeriesReadTiming } from '../../lib/chartPerf';
+  import { settleWidth } from '../../lib/blackboxSeries';
   import {
     PROC_METRICS, apiStrip, bucketFor, bucketText, buildStrips, hostSelectors, orderStrips, processSelectors, processStrip, readSeries, resourceCopy, stripsSummary,
     type EpisodeSpan, type Marker, type ProcMetricId, type ResourceHost, type SeriesRead, type ViewWindow
@@ -24,14 +25,16 @@
   let procBusy = $state(false);
   let problem = $state('');
   let attempt = $state(0);
-  let chartWidth = $state(800);
+  // 0 until the box has a real size; nothing is read before then, and the width is taken in steps so a small change reads nothing again.
+  let chartWidth = $state(0);
+  let pixelWidth = $state(0);
+  $effect(() => { const measured = chartWidth; untrack(() => { pixelWidth = settleWidth(pixelWidth, measured); }); });
 
   const aborted = (error: unknown) => error instanceof DOMException && error.name === 'AbortError';
   function failure(error: unknown): string {
     if (isCaseGone(error)) onGone?.();
     return error instanceof CaseApiError ? errorText(error) : errorText({ status: 0, reason: 'unreachable', message: '' });
   }
-  const pixelWidth = $derived(Math.max(1, Math.floor(chartWidth)));
 
   // The panel hands over a fresh host object after each summary read. These keep a read from repeating when nothing it depends on changed.
   const hostName = $derived(host.host);
@@ -43,6 +46,7 @@
   $effect(() => {
     const from = fromMs, to = toMs, name = hostName, width = pixelWidth;
     void attempt;
+    if (width <= 0) return;
     const mine = new AbortController();
     const timer = setTimeout(async () => {
       hostBusy = true; problem = '';
@@ -65,6 +69,7 @@
     const refs = untrack(() => processSelectors(host.processes, metric));
     void attempt;
     if (refs.length === 0) { procRead = null; procBusy = false; return; }
+    if (width <= 0) return;
     const mine = new AbortController();
     const timer = setTimeout(async () => {
       procBusy = true;

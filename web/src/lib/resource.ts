@@ -7,6 +7,7 @@
 import type { Palette } from './charts';
 import { chartTime } from './chartTime';
 import { lonePointSeries } from './chartPerf';
+import { SERIES_BODY_CAP } from './binaryBody';
 import { richTip, rt } from './chartTooltip';
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -269,7 +270,7 @@ export function parseSeries(value: unknown): SeriesView | null {
 
 const SERIES_BINARY_MAGIC = 'URS1';
 const SERIES_BINARY_HEAD_CAP = 1 << 20;
-const SERIES_BINARY_BODY_CAP = 64 << 20;
+const SERIES_BINARY_BODY_CAP = SERIES_BODY_CAP;
 const whole = (value: unknown): value is number => isNumber(value) && Number.isSafeInteger(value) && value >= 0;
 
 /** Decode the opt-in URS1 frame: magic, padded JSON metadata, then eight little-endian doubles per point. */

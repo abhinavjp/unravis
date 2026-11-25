@@ -3,6 +3,7 @@ import { WRONG_CASE_KEY_REASON, signalIfAppLocked } from './lockSignal';
 import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
 import { pacedSleep } from './visibility';
 import { parseTimelineView, type TimelineView } from './timeline';
+import { readBinaryBody } from './binaryBody';
 import { parseResource, parseSeries, parseSeriesBinary, type ResourceView, type SeriesView } from './resource';
 import { parseCollect, type CollectItem } from './collect';
 import { parseArchive, type ArchiveInfo } from './archiveModel';
@@ -1237,10 +1238,14 @@ export async function fetchSeries(id: string, request: SeriesRequest, signal?: A
   for (const sel of request.sels) params.append('sel', sel);
   const path = casePath(id, '/series') + '?' + params.toString();
   let response = await send(path, {}, signal);
-  let view = response.headers.get('Content-Type')?.includes('application/octet-stream')
-    ? parseSeriesBinary(await response.arrayBuffer())
-    : parseSeries(await json<unknown>(response));
-  if (!view && response.headers.get('Content-Type')?.includes('application/octet-stream')) {
+  const packed = response.headers.get('Content-Type')?.includes('application/octet-stream');
+  let view: SeriesView | null;
+  if (packed) {
+    // A body that is too big, cut short or not a frame this reader knows takes the one JSON retry, never an error.
+    const body = await readBinaryBody(response, signal);
+    view = body && parseSeriesBinary(body);
+  } else view = parseSeries(await json<unknown>(response));
+  if (!view && packed) {
     params.delete('format');
     response = await send(casePath(id, '/series') + '?' + params.toString(), {}, signal);
     view = response.headers.get('Content-Type')?.includes('application/octet-stream') ? null : parseSeries(await json<unknown>(response));

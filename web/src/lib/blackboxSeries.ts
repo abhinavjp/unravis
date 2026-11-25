@@ -4,6 +4,7 @@
  * same Windows counters as Perfmon (PDH), so these charts show the same numbers Perfmon would, downsampled by the server.
  * A value that was not read is absent in the answer and stays absent here: a line breaks, it never drops to 0.
  */
+import { SERIES_BODY_CAP } from './binaryBody';
 import { SQL_DMV_GROUP, sqlDmvLine, type SeriesSql } from './blackboxSqlNames';
 
 export type SeriesUnit = 'pct' | 'bytes' | 'bytesPerSec' | 'ms' | 'sec' | 'perSec' | 'count';
@@ -77,22 +78,28 @@ export function readSeriesAnswer(v: unknown): SeriesAnswer | null {
 
 export const SERIES_BINARY_TYPE = 'application/vnd.unravis.series+f64';
 const SERIES_BINARY_HEAD_CAP = 1 << 20;
-const SERIES_BINARY_BODY_CAP = 64 << 20;
+const SERIES_BINARY_BODY_CAP = SERIES_BODY_CAP;
 const SERIES_BINARY_CELL = 48;
+/** The frame starts with these four bytes and a u16 version, so a layout this reader does not know is refused, never misread. */
+const SERIES_BINARY_MAGIC = 'UBB1';
+const SERIES_BINARY_VERSION = 1;
+const SERIES_BINARY_PREFIX = 10;
 const whole = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
-/** Decode the opt-in Blackbox M4 frame: u32 header length, JSON point counts, then six little-endian doubles per point. */
+/** Decode the opt-in Blackbox M4 frame: magic "UBB1", u16 version, u32 header length, JSON point counts, then six little-endian doubles per point. */
 export function readSeriesBinary(buffer: ArrayBuffer): SeriesAnswer | null {
-  if (buffer.byteLength < 4 || buffer.byteLength > SERIES_BINARY_BODY_CAP) return null;
+  if (buffer.byteLength < SERIES_BINARY_PREFIX || buffer.byteLength > SERIES_BINARY_BODY_CAP) return null;
   const view = new DataView(buffer);
-  const headBytes = view.getUint32(0, true);
-  if (headBytes < 2 || headBytes > SERIES_BINARY_HEAD_CAP || 4 + headBytes > buffer.byteLength) return null;
+  for (let i = 0; i < SERIES_BINARY_MAGIC.length; i++) if (view.getUint8(i) !== SERIES_BINARY_MAGIC.charCodeAt(i)) return null;
+  if (view.getUint16(4, true) !== SERIES_BINARY_VERSION) return null;
+  const headBytes = view.getUint32(6, true);
+  if (headBytes < 2 || headBytes > SERIES_BINARY_HEAD_CAP || SERIES_BINARY_PREFIX + headBytes > buffer.byteLength) return null;
   let header: unknown;
   try {
-    header = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(buffer, 4, headBytes)));
+    header = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(buffer, SERIES_BINARY_PREFIX, headBytes)));
   } catch { return null; }
   if (!isObj(header) || !Array.isArray(header.lines)) return null;
-  const payload = new DataView(buffer, 4 + headBytes);
+  const payload = new DataView(buffer, SERIES_BINARY_PREFIX + headBytes);
   let at = 0;
   const readPoints = (ref: unknown): SeriesPoint[] | null => {
     if (!isObj(ref) || !whole(ref.n) || ref.n > (payload.byteLength - at) / SERIES_BINARY_CELL) return null;
@@ -118,6 +125,25 @@ export function readSeriesBinary(buffer: ArrayBuffer): SeriesAnswer | null {
   });
   if (processes.some((proc) => proc === null) || at !== payload.byteLength) return null;
   return readSeriesAnswer({ ...header, lines, processes });
+}
+
+/* ------------------------------------------------------------------ chart width */
+
+/** A chart's width is read in steps this many pixels wide, so a small change (a scrollbar, a panel nudge) does not read the data again. */
+export const WIDTH_STEP = 64;
+/** A shrink must pass the step's own edge by this many pixels before it counts, so a width sitting on an edge cannot flip back and forth. */
+const WIDTH_SHRINK_SLACK = 24;
+
+/**
+ * The width a chart asks the server to cut for. A width that is not a real measure yet (0, NaN, negative) keeps the one in hand (0 means
+ * "not measured, do not read yet"). A wider chart rounds up to the next step at once; a narrower one counts only when it is clearly
+ * under the current step.
+ */
+export function settleWidth(current: number, measured: number): number {
+  if (!Number.isFinite(measured) || measured <= 0) return current;
+  const next = Math.ceil(measured / WIDTH_STEP) * WIDTH_STEP;
+  if (current <= 0 || next > current) return next;
+  return measured <= current - WIDTH_STEP - WIDTH_SHRINK_SLACK ? next : current;
 }
 
 /* ------------------------------------------------------------------ names */

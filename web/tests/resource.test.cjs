@@ -210,6 +210,51 @@ test('a visible width asks for binary M4 data and decodes it; a JSON answer rema
   assert.equal(retryParams.get('width'), '320');
 });
 
+// A body that drops mid-read, declares too much, or streams past the cap takes the one JSON retry, like any malformed frame.
+function brokenBodies() {
+  const dropped = () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new Uint8Array(16)); controller.error(new TypeError('network error')); }
+  }), { headers: { 'Content-Type': 'application/octet-stream' } });
+  const declared = () => new Response(new Uint8Array(16), { headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String((16 << 20) + 1) } });
+  const streamed = () => {
+    let sent = 0;
+    return new Response(new ReadableStream({
+      pull(controller) { sent += 1 << 20; controller.enqueue(new Uint8Array(1 << 20)); if (sent > (17 << 20)) controller.close(); }
+    }), { headers: { 'Content-Type': 'application/octet-stream' } });
+  };
+  return { dropped, declared, streamed };
+}
+
+test('a dropped, over-declared or over-long binary body takes the one JSON retry', async () => {
+  globalThis.sessionStorage = { getItem: () => 'session-token-1', setItem() {}, removeItem() {} };
+  for (const [name, make] of Object.entries(brokenBodies())) {
+    const urls = [];
+    globalThis.fetch = async (url) => {
+      urls.push(String(url));
+      if (urls.length === 1) return make();
+      return new Response(JSON.stringify(seriesJson([item('a', [point(T0, 7)])])), { headers: { 'Content-Type': 'application/json' } });
+    };
+    const view = await cases.fetchSeries(CASE_ID, { fromMs: T0, toMs: T0 + MIN, bucketMs: 100, sels: ['a'], width: 320 });
+    assert.equal(view.series[0].points[0].mean, 7, name);
+    assert.equal(urls.length, 2, name + ': exactly one retry');
+    assert.equal(new URL(urls[1], 'http://x').searchParams.get('format'), null, name);
+  }
+});
+
+test('an aborted binary read is not retried', async () => {
+  globalThis.sessionStorage = { getItem: () => 'session-token-1', setItem() {}, removeItem() {} };
+  const controller = new AbortController();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response(new ReadableStream({
+      start(c) { c.enqueue(new Uint8Array(16)); controller.abort(); c.error(new DOMException('aborted', 'AbortError')); }
+    }), { headers: { 'Content-Type': 'application/octet-stream' } });
+  };
+  await assert.rejects(cases.fetchSeries(CASE_ID, { fromMs: T0, toMs: T0 + MIN, bucketMs: 100, sels: ['a'], width: 320 }, controller.signal));
+  assert.equal(calls, 1);
+});
+
 test('a server refusal keeps its reason and message; a wrong shape becomes "unreadable"', async () => {
   mockServer(() => ({ status: 400, body: { error: 'bad', reason: 'too-many-buckets', message: 'Too many. Use a bucket of at least 87 ms.' } }));
   await assert.rejects(cases.fetchSeries(CASE_ID, { fromMs: T0, toMs: T0 + MIN, bucketMs: 1, sels: ['x'] }), (error) => error.reason === 'too-many-buckets' || error.status === 400);
