@@ -38,7 +38,7 @@ Left:
 
 ## Deviations and open questions
 
-- BL-584 in the backlog is the slice 4 leftovers (`fallback`, `--post-required`); this slice's UI items are recorded under it and ticked separately. `fallback` and `--post-required` stay unticked.
+- BL-584 in the backlog is the slice 4 leftovers (`fallback`, `--post-required`); this slice's UI items are the sub-items BL-584a (ticked, live) and BL-584b (seeded only, unticked). `fallback` and `--post-required` stay unticked.
 - `unravis-ci compare --save` is what feeds the Overview headline; until someone runs it the card says so. Should `serve` save it on a timer? Needs an owner go (agent change).
 - Should the Machines tab and `/api/run/tests` wait for a collector that records them?
 
