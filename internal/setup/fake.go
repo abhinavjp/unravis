@@ -94,6 +94,110 @@ func (f *Faults) check(op string) error {
 	return err
 }
 
+// ---- PATH ----
+
+// FakeEnv is the in-memory PATH of the fake PC: one text value per hive, as the registry holds it.
+type FakeEnv struct {
+	mu     sync.Mutex
+	paths  map[Root]string
+	Faults *Faults
+	// Types is the registry type of each hive's value ("REG_SZ" or "REG_EXPAND_SZ"; "" means expandable, as a missing value reads).
+	Types map[Root]string
+	// Broadcasts counts the BroadcastEnvChange calls.
+	Broadcasts int
+}
+
+// Set puts a PATH value in place, as an earlier program or the person left it.
+func (e *FakeEnv) Set(root Root, value string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.paths == nil {
+		e.paths = map[Root]string{}
+	}
+	e.paths[root] = value
+}
+
+// Get returns the PATH value of the hive ("" when there is none).
+func (e *FakeEnv) Get(root Root) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.paths[root]
+}
+
+// Snapshot is the PATH of each hive as text.
+func (e *FakeEnv) Snapshot() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []string
+	for _, r := range []Root{HKLM, HKCU} {
+		if v, ok := e.paths[r]; ok {
+			out = append(out, r.String()+" "+v)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func (e *FakeEnv) HasPathEntry(root Root, entry string) (bool, error) {
+	if err := e.Faults.check("env.Has:" + root.String()); err != nil {
+		return false, err
+	}
+	key := pathEntryKey(entry)
+	if key == "" {
+		return false, nil
+	}
+	for _, s := range strings.Split(e.Get(root), ";") {
+		if pathEntryKey(s) == key {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (e *FakeEnv) AddPathEntry(root Root, entry string) (bool, error) {
+	if err := e.Faults.check("env.Add:" + root.String()); err != nil {
+		return false, err
+	}
+	if err := checkPathEntry(entry); err != nil {
+		return false, err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out, added, changed, err := addToPathValue(e.paths[root], entry)
+	if err != nil {
+		return false, err
+	}
+	if changed {
+		if e.paths == nil {
+			e.paths = map[Root]string{}
+		}
+		e.paths[root] = out
+	}
+	return added, nil
+}
+
+func (e *FakeEnv) RemovePathEntry(root Root, entry string) (bool, error) {
+	if err := e.Faults.check("env.Remove:" + root.String()); err != nil {
+		return false, err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out, removed := removeFromPathValue(e.paths[root], entry)
+	if removed {
+		e.paths[root] = out
+	}
+	return removed, nil
+}
+
+func (e *FakeEnv) BroadcastEnvChange() error {
+	if err := e.Faults.check("env.Broadcast"); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	e.Broadcasts++
+	e.mu.Unlock()
+	return nil
+}
+
 // ---- registry ----
 
 type fakeValue struct {
@@ -685,6 +789,7 @@ func (d fakeDisk) Free(path string) (blackbox.DiskInfo, error) {
 // Fakes are the parts of a fake System, for tests to look at and to change.
 type Fakes struct {
 	Reg    *FakeRegistry
+	Env    *FakeEnv
 	Svc    *FakeServices
 	FW     *FakeFirewall
 	Sec    *FakeSecurity
@@ -714,13 +819,13 @@ type Fakes struct {
 func NewFakeSystem(version string) (*System, *Fakes) {
 	faults := &Faults{}
 	f := &Fakes{
-		Reg: &FakeRegistry{Faults: faults}, Svc: &FakeServices{Faults: faults}, FW: &FakeFirewall{Faults: faults},
+		Reg: &FakeRegistry{Faults: faults}, Env: &FakeEnv{Faults: faults}, Svc: &FakeServices{Faults: faults}, FW: &FakeFirewall{Faults: faults},
 		Sec: &FakeSecurity{Faults: faults}, Proc: &FakeProcesses{Faults: faults, OwnerSID: "S-1-5-21-1000"},
 		Mach: &FakeMachine{Version: WindowsVersion{Major: 10, Build: 22631, Is64: true}, BrowserPath: `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,
 			HasWebView2: true, Admin: true, Elevate: true},
 		Faults: faults, Versions: map[string]string{}, version: version, UserSID: "S-1-5-21-1000",
 	}
-	s := &System{Reg: f.Reg, Svc: f.Svc, FW: f.FW, Sec: f.Sec, Proc: f.Proc, Mach: f.Mach, Disk: fakeDisk{f.Mach},
+	s := &System{Reg: f.Reg, Env: f.Env, Svc: f.Svc, FW: f.FW, Sec: f.Sec, Proc: f.Proc, Mach: f.Mach, Disk: fakeDisk{f.Mach},
 		Trust: TrustWith(f.Sec, f.Reg),
 		Probe: func(string, int, string) error { return f.ProbeErr },
 		RunVersion: func(exe string) (string, error) {
@@ -774,7 +879,7 @@ func (f *Fakes) UseAskQuit(s *System) {
 	}
 }
 
-// Snapshot is the whole fake machine as text: registry, services, firewall and permissions.
+// Snapshot is the whole fake machine as text: registry, PATH, services, firewall and permissions.
 func (f *Fakes) Snapshot() string {
-	return "REG\n" + f.Reg.Snapshot() + "\nSVC\n" + f.Svc.Snapshot() + "\nFW\n" + f.FW.Snapshot() + "\nSEC\n" + f.Sec.Snapshot()
+	return "REG\n" + f.Reg.Snapshot() + "\nENV\n" + f.Env.Snapshot() + "\nSVC\n" + f.Svc.Snapshot() + "\nFW\n" + f.FW.Snapshot() + "\nSEC\n" + f.Sec.Snapshot()
 }

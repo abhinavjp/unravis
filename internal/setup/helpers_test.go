@@ -62,7 +62,8 @@ func newEnv(t *testing.T, version string) *testEnv {
 }
 
 // testPayload is a payload whose "programs" are small text files.
-func testPayload(t *testing.T, version string, withBlackbox bool) *Payload {
+// extra names more payload files (CLIExeName, the optional command line program).
+func testPayload(t *testing.T, version string, withBlackbox bool, extra ...string) *Payload {
 	t.Helper()
 	m := fstest.MapFS{}
 	var man Manifest
@@ -71,6 +72,7 @@ func testPayload(t *testing.T, version string, withBlackbox bool) *Payload {
 	if withBlackbox {
 		names = append(names, BlackboxExeName)
 	}
+	names = append(names, extra...)
 	for _, n := range names {
 		data := []byte(n + " " + version + " " + strings.Repeat("x", 300<<10)) // over one copy chunk, for the cancel test
 		sum := sha256.Sum256(data)

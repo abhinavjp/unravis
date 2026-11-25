@@ -33,6 +33,11 @@ func uninstallSteps(p *Plan) []Step {
 	steps = append(steps,
 		Step{ID: "shortcuts", Title: "Remove the shortcuts", Do: p.removeShortcuts},
 		Step{ID: "arp", Title: "Remove Unravis from Installed apps", Do: p.removeARP},
+	)
+	if p.cliPresent() {
+		steps = append(steps, Step{ID: "cli-path", Title: "Remove the unravis command from the path", Do: p.removeCLIPath})
+	}
+	steps = append(steps,
 		Step{ID: "program-files", Title: "Remove the program files", Do: p.removeProgramFiles},
 		Step{ID: "data", Title: "Cases and saved connections", Do: p.removeData},
 	)
@@ -186,6 +191,43 @@ func (p *Plan) removeARP(ctx context.Context, t *Txn) error {
 	return nil
 }
 
+// cliRoot is the PATH hive setup used for this scope.
+func (p *Plan) cliRoot() Root {
+	if p.Opts.Scope == ScopeMachine {
+		return HKLM
+	}
+	return HKCU
+}
+
+// cliPresent: the command line program or its PATH entry is there to remove.
+func (p *Plan) cliPresent() bool {
+	if p.Layout.CLIDir == "" {
+		return false
+	}
+	if _, err := os.Lstat(p.Layout.CLIExe); err == nil {
+		return true
+	}
+	has, err := p.r.Sys.Env.HasPathEntry(p.cliRoot(), p.Layout.CLIDir)
+	return err != nil || has // a PATH that cannot be read is tried again by the step, which lists what it could not do
+}
+
+// removeCLIPath takes only our entry off the PATH; every other entry stays. An entry that was on the PATH before setup (the state says
+// this install did not add it) is left alone.
+func (p *Plan) removeCLIPath(ctx context.Context, t *Txn) error {
+	if p.Old != nil && p.Old.State.PathAdded != nil && !*p.Old.State.PathAdded {
+		p.un().kept = append(p.un().kept, "The PATH entry "+p.Layout.CLIDir+" (it was there before Unravis)")
+		return nil
+	}
+	if _, err := p.r.Sys.Env.RemovePathEntry(p.cliRoot(), p.Layout.CLIDir); err != nil {
+		p.leftf("PATH entry %s (%v)", p.Layout.CLIDir, err)
+		return nil
+	}
+	if err := p.r.Sys.Env.BroadcastEnvChange(); err != nil {
+		t.Logf("cli-path: could not tell running programs about the new PATH: %v", err)
+	}
+	return nil
+}
+
 func (p *Plan) removeProgramFiles(ctx context.Context, t *Txn) error {
 	dir := p.Layout.InstallDir
 	for _, f := range []string{p.Layout.AppExe, p.Layout.KeeperExe, p.Layout.BlackboxExe, p.Layout.ReleasesExe, p.Layout.StateFile} {
@@ -194,6 +236,17 @@ func (p *Plan) removeProgramFiles(ctx context.Context, t *Txn) error {
 		}
 		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
 			p.leftf("File %s (%v)", f, err)
+		}
+	}
+	// The command line program and its bin folder: the folder goes only when it is empty after that.
+	if p.Layout.CLIDir != "" {
+		if err := os.Remove(p.Layout.CLIExe); err != nil && !errors.Is(err, os.ErrNotExist) {
+			p.leftf("File %s (%v)", p.Layout.CLIExe, err)
+		}
+		if err := os.Remove(p.Layout.CLIDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if ents, rerr := os.ReadDir(p.Layout.CLIDir); rerr == nil && len(ents) > 0 {
+				p.un().kept = append(p.un().kept, "Files you added to "+p.Layout.CLIDir)
+			}
 		}
 	}
 	// The setup program removes its own copy at the next restart when it runs from there (it normally runs from a temporary copy).

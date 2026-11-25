@@ -35,7 +35,7 @@ import (
 func NewOSSystem() (*System, error) {
 	m := osMachine{}
 	s := &System{
-		Reg: osRegistry{}, Svc: osServices{}, FW: osFirewall{}, Sec: osSecurity{}, Proc: osProcesses{}, Mach: m,
+		Reg: osRegistry{}, Env: osEnv{}, Svc: osServices{}, FW: osFirewall{}, Sec: osSecurity{}, Proc: osProcesses{}, Mach: m,
 		Disk:        blackbox.OSDisk{},
 		Paths:       osPaths{},
 		Trust:       datadir.TrustInstalled,
