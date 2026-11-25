@@ -206,7 +206,6 @@ func TestRunRefPushConfiguredGateRunsWhateverItsOnSays(t *testing.T) {
 
 // A schedule run is not a gate: the schedule trigger says when it fires, so a workflow without one is refused.
 func TestRunRefScheduleStillNeedsASchedule(t *testing.T) {
-	needBash(t)
 	o := newOrigin(t)
 	sha := commitWorkflowT(t, o, "develop", "fast-gate.yml", gateWF(dispatchOnlyOn))
 	ro := refOpts(o, "develop", sha, "fast-gate.yml", "schedule")
@@ -218,11 +217,16 @@ func TestRunRefScheduleStillNeedsASchedule(t *testing.T) {
 	if res == nil || res.Run == nil || res.Run.Conclusion != "error" {
 		t.Fatalf("%+v", res)
 	}
-	// and one that has the trigger runs
-	sha = commitWorkflowT(t, o, "develop", "fast-gate.yml", gateWF("on:\n  schedule:\n    - cron: '0 3 * * *'\n"))
-	ro = refOpts(o, "develop", sha, "fast-gate.yml", "schedule")
+}
+
+// A workflow that has the schedule trigger runs on schedule.
+func TestRunRefScheduleWithTheTriggerRuns(t *testing.T) {
+	needBash(t)
+	o := newOrigin(t)
+	sha := commitWorkflowT(t, o, "develop", "fast-gate.yml", gateWF("on:\n  schedule:\n    - cron: '0 3 * * *'\n"))
+	ro := refOpts(o, "develop", sha, "fast-gate.yml", "schedule")
 	ro.Store = newStore(t)
-	if res, err = RunRef(context.Background(), ro); err != nil || res.Run.Conclusion != "success" {
+	if res, err := RunRef(context.Background(), ro); err != nil || res.Run.Conclusion != "success" {
 		t.Fatalf("%v %+v", err, res)
 	}
 }
