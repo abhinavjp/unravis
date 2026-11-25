@@ -49,8 +49,8 @@ const (
 
 // Defaults of the fleet.
 const (
-	DefaultLeaseTTL   = 5 * time.Minute  // a lease not refreshed for this long can be taken over
-	DefaultFleetEvery = time.Minute      // between two refreshes, agent records and syncs (keeps within the REST limits)
+	DefaultLeaseTTL   = 5 * time.Minute // a lease not refreshed for this long can be taken over
+	DefaultFleetEvery = time.Minute     // between two refreshes, agent records and syncs (keeps within the REST limits)
 	DoneClaimKeep     = 7 * 24 * time.Hour
 	StoppedAgentKeep  = 24 * time.Hour
 	AgentRecordKeep   = 7 * 24 * time.Hour
