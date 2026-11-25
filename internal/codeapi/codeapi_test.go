@@ -264,7 +264,7 @@ func TestMCPBridgeIsRefusedOnEveryCodeRoute(t *testing.T) {
 	r := newRig(t, rigOpts{spawner: sp})
 	r.enable()
 	r.newCase("Bridge case")
-	for _, ua := range []string{"unravis-mcp", "unravis-mcp-agent"} {
+	for _, ua := range []string{"unravis-mcp", "unravis-mcp-agent", "unravis-mcp/2.0 (future)"} {
 		for _, rt := range allRoutes {
 			body := ""
 			if rt.method == http.MethodPut {
@@ -988,4 +988,43 @@ func TestOpeningACaseClosesRunsACrashLeftOpen(t *testing.T) {
 	if len(runs) != 1 || runs[0].Status == casestore.RunRunning || runs[0].EndedMS == 0 {
 		t.Fatalf("the orphan run was not closed by opening the case: %+v", runs)
 	}
+}
+
+// A sweep that failed (an import held the case, the budget ran out) is not marked done: the next open of the case tries again, and a
+// sweep that worked is not repeated.
+func TestFailedCrashSweepIsRetriedOnTheNextOpen(t *testing.T) {
+	r := newRig(t, rigOpts{spawner: &spawn{}})
+	id := r.newCase("Sweep retry")
+	var calls int
+	r.mount.Set(http.NotFoundHandler(), func(ctx context.Context, _ casestore.CodeRunStore) error {
+		calls++
+		if ctx.Err() != nil {
+			t.Error("the sweep must not be tied to the page's request")
+		}
+		if calls == 1 {
+			return errors.New("the case is held by an import")
+		}
+		return nil
+	})
+	for i, want := range []int{1, 2, 2} {
+		if res := r.call(http.MethodGet, "/api/cases/"+id, ""); res.Code != http.StatusOK {
+			t.Fatalf("open %d = %d %s", i, res.Code, res.Body)
+		}
+		if calls != want {
+			t.Fatalf("after open %d the sweep ran %d times, want %d", i, calls, want)
+		}
+	}
+}
+
+// A settings file that cannot be read (not one that is corrupt) must not be replaced by defaults plus the patch: the save is refused.
+func TestSettingsSaveIsRefusedWhenTheFileCannotBeRead(t *testing.T) {
+	notAFolder := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notAFolder, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := newRig(t, rigOpts{spawner: &spawn{}, settingsIn: notAFolder})
+	if _, err := r.files.Load(); err == nil || errors.Is(err, settingsfile.ErrCorrupt) {
+		t.Skipf("this OS reports the path as missing or damaged, not as unreadable: %v", err)
+	}
+	wantProblem(t, r.call(http.MethodPut, "/api/code/settings", `{"keepResults":true}`), http.StatusInternalServerError, codemode.CodeInternal)
 }

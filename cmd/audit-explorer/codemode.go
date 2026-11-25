@@ -28,6 +28,8 @@ func mountCodeMode(getenv func(string) string, served http.Handler, token string
 		log.Print("Code mode is off: the settings folder is not known")
 		return
 	}
+	// AllowIdentifiers (the operator's --mcp-allow-identifiers) is left false here on purpose: this slice has no entrance for it, so it
+	// stays the safe default, and the settings screen shows false. The slice that adds the MCP entrance wires the flag through.
 	files := settingsfile.New(dir)
 	broker, err := codemode.New(codemode.Config{
 		Hosts:    codemode.DashboardHosts(served, token),

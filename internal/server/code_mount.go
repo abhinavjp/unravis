@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,7 +51,7 @@ const maxCodeSeen = 1024
 type codeMountState struct {
 	h http.Handler
 	// onCaseOpen is called when the app opens a case (once per case per process); codeapi sets it to Broker.OnCaseOpen.
-	onCaseOpen func(context.Context, casestore.CodeRunStore)
+	onCaseOpen func(context.Context, casestore.CodeRunStore) error
 }
 
 // CodeMount is where codeapi hangs the code-mode handler once the Broker is built (the Broker needs the dashboard handler, which is
@@ -68,7 +69,7 @@ func NewCodeMount() *CodeMount { return &CodeMount{seen: map[casestore.CaseID]st
 
 // Set turns the routes on with h, which serves every /api/code/ path of the table above (the server has already checked the token, the
 // origin, the method and the caller). onCaseOpen may be nil.
-func (m *CodeMount) Set(h http.Handler, onCaseOpen func(context.Context, casestore.CodeRunStore)) {
+func (m *CodeMount) Set(h http.Handler, onCaseOpen func(context.Context, casestore.CodeRunStore) error) {
 	m.state.Store(&codeMountState{h: h, onCaseOpen: onCaseOpen})
 }
 
@@ -85,7 +86,7 @@ func WithCodeMount(m *CodeMount) Option {
 func (h *handler) serveCode(w http.ResponseWriter, r *http.Request) {
 	// The MCP bridge and the MCP agent hold the session token too, but a model must not run owner-level code, nor flip the setting that
 	// allows it. The User-Agent is the client's own word, so this is the same convenience guard as the grant screen's, not a boundary.
-	if ua := r.Header.Get("User-Agent"); ua == mcpUserAgent || ua == mcpAgentUserAgent {
+	if ua := r.Header.Get("User-Agent"); strings.HasPrefix(ua, mcpUserAgent) || strings.HasPrefix(ua, mcpAgentUserAgent) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"code": "denied", "message": "Not for the MCP bridge."}, 1024)
 		return
 	}
@@ -196,10 +197,13 @@ func (h *handler) caseOpened(ctx context.Context, id casestore.CaseID, c casesto
 	if done {
 		return
 	}
-	sweepCtx, cancel := context.WithTimeout(ctx, codeOpenBudget)
+	// The page leaving does not cancel the sweep (it is not tied to the request), and a sweep that failed (an import holds the case, the
+	// budget ran out) is not marked done, so the next open tries again.
+	sweepCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), codeOpenBudget)
 	defer cancel()
-	st.onCaseOpen(sweepCtx, store)
-	// Marked done even when the sweep reported nothing: Run sweeps once per case itself, so a failure here is retried there.
+	if err := st.onCaseOpen(sweepCtx, store); err != nil {
+		return
+	}
 	h.code.mu.Lock()
 	if len(h.code.seen) >= maxCodeSeen {
 		h.code.seen = map[casestore.CaseID]struct{}{}

@@ -66,7 +66,7 @@ type Options struct {
 // sweep of runs a crash left open.
 func Install(o Options) {
 	api := &api{broker: o.Broker, files: o.Settings, allowIdentifiers: o.AllowIdentifiers}
-	o.Mount.Set(api, func(ctx context.Context, store casestore.CodeRunStore) { _, _ = o.Broker.OnCaseOpen(ctx, store) })
+	o.Mount.Set(api, func(ctx context.Context, store casestore.CodeRunStore) error { _, err := o.Broker.OnCaseOpen(ctx, store); return err })
 }
 
 type api struct {
@@ -254,7 +254,12 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 	a.settingsMu.Lock()
 	defer a.settingsMu.Unlock()
 	// A damaged file reads as all off: the save below starts from that, which repairs it.
-	set, _ := a.files.Load()
+	set, lerr := a.files.Load()
+	if lerr != nil && !errors.Is(lerr, settingsfile.ErrCorrupt) {
+		// A read that failed (not a file that cannot be trusted): saving would turn off switches the caller did not send.
+		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be read. Nothing was changed.")
+		return
+	}
 	if in.Enabled != nil {
 		set.Enabled = *in.Enabled
 	}
