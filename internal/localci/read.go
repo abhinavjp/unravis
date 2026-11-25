@@ -29,7 +29,7 @@ type LedgerRow struct {
 
 // ReadLedger lists the remembered posts, newest first. A missing file is an empty list.
 func ReadLedger(stateDir string) ([]LedgerRow, error) {
-	b, err := os.ReadFile(LedgerPath(stateDir)) //nolint:gosec // path inside the store
+	b, err := os.ReadFile(LedgerPath(stateDir))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -64,8 +64,12 @@ func ReadLedger(stateDir string) ([]LedgerRow, error) {
 
 // ListRequests reads the queue folders without creating them (OpenQueue does). Missing folders are empty.
 func ListRequests(stateDir string) ([]Request, error) {
-	if st, err := os.Stat(QueueDir(stateDir)); err != nil || !st.IsDir() {
+	st, err := os.Stat(QueueDir(stateDir))
+	if errors.Is(err, fs.ErrNotExist) || (err == nil && !st.IsDir()) {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	q := &Queue{Dir: QueueDir(stateDir)}
 	var out []Request
@@ -195,7 +199,7 @@ func SaveCompare(stateDir string, rep *CompareReport) error {
 
 // ReadCompare reads the saved report. A missing file is (nil, nil): nobody has run compare --save here yet.
 func ReadCompare(stateDir string) (*CompareReport, error) {
-	b, err := os.ReadFile(ComparePath(stateDir)) //nolint:gosec // path inside the store
+	b, err := os.ReadFile(ComparePath(stateDir))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}

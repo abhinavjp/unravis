@@ -99,8 +99,12 @@
   .rchips{justify-content:flex-start}
   .ci .facts{grid-template-columns:1fr}
   .mainnav{padding:0 8px}
-  .proj{margin-left:8px}
+  .mainnav{flex-wrap:wrap}
+  .proj{flex:1 0 100%;margin-left:0;padding:4px 8px}
+  .proj select{flex:1;min-width:0}
   .fld input,.fld select{width:100%;min-width:0}
   .fld{flex:1 1 140px}
 }
 @media (forced-colors:active){.mt[aria-current=page]{border-bottom-color:Highlight}}
+#refresh{grid-column:4;justify-self:end}
+.filters input::placeholder{color:var(--mut);opacity:1}

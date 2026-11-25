@@ -572,10 +572,10 @@ func (v *ciView) Page(f CIFilter, limit int, cursor string) CIPage {
 // ---------------------------------------------------------------- one run
 
 // errNoRun is what Detail and StepLog answer for a run the store does not have.
-var errNoRun = errors.New("That run is not in this CI store.")
+var errNoRun = errors.New("That run is not in this CI store.") //nolint:staticcheck // shown to the reader as a sentence
 
 // errBadID is what they answer for text that cannot be a run id.
-var errBadID = errors.New("That is not a run id.")
+var errBadID = errors.New("That is not a run id.") //nolint:staticcheck // shown to the reader as a sentence
 
 // Detail reads one run. id is a run id or a request id (the id of a run that has not started, or that ended without one).
 func (v *ciView) Detail(id string) (*CIDetail, error) {
@@ -610,7 +610,7 @@ func (v *ciView) Detail(id string) (*CIDetail, error) {
 }
 
 func fileExists(p string) bool {
-	st, err := os.Stat(p)
+	st, err := os.Stat(p) //nolint:gosec // p is joined inside the store from a validated id
 	return err == nil && st.Mode().IsRegular()
 }
 
@@ -894,7 +894,7 @@ func (v *ciView) StepLog(id, job string, step, from, n int, tail bool) (*CILog, 
 		}
 		path, title = filepath.Join(dir, "logs", jobDir, name), v.rd(job)+" / step "+strconv.Itoa(step)
 	}
-	fi, err := os.Stat(path)
+	fi, err := os.Stat(path) //nolint:gosec // path is joined inside the store from a validated id and a listed log name
 	if err != nil || !fi.Mode().IsRegular() {
 		return nil, errNoRun
 	}
@@ -912,7 +912,7 @@ func (v *ciView) StepLog(id, job string, step, from, n int, tail bool) (*CILog, 
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, errNoRun
 		}
-		return nil, errors.New("The log could not be read.")
+		return nil, errors.New("The log could not be read.") //nolint:staticcheck // shown to the reader as a sentence
 	}
 	total := len(res.lines)
 	if n <= 0 || n > maxLogPage {

@@ -136,7 +136,7 @@ func (f *ciFixture) do(t *testing.T, method, host, path, cookie string) *httptes
 	t.Helper()
 	r := httptest.NewRequest(method, "http://"+host+path, nil)
 	if cookie != "" {
-		r.AddCookie(&http.Cookie{Name: cookieName, Value: cookie})
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: cookie}) //nolint:gosec // a request cookie in a test; the server sets the flags
 	}
 	w := httptest.NewRecorder()
 	f.h.ServeHTTP(w, r)
@@ -193,7 +193,7 @@ func TestCIProjectsRoute(t *testing.T) {
 	d := New(t.TempDir(), "", nil)
 	h := Handler(d, "tok", fstest.MapFS{"index.html": {Data: []byte("x")}})
 	r := httptest.NewRequest("GET", "http://127.0.0.1:80/api/projects", nil)
-	r.AddCookie(&http.Cookie{Name: cookieName, Value: "tok"})
+	r.AddCookie(&http.Cookie{Name: cookieName, Value: "tok"}) //nolint:gosec // a request cookie in a test; the server sets the flags
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	var def struct{ Projects []CIProject }
@@ -456,7 +456,7 @@ func TestCINoStoreIsEmptyNotAnError(t *testing.T) {
 	for _, id := range []string{"p", "q"} {
 		for _, path := range []string{"/api/runs", "/api/overview", "/api/run?id=20260101-000000-x", "/api/run/log?id=20260101-000000-x&job=a&step=1"} {
 			r := httptest.NewRequest("GET", "http://127.0.0.1:80"+path+sep(path)+"project="+id, nil)
-			r.AddCookie(&http.Cookie{Name: cookieName, Value: "tok"})
+			r.AddCookie(&http.Cookie{Name: cookieName, Value: "tok"}) //nolint:gosec // a request cookie in a test; the server sets the flags
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
 			want := 200

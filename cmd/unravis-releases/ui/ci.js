@@ -48,7 +48,7 @@ function apiUrl(path, params) {
 function code(text) { return el('code', 'code', text); }
 function para(cls, ...bits) { const p = el('p', cls); for (const b of bits) p.append(b); return p; }
 function ms2s(ms) { return ms == null ? null : Math.round(ms / 1000); }
-function took(ms) { return ms ? dur(ms2s(ms)) : ''; }
+function took(ms) { return ms ? dur(ms2s(ms)).replace(/ /g, '\u00a0') : ''; } // a duration never breaks across two lines
 
 function statusTag(key, word, extra) {
   const s = CI_STATUS[key] || ['?', 'mut', ''];
@@ -194,10 +194,15 @@ function setFoot(ok) {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && section !== 'releases') tick(false); });
 
+// The browser says "Failed to fetch" when the program is gone; say it in words a first-time reader can act on.
+function plainErr(e) {
+  const m = String((e && e.message) || '').trim();
+  return !m || /failed to fetch|networkerror|load failed/i.test(m) ? 'Could not reach the Releases program. It may have been closed. Start it again, then press Refresh.' : m;
+}
 function main() { const m = $('ci-main'); m.replaceChildren(); return m; }
 function failBox(e, retry) {
   const m = main();
-  const why = String((e && e.message) || 'The program did not answer.').trim();
+  const why = plainErr(e);
   m.append(para('note bad', /^could not/i.test(why) ? why : 'Could not read this: ' + why));
   const b = el('button', '', 'Try again'); b.type = 'button'; b.addEventListener('click', retry || ciRefresh); m.append(b);
 }
@@ -279,6 +284,7 @@ function compareCard(s) {
   row.append(el('span', 'big', s.streak + ' of ' + s.gate), el('span', 'bigl', ' pull requests in a row agree'), pg);
   c.append(row);
   c.append(el('p', s.gateMet ? 'note ok' : 'note', s.gateMet ? 'The target is reached.' : (s.gate - s.streak) + ' more in a row to reach the target.'));
+  if (!s.agree && !s.disagree && !s.localOnly && s.githubOnly) c.append(para('note', 'None of these pull requests has been checked on this PC yet. Start the agent with ', code('unravis-ci serve'), '; new pull requests are then checked here as well.'));
   const f = el('dl', 'facts');
   const fact = (k, v, tip) => { const dt = el('dt', '', k); if (tip) dt.title = tip; f.append(dt, el('dd', '', String(v))); };
   fact('Same answer', s.agree, 'Pull requests where this PC and GitHub agreed.');
@@ -365,7 +371,7 @@ function runsView(rs) {
       return getJSON(apiUrl('/api/runs', { status: rs.f.status, branch: rs.f.branch, pr: rs.f.pr, sha: rs.f.sha, release: rs.f.release, limit: Math.min(200, Math.max(30, n)) }));
     },
     fast: (d) => d.runs.some((r) => r.status === 'running' || r.status === 'waiting'),
-    fail: (e) => { rs.err = e.message === 'keep' ? '' : e.message; rs.loaded = true; drawRuns(rs); },
+    fail: (e) => { rs.err = e.message === 'keep' ? '' : plainErr(e); rs.loaded = true; drawRuns(rs); },
     draw: (d) => { rs.rows = d.runs; rs.next = d.next || ''; rs.total = d.total; rs.found = d.ciFound; rs.loaded = true; rs.err = ''; drawRuns(rs); },
   };
 }
@@ -397,7 +403,7 @@ function drawRuns(rs) {
         if (ep !== ci.epoch) return;
         const seen = new Set(rs.rows.map((r) => r.id)); for (const r of d.runs) if (!seen.has(r.id)) rs.rows.push(r);
         rs.next = d.next || ''; rs.total = d.total; ci.sig = JSON.stringify({ runs: rs.rows }); drawRuns(rs);
-      } catch (e) { rs.err = e.message; drawRuns(rs); }
+      } catch (e) { rs.err = plainErr(e); drawRuns(rs); }
     });
     more.append(b);
   }

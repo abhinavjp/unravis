@@ -30,7 +30,7 @@ function load(hash) {
   };
   vm.createContext(sandbox);
   // let and const at the top of a script are not properties of the sandbox, so the checks run inside it.
-  vm.runInContext(ui('ci.js') + '\n;globalThis.__t = { parseHash, hashFor, apiUrl, runTitle, ciLogUrl, logKey, took, ci, first, runWhen, CI_STATUS, CI_STATUS_FILTER };', sandbox, { filename: 'ci.js' });
+  vm.runInContext(ui('ci.js') + '\n;globalThis.__t = { parseHash, hashFor, apiUrl, runTitle, ciLogUrl, logKey, took, ci, first, runWhen, CI_STATUS, CI_STATUS_FILTER, plainErr };', sandbox, { filename: 'ci.js' });
   return sandbox.__t;
 }
 
@@ -108,4 +108,11 @@ test('the files that draw the page: no HTML strings, no hard coded release names
 test('font sizes in the new stylesheet stay on the page scale', () => {
   const css = ui('ci.css');
   for (const m of css.matchAll(/font(?:-size)?:\s*(?:\d+\s+)?(\d+)px/g)) assert.ok([12, 13, 14, 20].includes(Number(m[1])), m[0]);
+});
+
+test('errors: a lost connection is said in plain words, a program message is kept', () => {
+  const t = load();
+  assert.match(t.plainErr(new TypeError('Failed to fetch')), /^Could not reach the Releases program/);
+  assert.match(t.plainErr(new Error('')), /^Could not reach/);
+  assert.equal(t.plainErr(new Error('That run is not in this CI store.')), 'That run is not in this CI store.');
 });
