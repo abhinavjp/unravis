@@ -219,8 +219,11 @@ test('STORY-05: a file added through the case API shows in Story so far when the
   const id = await createCase(api, title);
   await openStory(page, title);
   await expect(storyFiles(page)).toHaveCount(0);
+  // Measure once the page has stopped moving: the same two reads in a row are the place to hold to.
+  const panelBox = () => page.locator('section[aria-labelledby="home-story"]').boundingBox();
+  let panelBefore = await panelBox();
+  await expect.poll(async () => { const now = await panelBox(); const same = JSON.stringify(now) === JSON.stringify(panelBefore); panelBefore = now; return same; }, { intervals: [250] }).toBe(true);
   const headingBefore = await page.getByRole('heading', { name: 'Story so far' }).boundingBox();
-  const panelBefore = await page.locator('section[aria-labelledby="home-story"]').boundingBox();
 
   await away(page);
   await addByApi(api, id, '05');
@@ -284,7 +287,9 @@ test('STORY-07: no request storm: a return inside the gap or while hidden reads 
   await openStory(page, title);
   const reads = watchReads(page, id);
   const panel = page.locator('section[aria-labelledby="home-story"]');
-  const rectBefore = await panel.boundingBox();
+  // Measure once the page has stopped moving (fonts, scrollbar, late rows); the same two reads in a row are the place to hold to.
+  let rectBefore = await panel.boundingBox();
+  await expect.poll(async () => { const now = await panel.boundingBox(); const same = JSON.stringify(now) === JSON.stringify(rectBefore); rectBefore = now; return same; }, { intervals: [250] }).toBe(true);
 
   // Just read: a return now reads nothing.
   await back(page);

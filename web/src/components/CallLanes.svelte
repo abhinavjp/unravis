@@ -389,7 +389,7 @@
       {@const hitMap = hitBoxes(name)}
       <div class="scall-lane" data-lane={name} data-testid="scall-lane-{name}">
         <div class="scall-head">
-          <span class="scall-name" style="color: {color}">{lane.title}</span>
+          <span class="scall-name" style:color={color}>{lane.title}</span>
           {#if name === 'sql'}
             <span class="scall-source" data-testid="scall-db-source">{DRILL_TEXT.laneSource(db.source)}</span>
           {/if}
@@ -446,7 +446,7 @@
             {/each}
           </svg>
           {#if path && lanes[name].peak}
-            <span class="y-peak" style="top: {peakTop}%" style:color={color} aria-hidden="true">{DRILL_TEXT.yPeak(peakNumber(name))}</span>
+            <span class="y-peak" style:top="{peakTop}%" style:color={color} aria-hidden="true">{DRILL_TEXT.yPeak(peakNumber(name))}</span>
             <span class="y-zero" aria-hidden="true">{DRILL_TEXT.yZero}</span>
           {/if}
           {#if name === 'sql' && db.shape === 'none'}
@@ -460,16 +460,16 @@
     {/each}
 
     {#if hoverMs !== null}
-      <div class="scall-line hover" style="left: {((hoverMs - start) / span) * 100}%"></div>
+      <div class="scall-line hover" style:left="{((hoverMs - start) / span) * 100}%"></div>
     {/if}
     {#if pinnedMs !== null}
-      <div class="scall-line pinned" style="left: {((pinnedMs - start) / span) * 100}%"></div>
+      <div class="scall-line pinned" style:left="{((pinnedMs - start) / span) * 100}%"></div>
     {/if}
   </div>
 
   <div class="scall-axis" aria-hidden="true">
     {#each ticks as tick}
-      <span class="tick {tick.edge}" style="left: {tick.pct}%">{tick.label}</span>
+      <span class="tick {tick.edge}" style:left="{tick.pct}%">{tick.label}</span>
     {/each}
     <span class="scall-xtitle">{DRILL_TEXT.xTitle(zoneName)}</span>
     <span class="scall-zone">{zoneName}</span>

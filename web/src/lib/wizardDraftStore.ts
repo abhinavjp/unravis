@@ -26,3 +26,8 @@ export function saveDraft(draft: SavedDraft): void {
 export function clearSavedDraft(): void {
   try { if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(STORE); } catch { /* nothing stored */ }
 }
+
+/** True when a kept draft holds something worth coming back to: a name or environments (an own-key switch alone is not). */
+export function draftHasContent(draft: SavedDraft | null): boolean {
+  return draft != null && (draft.title.trim() !== '' || draft.envText.trim() !== '');
+}

@@ -1,0 +1,8 @@
+guide: string
+partial: boolean
+schemaVersion: number
+tool: string
+truncation: null
+untrusted.note: string
+untrusted.paths: array
+untrusted: object

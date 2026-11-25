@@ -389,8 +389,8 @@ func (st *state) emit(op string, data any, meta clicore.Meta, table func(io.Writ
 			}
 			return nil
 		}
-		_, err = st.io.Out.Write(b)
-		return writeErr(err)
+		err = writeErr(writeContext(st.ctx, st.io.Out, b))
+		return err
 	case clicore.ModeJSONL:
 		return clicore.NewError(clicore.CodeUnsupportedFormat, "This command has no JSON Lines form. Use -o json.", "")
 	}
@@ -406,8 +406,40 @@ func (st *state) notices(meta clicore.Meta) {
 	if meta.Coverage == "partial" {
 		_, _ = io.WriteString(st.io.Err, "unravis: the result is partial.\n")
 	}
-	for _, w := range meta.Warnings {
-		_, _ = io.WriteString(st.io.Err, "unravis: "+clicore.Printable(w)+"\n")
+	st.warnings(meta.Warnings, nil)
+}
+
+func (st *state) warnings(warnings []string, seen map[string]bool) {
+	for _, w := range warnings {
+		text := clicore.Printable(w)
+		if seen != nil {
+			if seen[text] {
+				continue
+			}
+			seen[text] = true
+		}
+		_, _ = io.WriteString(st.io.Err, "unravis: "+text+"\n")
+	}
+}
+
+// An arbitrary io.Writer cannot be interrupted, so its write must not hold the command's deadline.
+func writeContext(ctx context.Context, w io.Writer, p []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() {
+		n, err := w.Write(p)
+		if err == nil && n != len(p) {
+			err = io.ErrShortWrite
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -416,6 +448,9 @@ func (st *state) notices(meta clicore.Meta) {
 func writeErr(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
 	var no syscall.Errno
 	if errors.As(err, &no) {

@@ -361,6 +361,8 @@ func applyGroup(s *Sample, name string, v any) {
 		assignIf(&s.VM, v)
 	case "dumps":
 		assignIf(&s.Dumps, v)
+	case "sqlLog":
+		assignIf(&s.SQLLog, v)
 	}
 }
 

@@ -95,6 +95,7 @@ func (b *Bridge) cached(id string) (*audit.Analysis, error) {
 	if id == "" || b.result == nil || id != b.resultID || b.now().Sub(b.created) > resultTTL {
 		return nil, coded(CodeResultExpired, "result expired or was replaced; run audit_compare again. Results last ten minutes and only the latest successful comparison is retained")
 	}
+	b.used = b.now()
 	return b.result, nil
 }
 func findGroup(result *audit.Analysis, key string) (audit.Comparison, error) {
@@ -122,6 +123,16 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err := b.request(ctx, "/api/sources", nil, &sources); err != nil {
 			return nil, err
 		}
+		if b.scoped {
+			// A host sees only the sources of its grant, never the others' ids or labels.
+			kept := make([]audit.Source, 0, len(sources))
+			for _, s := range sources {
+				if _, ok := b.sources[s.ID]; ok {
+					kept = append(kept, s)
+				}
+			}
+			sources = kept
+		}
 		if sources == nil {
 			sources = []audit.Source{}
 		}
@@ -134,6 +145,11 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		}
 		if err := strictArgs(raw, &args); err != nil {
 			return nil, err
+		}
+		if len(args.Query.SourceIDs) > 0 { // none named: validation says so, and request() still refuses it on a scoped bridge
+			if err := b.checkScope(args.Query); err != nil { // before validation: every id outside the grant, a blank one included, is refused alike
+				return nil, err
+			}
 		}
 		if err := audit.ValidateQuery(args.Query); err != nil {
 			return nil, err
@@ -162,32 +178,40 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 			return nil, coded(CodeInternal, "could not create result handle")
 		}
 		id := hex.EncodeToString(random[:])
+		size := 0
+		if b.resultCap > 0 {
+			// A host's bridge keeps a result only up to its cap (the backend bounds what all hosts hold together).
+			raw, merr := json.Marshal(&result)
+			if merr != nil || len(raw) > b.resultCap {
+				return nil, coded(CodeBudgetExceeded, "the comparison is too large to keep for paging; narrow the sources, filters or window and run it again")
+			}
+			size = len(raw)
+		}
 		b.mu.Lock()
 		b.result = &result
 		b.resultID = id
 		b.created = b.now()
+		b.used, b.resultSize = b.created, size
 		b.mu.Unlock()
 		page, _ := groupPage(result.APIs, pageArgs)
 		comparable, limited := 0, 0
-		var currentEvents, referenceEvents int64
 		for _, row := range result.APIs {
 			if row.State == "compared" {
 				comparable++
 			} else {
 				limited++
 			}
-			currentEvents += row.CurrentEvents
-			referenceEvents += row.ReferenceEvents
 		}
+		b.pageGroups(&result, page)
 		page["resultId"] = id
 		page["query"] = result.Query
 		page["sources"] = result.Sources
 		page["quality"] = result.Quality
 		page["comparableGroups"] = comparable
 		page["groupsWithoutReliableRatio"] = limited
-		page["recordedEvents"] = map[string]any{"current": currentEvents, "reference": referenceEvents, "currentPerSecond": float64(currentEvents) / args.Query.End.Sub(args.Query.Start).Seconds(), "referencePerSecond": float64(referenceEvents) / args.Query.BaselineEnd.Sub(args.Query.BaselineStart).Seconds()}
+		page["recordedEvents"] = b.recorded(&result, args.Query)
 		page["approximate"] = result.Approximate
-		withProvenance(page, result.Provenance)
+		b.withProvenance(page, result.Provenance)
 		page["expiresInSeconds"] = int(resultTTL.Seconds())
 		page["interpretation"] = fmt.Sprintf("Statistics are approximate; groups with fewer than %d usable timings in either period have no reliable slowdown ratio. Source failures mean incomplete coverage. Counts/rates reflect these filters, not all server traffic. Read audit_get_guide before drawing conclusions.", audit.MinSampleCount)
 		return page, nil
@@ -206,6 +230,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 			return nil, err
 		}
 		page["resultId"] = args.ResultID
+		b.pageGroups(result, page)
 		return page, nil
 	case "audit_get_timeline":
 		var args struct {
@@ -223,6 +248,9 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err != nil {
 			return nil, err
 		}
+		if b.hiddenGroup(result, row) {
+			return nil, b.groupHidden()
+		}
 		points := []audit.Point{}
 		for _, series := range result.Timeline {
 			if series.Key == args.APIKey {
@@ -230,7 +258,11 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 				break
 			}
 		}
-		return map[string]any{"resultId": args.ResultID, "query": result.Query, "group": row, "points": points, "note": "Each point summarizes a time slot, not an individual request. Absent slots are missing observations, not zero duration. Reference statistics cover the whole fixed earlier period. Slot P95 values with few samples are unstable; inspect counts and narrow the interval before claiming precise incident boundaries."}, nil
+		shownPoints, ok := b.points(row, result.Query, points)
+		if !ok {
+			return nil, b.groupHidden()
+		}
+		return map[string]any{"resultId": args.ResultID, "query": result.Query, "group": row, "points": shownPoints, "note": "Each point summarizes a time slot, not an individual request. Absent slots are missing observations, not zero duration. Reference statistics cover the whole fixed earlier period. Slot P95 values with few samples are unstable; inspect counts and narrow the interval before claiming precise incident boundaries."}, nil
 	case "audit_compare_timelines":
 		var args struct {
 			ResultID string   `json:"resultId"`
@@ -243,7 +275,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err != nil {
 			return nil, err
 		}
-		return compareTimelines(result, args.ResultID, args.APIKeys)
+		return b.compareTimelines(result, args.ResultID, args.APIKeys)
 	case "audit_get_requests":
 		var args struct {
 			ResultID string `json:"resultId"`
@@ -266,16 +298,27 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err != nil {
 			return nil, err
 		}
+		fp := fingerprint("audit_get_requests", result.Query, args.APIKey)
+		pos, err := b.openCursor("audit_get_requests", fp, args.Cursor)
+		if err != nil {
+			return nil, err
+		}
 		var page audit.Page
-		if err = b.request(ctx, "/api/requests", audit.PageInput{Query: result.Query, APIKey: args.APIKey, Cursor: args.Cursor, Limit: args.Limit}, &page); err != nil {
+		if err = b.request(ctx, "/api/requests", audit.PageInput{Query: result.Query, APIKey: args.APIKey, Cursor: pos, Limit: args.Limit}, &page); err != nil {
 			return nil, err
 		}
 		rows := make([]map[string]any, 0, len(page.Rows))
 		for _, record := range page.Rows {
-			rows = append(rows, projectRecord(record))
+			rows = append(rows, b.projectRecord(record))
+		}
+		if err = b.evidenceRefs(ctx, page.Rows, rows, row.SourceID); err != nil {
+			return nil, err
+		}
+		if page.NextCursor, err = b.sealCursor("audit_get_requests", fp, page.NextCursor); err != nil {
+			return nil, err
 		}
 		out := map[string]any{"resultId": args.ResultID, "sourceId": row.SourceID, "controller": row.Controller, "action": row.Action, "kind": row.Kind, "outcome": row.Outcome, "query": echoQuery(result.Query), "rows": rows, "nextCursor": page.NextCursor, "sources": page.Sources, "truncated": page.Truncated, "note": "Newest-first metadata page; not a random sample or a complete ranking of slow requests. AuditCreateTime plus ApiTime make up total latency; PayloadRecordTime happens after the response and is not latency. Do not infer database, network or queue wait from them without checking their instrumentation in code."}
-		withProvenance(out, page.Provenance)
+		b.withProvenance(out, page.Provenance)
 		return out, nil
 	case "audit_get_slowest":
 		return b.slowest(ctx, raw)

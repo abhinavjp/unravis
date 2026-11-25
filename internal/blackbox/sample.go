@@ -58,6 +58,7 @@ type Sample struct {
 	MemPressure *MemPressureGroup `json:"memPressure,omitempty"`
 	VM          *VMGroup          `json:"vm,omitempty"`
 	Dumps       *DumpsGroup       `json:"dumps,omitempty"`
+	SQLLog      *SQLLogGroup      `json:"sqlLog,omitempty"`
 
 	Missing []string `json:"missing,omitempty"`
 }

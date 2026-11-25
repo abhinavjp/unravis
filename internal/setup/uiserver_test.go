@@ -105,7 +105,8 @@ func TestSetupPageServesThePageWithoutTheKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
+	wantCSP := "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Security-Policy") != wantCSP {
 		t.Fatalf("%d %v", resp.StatusCode, resp.Header)
 	}
 	if !strings.HasPrefix(c.s.URL(), "http://"+c.s.Addr+"/#k=") {

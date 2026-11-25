@@ -88,7 +88,7 @@
               <span class="when">{clock(row.initiatedAt)}</span>
               <span class="route">{row.controller}.{row.action}</span>
               <span class="bar" role="img" aria-label={`${fmtMs(row.durationMs ?? undefined)}, ${BAND_WORD[band]}`}>
-                <span class={'fill band-' + band} style={`width:${longest > 0 ? Math.max(2, Math.round(((row.durationMs ?? 0) / longest) * 100)) : 0}%`}></span>
+                <span class={'fill band-' + band} style:width={`${longest > 0 ? Math.max(2, Math.round(((row.durationMs ?? 0) / longest) * 100)) : 0}%`}></span>
               </span>
               <span class="ms">{fmtMs(row.durationMs ?? undefined)}</span>
             </li>

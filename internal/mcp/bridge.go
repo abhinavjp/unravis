@@ -36,12 +36,25 @@ type Bridge struct {
 	resultID  string
 	created   time.Time
 	comparing bool
-	now       func() time.Time
+	// BL-349 (evidence.go): the result's size and last use for the handle bounds, and the options of a host's bridge.
+	resultSize int
+	used       time.Time
+	resultCap  int
+	minter     EvidenceMinter
+	cursors    CursorCodec
+	now        func() time.Time
 	// allowIdentifiers is the operator switch (--mcp-allow-identifiers). Off by
 	// default. It is the only thing that decides whether identifiers are shown.
 	allowIdentifiers bool
-	sessionFile      string
-	envToken         string
+	// scoped says the bridge may reach only the sources in sources (a host's grant, BL-348). A nil set with scoped false is the
+	// unscoped bridge of the stdio server and the command line. Scoped with an empty set reaches no source at all.
+	// minCohort is the smallest count shown (suppress.go); zero shows every count. hideRecordIDs removes the audit record id from rows.
+	minCohort     int
+	hideRecordIDs bool
+	scoped        bool
+	sources       map[string]struct{}
+	sessionFile   string
+	envToken      string
 	// proven is set by New: the client's transport runs the session proof on
 	// each connection, with the token passed through the request context.
 	proven bool
@@ -54,6 +67,20 @@ type Option func(*Bridge)
 // accept filters on them and on URLs and audit record ids.
 func WithIdentifiers(allowed bool) Option {
 	return func(b *Bridge) { b.allowIdentifiers = allowed }
+}
+
+// WithSources limits the bridge to the given source ids: the source scope of a host's grant. Every request that names sources is
+// refused unless each one is in the list (checked at the one place that talks to the dashboard, so no tool can skip it), and the source
+// list shows only these. An empty list reaches no source. Without this option the bridge is unscoped, as the stdio server and the
+// command line are.
+func WithSources(ids []string) Option {
+	return func(b *Bridge) {
+		b.scoped = true
+		b.sources = make(map[string]struct{}, len(ids))
+		for _, id := range ids {
+			b.sources[id] = struct{}{}
+		}
+	}
 }
 
 // WithSessionFile names the session file the dashboard writes (see
@@ -235,6 +262,16 @@ func (b *Bridge) identifiersAllowed() bool {
 	return b.allowIdentifiers
 }
 
+// noIdentifiers is the reason text of a refused identifier filter. On the stdio server the switch is the operator's flag; a bridge
+// scoped to a host's grant has no flag, the permission is the person's choice in Unravis, so the text must not point at a flag that does
+// nothing for that host.
+func (b *Bridge) noIdentifiers() string {
+	if b.scoped {
+		return "the identifiers permission is not on for this host. Ask the person to allow it in Unravis > AI access."
+	}
+	return "the operator has not turned on --mcp-allow-identifiers."
+}
+
 // identifierFilterNames lists the record filters of q that match on a user id,
 // a user agent, an IP address, a URL or an audit record id. URLs can carry
 // personal data in paths and query strings, and an audit id pins one person's
@@ -267,7 +304,42 @@ func (b *Bridge) checkIdentifierFilters(q audit.Query) error {
 	if len(names) == 0 || b.identifiersAllowed() {
 		return nil
 	}
-	return errors.New("The " + strings.Join(names, ", ") + " filters are not available: the operator has not turned on --mcp-allow-identifiers. User ids, user agents, IP addresses, URLs and audit record ids are hidden, and filtering on them would reveal them")
+	return codedWire(CodeInvalidArguments, WirePermissionRequired, "The "+strings.Join(names, ", ")+" filters are not available: "+b.noIdentifiers()+" User ids, user agents, IP addresses, URLs and audit record ids are hidden, and filtering on them would reveal them")
+}
+
+// scopeRefused is the answer to a request that names a source outside the grant. It never repeats the ids that were asked for.
+const scopeRefused = "That request names a source this host is not approved for. Use audit_list_sources for the sources this host may read, or ask the person to widen the access in Unravis."
+
+// checkScope refuses a request whose sources are not all in the scope of a scoped bridge. It reads the typed input the tools are about to
+// send, so what is checked is exactly what the dashboard receives. Input of a type it does not know, or with no source at all, is
+// refused on a scoped bridge: that fails closed if a new route is added without a scope rule. A request with no input (the source list
+// and the info) names no source.
+func (b *Bridge) checkScope(input any) error {
+	if !b.scoped || input == nil {
+		return nil
+	}
+	var ids []string
+	switch in := input.(type) {
+	case audit.Query:
+		ids = in.SourceIDs
+	case audit.ActivityInput:
+		ids = in.SourceIDs
+	case audit.PageInput:
+		ids = in.Query.SourceIDs
+	case audit.BreakdownInput:
+		ids = in.Query.SourceIDs
+	default:
+		return codedWire(CodeInvalidArguments, WirePermissionRequired, scopeRefused)
+	}
+	if len(ids) == 0 {
+		return codedWire(CodeInvalidArguments, WirePermissionRequired, scopeRefused)
+	}
+	for _, id := range ids {
+		if _, ok := b.sources[id]; !ok {
+			return codedWire(CodeInvalidArguments, WirePermissionRequired, scopeRefused)
+		}
+	}
+	return nil
 }
 
 func boundedBody(r io.Reader, limit int) ([]byte, error) {
@@ -297,6 +369,7 @@ func (b *Bridge) session() (string, string, error) {
 		b.token = token
 		b.result = nil
 		b.resultID = ""
+		b.resultSize = 0
 	}
 	b.mu.Unlock()
 	if changed && b.client != nil {
@@ -311,6 +384,9 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 	case "/api/info", "/api/sources", "/api/analyze", "/api/requests", "/api/activity", "/api/slowest", "/api/breakdown":
 	default:
 		return coded(CodeInternal, "audit operation is not allowed")
+	}
+	if err := b.checkScope(input); err != nil {
+		return err
 	}
 	var payload []byte
 	var err error
@@ -377,7 +453,7 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 			case 400:
 				return coded(CodeInvalidArguments, "audit query rejected; verify source IDs, date windows, filters and chart interval")
 			case 404:
-				return coded(CodeNotFound, "audit source or record is unavailable; list sources again")
+				return codedWire(CodeNotFound, WireSourceUnavailable, "audit source or record is unavailable; list sources again")
 			case 423:
 				return coded(CodeLocked, "Unravis is locked; unlock it in the app")
 			case 429:

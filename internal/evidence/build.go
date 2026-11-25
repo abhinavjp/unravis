@@ -170,9 +170,9 @@ func maskingStatements(o Options, w withholding) []string {
 		s = append(s, "Users are shown as keyed pseudonyms (user- followed by 8 hex characters). They are stable within this export only: each preview uses a new key, so the same user gets a different label in any other export.")
 	}
 	if o.IncludeLedger {
-		s = append(s, fmt.Sprintf("Only hypotheses that reference a finding in this export are included, with their text, state and evidence references; notes and guard facts are not. In hypothesis text, identifiers, email addresses, IP addresses, host names, paths and links are replaced by \"[removed]\", every number below %d is shown as \"<%d\", and text that still looks like it holds an identifier is replaced by \"%s\".", ThinCell, ThinCell, ledgerWithheld))
+		s = append(s, fmt.Sprintf("Only theories that reference a finding in this export are included, with their text, state and evidence references; notes and guard facts are not. In theory text, identifiers, email addresses, IP addresses, host names, paths and links are replaced by \"[removed]\", every number below %d is shown as \"<%d\", and text that still looks like it holds an identifier is replaced by \"%s\".", ThinCell, ThinCell, ledgerWithheld))
 	} else {
-		s = append(s, "The hypothesis ledger is not included.")
+		s = append(s, "The theory ledger is not included.")
 	}
 	return append(s, keyStatement, hashStatement)
 }

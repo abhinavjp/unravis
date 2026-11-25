@@ -33,6 +33,7 @@ import (
 	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/pipesrv"
+	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/store"
 	"api-audit-explorer/internal/tray"
@@ -329,7 +330,19 @@ func run(args []string, getenv func(string) string) error {
 			}
 		}
 	}
+	// The AI access screen (BL-347): the routes are in the table of every run; they answer for real only once the grant store is open
+	// (pipe mode below, or the screenshot demo with UNRAVIS_DEMO_MCP), and say "legacy" in a browser-mode run, which has no grants.
+	mcpMount := server.NewMCPMount()
+	serverOptions = append(serverOptions, server.WithMCPMount(mcpMount))
+	// Code mode (BL-574): the routes answer 503 until the broker is mounted just below (it needs the server built first).
+	codeMount := server.NewCodeMount()
+	serverOptions = append(serverOptions, server.WithCodeMount(codeMount))
 	served := server.New(wired.repo, explorer.Assets(), token, f.demo, serverOptions...)
+	mountCodeMode(getenv, served, token, codeMount)
+	if f.demo && !pipeMode {
+		closeDemoMCP := openDemoMCP(appCtx, getenv, wired.repo, mcpMount)
+		defer closeDemoMCP()
+	}
 	if updater != nil {
 		updaterDone := make(chan struct{})
 		go func() { defer close(updaterDone); updater.Run(signalContext) }()
@@ -367,7 +380,13 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 	if pipes != nil {
-		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel)))), newHTTPServer)
+		pipeOpts := []pipesrv.Option{pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel))}
+		mcpHandler, closeMCP := openMCPEndpoint(appCtx, getenv, served, token, f.demo, sealedfile.CurrentUser, withMCPMount(mcpMount))
+		defer closeMCP() // runs after the servers have stopped (awaitShutdownWithin below)
+		if mcpHandler != nil {
+			pipeOpts = append(pipeOpts, pipesrv.WithMCP(mcpHandler))
+		}
+		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipeOpts...)), newHTTPServer)
 		stopServers = append(stopServers, group)
 		go func() { serveDone <- <-group.Done() }()
 		log.Print("Serving over the ui and ag pipes")

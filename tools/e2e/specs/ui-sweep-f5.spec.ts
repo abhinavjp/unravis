@@ -30,7 +30,7 @@ test('SWEEP-F5-03: each screen change puts the keyboard on the new screen and na
 
 test('SWEEP-F5-03: closing "Where is it?" with Esc leaves the keyboard on the analysis, not the page body', async ({ page }) => {
   await page.getByRole('button', { name: 'Where is it?', exact: true }).first().click();
-  await expect(page.getByRole('heading', { name: 'Where is it?' })).toBeVisible();
+  await expect(page.locator('#where-title')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page).toHaveTitle('Analysis - Unravis');
   await expect.poll(() => activeName(page)).not.toBe('BODY');

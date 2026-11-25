@@ -134,7 +134,7 @@
       {/if}
 
       <section class="export-block" aria-label={EXPORT_TEXT.masking}>
-        <h3>{EXPORT_TEXT.masking}<Hint termId="thin-cell" /></h3>
+        <div class="heading-with-hint"><h3>{EXPORT_TEXT.masking}</h3><Hint termId="thin-cell" /></div>
         <ul class="export-statements">
           {#each summary.statements as statement, i (i)}<li>{statement}</li>{/each}
         </ul>
@@ -183,7 +183,7 @@
 
       {#if exp.body.pseudonyms || asked.pseudonyms}
         <section class="export-block" aria-label={EXPORT_TEXT.pseudonyms}>
-          <h3>{EXPORT_TEXT.pseudonyms}<Hint termId="pseudonym" /></h3>
+          <div class="heading-with-hint"><h3>{EXPORT_TEXT.pseudonyms}</h3><Hint termId="pseudonym" /></div>
           {#if !exp.body.pseudonyms || exp.body.pseudonyms.length === 0}
             <p class="export-note">{EXPORT_TEXT.pseudonymsNone}</p>
           {:else}
@@ -266,6 +266,8 @@
   .export-summary { margin: 0; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .export-block { min-width: 0; margin-top: 4px; }
   .export-block h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+  .heading-with-hint { display: flex; align-items: center; margin-bottom: 8px; }
+  .heading-with-hint h3 { margin: 0; }
   .export-statements { display: grid; gap: 6px; margin: 0; padding: 0 0 0 18px; font-size: 13px; line-height: 1.5; }
   .export-records { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
   .export-record { min-width: 0; padding: 10px 0; background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; }

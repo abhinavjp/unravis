@@ -11,7 +11,7 @@ const json = (rel) => JSON.parse(read(rel));
 // The step language of lib/steps.ts. There is deliberately no "only on newer builds" step: a guard like that turned a renamed or
 // removed part of a merged feature into "not on this build" and the audit still passed (sweep 2026-11-22, finding 7). A part a screen
 // needs is a `waitFor`: when it is missing the screen is "not reached", which fails the run unless baseline.json lists it.
-const KINDS = ['goto', 'click', 'fill', 'select', 'waitFor', 'scrollTo', 'clickCentre', 'theme', 'aside', 'upload', 'macro'];
+const KINDS = ['goto', 'click', 'fill', 'select', 'waitFor', 'scrollTo', 'clickCentre', 'theme', 'aside', 'upload', 'seedCounters', 'dropCase', 'macro'];
 
 function* stepsOf(list) {
   for (const s of list ?? []) {

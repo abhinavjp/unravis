@@ -139,6 +139,10 @@ func (s *UIServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Frame-Options", "DENY")
+	// Setup keeps its own, looser policy on purpose (BL-571 leaves it open): the built page (cmd/unravis-setup/ui, from web/setup) still carries its
+	// favicon as a data: address in index.html, hence img-src data:, and its styles have not been run under style-src 'self' alone, hence
+	// 'unsafe-inline'. Tightening both needs the page rebuilt (the favicon as a same-origin file) and a strict-policy run of the setup screens;
+	// until then the exact string is pinned by TestSetupPageServesThePageWithoutTheKey so a change is a decision, not drift.
 	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 	if r.Host != s.Addr {
 		http.Error(w, "wrong host", http.StatusMisdirectedRequest)
