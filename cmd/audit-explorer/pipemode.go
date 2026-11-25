@@ -158,7 +158,7 @@ func enterPipeSingleton(demo bool, getenv func(string) string) (release func(), 
 	if err != nil {
 		gate.release()
 		if errors.Is(err, ownerlease.ErrBusy) {
-			return nil, "", instance.Names{}, &exitCodeError{code: exitAttached, msg: "Unravis is already running for this user in another sign-in session"}
+			return nil, "", instance.Names{}, &exitCodeError{code: exitOtherSession, msg: "Unravis is already running for this user in another sign-in session"}
 		}
 		return nil, "", instance.Names{}, fmt.Errorf("pipe mode: owner lease: %w", err)
 	}

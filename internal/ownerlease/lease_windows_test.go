@@ -8,8 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestLeaseExclusive(t *testing.T) {
@@ -100,5 +103,35 @@ func TestAcquireCreatesRunDir(t *testing.T) {
 	defer rel()
 	if _, err := os.Stat(Path(dir, false)); err != nil {
 		t.Errorf("lock file missing: %v", err)
+	}
+}
+
+// The lock file is owner-only and carries a Medium no-read-up label, so a Low-integrity process of the same user cannot open it to hold
+// it (which would lock every later start out while no owner runs). An older file with inherited rights is replaced.
+func TestLeaseFileDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(Path(dir, false), nil, 0o600); err != nil { // a file of an older run: inherited rights, default label
+		t.Fatal(err)
+	}
+	rel, err := Acquire(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rel()
+	sd, err := windows.GetNamedSecurityInfo(Path(dir, false), windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.LABEL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := sd.String()
+	if !strings.HasPrefix(s, "D:P") {
+		t.Errorf("DACL is not protected from inheritance: %s", s)
+	}
+	if !strings.Contains(s, "ML;;NWNR;;;ME") {
+		t.Errorf("no Medium no-read/no-write-up label: %s", s)
+	}
+	for _, wide := range []string{";;;BU)", ";;;AU)", ";;;WD)", ";;;BA)"} { // users, authenticated users, everyone, administrators
+		if strings.Contains(s, wide) {
+			t.Errorf("the DACL grants a wider group (%s): %s", wide, s)
+		}
 	}
 }

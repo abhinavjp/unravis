@@ -30,6 +30,9 @@ const (
 	// but no live locator appeared within the wait, for example because that copy is browser mode (it writes none) or is still starting.
 	exitElevated = 11
 	exitNoOwner  = 13
+	// exitOtherSession: the owner lease is held by a copy in another sign-in session of this Windows profile. Waiting does not help; that
+	// copy has to be quit in its own session.
+	exitOtherSession = 14
 )
 
 // refuseElevated is the one administrator check. Today enterSingleInstance (the

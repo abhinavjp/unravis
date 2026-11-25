@@ -351,9 +351,9 @@ func TestPipeModeSecondCopyExits12(t *testing.T) {
 	}
 }
 
-// TestPipeModeLeaseBusyExits12: the first copy in this session, but another session holds the owner lease: exit 12, gate released,
+// TestPipeModeLeaseBusyExits14: the first copy in this session, but another session holds the owner lease: exit 14 (not 12: nobody to attach to), gate released,
 // nothing served.
-func TestPipeModeLeaseBusyExits12(t *testing.T) {
+func TestPipeModeLeaseBusyExits14(t *testing.T) {
 	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": t.TempDir(), "AUDIT_SESSION_TOKEN": testToken})
 	f := &fakeGate{first: true}
 	pipeGateWith(t, f, func() bool { return false })
@@ -361,7 +361,7 @@ func TestPipeModeLeaseBusyExits12(t *testing.T) {
 	swapPipeSeams(t, func(cancel context.CancelFunc) { opened = true; cancel() })
 	ownerLeaseFn = func(string, bool) (func(), error) { return func() {}, ownerlease.ErrBusy }
 	err := run([]string{"--pipe-only", "--demo"}, getenv)
-	assertQuietExit(t, err, 12)
+	assertQuietExit(t, err, 14)
 	if f.released != 1 {
 		t.Errorf("gate released %d times, want 1", f.released)
 	}
