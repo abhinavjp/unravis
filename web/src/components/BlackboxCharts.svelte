@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { watchSize } from '../lib/chartPerf';
+  import { logSeriesReadTiming, watchSize } from '../lib/chartPerf';
   import { timeZone } from '../lib/timeZone.svelte';
   import { onMount, untrack } from 'svelte';
   import { MarkAreaComponent } from 'echarts/components';
@@ -12,7 +12,7 @@
   import { sqlNote } from '../lib/blackboxSqlNames';
   import {
     PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapRanges, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
-    alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own, niceBinaryMax, biggestPlotted,
+    alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own, niceBinaryMax, biggestPlotted, settleWidth,
     type SeriesAnswer, type SeriesLine, type SeriesPoint, type SeriesUnit, type WindowPreset
   } from '../lib/blackboxSeries';
   import { MAX_DRAWN, eventDots, eventRows, happenedItems, healthRows, statusChips, type HappenedItem, type Happened } from '../lib/blackboxHappened';
@@ -45,6 +45,15 @@
   let busy = $state(false);
   let problem = $state('');
   let attempt = $state(0);
+  // 0 until the chart box has a real size: nothing is read before then (a hidden box would ask for a 1-point answer).
+  let chartWidth = $state(0);
+  let readRun = 0;
+  // The window the current zoom belongs to: a new window clears the zoom, a new width does not.
+  let zoomWin: Win | null = null;
+  let paintSample = $state.raw<{ answer: SeriesAnswer; startedAt: number } | null>(null);
+  // The width the reads use: in steps of WIDTH_STEP, with some slack on a shrink, so a scrollbar or a nudge does not read again.
+  let pixelWidth = $state(0);
+  $effect(() => { const measured = chartWidth; untrack(() => { pixelWidth = settleWidth(pixelWidth, measured); }); });
   let log = $state(saved.log === true);
   let keys = $state<string[]>(Array.isArray(saved.keys) ? saved.keys : []);
   let tab = $state<'counters' | 'processes'>('counters');
@@ -90,29 +99,40 @@
     };
   });
 
-  // One read per window. A newer window cancels the older read.
+  // One debounced read per window or visible width step. A newer read cancels the older request and rejects a late answer even if abort lost the race.
+  // A width that is not measured yet waits. The user's zoom is kept when only the width changed; a new window clears it.
   $effect(() => {
-    const w = win;
+    const w = win, width = pixelWidth;
     void attempt;
-    if (!w) return;
+    const mine = ++readRun;
+    if (!w || width <= 0) return;
     const ctl = new AbortController();
-    untrack(() => { busy = true; problem = ''; zoom = null; });
-    const req = alignedRequest(w.startMs, w.endMs, facts?.effectiveIntervalSeconds || facts?.intervalSeconds || 15, POINTS);
-    blackboxApi.series(item.id, { start: new Date(req.startMs).toISOString(), end: new Date(req.endMs).toISOString(), points: req.points }, ctl.signal)
-      .then((raw) => {
-        const a = readSeriesAnswer(raw);
-        if (!a) { problem = T.badAnswer; answer = null; return; }
-        answer = a;
-        const have = new Set(a.lines.map((l) => l.key));
-        const kept = untrack(() => keys).filter((k) => have.has(k));
-        if (!kept.length) keys = defaultSelection(a.lines);
-      })
-      .catch((e: unknown) => {
-        if (e instanceof DOMException && e.name === 'AbortError') return;
-        problem = refusalText(e, BB_REFUSAL) || T.readFailed;
-      })
-      .finally(() => { if (!ctl.signal.aborted) busy = false; });
-    return () => ctl.abort();
+    paintSample = null;
+    untrack(() => { busy = true; problem = ''; if (w !== zoomWin) { zoom = null; zoomWin = w; } });
+    const maxPoints = Math.max(1, Math.min(POINTS, width));
+    const req = alignedRequest(w.startMs, w.endMs, facts?.effectiveIntervalSeconds || facts?.intervalSeconds || 15, maxPoints);
+    const timer = setTimeout(() => {
+      const began = performance.now();
+      blackboxApi.series(item.id, {
+        start: new Date(req.startMs).toISOString(), end: new Date(req.endMs).toISOString(), points: req.points, width, shape: 'm4'
+      }, ctl.signal, true)
+        .then((raw) => {
+          if (mine !== readRun || ctl.signal.aborted) return;
+          const a = readSeriesAnswer(raw);
+          if (!a) { problem = T.badAnswer; answer = null; return; }
+          answer = a;
+          paintSample = { answer: a, startedAt: began };
+          const have = new Set(a.lines.map((l) => l.key));
+          const kept = untrack(() => keys).filter((k) => have.has(k));
+          if (!kept.length) keys = defaultSelection(a.lines);
+        })
+        .catch((e: unknown) => {
+          if (mine !== readRun || ctl.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) return;
+          problem = refusalText(e, BB_REFUSAL) || T.readFailed;
+        })
+        .finally(() => { if (mine === readRun && !ctl.signal.aborted) busy = false; });
+    }, 150);
+    return () => { clearTimeout(timer); ctl.abort(); };
   });
 
   $effect(() => { save(item.id, { keys, log }); });
@@ -333,6 +353,11 @@
         }
       }
     }, true);
+    const sample = untrack(() => paintSample);
+    if (sample?.answer === a) {
+      paintSample = null;
+      logSeriesReadTiming('blackbox-paint', performance.now() - sample.startedAt);
+    }
   });
 
   // A click on a table row only restyles the lines (no rebuild of the chart).
@@ -490,7 +515,7 @@
             {/if}
           {/if}
           <div class="bbc-canvas-wrap" role="img" aria-label={T.chartLabel(item.name, drawn.slice(0, 6).map((d) => d.title).join(', '), Math.max(0, drawn.length - 6))} style:height={height + 'px'} class:empty={!drawn.length || !!problem}>
-            <div class="bbc-canvas" bind:this={node}></div>
+            <div class="bbc-canvas" bind:this={node} bind:clientWidth={chartWidth}></div>
             <div class="bbc-legends" aria-hidden="true">
               {#each legends as lg, i (lg.unit)}
                 <ul class="bbc-legend" style:top={(TOP + i * (STRIP_H + GAP) - 24) + 'px'} style:left={LEFT + 'px'}>

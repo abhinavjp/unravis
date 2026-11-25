@@ -66,6 +66,11 @@ func TestRedactorHidesValuesOnTheNextLines(t *testing.T) {
 		"env style":                 {"PASSWORD=", "FAKEPW"},
 		"colon":                     {"password:", "  FAKEPW"},
 		"xml element on own lines":  {"<Password>", "  FAKEPW", "</Password>"},
+		"quoted json over lines":    {`{"password":"FAKEPW one`, `FAKEPW two", "user":"bob"}`},
+		"quoted env over lines":     {`DB_PASSWORD='FAKEPW one`, `FAKEPW two'`},
+		"json array over lines":     {`{"password":[`, `"FAKEPW",`, `"FAKEPW two"`, `],"user":"bob"}`},
+		"split xml tag":             {`<Password`, `>FAKEPW</Password>`},
+		"xml text over lines":       {`<Password>`, `FAKEPW one`, `FAKEPW two`, `</Password>`},
 		"with a time stamp and job": {"job\tstep\t2026-11-22T10:00:00.000Z password: |", "job\tstep\t2026-11-22T10:00:00.001Z   FAKEPW"},
 	} {
 		t.Run(name, func(t *testing.T) {

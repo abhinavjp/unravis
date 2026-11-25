@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect, type Page } from '../support/fixtures';
+import type { Response } from '@playwright/test';
 import { createCase, ensureHost, ensureHostLabel, importFile, HOST } from '../support/api';
 import { goHome, openCase, layoutSettled } from '../support/ui';
 import { perfmonCsv } from '../support/perfmon';
@@ -110,4 +111,100 @@ test('RESCASE-04: a very long host name wraps inside the block (no sideways over
        noScroll: card.scrollWidth <= card.clientWidth + 1 };
   }, host);
   expect(fits).toEqual({ inside: true, apart: true, noScroll: true });
+});
+
+test('RESCASE-05: visible width uses URS1, JSON fallback draws the same chart, and zoom reads are debounced and canceled', async ({ page, api }) => {
+  const title = 'QA Resource Binary Chart';
+  const id = await createCase(api, title);
+  await ensureHost(api);
+  expect((await importFile(api, id, perfmonCsv(), { name: 'perf.csv', importer: 'win-counters', host: HOST })).status).toBeLessThan(300);
+  await openAndSettle(page, title);
+  const panel = panelOf(page);
+  const requests: URL[] = [];
+  const responses: Response[] = [];
+  page.on('request', (request) => { if (new URL(request.url()).pathname === `/api/cases/${id}/series`) requests.push(new URL(request.url())); });
+  page.on('response', (response) => { if (new URL(response.url()).pathname === `/api/cases/${id}/series`) responses.push(response); });
+  const waitForRead = async (count: number) => {
+    await expect.poll(() => responses.length).toBeGreaterThanOrEqual(count);
+    await expect(panel.getByText('Reading the lines for this window.')).toHaveCount(0);
+    await expect(panel.locator('canvas').first()).toBeVisible();
+    return responses[count - 1];
+  };
+
+  await panel.getByRole('button', { name: 'Show the resource lines for ' + HOST }).click();
+  await waitForRead(1);
+  await expect.poll(async () => {
+    const box = await panel.locator('.lines').boundingBox();
+    // The chart asks in steps of 64 px (rounded up), so a small width change does not read again.
+    const asked = Number(requests.at(-1)?.searchParams.get('width'));
+    return asked > 0 && asked % 64 === 0 && asked >= Math.floor(box!.width) && asked < Math.floor(box!.width) + 64;
+  }).toBe(true);
+  const binary = await waitForRead(requests.length);
+  const url = new URL(binary.url());
+  expect(url.searchParams.get('format')).toBe('binary');
+  expect(url.searchParams.get('bucket')).toBe('1');
+  expect(Number(url.searchParams.get('width'))).toBeGreaterThan(0);
+  expect(binary.headers()['content-type']).toContain('application/octet-stream');
+  const frame = await binary.body();
+  expect(frame.subarray(0, 4).toString('ascii')).toBe('URS1');
+  const headBytes = frame.readUInt32LE(4);
+  expect(headBytes % 8).toBe(0);
+  const header = JSON.parse(frame.subarray(8, 8 + headBytes).toString('utf8'));
+  expect(header.version).toBe(1);
+  expect(header.width).toBe(Number(url.searchParams.get('width')));
+  expect(frame.length).toBe(8 + headBytes + header.series.reduce((sum: number, item: { points: number }) => sum + item.points, 0) * 64);
+  await page.waitForTimeout(300);
+  const canvas = panel.locator('canvas').first();
+  const binaryPixels = await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL());
+
+  // An older server can answer the same read as JSON. Hide/show keeps the window but remounts the chart, so the pixels are directly comparable.
+  const fallbackTarget = requests.length + 1;
+  await panel.getByRole('button', { name: 'Hide the resource lines for ' + HOST }).click();
+  await page.route(new RegExp(`/api/cases/${id}/series\?`), async (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    params.delete('format'); params.delete('width'); params.set('bucket', String(header.bucketMs));
+    const answer = await api('GET', `/api/cases/${id}/series?${params}`);
+    expect(answer.status).toBe(200);
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer.json) });
+  });
+  await panel.getByRole('button', { name: 'Show the resource lines for ' + HOST }).click();
+  await expect.poll(() => requests.length).toBe(fallbackTarget);
+  const fallback = await waitForRead(fallbackTarget);
+  expect(fallback.headers()['content-type']).toContain('application/json');
+  await page.unroute(new RegExp(`/api/cases/${id}/series\?`));
+  await page.waitForTimeout(300);
+  expect(await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(binaryPixels);
+
+  // Several zoom clicks in one turn make one read, not one read per click.
+  const beforeZoom = requests.length;
+  await panel.getByRole('button', { name: 'Zoom in', exact: true }).evaluate((button) => { for (let i = 0; i < 3; i++) (button as HTMLButtonElement).click(); });
+  await page.waitForTimeout(80);
+  expect(requests).toHaveLength(beforeZoom);
+  await expect.poll(() => requests.length).toBe(beforeZoom + 1);
+  await waitForRead(beforeZoom + 1);
+  expect(requests).toHaveLength(beforeZoom + 1);
+
+  // A newer window aborts the held read; its late answer cannot replace the whole-period chart.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let held!: () => void;
+  const heldSeen = new Promise<void>((resolve) => (held = resolve));
+  await page.route(new RegExp(`/api/cases/${id}/series\?`), async (route) => {
+    const response = await route.fetch();
+    held();
+    await gate;
+    await route.fulfill({ response }).catch(() => undefined);
+  });
+  const beforeCancel = requests.length;
+  const beforeCancelResponses = responses.length;
+  await panel.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await heldSeen;
+  await panel.getByRole('button', { name: 'Whole period', exact: true }).click();
+  await expect.poll(() => requests.length).toBe(beforeCancel + 2);
+  release();
+  await waitForRead(beforeCancelResponses + 1);
+  await page.unroute(new RegExp(`/api/cases/${id}/series\?`));
+  expect(requests).toHaveLength(beforeCancel + 2);
+  await expect(panel.getByRole('alert')).toHaveCount(0);
+  await expect(canvas).toBeVisible();
 });

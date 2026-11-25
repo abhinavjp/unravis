@@ -64,6 +64,8 @@ type Updater struct {
 	inflight    atomic.Int32
 	busyMu      sync.Mutex
 	extraBusy   []func() bool
+	powerMu     sync.RWMutex
+	powerTouch  func()
 	auto        autoState
 	resultDir   string // where the setup program leaves the result of an unattended update
 	inst        installState

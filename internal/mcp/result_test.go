@@ -196,7 +196,7 @@ func checkGolden(t *testing.T, path string, got []byte) {
 	if err != nil {
 		t.Fatalf("%v (create it with: go test ./internal/mcp -run %s -update)", err, t.Name())
 	}
-	if string(want) != string(got) {
+	if strings.ReplaceAll(string(want), "\r\n", "\n") != strings.ReplaceAll(string(got), "\r\n", "\n") {
 		t.Fatalf("%s changed; review the change (additive only) and update the golden with: go test ./internal/mcp -run %s -update\n got  %.400s\n want %.400s", path, t.Name(), got, want)
 	}
 }
@@ -288,7 +288,7 @@ func TestResultShapesAdditive(t *testing.T) {
 		for _, l := range strings.Split(strings.TrimSpace(string(got)), "\n") {
 			have[l] = true
 		}
-		for _, l := range strings.Split(strings.TrimSpace(string(want)), "\n") {
+		for _, l := range strings.Split(strings.TrimSpace(strings.ReplaceAll(string(want), "\r\n", "\n")), "\n") {
 			if !have[l] {
 				t.Errorf("%s: the shape line %q is no longer in the result (a field was removed or changed type)", tool, l)
 			}

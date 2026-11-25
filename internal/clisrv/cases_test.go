@@ -63,6 +63,9 @@ func TestCasesOverTheRealDashboardHandler(t *testing.T) {
 	if l.Meta["identifiers"] == "" {
 		t.Errorf("meta: %v", l.Meta)
 	}
+	if erased, ok := l.Data["erased"].([]any); !ok || len(erased) != 0 || l.Data["oldCases"] != float64(0) {
+		t.Errorf("erase and old-layout fields: %s", l.Raw)
+	}
 
 	s := op(t, h, "cases.show", `{"id":"`+string(a.ID)+`"}`)
 	if !s.OK || s.Data["id"] != string(a.ID) || s.Data["title"] != "Payroll slowdown" {
@@ -116,7 +119,7 @@ func TestCasesProjectionAndErrorsCarryNoExtraText(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/cases" {
-			_, _ = io.WriteString(w, `{"cases":[`+full+`],"archivedTotal":4,"offset":0,"pageSize":50,"erased":[{"line":"`+marker+`"}],"oldCases":2}`)
+			_, _ = io.WriteString(w, `{"cases":[`+full+`],"archivedTotal":4,"offset":0,"pageSize":50,"erased":[{"id":"abcdefghijklmnopqrstuvwxyz","at":"2026-11-20T10:00:00+02:00","line":"`+marker+`"}],"oldCases":2}`)
 			return
 		}
 		_, _ = io.WriteString(w, view)
@@ -135,6 +138,17 @@ func TestCasesProjectionAndErrorsCarryNoExtraText(t *testing.T) {
 	}
 	if _, has := c["state"]; has {
 		t.Errorf("state is not in the spec: %v", c)
+	}
+	if l.Data["oldCases"] != float64(2) {
+		t.Errorf("oldCases: %v", l.Data)
+	}
+	erased := l.Data["erased"].([]any)
+	if len(erased) != 1 {
+		t.Fatalf("erased: %v", erased)
+	}
+	e := erased[0].(map[string]any)
+	if len(e) != 2 || e["id"] != "abcdefghijklmnopqrstuvwxyz" || e["at"] != "2026-11-20T08:00:00Z" {
+		t.Errorf("erased projection: %v", e)
 	}
 	h0 := s.Data["history"].([]any)[0].(map[string]any)
 	if len(h0) != 2 || h0["kind"] != "created" || s.Data["envs"] != float64(1) || s.Data["sources"] != float64(2) {
@@ -274,7 +288,7 @@ func TestCasesProjectionKeys(t *testing.T) {
 		return strings.Join(ks, ",")
 	}
 	l := op(t, h, "cases.list", "")
-	if got := keys(l.Data); got != "archivedTotal,cases,offset,pageSize" {
+	if got := keys(l.Data); got != "archivedTotal,cases,erased,offset,oldCases,pageSize" {
 		t.Errorf("list keys: %s", got)
 	}
 	if got := keys(l.Data["cases"].([]any)[0].(map[string]any)); got != "archived,bytes,closed,created,id,imports,keyLocked,missing,ownKey,title,untrusted" {
@@ -361,6 +375,41 @@ func TestCasesRealLocks(t *testing.T) {
 	for _, r := range []reply{op(t, h, "cases.list", ""), op(t, h, "cases.show", `{"id":"`+id+`"}`), op(t, h, "cases.list", `{"archived":true}`)} {
 		if r.OK || r.Error.Code != "CASE_LOCKED" || strings.Contains(r.Raw, "SECRETTITLE") {
 			t.Errorf("a locked master key: %s", r.Raw)
+		}
+	}
+}
+
+// erased.json is a plain file: a line whose id is not a case id is dropped, and a line without a time shows null, as a case row does.
+func TestCasesErasedLinesAreCheckedAndUndatedIsNull(t *testing.T) {
+	const good, undated, zero = "abcdefghijklmnopqrstuvwxyz", "bcdefghijklmnopqrstuvwxyza", "cdefghijklmnopqrstuvwxyzab"
+	dash := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"cases":[],"archivedTotal":0,"offset":0,"pageSize":50,"oldCases":0,"erased":[`+
+			`{"id":"`+good+`","at":"2026-11-20T10:00:00Z"},`+
+			`{"id":"not a case id","at":"2026-11-20T10:00:00Z"},`+
+			`{"id":"ABCDEFGHIJKLMNOPQRSTUVWXYZ","at":"2026-11-20T10:00:00Z"},`+
+			`{"id":"abc","at":"2026-11-20T10:00:00Z"},`+
+			`{"id":"","at":"2026-11-20T10:00:00Z"},`+
+			`{"id":"`+undated+`"},`+
+			`{"id":"`+zero+`","at":"0001-01-01T00:00:00Z"}]}`)
+	})
+	l := op(t, casesHandler(dash), "cases.list", "")
+	if !l.OK {
+		t.Fatalf("%s", l.Raw)
+	}
+	erased := l.Data["erased"].([]any)
+	if len(erased) != 3 {
+		t.Fatalf("only the lines with a case id stay: %v", erased)
+	}
+	for i, want := range []struct {
+		id string
+		at any
+	}{{good, "2026-11-20T10:00:00Z"}, {undated, nil}, {zero, nil}} {
+		e := erased[i].(map[string]any)
+		if e["id"] != want.id || e["at"] != want.at || len(e) != 2 {
+			t.Errorf("erased[%d] = %v, want id %s at %v", i, e, want.id, want.at)
+		}
+		if _, ok := e["at"]; !ok {
+			t.Errorf("erased[%d] has no at key (null expected): %v", i, e)
 		}
 	}
 }

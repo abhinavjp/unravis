@@ -256,3 +256,29 @@ func TestBBSeriesM4NeverMoreBucketsThanPoints(t *testing.T) {
 		}
 	}
 }
+
+// The window's real last sample is always in the last bucket of the M4 answer, whatever the cadence and point count (the zoom line
+// then ends at the real final reading, not one bucket early).
+func TestBBSeriesM4KeepsTheLastSample(t *testing.T) {
+	start := time.Date(2026, 11, 18, 6, 0, 0, 0, time.UTC)
+	for _, tc := range []struct{ cadence, span, points int }{{15, 8700, 480}, {15, 28800, 480}, {30, 3600, 600}, {15, 600, 7}} {
+		var samples []blackbox.Sample
+		for sec := 0; sec <= tc.span; sec += tc.cadence {
+			s := fullSample(start.Add(time.Duration(sec)*time.Second), sec)
+			s.Seq = uint64(sec + 1)
+			s.CPU = f64(float64(sec))
+			samples = append(samples, s)
+		}
+		lastSec := (tc.span / tc.cadence) * tc.cadence
+		win := bbWindow{Start: start, End: start.Add(time.Duration(tc.span) * time.Second)}
+		ans := buildBBSeriesShape(blackbox.Manifest{IntervalSeconds: tc.cadence}, samples, blackbox.ReadReport{}, blackbox.StateInfo{}, win, tc.points, true, true)
+		for _, l := range ans.Lines {
+			if l.Key != "cpu" {
+				continue
+			}
+			if got := l.M4[len(l.M4)-1][5]; got != float64(lastSec) {
+				t.Errorf("%+v: last bucket ends at %v, want the final sample %d", tc, got, lastSec)
+			}
+		}
+	}
+}

@@ -1,0 +1,101 @@
+operation app.start | Start the Unravis app with no window (a headless owner) and wait until it answers.
+operation app.status | Say whether the Unravis app runs, who owns it and which protocol it speaks.
+operation app.stop | Stop the headless Unravis app and wait until it is gone.
+operation audit.activity | Live query.
+operation audit.breakdown | Live query.
+operation audit.compare | Live query.
+operation audit.groups | Cached, no query.
+operation audit.guide | Cached, no query.
+operation audit.requests | Live query.
+operation audit.slowest | Live query.
+operation audit.timeline | Cached, no query.
+operation audit.timelines.compare | Cached, no query.
+operation blackbox.inspect | Read a Blackbox recording folder or hourly file from disk, with no running app, and say what it holds.
+operation cases.list | List the cases of the running app, as its window lists them: id, title, dates, size and flags, plus erase n...
+operation cases.show | Show one case: the fields of the list plus the counts of environments and sources and the history (kind and...
+operation doctor | Check this command line and its link to the running app: its version and place, the app program, and whethe...
+operation schema | List the operations, or describe one: its input, output and errors.
+operation sources.list | Cached, no query.
+operation version | Print the version of the command line and the protocol it speaks.
+native app.start | 2ac119ddc20a6b87c9be11b9ecad9aef4e3185053ce54df2e130ee13fa105dea
+native app.status | 67451fc7f76937155e78229609b52ce46bd56552731deb598d1ff6c763853a25
+native app.stop | 7d0d4f6bf6901fb5352bd55e152614c559ce90edc6423d7e23f7971db8e9cf8e
+native blackbox.inspect | f2b5f24b11a619faeff1501ddbf4fe61d7a811f13fd98901c1ce1dff6bb981d2
+native cases.list | db1dce8c4cf001414c49390bf3ec816f668a8436bfbc3f01fe28c80b249a7996
+native cases.show | 0ebcb65e02768c212dff900bd0ca16d2d498cd91035e8fa46cb930fcac7bdfa4
+native doctor | 8656b12a8c6223df0aeee3634e7537113baa89cfabf12104d1eda673e7b04fa8
+native schema | 293b9d1c1e880399a7b7d6be6038a271a26c5a8fe865312135405588c879aeb1
+native version | 38f856f71972336f9a80e624ded97689b21891623d5ecb86f6540ae44964399f
+schema app.start | 2ac119ddc20a6b87c9be11b9ecad9aef4e3185053ce54df2e130ee13fa105dea
+schema app.status | 67451fc7f76937155e78229609b52ce46bd56552731deb598d1ff6c763853a25
+schema app.stop | 7d0d4f6bf6901fb5352bd55e152614c559ce90edc6423d7e23f7971db8e9cf8e
+schema audit.activity | 70d4f60ef6304b85317a3336021b60a89cf3d38ccb8989fc9236bdfb2e29c55e
+schema audit.breakdown | 0186e0cf844c680d6b63471b7e2c90fed79f352b0341cd618008b1495fad9cf5
+schema audit.compare | 7c24d544632eca491c5e7b6a0f13ad153da761d608ec407d13473b88c5c2e87b
+schema audit.groups | e28ec1ab2bb75ea70c4748e792372213c40b8357136d7c4a50086d6cbfdffeeb
+schema audit.guide | 55efa9942d65a17fa93231bb641fdd7c570a6aec682015ded604305c17a9ba52
+schema audit.requests | 6124577e893fd8eb664ba92ae0b8eb1e6c829f3eb4e330734109b735628e20b8
+schema audit.slowest | 8015bb4598661661098fba55e42204f7cc6ec2335f5da6a7f562028c60d3c0c0
+schema audit.timeline | 0e2e4c3e44786e946a23dfb8b768e9548e0ada4340708e3a0a33100c8358ba9d
+schema audit.timelines.compare | 000ceae4540b529184eda3299b85903a4abeaab590001596395ff8e605ffea2c
+schema blackbox.inspect | f2b5f24b11a619faeff1501ddbf4fe61d7a811f13fd98901c1ce1dff6bb981d2
+schema cases.list | db1dce8c4cf001414c49390bf3ec816f668a8436bfbc3f01fe28c80b249a7996
+schema cases.show | 0ebcb65e02768c212dff900bd0ca16d2d498cd91035e8fa46cb930fcac7bdfa4
+schema doctor | 8656b12a8c6223df0aeee3634e7537113baa89cfabf12104d1eda673e7b04fa8
+schema schema | 293b9d1c1e880399a7b7d6be6038a271a26c5a8fe865312135405588c879aeb1
+schema sources.list | e5bbabbdb5308b8c92efae70ec5b2a77d8c8c3acebde9fc293d038ce96a787b1
+schema version | 38f856f71972336f9a80e624ded97689b21891623d5ecb86f6540ae44964399f
+mcp audit_get_activity | d8c54cc4007b466d1a0aa059698372a997f352f860f5135dd212d6c7f52c0949
+mcp audit_get_guide | 540436cc1dc47abe082e8648943a42a10de714713a6b529cb2e0482413eac124
+mcp audit_list_sources | f7a35478474f751b229197efb64076c5b2b94a2441b54c564cf2945277edb122
+mcp audit_compare | 9d99aa23781c182d8addedb5b383875c1a007c93bf63bbd018545a52c4ef7c7d
+mcp audit_get_groups | 911b26c463e12ea7acaaf75d6ebfe7e2cfa3678e1644ee1b0e37a18f71e6dc2d
+mcp audit_get_timeline | 3a3fae15e2124c6ae9830aaf19830d2656bc41f40e7f137a847e45350c3b2512
+mcp audit_compare_timelines | 95ff17b571afcaef73fc7d384de0a0bed42f698dbedfcfba882bb1431e817e6e
+mcp audit_get_requests | 8943f9b276fdfe111d96ffcd52603dc0a7d42a7e2e3f321ceb22f7e9a1a9b5b8
+mcp audit_get_slowest | f3ba8894042033d8292afb61611b1f65403de6dc8a287e511bace2b57664b1a3
+mcp audit_get_breakdown | 2de6d4a8f06bab702c8b633aaac5246964d9260a31a51f40c51e7cad7b053b1c
+matrix version | gui=n/a human=allow auto=n/a mcp=n/a sandbox=n/a tool=
+matrix schema | gui=n/a human=allow auto=n/a mcp=n/a sandbox=n/a tool=
+matrix sources.list | gui=allow human=allow auto=scoped mcp=scoped sandbox=deny tool=audit_list_sources
+matrix audit.guide | gui=allow human=allow auto=scoped mcp=scoped sandbox=deny tool=audit_get_guide
+matrix audit.compare | gui=allow human=allow auto=scoped mcp=scoped sandbox=deny tool=audit_compare
+matrix audit.groups | gui=allow human=allow auto=scoped mcp=scoped sandbox=deny tool=audit_get_groups
+matrix audit.timeline | gui=allow human=allow auto=scoped mcp=scoped sandbox=deny tool=audit_get_timeline
+matrix audit.timelines.compare | gui=allow human=allow auto=scoped mcp=scoped sandbox=deny tool=audit_compare_timelines
+matrix audit.requests | gui=allow human=allow auto=scoped mcp=scoped sandbox=deny tool=audit_get_requests
+matrix audit.slowest | gui=allow human=allow auto=scoped mcp=scoped sandbox=deny tool=audit_get_slowest
+matrix audit.breakdown | gui=allow human=allow auto=scoped mcp=scoped sandbox=deny tool=audit_get_breakdown
+matrix audit.activity | gui=allow human=allow auto=scoped mcp=scoped sandbox=deny tool=audit_get_activity
+matrix cases.list | gui=allow human=allow auto=deny mcp=deny sandbox=deny tool=
+matrix cases.show | gui=allow human=allow auto=deny mcp=deny sandbox=deny tool=
+matrix doctor | gui=n/a human=allow auto=deny mcp=deny sandbox=deny tool=
+matrix app.status | gui=n/a human=allow auto=allow mcp=deny sandbox=deny tool=
+matrix app.start | gui=n/a human=allow auto=deny mcp=deny sandbox=deny tool=
+matrix app.stop | gui=n/a human=allow auto=deny mcp=deny sandbox=deny tool=
+matrix grant.list | gui=allow human=allow auto=deny mcp=deny sandbox=deny tool=
+matrix grant.approve | gui=allow human=allow auto=deny mcp=deny sandbox=deny tool=
+matrix grant.revoke | gui=allow human=allow auto=deny mcp=deny sandbox=deny tool=
+matrix blackbox.inspect | gui=n/a human=allow auto=n/a mcp=n/a sandbox=n/a tool=
+matrix code.run | gui=deny human=deny auto=deny mcp=deny sandbox=deny tool=
+matrix code.types | gui=deny human=deny auto=deny mcp=deny sandbox=deny tool=
+matrix code.replay | gui=deny human=deny auto=deny mcp=deny sandbox=deny tool=
+command app.start | unravis app start
+command app.status | unravis app status
+command app.stop | unravis app stop
+command audit.activity | unravis audit activity
+command audit.breakdown | unravis audit breakdown
+command audit.compare | unravis audit compare
+command audit.groups | unravis audit groups
+command audit.guide | unravis audit guide
+command audit.requests | unravis audit requests
+command audit.slowest | unravis audit slowest
+command audit.timeline | unravis audit timeline
+command audit.timelines.compare | unravis audit timelines compare
+command blackbox.inspect | unravis blackbox inspect
+command cases.list | unravis cases list
+command cases.show | unravis cases show
+command doctor | unravis doctor
+command schema | unravis schema
+command sources.list | unravis sources list
+command version | unravis version

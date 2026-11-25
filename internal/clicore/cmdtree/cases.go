@@ -16,7 +16,7 @@ var caseIDRE = regexp.MustCompile(`^[a-z2-7]{26}$`)
 
 // casesListSpec is `cases list`. The fields are the arguments of the operation (internal/clicore/schemas/cases.list.json).
 var casesListSpec = readSpec{op: "cases.list", use: "list", short: "List the cases of the running app (the same list as its window)",
-	long: "Lists the cases the way the app's window does: id, title, dates, size and flags. A title reads (locked) while the key of that case is locked. " +
+	long: "Lists the cases the way the app's window does: id, title, dates, size and flags, followed by erase notices and any cases left in the old layout. A title reads (locked) while the key of that case is locked. " +
 		"Use --archived to list the archived cases, 50 to a page.",
 	flags: []fieldFlag{{"archived", "archived", "list the archived cases instead of the others", kBool, false},
 		{"offset", "offset", "first archived case to list (only with --archived)", kInt, false}},
@@ -50,12 +50,16 @@ func (st *state) casesCmd() *cobra.Command {
 			return st.runOp("cases.show", a, caseTable)
 		},
 	}
-	list := casesListSpec.command(st)
+	spec := casesListSpec
+	archivedFlag := false // --archived was given: the page is an archived page even when it is empty
+	spec.table = func(w io.Writer, data json.RawMessage) error { return casesTablePage(w, data, archivedFlag) }
+	list := spec.command(st)
 	run := list.RunE
 	list.RunE = func(c *cobra.Command, args []string) error {
 		if st.opts.request == "" && c.Flags().Changed("offset") && !c.Flags().Changed("archived") {
 			return usage("--offset goes with --archived.")
 		}
+		archivedFlag, _ = c.Flags().GetBool("archived")
 		return run(c, args)
 	}
 	g.AddCommand(list, show)
@@ -96,12 +100,21 @@ func (c caseRowOut) flagsOf() string {
 	return out
 }
 
-func casesTable(w io.Writer, data json.RawMessage) error {
+func casesTable(w io.Writer, data json.RawMessage) error { return casesTablePage(w, data, false) }
+
+// casesTablePage prints a list. The owner sends the erase notices and the old-layout count with every page, archived ones too, so they
+// are printed on the first page of the other list only and not repeated on each archived page.
+func casesTablePage(w io.Writer, data json.RawMessage, archivedAsked bool) error {
 	var d struct {
 		Cases         []caseRowOut `json:"cases"`
 		ArchivedTotal int          `json:"archivedTotal"`
 		Offset        int          `json:"offset"`
 		PageSize      int          `json:"pageSize"`
+		Erased        []struct {
+			ID string  `json:"id"`
+			At *string `json:"at"`
+		} `json:"erased"`
+		OldCases int `json:"oldCases"`
 	}
 	if err := json.Unmarshal(data, &d); err != nil {
 		return pretty(w, data)
@@ -118,16 +131,37 @@ func casesTable(w io.Writer, data json.RawMessage) error {
 	for _, c := range d.Cases {
 		archivedPage = archivedPage && c.Archived
 	}
+	archivedPage = archivedPage || archivedAsked || d.Offset > 0
 	if archivedPage {
 		foot := "\n" + strconv.Itoa(len(d.Cases)) + " archived cases shown (of " + strconv.Itoa(d.ArchivedTotal) + ").\n"
 		if next := d.Offset + len(d.Cases); next < d.ArchivedTotal {
 			foot += "More: add --archived --offset " + strconv.Itoa(next) + ".\n"
 		}
-		_, err := io.WriteString(w, foot)
+		if _, err := io.WriteString(w, foot); err != nil {
+			return err
+		}
+	} else if _, err := io.WriteString(w, "\n"+strconv.Itoa(len(d.Cases))+" cases shown; "+strconv.Itoa(d.ArchivedTotal)+" archived (use --archived).\n"); err != nil {
 		return err
 	}
-	_, err := io.WriteString(w, "\n"+strconv.Itoa(len(d.Cases))+" cases shown; "+strconv.Itoa(d.ArchivedTotal)+" archived (use --archived).\n")
-	return err
+	if archivedPage {
+		return nil
+	}
+	if d.OldCases > 0 {
+		if _, err := io.WriteString(w, strconv.Itoa(d.OldCases)+" cases from before the shared layout remain in the owner's folder.\n"); err != nil {
+			return err
+		}
+	}
+	if len(d.Erased) > 0 {
+		erased := make([][]string, len(d.Erased))
+		for i, e := range d.Erased {
+			erased[i] = []string{e.ID, shortTime(e.At)}
+		}
+		if _, err := io.WriteString(w, "\n"); err != nil {
+			return err
+		}
+		return clicore.WriteTable(w, []string{"ERASED CASE", "WHEN"}, erased)
+	}
+	return nil
 }
 
 func caseTable(w io.Writer, data json.RawMessage) error {

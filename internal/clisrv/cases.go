@@ -155,6 +155,18 @@ type caseShow struct {
 	History []history `json:"history"`
 }
 
+// erasedWire is what the dashboard sends for an erase notice; erasedCase is what the command line shows: the id and the time, and
+// nothing else. A zero time is null, as for the case rows.
+type erasedWire struct {
+	ID string    `json:"id"`
+	At time.Time `json:"at"`
+}
+
+type erasedCase struct {
+	ID string     `json:"id"`
+	At *time.Time `json:"at"`
+}
+
 // busyReasons are the reasons of a 409 that pass by themselves: the case is being erased, freed, archived or imported into, or is held by
 // another call. The reason is compared with this closed list and never copied.
 var busyReasons = map[string]bool{"case-erasing": true, "case-freeing": true, "case-in-use": true, "archive-running": true, "case-import-running": true, "cancel-archive-first": true}
@@ -253,10 +265,12 @@ func (s *server) casesList(ctx context.Context, args json.RawMessage) (any, *cli
 		return nil, e
 	}
 	var wire struct {
-		Cases         []caseWire `json:"cases"`
-		ArchivedTotal int        `json:"archivedTotal"`
-		Offset        int        `json:"offset"`
-		PageSize      int        `json:"pageSize"`
+		Cases         []caseWire   `json:"cases"`
+		ArchivedTotal int          `json:"archivedTotal"`
+		Offset        int          `json:"offset"`
+		PageSize      int          `json:"pageSize"`
+		Erased        []erasedWire `json:"erased"`
+		OldCases      int          `json:"oldCases"`
 	}
 	if json.Unmarshal(body, &wire) != nil {
 		return nil, clicore.NewErrorAfterWork(clicore.CodeInternal, "The case store gave an answer this command line does not understand.", "")
@@ -265,7 +279,17 @@ func (s *server) casesList(ctx context.Context, args json.RawMessage) (any, *cli
 	for i, c := range wire.Cases {
 		rows[i] = c.row()
 	}
-	return map[string]any{"cases": rows, "archivedTotal": wire.ArchivedTotal, "offset": wire.Offset, "pageSize": wire.PageSize}, nil
+	// erased.json is a plain file that reads as no lines when it is damaged, but a hand-edited line can still carry any text as its id:
+	// keep a line only when its id is a case id (the web window does the same).
+	erased := make([]erasedCase, 0, len(wire.Erased))
+	for _, e := range wire.Erased {
+		if _, err := casestore.ParseID(e.ID); err != nil {
+			continue
+		}
+		erased = append(erased, erasedCase{ID: e.ID, At: utc(&e.At)})
+	}
+	return map[string]any{"cases": rows, "archivedTotal": wire.ArchivedTotal, "offset": wire.Offset, "pageSize": wire.PageSize,
+		"erased": erased, "oldCases": wire.OldCases}, nil
 }
 
 func (s *server) casesShow(ctx context.Context, args json.RawMessage) (any, *clicore.Error) {

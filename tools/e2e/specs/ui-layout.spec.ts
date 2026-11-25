@@ -1254,7 +1254,8 @@ async function barFacts(page: Page) {
       bar: rect(g.querySelector('.bar')!),
       hit: rect(g.querySelector('.bar-hit')!),
       svg: rect(g.closest('svg')!),
-      lane: g.closest('[data-lane]')?.getAttribute('data-lane') ?? ''
+      lane: rect(g.closest('[data-lane]')!),
+      laneName: g.closest('[data-lane]')?.getAttribute('data-lane') ?? ''
     }));
   });
 }
@@ -1269,15 +1270,15 @@ for (const size of SCALL_SIZES) {
     const overlapArea = (a: { l: number; t: number; r: number; b: number }, b: { l: number; t: number; r: number; b: number }) =>
       Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l)) * Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
     for (const b of bars) {
-      // holds its bar, inside its own lane drawing (never reaches the lane above or below)
+      // holds its bar and stays inside its own lane; the upper rows may use the non-interactive name row above the svg
       expect(b.hit.l, b.label + ' left').toBeLessThanOrEqual(b.bar.l + eps);
       expect(b.hit.r, b.label + ' right').toBeGreaterThanOrEqual(b.bar.r - eps);
       expect(b.hit.t, b.label + ' top').toBeLessThanOrEqual(b.bar.t + eps);
       expect(b.hit.b, b.label + ' bottom').toBeGreaterThanOrEqual(b.bar.b - eps);
-      expect(b.hit.t, b.label + ' inside the lane drawing (top)').toBeGreaterThanOrEqual(b.svg.t - eps);
-      expect(b.hit.b, b.label + ' inside the lane drawing (bottom)').toBeLessThanOrEqual(b.svg.b + eps);
-      expect(b.hit.l, b.label + ' inside the lane drawing (left)').toBeGreaterThanOrEqual(b.svg.l - eps);
-      expect(b.hit.r, b.label + ' inside the lane drawing (right)').toBeLessThanOrEqual(b.svg.r + eps);
+      expect(b.hit.t, b.label + ' inside its lane (top)').toBeGreaterThanOrEqual(b.lane.t - eps);
+      expect(b.hit.b, b.label + ' inside its lane (bottom)').toBeLessThanOrEqual(b.lane.b + eps);
+      expect(b.hit.l, b.label + ' inside its lane (left)').toBeGreaterThanOrEqual(b.lane.l - eps);
+      expect(b.hit.r, b.label + ' inside its lane (right)').toBeLessThanOrEqual(b.lane.r + eps);
       // grew: taller than the bar by something, and as wide as 24 px
       expect(b.hit.b - b.hit.t, b.label + ' taller than the bar').toBeGreaterThan(b.bar.b - b.bar.t + 1);
       expect(b.hit.r - b.hit.l, b.label + ' width').toBeGreaterThanOrEqual(24 - eps);
@@ -1285,9 +1286,9 @@ for (const size of SCALL_SIZES) {
       const height = b.hit.b - b.hit.t;
       if (height < 24 - eps) {
         for (const end of ['t', 'b'] as const) {
-          const edge = end === 't' ? b.svg.t : b.svg.b;
+          const edge = end === 't' ? b.lane.t : b.lane.b;
           const atEdge = Math.abs(b.hit[end] - edge) <= eps;
-          const atNeighbour = bars.some((o) => o !== b && o.lane === b.lane && Math.min(o.hit.r, b.hit.r) - Math.max(o.hit.l, b.hit.l) > 0 && Math.abs(o.hit[end === 't' ? 'b' : 't'] - b.hit[end]) <= eps);
+          const atNeighbour = bars.some((o) => o !== b && o.laneName === b.laneName && Math.min(o.hit.r, b.hit.r) - Math.max(o.hit.l, b.hit.l) > 0 && Math.abs(o.hit[end === 't' ? 'b' : 't'] - b.hit[end]) <= eps);
           expect(atEdge || atNeighbour, b.label + ' is short (' + height.toFixed(1) + ' px) and its ' + (end === 't' ? 'top' : 'bottom') + ' end touches neither the lane edge nor another area').toBe(true);
         }
       }
@@ -1310,8 +1311,12 @@ for (const size of SCALL_SIZES) {
       return out;
     });
     expect(wrong, 'presses inside an area that miss its bar').toEqual([]);
-    // at least the lowest bar of the stack reaches the full 24 px on the desktop sizes (a stack of three rows shares its room)
-    if (size.width >= 1024) expect(Math.max(...bars.map((b) => b.hit.b - b.hit.t)), 'the bar with room above and below').toBeGreaterThanOrEqual(24 - eps);
+    // the upper bar uses the name row and the lowest bar uses the room below it: both reach the full 24 px on desktop sizes
+    if (size.width >= 1024) {
+      const stack = bars.filter((b) => b.laneName === bars[0].laneName).sort((a, b) => a.bar.t - b.bar.t);
+      expect(stack[0].hit.b - stack[0].hit.t, 'the upper bar reaches 24 px through the name row').toBeGreaterThanOrEqual(24 - eps);
+      expect(Math.max(...bars.map((b) => b.hit.b - b.hit.t)), 'the bar with room above and below').toBeGreaterThanOrEqual(24 - eps);
+    }
   });
 }
 
@@ -1348,7 +1353,7 @@ for (const scheme of ['dark', 'light'] as const) {
 test('UIFIX-19e Slow call screen: a press goes to the bar it is nearest to, an area never takes a press from the chart outside it or from the next lane', async ({ page }) => {
   await openSlowCallScreen(page);
   const bars = await barFacts(page);
-  const stack = bars.filter((b) => b.lane === bars[0].lane).sort((a, b) => a.bar.t - b.bar.t);
+  const stack = bars.filter((b) => b.laneName === bars[0].laneName).sort((a, b) => a.bar.t - b.bar.t);
   expect(stack.length, 'a stack of bars in one lane').toBeGreaterThan(1);
   const pressed = async () => page.evaluate(() => [...document.querySelectorAll('.bar-g')].map((g) => g.getAttribute('aria-pressed') === 'true'));
   const click = async (x: number, y: number) => { await page.mouse.click(x, y); };
@@ -1377,12 +1382,12 @@ test('UIFIX-19e Slow call screen: a press goes to the bar it is nearest to, an a
   expect((await pressed())[lowest.i], 'past the area the lowest bar is not selected (the chart takes the press)').toBe(false);
   expect((await pressed())[stack[0].i], 'past the area the earlier selection stays').toBe(true);
   await expect(page.locator('.scall-line.pinned')).toHaveCount(1);
-  // the lane boundary: one pixel below the drawing of a lane is not a bar of that lane
+  // the lane boundary: a press one pixel outside a lane never belongs to a bar of that lane
   for (const b of bars) {
-    const below = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.svg.b + 1] as [number, number]);
-    expect(below, 'one pixel below the lane drawing of ' + b.label).toBeNull();
-    const above = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.svg.t - 1] as [number, number]);
-    expect(above, 'one pixel above the lane drawing of ' + b.label).toBeNull();
+    const below = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.lane.b + 1] as [number, number]);
+    expect(below, 'one pixel below the lane of ' + b.label).not.toBe(b.label);
+    const above = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.lane.t - 1] as [number, number]);
+    expect(above, 'one pixel above the lane of ' + b.label).not.toBe(b.label);
   }
 });
 

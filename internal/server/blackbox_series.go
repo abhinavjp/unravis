@@ -53,6 +53,10 @@ type bbSeriesPoint [4]float64
 // the lowest and highest are the whole bucket's, the first and last are by time.
 type bbSeriesPointM4 [6]float64
 
+type bbSeriesPointRef struct {
+	N int `json:"n"`
+}
+
 type bbSeriesLine struct {
 	Key    string          `json:"key"`   // for example "memCommit" or "sqlHost.SQLEXPRESS.batchRequestsPerSec"
 	Group  string          `json:"group"` // "host" for the core measurements, else the group name
@@ -60,11 +64,19 @@ type bbSeriesLine struct {
 	Unit   string          `json:"unit"` // "pct", "bytes", "bytesPerSec", "ms", "sec", "perSec", "count"
 	Points []bbSeriesPoint `json:"points"`
 	// M4, when set (Shape "m4"), is what the answer carries as "points" instead.
-	M4 []bbSeriesPointM4 `json:"-"`
+	M4     []bbSeriesPointM4 `json:"-"`
+	Binary bool              `json:"-"`
 }
 
 func (l bbSeriesLine) MarshalJSON() ([]byte, error) {
 	type plain bbSeriesLine
+	if l.Binary {
+		n := len(l.Points) + len(l.M4)
+		return json.Marshal(struct {
+			plain
+			Points bbSeriesPointRef `json:"points"`
+		}{plain(l), bbSeriesPointRef{N: n}})
+	}
 	if l.M4 == nil {
 		return json.Marshal(plain(l))
 	}
@@ -94,10 +106,19 @@ type bbSeriesProc struct {
 	// With Shape "m4" these (M4On set) are answered as cpu, workingSet and privateBytes instead.
 	M4On                bool              `json:"-"`
 	M4CPU, M4WS, M4Priv []bbSeriesPointM4 `json:"-"`
+	Binary              bool              `json:"-"`
 }
 
 func (p bbSeriesProc) MarshalJSON() ([]byte, error) {
 	type plain bbSeriesProc
+	if p.Binary {
+		return json.Marshal(struct {
+			plain
+			CPU  bbSeriesPointRef `json:"cpu"`
+			WS   bbSeriesPointRef `json:"workingSet"`
+			Priv bbSeriesPointRef `json:"privateBytes"`
+		}{plain(p), bbSeriesPointRef{N: len(p.CPU) + len(p.M4CPU)}, bbSeriesPointRef{N: len(p.WS) + len(p.M4WS)}, bbSeriesPointRef{N: len(p.Priv) + len(p.M4Priv)}})
+	}
 	if !p.M4On {
 		return json.Marshal(plain(p))
 	}
@@ -406,7 +427,12 @@ func (h *handler) bbSeries(w http.ResponseWriter, r *http.Request, id string) {
 	rp := rep
 	state := blackbox.DeriveState(blackbox.StateInput{Placed: true, Reading: &rd, Report: &rp})
 	sqlRead := b.readSQLSamples(r.Context(), e, win)
-	writeJSON(w, http.StatusOK, buildBBSeriesWith(rd.Manifest, samples, rep, state, win, points, body.Shape == "m4", body.Width > 0 || body.Shape == "m4", sqlRead), maxResponseBytes)
+	ans := buildBBSeriesWith(rd.Manifest, samples, rep, state, win, points, body.Shape == "m4", body.Width > 0 || body.Shape == "m4", sqlRead)
+	if body.Shape == "m4" && strings.Contains(r.Header.Get("Accept"), bbSeriesBinaryType) {
+		writeBBSeriesBinary(w, ans)
+		return
+	}
+	writeJSON(w, http.StatusOK, ans, maxResponseBytes)
 }
 
 // bbSeriesPointCount is the number of buckets to answer: the asked points (the

@@ -41,7 +41,41 @@ func TestOnlyATokenedMCPRequestCountsAsUse(t *testing.T) {
 	}
 }
 
-// The archive, verify and export work that goes on after its request returned keeps the app in use.
+func TestBusyDoesNotExtendRequestActivityWindows(t *testing.T) {
+	u, _ := mcpRig(t)
+	u.presence.Touch()
+	u.NoteMCP()
+	if !u.InUse() {
+		t.Fatal("recent UI and MCP requests count as use")
+	}
+	if u.Busy() {
+		t.Fatal("recent requests are not work that must block the idle power policy")
+	}
+}
+
+func TestUpdateDownloadAndInstallCountAsBusy(t *testing.T) {
+	u := &Updater{}
+	u.inst.mu.Lock()
+	u.inst.running = true
+	u.inst.mu.Unlock()
+	if !u.Busy() {
+		t.Fatal("a running download must block idle throttling")
+	}
+	u.inst.mu.Lock()
+	u.inst.running = false
+	u.inst.busy = true
+	u.inst.mu.Unlock()
+	if !u.Busy() {
+		t.Fatal("an install in progress must block idle throttling")
+	}
+	u.inst.mu.Lock()
+	u.inst.busy = false
+	u.inst.mu.Unlock()
+	if u.Busy() {
+		t.Fatal("finished update work no longer blocks throttling")
+	}
+}
+
 func TestCaseFileWorkKeepsTheAppInUse(t *testing.T) {
 	u, h := mcpRig(t)
 	if u.InUse() {

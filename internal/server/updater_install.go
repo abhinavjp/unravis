@@ -127,14 +127,15 @@ func (u *Updater) StartDownload() error {
 		return errNoInstall
 	}
 	u.mu.Lock()
-	defer u.mu.Unlock()
 	m := u.validAvail()
 	if m == nil {
+		u.mu.Unlock()
 		return errNoUpdate
 	}
 	u.inst.mu.Lock()
-	defer u.inst.mu.Unlock()
 	if u.inst.running || u.inst.busy {
+		u.inst.mu.Unlock()
+		u.mu.Unlock()
 		return errBusy
 	}
 	a := m.Assets[update.AssetSetup]
@@ -143,6 +144,9 @@ func (u *Updater) StartDownload() error {
 	gen := u.inst.gen
 	u.inst.cancel, u.inst.running, u.inst.m = cancel, true, m
 	u.inst.info = InstallInfo{State: "downloading", Version: m.Version, Total: a.Size}
+	u.inst.mu.Unlock()
+	u.mu.Unlock()
+	u.touchPower()
 	go u.runDownload(ctx, gen, m)
 	return nil
 }
@@ -201,6 +205,7 @@ func (u *Updater) Install() error {
 	gen := u.inst.gen
 	u.inst.mu.Unlock()
 	defer func() { u.inst.mu.Lock(); u.inst.busy = false; u.inst.mu.Unlock() }()
+	u.touchPower()
 
 	// The hash of a big file happens outside the lock, so status reads are never held up. It runs first, so the last look at the
 	// feed is the final step before the start.

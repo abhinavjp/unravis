@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"api-audit-explorer/internal/sessionproof"
 )
@@ -468,6 +469,16 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Only a request with the session token counts as use (a tokenless one from another local process must not hold updates back).
+	if h.power != nil {
+		h.power.Touch()
+		started := time.Now()
+		defer h.power.Begin()()
+		defer func() {
+			if time.Since(started) > 5*time.Second {
+				h.trim.maybe() // at most once per memoryTrimEvery
+			}
+		}()
+	}
 	if u, _ := h.updaterAndDemo(); u != nil {
 		if r.Header.Get("User-Agent") == mcpUserAgent {
 			u.NoteMCP()

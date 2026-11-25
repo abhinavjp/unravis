@@ -26,6 +26,17 @@ type work struct {
 	// parseTag sets it when a tag ran past maxTag without closing: the attributes read so far are kept and the rest of the tag is text.
 	truncated bool
 	rescan    int // the first "<" inside a quoted value of the tag parseTag read last, or 0
+	carry     carryHint
+}
+
+type carryHint struct {
+	quote   byte
+	nest    int
+	literal bool
+	class   int // the class of the key whose quote is open
+	depth   int
+	tag     string
+	sub     int // a block or next-line state that came with a split tag
 }
 
 func newWork(n int) *work { return &work{left: workFactor*n + workFloor, eolFrom: -1} }

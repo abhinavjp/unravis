@@ -4,11 +4,12 @@
  * same Windows counters as Perfmon (PDH), so these charts show the same numbers Perfmon would, downsampled by the server.
  * A value that was not read is absent in the answer and stays absent here: a line breaks, it never drops to 0.
  */
+import { SERIES_BODY_CAP } from './binaryBody';
 import { SQL_DMV_GROUP, sqlDmvLine, type SeriesSql } from './blackboxSqlNames';
 
 export type SeriesUnit = 'pct' | 'bytes' | 'bytesPerSec' | 'ms' | 'sec' | 'perSec' | 'count';
-/** [bucket start in ms, average, lowest, highest]. */
-export type SeriesPoint = [number, number, number, number];
+/** [bucket start in ms, average, lowest, highest, first?, last?]. */
+export type SeriesPoint = [number, number, number, number, number?, number?]
 
 export interface SeriesLine { key: string; group: string; label: string; unit: string; points: SeriesPoint[] }
 /** partial: samples whose reading covered only part of what it sums (some network adapters, for example). Absent from an older server. */
@@ -26,13 +27,13 @@ export interface SeriesAnswer {
   /** What the SQL service's part of the answer rests on. Absent from an older server. */
   sql?: SeriesSql;
 }
-export interface SeriesRequest { start: string; end: string; points?: number }
+export interface SeriesRequest { start: string; end: string; points?: number; width?: number; shape?: 'm4' }
 
 /** An own property of a plain lookup table, never one inherited from Object (recorded text can say "constructor"). */
 export const own = <T>(rec: Record<string, T>, key: unknown): T | undefined => (typeof key === 'string' && Object.prototype.hasOwnProperty.call(rec, key) ? rec[key] : undefined);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isArr = Array.isArray;
-const isPoint = (p: unknown): p is SeriesPoint => isArr(p) && p.length === 4 && p.every((x) => typeof x === 'number' && Number.isFinite(x));
+const isPoint = (p: unknown): p is SeriesPoint => isArr(p) && (p.length === 4 || p.length === 6) && p.every((x) => typeof x === 'number' && Number.isFinite(x));
 const points = (v: unknown): SeriesPoint[] | null => (isArr(v) && v.every(isPoint) ? (v as SeriesPoint[]) : null);
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -73,6 +74,76 @@ export function readSeriesAnswer(v: unknown): SeriesAnswer | null {
       dropped: isArr(read.dropped) ? (read.dropped as string[]) : null, missing: isArr(read.missing) ? (read.missing as string[]) : null
     }
   };
+}
+
+export const SERIES_BINARY_TYPE = 'application/vnd.unravis.series+f64';
+const SERIES_BINARY_HEAD_CAP = 1 << 20;
+const SERIES_BINARY_BODY_CAP = SERIES_BODY_CAP;
+const SERIES_BINARY_CELL = 48;
+/** The frame starts with these four bytes and a u16 version, so a layout this reader does not know is refused, never misread. */
+const SERIES_BINARY_MAGIC = 'UBB1';
+const SERIES_BINARY_VERSION = 1;
+const SERIES_BINARY_PREFIX = 10;
+const whole = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+
+/** Decode the opt-in Blackbox M4 frame: magic "UBB1", u16 version, u32 header length, JSON point counts, then six little-endian doubles per point. */
+export function readSeriesBinary(buffer: ArrayBuffer): SeriesAnswer | null {
+  if (buffer.byteLength < SERIES_BINARY_PREFIX || buffer.byteLength > SERIES_BINARY_BODY_CAP) return null;
+  const view = new DataView(buffer);
+  for (let i = 0; i < SERIES_BINARY_MAGIC.length; i++) if (view.getUint8(i) !== SERIES_BINARY_MAGIC.charCodeAt(i)) return null;
+  if (view.getUint16(4, true) !== SERIES_BINARY_VERSION) return null;
+  const headBytes = view.getUint32(6, true);
+  if (headBytes < 2 || headBytes > SERIES_BINARY_HEAD_CAP || SERIES_BINARY_PREFIX + headBytes > buffer.byteLength) return null;
+  let header: unknown;
+  try {
+    header = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(buffer, SERIES_BINARY_PREFIX, headBytes)));
+  } catch { return null; }
+  if (!isObj(header) || !Array.isArray(header.lines)) return null;
+  const payload = new DataView(buffer, SERIES_BINARY_PREFIX + headBytes);
+  let at = 0;
+  const readPoints = (ref: unknown): SeriesPoint[] | null => {
+    if (!isObj(ref) || !whole(ref.n) || ref.n > (payload.byteLength - at) / SERIES_BINARY_CELL) return null;
+    const out: SeriesPoint[] = [];
+    for (let i = 0; i < ref.n; i++) {
+      const values = Array.from({ length: 6 }, (_, column) => payload.getFloat64(at + column * 8, true));
+      if (!values.every((value) => Number.isFinite(value))) return null;
+      out.push(values as SeriesPoint);
+      at += SERIES_BINARY_CELL;
+    }
+    return out;
+  };
+  const lines = header.lines.map((line) => {
+    if (!isObj(line)) return null;
+    const points = readPoints(line.points);
+    return points && { ...line, points };
+  });
+  if (lines.some((line) => line === null)) return null;
+  const processes = (Array.isArray(header.processes) ? header.processes : []).map((proc) => {
+    if (!isObj(proc)) return null;
+    const cpu = readPoints(proc.cpu), workingSet = readPoints(proc.workingSet), privateBytes = readPoints(proc.privateBytes);
+    return cpu && workingSet && privateBytes && { ...proc, cpu, workingSet, privateBytes };
+  });
+  if (processes.some((proc) => proc === null) || at !== payload.byteLength) return null;
+  return readSeriesAnswer({ ...header, lines, processes });
+}
+
+/* ------------------------------------------------------------------ chart width */
+
+/** A chart's width is read in steps this many pixels wide, so a small change (a scrollbar, a panel nudge) does not read the data again. */
+export const WIDTH_STEP = 64;
+/** A shrink must pass the step's own edge by this many pixels before it counts, so a width sitting on an edge cannot flip back and forth. */
+const WIDTH_SHRINK_SLACK = 24;
+
+/**
+ * The width a chart asks the server to cut for. A width that is not a real measure yet (0, NaN, negative) keeps the one in hand (0 means
+ * "not measured, do not read yet"). A wider chart rounds up to the next step at once; a narrower one counts only when it is clearly
+ * under the current step.
+ */
+export function settleWidth(current: number, measured: number): number {
+  if (!Number.isFinite(measured) || measured <= 0) return current;
+  const next = Math.ceil(measured / WIDTH_STEP) * WIDTH_STEP;
+  if (current <= 0 || next > current) return next;
+  return measured <= current - WIDTH_STEP - WIDTH_SHRINK_SLACK ? next : current;
 }
 
 /* ------------------------------------------------------------------ names */

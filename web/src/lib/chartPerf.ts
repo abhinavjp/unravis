@@ -96,3 +96,31 @@ export function watchSize(nodes: Element | readonly Element[], onResize: () => v
   });
   return () => { observer.disconnect(); off(); };
 }
+
+export function seriesTimingP95(samples: readonly number[]): number {
+  if (samples.length === 0) return 0;
+  const sorted = [...samples].sort((a, b) => a - b);
+  return sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)];
+}
+
+export interface SeriesPerfSample { kind: string; elapsedMs: number; at: number }
+
+declare global {
+  interface Window { __unravisPerf?: SeriesPerfSample[] }
+}
+
+const seriesReadTimes: number[] = [];
+
+export function logSeriesReadTiming(kind: string, elapsedMs: number): void {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return;
+  seriesReadTimes.push(elapsedMs);
+  if (seriesReadTimes.length > 100) seriesReadTimes.shift();
+  if (typeof window !== 'undefined') {
+    const samples = window.__unravisPerf ??= [];
+    samples.push({ kind, elapsedMs, at: Date.now() });
+    if (samples.length > 200) samples.splice(0, samples.length - 200);
+  }
+  if (typeof console !== 'undefined') {
+    console.info(`[chart-series] ${kind}: p95 ${seriesTimingP95(seriesReadTimes).toFixed(1)} ms over ${seriesReadTimes.length} reads; latest ${elapsedMs.toFixed(1)} ms`);
+  }
+}

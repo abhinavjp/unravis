@@ -47,6 +47,18 @@ const point = (t, mean, count = 1) => ({ t, min: mean, mean, max: mean, count })
 const seriesJson = (series, extra = {}) => ({ from: iso(T0), to: iso(T0 + 60 * MIN), bucketMs: 6000, buckets: 600, partial: false, scanned: 10, series, ...extra });
 const item = (sel, points, extra = {}) => ({ sel, unit: 'percent', unitMixed: false, count: points ? points.length : 0, points, ...extra });
 
+function binaryFrame(header, rows) {
+  const metadata = Buffer.from(JSON.stringify(header));
+  const padded = Math.ceil(metadata.length / 8) * 8;
+  const body = Buffer.alloc(8 + padded + rows.length * 64);
+  body.write('URS1');
+  body.writeUInt32LE(padded, 4);
+  metadata.copy(body, 8);
+  body.fill(0x20, 8 + metadata.length, 8 + padded);
+  rows.forEach((row, index) => row.forEach((value, column) => body.writeDoubleLE(value, 8 + padded + index * 64 + column * 8)));
+  return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+}
+
 /* ------------------------------------------------------------------ shape checks */
 
 test('parseResource accepts the documented shape and turns times into milliseconds', () => {
@@ -96,6 +108,42 @@ test('parseSeries accepts the documented shape and treats null points as none', 
   }
 });
 
+test('parseSeriesBinary reads M4 values and classes, and refuses malformed or unbounded frames', () => {
+  const header = {
+    version: 1, from: iso(T0), to: iso(T0 + 60 * MIN), bucketMs: 30000, buckets: 3, width: 2, partial: true, scanned: 9,
+    series: [
+      { sel: 'a', unit: 'ms', unitMixed: false, count: 2, points: 2, offset: 0, byClass: [{ point: 0, counts: { '2xx': 2 } }] },
+      { sel: 'b', unit: '', unitMixed: true, count: 1, points: 1, offset: 2 }
+    ]
+  };
+  const rows = [
+    [T0, 10, 20, 30, 2, NaN, NaN, 25],
+    [T0 + 30000, 50, 50, 50, 1, 50, 50, NaN],
+    [T0 + 60000, 90, 90, 90, 1, NaN, NaN, NaN]
+  ];
+  const view = r.parseSeriesBinary(binaryFrame(header, rows));
+  assert.deepEqual(view, r.parseSeries({ ...header, series: [
+    item('a', [{ t: T0, min: 10, mean: 20, max: 30, count: 2, q: 25, byClass: { '2xx': 2 } }, { t: T0 + 30000, min: 50, mean: 50, max: 50, count: 1, first: 50, last: 50 }], { unit: 'ms', count: 2 }),
+    item('b', [{ t: T0 + 60000, min: 90, mean: 90, max: 90, count: 1 }], { unit: '', unitMixed: true, count: 1 })
+  ] }));
+  const valid = Buffer.from(binaryFrame(header, rows));
+  const badMagic = Buffer.from(valid); badMagic.write('NOPE');
+  const badLength = Buffer.from(valid); badLength.writeUInt32LE(7, 4);
+  const badVersion = binaryFrame({ ...header, version: 2 }, rows);
+  const gap = binaryFrame({ ...header, series: [{ ...header.series[0], offset: 1 }, header.series[1]] }, rows);
+  const missing = binaryFrame(header, []);
+  const nan = binaryFrame(header, [[NaN, ...rows[0].slice(1)], ...rows.slice(1)]);
+  const infinite = binaryFrame(header, [[...rows[0].slice(0, 5), Infinity, NaN, NaN], ...rows.slice(1)]);
+  const badClass = binaryFrame({ ...header, series: [{ ...header.series[0], byClass: [{ point: 2, counts: { '2xx': 2 } }] }, header.series[1]] }, rows);
+  const trailing = Buffer.concat([valid, Buffer.alloc(64)]);
+  for (const frame of [badMagic, badLength, badVersion, gap, missing, nan, infinite, badClass, trailing, valid.subarray(0, valid.length - 1)]) {
+    const bytes = Buffer.from(frame);
+    assert.equal(r.parseSeriesBinary(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)), null);
+  }
+  const empty = r.parseSeriesBinary(binaryFrame({ ...header, series: [{ sel: 'a', unit: '', count: 0, points: 0, offset: 0 }] }, []));
+  assert.deepEqual(empty.series[0].points, []);
+});
+
 /* ------------------------------------------------------------------ the two routes (mocked fetch; no network) */
 
 function mockServer(handler) {
@@ -126,6 +174,85 @@ test('fetchResource and fetchSeries build the documented requests and check the 
   assert.equal(second.pathname, '/api/cases/' + CASE_ID + '/series');
   assert.equal(second.searchParams.get('bucket'), '6000', 'the bucket is whole milliseconds');
   assert.deepEqual(second.searchParams.getAll('sel'), ['kind=metric;host=h;field=value', 'kind=counter;field=value']);
+});
+
+test('a visible width asks for binary M4 data and decodes it; a JSON answer remains compatible', async () => {
+  globalThis.sessionStorage = { getItem: () => 'session-token-1', setItem() {}, removeItem() {} };
+  const calls = [];
+  const header = { version: 1, from: iso(T0), to: iso(T0 + MIN), bucketMs: 1000, buckets: 1, width: 320, partial: false, scanned: 1, series: [{ sel: 'a', unit: '', count: 1, points: 1, offset: 0 }] };
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(binaryFrame(header, [[T0, 1, 2, 3, 1, NaN, NaN, NaN]]), { headers: { 'Content-Type': 'application/octet-stream' } });
+  };
+  const view = await cases.fetchSeries(CASE_ID, { fromMs: T0, toMs: T0 + MIN, bucketMs: 100, sels: ['a'], width: 320.8 });
+  const params = new URL(calls[0], 'http://x').searchParams;
+  assert.equal(params.get('width'), '320');
+  assert.equal(params.get('format'), 'binary');
+  assert.equal(params.get('bucket'), '1', 'the server chooses the pixel-width bucket');
+  assert.equal(view.width, 320);
+  assert.equal(view.series[0].points[0].mean, 2);
+
+  globalThis.fetch = async () => new Response(JSON.stringify(seriesJson([item('a', [point(T0, 4)])])), { headers: { 'Content-Type': 'application/json' } });
+  const fallback = await cases.fetchSeries(CASE_ID, { fromMs: T0, toMs: T0 + MIN, bucketMs: 100, sels: ['a'], width: 320 });
+  assert.equal(fallback.series[0].points[0].mean, 4);
+
+  const retryCalls = [];
+  globalThis.fetch = async (url) => {
+    retryCalls.push(String(url));
+    if (retryCalls.length === 1) return new Response(binaryFrame(header, []), { headers: { 'Content-Type': 'application/octet-stream' } });
+    return new Response(JSON.stringify(seriesJson([item('a', [point(T0, 5)])])), { headers: { 'Content-Type': 'application/json' } });
+  };
+  const retried = await cases.fetchSeries(CASE_ID, { fromMs: T0, toMs: T0 + MIN, bucketMs: 100, sels: ['a'], width: 320 });
+  assert.equal(retried.series[0].points[0].mean, 5);
+  assert.equal(retryCalls.length, 2, 'a malformed binary answer gets exactly one JSON retry');
+  const retryParams = new URL(retryCalls[1], 'http://x').searchParams;
+  assert.equal(retryParams.get('format'), null);
+  assert.equal(retryParams.get('width'), '320');
+});
+
+// A body that drops mid-read, declares too much, or streams past the cap takes the one JSON retry, like any malformed frame.
+function brokenBodies() {
+  const dropped = () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new Uint8Array(16)); controller.error(new TypeError('network error')); }
+  }), { headers: { 'Content-Type': 'application/octet-stream' } });
+  const declared = () => new Response(new Uint8Array(16), { headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String((16 << 20) + 1) } });
+  const streamed = () => {
+    let sent = 0;
+    return new Response(new ReadableStream({
+      pull(controller) { sent += 1 << 20; controller.enqueue(new Uint8Array(1 << 20)); if (sent > (17 << 20)) controller.close(); }
+    }), { headers: { 'Content-Type': 'application/octet-stream' } });
+  };
+  return { dropped, declared, streamed };
+}
+
+test('a dropped, over-declared or over-long binary body takes the one JSON retry', async () => {
+  globalThis.sessionStorage = { getItem: () => 'session-token-1', setItem() {}, removeItem() {} };
+  for (const [name, make] of Object.entries(brokenBodies())) {
+    const urls = [];
+    globalThis.fetch = async (url) => {
+      urls.push(String(url));
+      if (urls.length === 1) return make();
+      return new Response(JSON.stringify(seriesJson([item('a', [point(T0, 7)])])), { headers: { 'Content-Type': 'application/json' } });
+    };
+    const view = await cases.fetchSeries(CASE_ID, { fromMs: T0, toMs: T0 + MIN, bucketMs: 100, sels: ['a'], width: 320 });
+    assert.equal(view.series[0].points[0].mean, 7, name);
+    assert.equal(urls.length, 2, name + ': exactly one retry');
+    assert.equal(new URL(urls[1], 'http://x').searchParams.get('format'), null, name);
+  }
+});
+
+test('an aborted binary read is not retried', async () => {
+  globalThis.sessionStorage = { getItem: () => 'session-token-1', setItem() {}, removeItem() {} };
+  const controller = new AbortController();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response(new ReadableStream({
+      start(c) { c.enqueue(new Uint8Array(16)); controller.abort(); c.error(new DOMException('aborted', 'AbortError')); }
+    }), { headers: { 'Content-Type': 'application/octet-stream' } });
+  };
+  await assert.rejects(cases.fetchSeries(CASE_ID, { fromMs: T0, toMs: T0 + MIN, bucketMs: 100, sels: ['a'], width: 320 }, controller.signal));
+  assert.equal(calls, 1);
 });
 
 test('a server refusal keeps its reason and message; a wrong shape becomes "unreadable"', async () => {
@@ -164,6 +291,8 @@ test('a window change refetches /series with a bucket of span / 600', async () =
   assert.equal(calls[1].bucketMs, 600);
   assert.deepEqual(calls[1].sels, ['a', 'b']);
   assert.equal(calls[1].fromMs, T0 + 10 * MIN);
+  await r.readSeries(fetcher, { fromMs: T0, toMs: T0 + MIN }, ['a'], undefined, 320);
+  assert.equal(calls[2].width, 320, 'the visible pixel width follows every chunk and retry');
 });
 
 test('selectors are sent in requests of at most 50, and the answers are joined', async () => {
@@ -188,6 +317,11 @@ test('a refusal that names a least bucket is retried once with that bucket; othe
   const other = Object.assign(new Error('The selector is wrong.'), { reason: 'bad-selector' });
   await assert.rejects(r.readSeries(async () => { count++; throw other; }, { fromMs: T0, toMs: T0 + MIN }, ['a']), /selector/);
   assert.equal(count, 1);
+
+  const widths = [];
+  const retrying = async (request) => { widths.push(request.width); if (widths.length === 1) throw refusal; return r.parseSeries(seriesJson([], { bucketMs: request.bucketMs })); };
+  await r.readSeries(retrying, { fromMs: T0, toMs: T0 + 6000 }, ['a'], undefined, 320);
+  assert.deepEqual(widths, [320, 320], 'a bucket retry keeps the same visible width');
 });
 
 test('the view window follows the panel, then the zoom on screen, then the queried window', () => {
