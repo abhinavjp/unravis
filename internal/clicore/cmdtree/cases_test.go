@@ -265,7 +265,7 @@ func TestCasesListShowsARealErasedCase(t *testing.T) {
 	if strings.Contains(tb.out, "Secret payroll title") {
 		t.Errorf("the title of the erased case is in the table:\n%s", tb.out)
 	}
-	if raw, err := os.ReadFile(logPath); err != nil || strings.Contains(string(raw), "Secret payroll title") {
+	if raw, err := os.ReadFile(logPath); err != nil || strings.Contains(string(raw), "Secret payroll title") { //nolint:gosec // a test reading its own temp log
 		t.Errorf("erased.json: %v %s", err, raw)
 	}
 }
