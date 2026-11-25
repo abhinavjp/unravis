@@ -1,9 +1,12 @@
 package mcpsrv
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"api-audit-explorer/internal/mcp"
 )
 
 // BL-350 budget tests, on the real path: HTTP routes, SQLite, the real dashboard handler over the demo repository.
@@ -213,5 +216,121 @@ func TestBytesAreChargedWhereTheyAreDelivered(t *testing.T) {
 	r.clk.Add(6 * time.Minute)
 	if g := r.call(h, "audit_get_guide", map[string]any{}); !g.OK {
 		t.Errorf("11 minutes after the answer: %.200s", g.Raw)
+	}
+}
+
+// Review 5 of #267, M2: the calls of a code run are charged to the same budgets and the same ledger as the host's own calls.
+func TestCodeRunCallsShareTheHostBudgets(t *testing.T) {
+	r := newRigBudgets(t, DefaultBudgets)
+	h := r.enroll("code-a", r.approval(TierAggregate))
+	other := r.enroll("code-b", r.approval(TierAggregate))
+	pr := r.principal("code-a")
+	args, _ := json.Marshal(r.compareArgs())
+
+	// Ten direct comparisons and two from a script are the host's twelve of the hour.
+	for i := 0; i < 10; i++ {
+		if c := r.call(h, "audit_compare", r.compareArgs()); !c.OK || c.IsError {
+			t.Fatalf("direct %d: %d %.300s", i+1, c.Status, c.Raw)
+		}
+		r.clk.Add(time.Minute)
+	}
+	for i := 0; i < 2; i++ {
+		_, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", args, false)
+		if refused != nil {
+			t.Fatalf("script comparison %d refused: %v", i+1, refused)
+		}
+		_ = end([]byte(`{"ok":1}`), false)
+		r.clk.Add(time.Minute)
+	}
+	// The 13th is refused, from either door, and neither reaches the dashboard.
+	n := len(r.dash.hits())
+	if c := r.call(h, "audit_compare", r.compareArgs()); !overBudget(c) {
+		t.Errorf("13th direct comparison: %d %.300s", c.Status, c.Raw)
+	}
+	_, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", args, false)
+	if refused == nil || end != nil || refused.Code != mcp.WireBudgetExceeded || refused.Message == "" {
+		t.Fatalf("13th script comparison: %v", refused)
+	}
+	if len(r.dash.hits()) != n {
+		t.Error("a refused comparison reached the dashboard")
+	}
+	// Other hosts and cheap tools are not affected; the refusal leaves a denied row, like a direct one.
+	if _, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`), false); refused != nil {
+		t.Errorf("guide: %v", refused)
+	} else {
+		_ = end([]byte(`{}`), false)
+	}
+	if c := r.call(other, "audit_compare", r.compareArgs()); !c.OK || c.IsError {
+		t.Errorf("another host: %.300s", c.Raw)
+	}
+	var admits, ends, denied int
+	for _, e := range r.events() {
+		if e.ProfileID != "code-a" || e.Tool != "audit_compare" {
+			continue
+		}
+		switch e.Kind {
+		case "admit":
+			admits++
+		case "end":
+			ends++
+		case "denied":
+			denied++
+		}
+	}
+	if admits != 12 || ends != 12 || denied != 2 {
+		t.Errorf("ledger rows of the host's comparisons: %d admit, %d end, %d denied (want 12, 12, 2)", admits, ends, denied)
+	}
+	// An hour later the oldest leave the window.
+	r.clk.Add(time.Hour)
+	if _, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", args, false); refused != nil {
+		t.Errorf("after the hour: %v", refused)
+	} else {
+		_ = end([]byte(`{}`), false)
+	}
+}
+
+// A script cannot run comparisons at once, nor read past the byte budget, nor use a tool that is not in the catalog.
+func TestCodeRunCallsHonourAtOnceAndBytes(t *testing.T) {
+	small := DefaultBudgets
+	small.CumulativeBytes = 1000
+	r := newRigBudgets(t, small)
+	r.enroll("code-c", r.approval(TierAggregate))
+	pr := r.principal("code-c")
+	_, end1, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`), false)
+	if refused != nil {
+		t.Fatal(refused)
+	}
+	if _, _, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`), false); refused == nil || refused.Code != mcp.WireBudgetExceeded {
+		t.Errorf("a second comparison at once: %v", refused)
+	}
+	_ = end1(make([]byte, 2000), false) // the answer was bigger than the 10-minute budget
+	if _, _, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`), false); refused == nil || refused.Code != mcp.WireBudgetExceeded {
+		t.Errorf("after the byte budget: %v", refused)
+	}
+	if _, _, refused := r.disp.AdmitCodeCall(ctx, pr, "not_a_tool", []byte(`{}`), false); refused == nil || refused.Code != mcp.WirePermissionRequired {
+		t.Errorf("a tool outside the catalog: %v", refused)
+	}
+	// In-flight slots are given back: after the end of the call another may start (once the byte window is over).
+	r.clk.Add(11 * time.Minute)
+	if _, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`), false); refused != nil {
+		t.Errorf("after the window: %v", refused)
+	} else {
+		_ = end(nil, true)
+	}
+}
+
+func TestToolAllowedIsTheGrantsListWithinItsTier(t *testing.T) {
+	list := []string{"audit_get_guide", "audit_get_requests", "audit_compare"}
+	if !ToolAllowed(TierEvidence, list, "audit_get_requests") || ToolAllowed(TierEvidence, list, "audit_get_slowest") {
+		t.Error("evidence list")
+	}
+	if ToolAllowed(TierAggregate, list, "audit_get_requests") || ToolAllowed("root", list, "audit_compare") || ToolAllowed(TierAggregate, nil, "audit_compare") {
+		t.Error("the tier is the ceiling, and an empty list allows nothing")
+	}
+	if got := GrantTools(TierAggregate, list); len(got) != 2 || got[0] != "audit_get_guide" || got[1] != "audit_compare" {
+		t.Errorf("grant tools %v", got)
+	}
+	if GrantTools("root", list) != nil || GrantTools(TierEvidence, nil) != nil {
+		t.Error("unknown tier or empty list")
 	}
 }

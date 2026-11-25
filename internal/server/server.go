@@ -66,6 +66,8 @@ type handler struct {
 	mongoTests mongoTests
 	// mk is the master-key session (nil when the feature is not wired).
 	mk *MasterKeySession
+	// evidence resolves the evidence references of MCP hosts (BL-349, mcp_evidence.go); nil until the owner wires it.
+	evidence evidenceHolder
 	// bb is the Blackbox pages (nil when not wired, see WithBlackbox).
 	bb *blackboxHub
 	// keeper is the key keeper wiring for the shared layout (nil in the per-user layout, see WithKeeper).

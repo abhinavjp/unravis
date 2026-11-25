@@ -1,4 +1,4 @@
-// schema_sha256: 512c26dd1875a99acdad2b365833170b192be88a4b006b886a39e516227e38dc
+// schema_sha256: 6e7be15b1a451cf44407e48fadc19eddc1ce2532ee69f479169d5eeb7983716d
 // Unravis code mode: tools are called as unravis.<tool>(input) and return a Promise of the same JSON the MCP
 // tool returns.
 // Limits of one run: at most 4 calls at the same time (more wait), at most 50 calls in all, 1024 KiB for each
@@ -720,6 +720,10 @@ declare namespace unravis {
        */
       completedAt: string | null;
       durationMs: number | null;
+      /**
+       * [pattern ^ev1_[a-z2-7]{26}$]
+       */
+      evidenceRef?: string;
       id: string;
       /**
        * [format date-time]
@@ -820,6 +824,10 @@ declare namespace unravis {
       completedAt: string | null;
       controller: string;
       durationMs: number | null;
+      /**
+       * [pattern ^ev1_[a-z2-7]{26}$]
+       */
+      evidenceRef?: string;
       id: string;
       /**
        * [format date-time]
@@ -1297,9 +1305,10 @@ declare namespace unravis {
   function audit_compare_timelines(input: AuditCompareTimelinesInput): Promise<AuditCompareTimelinesOutput>;
   /**
    * Live query. Read a bounded newest-first page of current-period timing metadata for one cached API
-   * group. Each row carries the record id (_id) to cite, its state, status class and timing phases. No
-   * payloads, raw URLs, IP addresses, user agents or headers. Performs a live metadata query; page order
-   * is not a random sample or slowest-first ranking.
+   * group. Each row carries an evidenceRef to cite (and the record id (_id) only when the person allowed
+   * identifiers), its state, status class and timing phases. No payloads, raw URLs, IP addresses, user
+   * agents or headers. Performs a live metadata query; page order is not a random sample or
+   * slowest-first ranking.
    * Untrusted audit text at: controller, action, kind, outcome, rows[].outcome, rows[].state,
    * rows[].status, sources[].error, sources[].version, sources[].indexWarning.
    */
@@ -1307,10 +1316,11 @@ declare namespace unravis {
   /**
    * Live query. Read a bounded page of the slowest completed requests of the cached comparison's current
    * period (all of its sources and filters, ranked by its metric: total or API time). Pending and
-   * incomplete requests are never ranked. Each row carries the record id (_id) to cite, its source,
-   * state, status class and timing phases. No payloads, raw URLs, IP addresses, user agents or headers.
-   * Performs a live metadata query; pages of at most 50 follow nextCursor. To rank one API, run
-   * audit_compare with that controller/action first.
+   * incomplete requests are never ranked. Each row carries an evidenceRef to cite (and the record id
+   * (_id) only when the person allowed identifiers), its source, state, status class and timing phases.
+   * No payloads, raw URLs, IP addresses, user agents or headers. Performs a live metadata query; pages
+   * of at most 50 follow nextCursor. To rank one API, run audit_compare with that controller/action
+   * first.
    * Untrusted audit text at: rows[].controller, rows[].action, rows[].kind, rows[].outcome,
    * rows[].state, rows[].status, sources[].error, sources[].version, sources[].indexWarning.
    */

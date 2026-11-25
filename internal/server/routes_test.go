@@ -75,6 +75,7 @@ var routeCases = []routeCase{
 	{"/api/sources/{id}/coverage", "/api/sources/s/coverage", "GET"},
 	{"/api/sources/{id}/stats", "/api/sources/s/stats", "GET"},
 	{"/api/sources/{id}", "/api/sources/s", "DELETE"},
+	{"/api/mcp/evidence/{alias}", "/api/mcp/evidence/ev1_aaaaaaaaaaaaaaaaaaaaaaaaaa", "GET"},
 	{"/api/analyze", "/api/analyze", "POST"},
 	{"/api/requests", "/api/requests", "POST"},
 	{"/api/activity", "/api/activity", "POST"},
