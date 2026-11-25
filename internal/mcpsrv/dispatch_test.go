@@ -92,6 +92,7 @@ type rig struct {
 	srv     *httptest.Server
 	backend *LocalBackend
 	disp    *Dispatcher
+	aliases *Aliases
 	now     time.Time
 }
 
@@ -104,13 +105,18 @@ func newRig(t *testing.T) *rig {
 	return newRigBudgets(t, open)
 }
 
-func newRigBudgets(t *testing.T, b Budgets) *rig {
+func newRigBudgets(t *testing.T, b Budgets) *rig { return newRigClock(t, b, nil) }
+
+// newRigClock is newRigBudgets with a clock for the cursors and result handles of the backend (nil: the real one). The backend is wired
+// as the owner wires it: aliases over the grants, cursors signed with the server key of the store.
+func newRigClock(t *testing.T, b Budgets, backendNow func() time.Time) *rig {
 	t.Helper()
 	e := newEnv(t)
 	now := time.Now().UTC().Truncate(time.Hour)
 	r := &rig{env: e, t: t, dash: newDash(now), now: now}
 	r.led = &ledger{DB: e.db}
-	r.backend = NewLocalBackend(r.dash, dashToken)
+	r.aliases = NewAliases(e.db, e.g, e.clk.Now, nil)
+	r.backend = NewLocalBackend(r.dash, dashToken, WithAliases(r.aliases), WithCursorKey(e.db.MAC), WithBackendClock(backendNow))
 	deps := Deps{Grants: e.g, Backend: r.backend, Recorder: r.led, Now: e.clk.Now, Budgets: b}
 	disp, err := NewDispatcher(deps)
 	if err != nil {

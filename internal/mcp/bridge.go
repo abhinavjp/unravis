@@ -36,7 +36,13 @@ type Bridge struct {
 	resultID  string
 	created   time.Time
 	comparing bool
-	now       func() time.Time
+	// BL-349 (evidence.go): the result's size and last use for the handle bounds, and the options of a host's bridge.
+	resultSize int
+	used       time.Time
+	resultCap  int
+	minter     EvidenceMinter
+	cursors    CursorCodec
+	now        func() time.Time
 	// allowIdentifiers is the operator switch (--mcp-allow-identifiers). Off by
 	// default. It is the only thing that decides whether identifiers are shown.
 	allowIdentifiers bool
@@ -363,6 +369,7 @@ func (b *Bridge) session() (string, string, error) {
 		b.token = token
 		b.result = nil
 		b.resultID = ""
+		b.resultSize = 0
 	}
 	b.mu.Unlock()
 	if changed && b.client != nil {

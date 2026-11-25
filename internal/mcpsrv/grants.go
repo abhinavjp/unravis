@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"log"
 	"regexp"
 	"slices"
 	"strings"
@@ -431,10 +432,24 @@ func (g *Grants) Resume(ctx context.Context) error {
 	return nil
 }
 
-// CancelAll cancels every running call and runs the hooks, without changing any profile. The case lock and the owner's shutdown use it.
+// CancelAll cancels every running call and runs the revoke hooks for every profile, without changing any profile: the master-key lock and
+// the owner's shutdown use it. Every profile's handles and aliases go, not only those of profiles with a call running; the grants stay,
+// and a host that calls again gets new ones.
 func (g *Grants) CancelAll() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	g.mu.Lock()
 	ids, cancels, hooks := g.takeAllRunning()
+	all, err := g.db.List(ctx, MaxProfiles)
+	if err != nil {
+		// Idle hosts cannot be named without the list, so their aliases stay; only the running calls end. Fixed text, no error text.
+		log.Print("MCP access: the host list could not be read, so only running calls were ended")
+	}
+	for _, p := range all {
+		if _, ok := cancels[p.ID]; !ok {
+			ids = append(ids, p.ID)
+		}
+	}
 	g.mu.Unlock()
 	for _, id := range ids {
 		finish(cancels[id], hooks, id)

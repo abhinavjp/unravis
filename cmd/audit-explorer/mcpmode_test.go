@@ -126,3 +126,55 @@ func TestOpeningTheStorePrunesTheLedger(t *testing.T) {
 		t.Errorf("%d rows after the open (want 1): %v", n, err)
 	}
 }
+
+// BL-349: opening the endpoint wires the app's evidence resolver into the dashboard handler. An alias made for an approved host (through a
+// second connection to the same store file) opens to its record with the session token, and only then; after the endpoint is closed the
+// route is a 404 again.
+func TestOwnerWiresTheEvidenceResolver(t *testing.T) {
+	const token = "tok-0123456789abcdef0123456789abcdef"
+	dash := server.New(audit.NewDemo(time.Now()), nil, token, true)
+	dir := filepath.Join(t.TempDir(), "mcp")
+	getenv := func(k string) string {
+		if k == "UNRAVIS_MCP_DIR" {
+			return dir
+		}
+		return ""
+	}
+	h, closeFn := openMCPEndpoint(context.Background(), getenv, dash, token, false, func() (sealedfile.Protector, error) { return testSeal{}, nil })
+	if h == nil {
+		t.Fatal("no handler")
+	}
+	ctx := context.Background()
+	db, _, err := mcpaudit.Open(ctx, dir, testSeal{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Insert(ctx, mcpaudit.Profile{ID: "h1", State: mcpaudit.StateActive, Rev: 2, Sources: []string{"demo-west"}, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	alias, err := db.MintAliases(ctx, "h1", 2, []mcpaudit.EvidenceKey{{SourceID: "demo-west", RecordID: "0123456789abcdef01234567"}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path, tok string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "http://127.0.0.1"+path, nil)
+		r.Host = "127.0.0.1"
+		if tok != "" {
+			r.Header.Set("X-Audit-Token", tok)
+		}
+		w := httptest.NewRecorder()
+		dash.ServeHTTP(w, r)
+		return w
+	}
+	if w := get("/api/mcp/evidence/"+alias[0], token); w.Code != 200 || !strings.Contains(w.Body.String(), `"recordId":"0123456789abcdef01234567"`) {
+		t.Errorf("resolve: %d %s", w.Code, w.Body)
+	}
+	if w := get("/api/mcp/evidence/"+alias[0], ""); w.Code != 401 {
+		t.Errorf("no token: %d", w.Code)
+	}
+	closeFn()
+	if w := get("/api/mcp/evidence/"+alias[0], token); w.Code != 404 {
+		t.Errorf("after close: %d", w.Code)
+	}
+}

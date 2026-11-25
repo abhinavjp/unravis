@@ -277,3 +277,78 @@ func firstDiff(a, b []byte) string {
 	}
 	return strings.Join(out, "\n")
 }
+
+// A scoped run is paged with sealed cursors: the dashboard's own cursor holds a position in the record list (record id, source), and a
+// script must not hold it (it could return it to a host that has no identifiers grant).
+func TestScopedRunGetsSealedCursorsThatPageTheRun(t *testing.T) {
+	var first, second json.RawMessage
+	var id string
+	_, res := tierRun(t, mcpsrv.TierEvidence, false, func(w *fakeWorker) {
+		cmp, _ := w.Call("audit_compare", map[string]any{"query": narrowQuery(), "limit": 5})
+		var m struct {
+			ResultID string `json:"resultId"`
+		}
+		_ = json.Unmarshal(cmp, &m)
+		id = m.ResultID
+		first, _ = w.Call("audit_get_slowest", map[string]any{"resultId": id, "limit": 1})
+		var f struct {
+			NextCursor string `json:"nextCursor"`
+		}
+		_ = json.Unmarshal(first, &f)
+		second, _ = w.Call("audit_get_slowest", map[string]any{"resultId": id, "limit": 1, "cursor": f.NextCursor})
+		w.done(1)
+	})
+	if res.Status != casestore.RunOK || id == "" {
+		t.Fatalf("run: %+v", res)
+	}
+	var f, s struct {
+		NextCursor string `json:"nextCursor"`
+		Error      *struct{ Code string }
+	}
+	_ = json.Unmarshal(first, &f)
+	_ = json.Unmarshal(second, &s)
+	if f.NextCursor == "" || s.Error != nil {
+		t.Fatalf("paging a run failed: first %.300s second %.300s", first, second)
+	}
+	// the same call on a bridge without the codec shows the dashboard's own cursor; the run's is not it
+	e := newEnv(t, func(w *fakeWorker) { w.done(1) })
+	raw := mcp.NewLocal(e.handler, testToken, mcpsrv.BridgeOptions(false, []string{"demo-west"}, mcpsrv.TierEvidence)...)
+	args, _ := json.Marshal(map[string]any{"query": narrowQuery(), "limit": 5})
+	cmp, _ := raw.CallEnvelope(t.Context(), "audit_compare", args)
+	var cm struct {
+		ResultID string `json:"resultId"`
+	}
+	_ = json.Unmarshal(cmp, &cm)
+	args, _ = json.Marshal(map[string]any{"resultId": cm.ResultID, "limit": 1})
+	rawSlow, _ := raw.CallEnvelope(t.Context(), "audit_get_slowest", args)
+	var r struct {
+		NextCursor string `json:"nextCursor"`
+	}
+	_ = json.Unmarshal(rawSlow, &r)
+	if r.NextCursor == "" || r.NextCursor == f.NextCursor {
+		t.Errorf("the run's cursor is the dashboard's own: %q", f.NextCursor)
+	}
+	// a cursor made by hand does not open
+	if _, ok := forgedCursor(t); ok {
+		t.Error("a forged cursor opened")
+	}
+}
+
+func forgedCursor(t *testing.T) (string, bool) {
+	t.Helper()
+	var ans json.RawMessage
+	var id string
+	tierRun(t, mcpsrv.TierEvidence, false, func(w *fakeWorker) {
+		cmp, _ := w.Call("audit_compare", map[string]any{"query": narrowQuery(), "limit": 5})
+		var m struct {
+			ResultID string `json:"resultId"`
+		}
+		_ = json.Unmarshal(cmp, &m)
+		id = m.ResultID
+		ans, _ = w.Call("audit_get_slowest", map[string]any{"resultId": id, "limit": 1, "cursor": "AAAA.BBBB"})
+		w.done(1)
+	})
+	var s struct{ Error *struct{ Code string } }
+	_ = json.Unmarshal(ans, &s)
+	return "", s.Error == nil
+}

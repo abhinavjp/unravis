@@ -49,7 +49,7 @@ func DashboardHosts(dashboard http.Handler, token string) HostFactory {
 			// The same options the MCP dispatcher builds for a grant (one shared function, no copy), so a script cannot read through the
 			// broker what the host's own tool calls refuse: other sources, counts below the cohort floor, record ids. An unknown tier
 			// fails closed to the aggregate rules.
-			opts = mcpsrv.BridgeOptions(scope.AllowIdentifiers, slices.Clone(scope.Sources), scope.Tier)
+			opts = append(mcpsrv.BridgeOptions(scope.AllowIdentifiers, slices.Clone(scope.Sources), scope.Tier), mcpsrv.RunCursors(scope.Sources, scope.Tier, scope.AllowIdentifiers))
 		}
 		return bridgeHost{b: mcp.NewLocal(dashboard, token, opts...)}
 	}

@@ -364,7 +364,7 @@ func WithMasterKey(s *MasterKeySession) Option { return func(h *handler) { h.mk 
 // route is gated by its pattern, so a route added under /api/cases cannot
 // forget it; the route-table test walks the table to prove it.
 func (h *handler) lockedGate(rt *route) bool {
-	if h.mk == nil || !gatedByMasterKey(rt) {
+	if h.mk == nil || (!gatedByMasterKey(rt) && (rt.public || rt.pattern != mcpEvidencePattern)) {
 		return false
 	}
 	// A damaged key file keeps the cases closed exactly like a locked key: the
@@ -957,6 +957,7 @@ func (h *handler) masterKeyLock(w http.ResponseWriter, r *http.Request) {
 	if ck, ok := h.cases.(casestore.CaseKeyer); ok {
 		ck.LockAllCaseKeys()
 	}
+	h.runLockHook() // the MCP hosts' handles and aliases end with the lock
 	h.event(r, "lock", "scope", "master_key")
 	writeJSON(w, http.StatusOK, masterKeyStatus{State: h.mk.State()}, 4096)
 }

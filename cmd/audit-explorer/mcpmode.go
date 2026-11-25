@@ -11,6 +11,7 @@ import (
 	"api-audit-explorer/internal/mcpaudit"
 	"api-audit-explorer/internal/mcpsrv"
 	"api-audit-explorer/internal/sealedfile"
+	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/version"
 )
 
@@ -47,6 +48,10 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 	if _, err := db.Prune(ctx, time.Now()); err != nil {
 		log.Print("The MCP call ledger could not be pruned")
 	}
+	// A crash or a kill runs no shutdown hook, so every alias is cleared when the app starts: none outlives a restart. Not on the 24 h timer.
+	if err := db.DropAllAliases(ctx); err != nil {
+		log.Print("The MCP evidence references could not be cleared")
+	}
 	grants, err := mcpsrv.NewGrants(ctx, db, time.Now)
 	if err != nil {
 		_ = db.Close()
@@ -57,17 +62,60 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 	if start, serr := selfStart(); serr == nil && !start.IsZero() {
 		gen = start.UTC().Format(time.RFC3339Nano)
 	}
+	// BL-349: evidence aliases (hooked to the grants: they go with a revoke, a reissue, the stop, the master-key lock and the shutdown), cursors signed with
+	// the server key of the store, and the resolver the app's own route uses. The route is the dashboard's (token), not the ag pipe's.
+	aliases := mcpsrv.NewAliases(db, grants, time.Now, log.Printf)
+	backend := mcpsrv.NewLocalBackend(dashboard, token, mcpsrv.WithAliases(aliases), mcpsrv.WithCursorKey(db.MAC))
+	server.SetEvidenceResolver(dashboard, func(c context.Context, alias string) (server.EvidenceTarget, bool) {
+		e, err := aliases.ResolveOwner(c, alias)
+		if err != nil {
+			return server.EvidenceTarget{}, false
+		}
+		return server.EvidenceTarget{SourceID: e.SourceID, RecordID: e.RecordID, Host: e.ProfileID, ExpiresAt: e.ExpiresAt}, true
+	})
+	server.SetMasterKeyLockHook(dashboard, grants.CancelAll) // the master-key lock ends every host's handles and aliases
 	h, err = mcpsrv.Handler(mcpsrv.Deps{
 		Grants:   grants,
-		Backend:  mcpsrv.NewLocalBackend(dashboard, token),
+		Backend:  backend,
 		Recorder: db,
 		Info:     func() mcpsrv.Info { return mcpsrv.Info{PID: os.Getpid(), Gen: gen, AppVersion: version.Version} },
 		Logf:     log.Printf,
 	})
 	if err != nil {
+		server.SetEvidenceResolver(dashboard, nil)
+		server.SetMasterKeyLockHook(dashboard, nil)
 		_ = db.Close()
 		log.Print("MCP access is off: the endpoint could not be built")
 		return nil, noop
 	}
-	return h, func() { grants.CancelAll(); _ = db.Close() }
+	// Idle work: expired comparison results leave memory, and the ledger and the aliases are pruned once a day.
+	stop, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		sweep, prune := time.NewTicker(time.Minute), time.NewTicker(24*time.Hour)
+		defer sweep.Stop()
+		defer prune.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case <-sweep.C:
+				backend.Sweep()
+			case <-prune.C:
+				if _, err := db.Prune(ctx, time.Now()); err != nil {
+					log.Print("The MCP call ledger could not be pruned")
+				}
+			}
+		}
+	}()
+	return h, func() {
+		close(stop)
+		<-stopped
+		grants.CancelAll()
+		server.SetEvidenceResolver(dashboard, nil)
+		server.SetMasterKeyLockHook(dashboard, nil)
+		_ = db.Close()
+	}
 }
