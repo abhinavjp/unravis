@@ -808,3 +808,77 @@ func TestCarrySplitTagMasksPartialAttributes(t *testing.T) {
 		})
 	}
 }
+
+// An unfinished tag whose secret attribute value holds a secret key must not hide that key from the key=value pass (review F1).
+func TestMaskUnfinishedTagKeepsKeyForValuePass(t *testing.T) {
+	for _, in := range []string{
+		`<add key="password" value="password="FAKEPW`,
+		`<add key="DbPassword" value="DB_PASSWORD=" FAKEPW`,
+		`<setting name="password" value="secret=" FAKEPW`,
+	} {
+		if got := Mask(in, m); strings.Contains(got, "FAKEPW") {
+			t.Errorf("Mask(%q) leaked: %q", in, shown(got))
+		}
+	}
+}
+
+// A block that opens on the tail of a line that closed a quote or a bracket is measured from that line (review F2).
+func TestCarryBlockAfterClosedQuoteUsesNewIndent(t *testing.T) {
+	for name, lines := range map[string][]string{
+		"quote":   {"        DB_PASSWORD=\"a", "b\" password: |", "  FAKEPW", "  FAKEPW2"},
+		"bracket": {`        {"password":[`, `"x"], "secret": |`, "  FAKEPW", "  FAKEPW2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var c Carry
+			var out []string
+			for _, line := range lines {
+				out = append(out, c.Line(line, m))
+			}
+			if got := strings.Join(out, "\n"); strings.Contains(got, "FAKEPW") {
+				t.Errorf("block body survived: %q", shown(got))
+			}
+		})
+	}
+}
+
+// A split secret tag keeps its hint when the same line also ends in a colon key (review F3).
+func TestCarrySplitTagBeatsColonKeyOnSameLine(t *testing.T) {
+	for name, lines := range map[string][]string{
+		"element text": {"<Password client_secret:", ">FAKEPW</Password>"},
+		"attribute":    {"<Password token:", "value=\"FAKEPW\">FAKEPW</Password>"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var c Carry
+			var out []string
+			for _, line := range lines {
+				out = append(out, c.Line(line, m))
+			}
+			if got := strings.Join(out, "\n"); strings.Contains(got, "FAKEPW") {
+				t.Errorf("split tag value survived: %q", shown(got))
+			}
+		})
+	}
+}
+
+// One stray quote, bracket or tag does not hide the rest of a log, and an XML close tag in another case closes the element (review F4).
+func TestCarryOpenStatesEndAtCapAndCloseIgnoresCase(t *testing.T) {
+	for name, open := range map[string]string{"quote": "password='", "bracket": `{"token":[`, "xml": "<Password>"} {
+		t.Run(name, func(t *testing.T) {
+			var c Carry
+			c.Line(open, m)
+			var last string
+			for i := 0; i < maxBlockLines+5; i++ {
+				last = c.Line("ordinary line", m)
+			}
+			if last != "ordinary line" {
+				t.Errorf("the state outlived the cap: %q", last)
+			}
+		})
+	}
+	var c Carry
+	c.Line("<Password>", m)
+	c.Line("FAKEPW</password>", m)
+	if got := c.Line("after", m); got != "after" {
+		t.Errorf("a close tag in another case did not close the element: %q", got)
+	}
+}

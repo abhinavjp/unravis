@@ -256,7 +256,10 @@ func maskPend(s, mask string) (string, int, carryHint) {
 	w.carry = carryHint{}
 	s, p2 := maskKV(s, mask, w)
 	hint := xmlCarry
-	if p2 > p1 {
+	// A split XML tag or an XML element text hides the next line's value already; the key=value state must not replace it
+	// ("<Password client_secret:" then ">FAKEPW</Password>"). A quote or bracket left open still wins: it swallows the lines.
+	xmlOpen := p1 == pendTag || p1 == pendXMLText
+	if p2 > p1 && !(xmlOpen && p2 != pendQuote && p2 != pendBracket) {
 		p1, hint = p2, w.carry
 	}
 	return s, p1, hint

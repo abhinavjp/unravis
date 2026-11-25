@@ -27,8 +27,22 @@ type Carry struct {
 	tag      string
 }
 
-func (c *Carry) set(pend int, hint carryHint) {
+// set takes what line left open. A new state starts with the indent of the line that opened it and no lines counted, so a block that
+// opens on the tail of a line that closed a quote, bracket or tag (b" password: |) is measured from that line.
+func (c *Carry) set(pend int, hint carryHint, line string) {
 	c.pend, c.quote, c.nest, c.literal, c.depth, c.tag = pend, hint.quote, hint.nest, hint.literal, hint.depth, hint.tag
+	if pend != pendNone {
+		c.indent, c.lines, c.comments = indentOf(line), 0, 0
+	}
+}
+
+// overCap counts a line carried by a quote, bracket or XML text and drops the state once it has gone on longer than maxBlockLines. Such
+// a value is not a password, so one stray quote or bracket does not hide the rest of a log.
+func (c *Carry) overCap() {
+	c.lines++
+	if c.lines > maxBlockLines {
+		c.pend = pendNone
+	}
 }
 
 // Line returns line with its secrets masked, including the value it carries over from the lines before.
@@ -67,10 +81,7 @@ func (c *Carry) Line(line, mask string) string {
 		c.pend = pendNone
 	}
 	out, pend, hint := maskPend(line, mask)
-	c.set(pend, hint)
-	if pend != pendNone {
-		c.indent, c.lines, c.comments = indentOf(line), 0, 0
-	}
+	c.set(pend, hint, line)
 	return out
 }
 
@@ -79,12 +90,13 @@ func (c *Carry) quotedLine(line, mask string) string {
 	combined := string(c.quote) + line
 	end, after := closingQuote(combined, 0, c.nest, c.literal)
 	if end == len(combined) && after == len(combined) {
+		c.overCap()
 		return line[:ind] + mask
 	}
 	out := line[:ind] + mask + line[end-1:]
 	c.pend = pendNone
 	out, pend, hint := maskPend(out, mask)
-	c.set(pend, hint)
+	c.set(pend, hint, line)
 	return out
 }
 
@@ -119,19 +131,20 @@ func (c *Carry) bracketLine(line, mask string) string {
 	}
 	if closeAt < 0 {
 		c.depth, c.quote = depth, quote
+		c.overCap()
 		return line[:ind] + mask
 	}
 	out := line[:ind] + mask + line[closeAt:]
 	c.pend = pendNone
 	out, pend, hint := maskPend(out, mask)
-	c.set(pend, hint)
+	c.set(pend, hint, line)
 	return out
 }
 
 func (c *Carry) xmlLine(line, mask string) string {
 	ind := indentOf(line)
 	close := "</" + c.tag
-	if at := strings.Index(line, close); at >= 0 {
+	if at := indexFold(line, close); at >= 0 {
 		if end := strings.IndexByte(line[at:], '>'); end >= 0 {
 			out := line
 			if strings.TrimSpace(line[:at]) != "" {
@@ -139,11 +152,23 @@ func (c *Carry) xmlLine(line, mask string) string {
 			}
 			c.pend = pendNone
 			out, pend, hint := maskPend(out, mask)
-			c.set(pend, hint)
+			c.set(pend, hint, line)
 			return out
 		}
 	}
+	c.overCap()
 	return line[:ind] + mask
+}
+
+// indexFold is strings.Index that does not care about the case of ASCII letters (XML names are written in any case in logs). It never
+// changes the length of the text, so the index is the index in s.
+func indexFold(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if strings.EqualFold(s[i:i+len(sub)], sub) {
+			return i
+		}
+	}
+	return -1
 }
 
 func (c *Carry) tagLine(line, mask string) string {
@@ -152,7 +177,7 @@ func (c *Carry) tagLine(line, mask string) string {
 		return mask
 	}
 	out, pend, hint := maskPend(c.tag+"\n"+line, mask)
-	c.set(pend, hint)
+	c.set(pend, hint, line)
 	if at := strings.LastIndexByte(out, '\n'); at >= 0 {
 		return out[at+1:]
 	}

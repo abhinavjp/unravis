@@ -965,7 +965,7 @@ $script:LogRx = @{
     Ctrl    = [regex]::new('[\x00-\x08\x0a-\x1f\x7f]', 'Compiled')
     Token   = [regex]::new('\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})', 'Compiled')
     Bearer  = [regex]::new('(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}', 'Compiled')
-    Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|nonce|seed[-_ ]?phrase|key[-_ ]?seed|_seed|mnemonic|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
+    Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|nonce|seed[-_ ]?phrase|key[-_ ]?seed|_seed|mnemonic|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|''(?:[^''\\]|\\.)*''|.+)', 'Compiled')
     # More secret shapes, the same patterns as the Go reader (explicit [ \t] and [A-Za-z], not \s and \w, so the two agree): a flag with its value
     # after a space or =, an environment style name ending in _PASS or _PIN, and user:password in a URL or after curl -u / --user.
     Flag    = [regex]::new('(?i)((?:^|[ \t])--?(?:pass(?:word|phrase|wd)?|pwd|token|secret|nonce|pin)(?:[ \t]+|=))(?:"[^"]*"|''[^'']*''|[^ \t\r\n\f\v]+)', 'Compiled')
@@ -1263,7 +1263,7 @@ function Protect-LogXml([string]$Line, $Redactor) {
     $indent = 0
     while ($indent -lt $Line.Length -and ($Line[$indent] -eq ' ' -or $Line[$indent] -eq "`t")) { $indent++ }
     if ($c.Mode -eq 'Xml') {
-        $at = $Line.IndexOf('</' + $c.Tag, [StringComparison]::Ordinal)
+        $at = $Line.IndexOf('</' + $c.Tag, [StringComparison]::OrdinalIgnoreCase)
         if ($at -ge 0) {
             $end = $Line.IndexOf('>', $at)
             if ($end -ge 0) {
@@ -1273,6 +1273,8 @@ function Protect-LogXml([string]$Line, $Redactor) {
                 return Protect-LogCarry $out $Redactor
             }
         }
+        $c.Lines++
+        if ($c.Lines -gt 200) { $c.Mode = ''; $c.Tag = '' }   # one stray tag does not hide the rest of a log
         return $Line.Substring(0, $indent) + '<hidden>'
     }
     $prefix = ''
@@ -1301,12 +1303,23 @@ function Protect-LogXml([string]$Line, $Redactor) {
         $budget -= $tag.Read
         if (-not $tag.Ok) {
             $found = Get-XmlAttributeSpans $tag.Attrs $combined $true
+            $firstEdit = $edits.Count
             foreach ($e in $found.Spans) { [void]$edits.Add($e) }
             $local = $name
             $colon = $local.LastIndexOf(':')
             if ($colon -ge 0) { $local = $local.Substring($colon + 1) }
             if ($found.KeyHit -or (Test-SecretName $local)) {
                 foreach ($a in $tag.Attrs) { if ($a.HasValue -and $script:LogValueAttrNames.ContainsKey($a.Name.ToLowerInvariant())) { [void]$edits.Add([pscustomobject]@{ From = $a.From; To = $a.To }) } }
+            }
+            if ($edits.Count -gt $firstEdit) {
+                # Fail closed: a secret attribute in an unfinished tag hides everything up to the end of what is read of the tag. Its value
+                # can itself hold a secret key, and the key=value pass that runs next must not lose it.
+                $to = $combined.Length
+                $next = $combined.IndexOf('<', $n)
+                if ($next -ge 0) { $to = $next }
+                $from = $to
+                for ($k = $firstEdit; $k -lt $edits.Count; $k++) { if ($edits[$k].To -gt $edits[$k].From -and $edits[$k].From -lt $from) { $from = $edits[$k].From } }
+                if ($from -lt $to) { [void]$edits.Add([pscustomobject]@{ From = $from; To = $to }) }
             }
             if (($found.KeyHit -or $found.SecretHit -or $found.KeyAttr -or (Test-SecretName $local) -or (Test-SecretTagPrefix $name)) -and $name.Length -gt 0) { $pending = 'Tag'; $pendingTag = $combined.Substring($i) }
             $pos = $n
@@ -1350,7 +1363,7 @@ function Protect-LogXml([string]$Line, $Redactor) {
         }
         if ($resume -gt 0 -and $resume -lt $pos) { $pos = $resume }
     }
-    if ($pending -eq 'Xml') { $c.Mode = 'Xml'; $c.Tag = $pendingTag }
+    if ($pending -eq 'Xml') { $c.Mode = 'Xml'; $c.Tag = $pendingTag; $c.Lines = 0 }
     elseif ($pending -eq 'Tag') { $c.Mode = 'Tag'; $c.Tag = $pendingTag }
     else { $c.Mode = ''; $c.Tag = '' }
     return Apply-LogXmlEdits $Line $edits $base
@@ -1363,7 +1376,7 @@ function Protect-LogCarry([string]$Line, $Redactor) {
     if ($c.Mode -eq 'Xml' -or $c.Mode -eq 'Tag') { return Protect-LogXml $Line $Redactor }
     if ($c.Mode -eq 'Quote') {
         $at = Find-ClosingQuote $Line -1 $c.Quote $c.Nest $c.Literal
-        if ($at -lt 0) { return $Line.Substring(0, $indent) + '<hidden>' }
+        if ($at -lt 0) { $c.Lines++; if ($c.Lines -gt 200) { $c.Mode = '' }; return $Line.Substring(0, $indent) + '<hidden>' }
         $c.Mode = ''
         return $Line.Substring(0, $indent) + '<hidden>' + (Protect-LogCarry $Line.Substring($at) $Redactor)
     }
@@ -1378,7 +1391,7 @@ function Protect-LogCarry([string]$Line, $Redactor) {
             elseif ($Line[$i] -eq ']' -or $Line[$i] -eq '}') { $depth--; if ($depth -eq 0) { $closeAt = $i; break } }
             elseif ($Line[$i] -eq '"' -or $Line[$i] -eq "'") { $quote = $Line[$i] }
         }
-        if ($closeAt -lt 0) { $c.Depth = $depth; $c.Quote = $quote; return $Line.Substring(0, $indent) + '<hidden>' }
+        if ($closeAt -lt 0) { $c.Depth = $depth; $c.Quote = $quote; $c.Lines++; if ($c.Lines -gt 200) { $c.Mode = '' }; return $Line.Substring(0, $indent) + '<hidden>' }
         $c.Mode = ''
         return $Line.Substring(0, $indent) + '<hidden>' + (Protect-LogCarry $Line.Substring($closeAt) $Redactor)
     }
@@ -1429,7 +1442,7 @@ function Protect-LogCarry([string]$Line, $Redactor) {
         if ($q -lt $v.Length -and ($v[$q] -eq '"' -or $v[$q] -eq "'")) {
             $nest = $q; $literal = -not ($sep.StartsWith('"') -or $sep.StartsWith("'"))
             if ((Find-ClosingQuote $v $q $v[$q] $nest $literal) -lt 0) {
-                $c.Mode = 'Quote'; $c.Quote = $v[$q]; $c.Nest = $nest; $c.Literal = $literal
+                $c.Mode = 'Quote'; $c.Quote = $v[$q]; $c.Nest = $nest; $c.Literal = $literal; $c.Lines = 0
                 $at = $m.Groups[3].Index + $q
                 return $Line.Substring(0, $at) + $v[$q] + '<hidden>'
             }
@@ -1445,7 +1458,7 @@ function Protect-LogCarry([string]$Line, $Redactor) {
                 elseif ($v[$i] -eq '"' -or $v[$i] -eq "'") { $quote = $v[$i] }
             }
             if ($depth -gt 0) {
-                $c.Mode = 'Bracket'; $c.Depth = $depth; $c.Quote = $quote
+                $c.Mode = 'Bracket'; $c.Depth = $depth; $c.Quote = $quote; $c.Lines = 0
                 return $Line.Substring(0, $m.Groups[3].Index + $first) + '<hidden>'
             }
         }

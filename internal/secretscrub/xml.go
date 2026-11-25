@@ -55,11 +55,19 @@ func maskXML(s, mask string, w *work) (string, int) {
 			if k := strings.IndexByte(s[n:], '<'); k >= 0 {
 				to = n + k
 			}
+			w.spend(to - i)
 			spans, _, _ := tagSpans(s, name, attrs)
-			for _, sp := range sortEdits(spans) {
-				if sp.to > sp.from {
-					edits = append(edits, sp)
+			// Fail closed: a secret attribute in a tag that is not finished hides everything up to the end of what is read of the tag,
+			// not only its value. The value can itself hold a secret key (value="password=" then the secret); masking only the value
+			// would take that key away from the key=value pass that runs next.
+			first := -1
+			for _, sp := range spans {
+				if sp.to > sp.from && (first < 0 || sp.from < first) {
+					first = sp.from
 				}
+			}
+			if first >= 0 && first < to {
+				edits = append(edits, edit{first, to})
 			}
 			if possibleSecretTag(s[i:to]) {
 				// A line reader can see only an unfinished tag. Mask secret attributes already present and carry its name

@@ -698,6 +698,28 @@ try {
         Assert-That "log redaction: an ordinary markup line is kept" ((Protect-LogLine $ok (New-LogRedactor)) -eq $ok)
     }
 
+    # Parity with the Go scrubber (SWP-1122-12 review): an unfinished tag that holds a secret key keeps hiding what follows, a JSON value
+    # with an escaped quote is hidden whole, a close tag in another case closes an XML value, and a stray open state ends at the cap.
+    foreach ($one in @('<add key="password" value="password="FAKEPW', '<add key="DbPassword" value="DB_PASSWORD=" FAKEPW', '<setting name="password" value="secret=" FAKEPW', ('{"password":"a' + [char]92 + '"b FAKEPW"}'))) {
+        Assert-That "log redaction: a secret after an unfinished tag or an escaped quote is hidden ($one)" (-not (Protect-LogLine $one (New-LogRedactor)).Contains('FAKEPW')) (Protect-LogLine $one (New-LogRedactor))
+    }
+    foreach ($lines in @(@('        DB_PASSWORD="a', 'b" password: |', '  FAKEPW', '  FAKEPW2'), @('<Password client_secret:', '>FAKEPW</Password>'))) {
+        $r = New-LogRedactor
+        $out = @($lines | ForEach-Object { Protect-LogLine $_ $r })
+        Assert-That "log redaction: a block or split tag after a closed value is hidden ($($lines[0]))" (-not (($out -join "`n").Contains('FAKEPW'))) ($out -join '|')
+    }
+    $r = New-LogRedactor
+    $null = Protect-LogLine '<Password>' $r
+    $null = Protect-LogLine 'FAKEPW</password>' $r
+    Assert-That 'log redaction: a close tag in another case ends an XML value' ((Protect-LogLine 'after' $r) -eq 'after')
+    foreach ($open in @("password='", '{"token":[', '<Password>')) {
+        $r = New-LogRedactor
+        $null = Protect-LogLine $open $r
+        $last = ''
+        1..205 | ForEach-Object { $last = Protect-LogLine 'ordinary line' $r }
+        Assert-That "log redaction: a stray open state ends at the line cap ($open)" ($last -eq 'ordinary line') "got '$last'"
+    }
+
     # A reason of several lines (what Run throws) keeps its lines apart; one hidden line hides only itself; a key block is hidden whole.
     $multi = "git fetch failed: fatal: unable to reach host`r`nremote: Support for password authentication was removed.`nAuthorization: token hunter2hunter2`nhint: run gh auth refresh`n-----BEGIN CERTIFICATE-----`nMIIBkTCB+wIJAKHBfpegPjMCMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnVu`n-----END CERTIFICATE-----`nthe real cause is here"
     $mr = Protect-ReasonText $multi
