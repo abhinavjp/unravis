@@ -78,6 +78,8 @@ type handler struct {
 	reconn reconnectState
 	// mcp is where the AI access screen's handler hangs once the grant store is open (nil: grants do not apply, see mcp_admin.go).
 	mcp *MCPMount
+	// code is where internal/codeapi hangs the code-mode handler (nil: the code routes answer 503, see code_mount.go).
+	code *CodeMount
 
 	casesState
 

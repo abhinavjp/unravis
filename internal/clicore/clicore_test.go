@@ -160,7 +160,7 @@ func TestMappingsFromOtherAreas(t *testing.T) {
 	if _, ok := FromHTTPStatus(200); ok {
 		t.Error("200 is not an error")
 	}
-	for exit, want := range map[int]Code{11: CodeElevationRefused, 12: CodeOwnerBusy, 13: CodeUpstreamUnavailable, 1: CodeInternal, 10: CodeInternal} {
+	for exit, want := range map[int]Code{11: CodeElevationRefused, 12: CodeOwnerBusy, 13: CodeUpstreamUnavailable, 14: CodeUpstreamUnavailable, 1: CodeInternal, 10: CodeInternal} {
 		if got := FromSidecarExit(exit); got != want {
 			t.Errorf("sidecar exit %d: %s", exit, got)
 		}

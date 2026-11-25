@@ -36,12 +36,13 @@ func (h *handler) getCase(w http.ResponseWriter, r *http.Request, raw string) {
 	if h.recordCaseView(w, r, raw) {
 		return
 	}
-	_, c, ok := h.openCase(w, r, raw)
+	id, c, ok := h.openCase(w, r, raw)
 	if !ok {
 		return
 	}
 	defer c.Close()
 	h.event(r, "case_opened")
+	h.caseOpened(r.Context(), id, c)
 	writeJSON(w, http.StatusOK, h.viewOf(r.Context(), c), maxResponseBytes)
 }
 

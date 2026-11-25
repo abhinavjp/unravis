@@ -334,7 +334,11 @@ func run(args []string, getenv func(string) string) error {
 	// (pipe mode below, or the screenshot demo with UNRAVIS_DEMO_MCP), and say "legacy" in a browser-mode run, which has no grants.
 	mcpMount := server.NewMCPMount()
 	serverOptions = append(serverOptions, server.WithMCPMount(mcpMount))
+	// Code mode (BL-574): the routes answer 503 until the broker is mounted just below (it needs the server built first).
+	codeMount := server.NewCodeMount()
+	serverOptions = append(serverOptions, server.WithCodeMount(codeMount))
 	served := server.New(wired.repo, explorer.Assets(), token, f.demo, serverOptions...)
+	mountCodeMode(getenv, served, token, codeMount)
 	if f.demo && !pipeMode {
 		closeDemoMCP := openDemoMCP(appCtx, getenv, wired.repo, mcpMount)
 		defer closeDemoMCP()
