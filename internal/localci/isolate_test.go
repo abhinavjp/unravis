@@ -114,3 +114,19 @@ func TestStepEnvHidesTheOwnersGitSetup(t *testing.T) {
 		t.Fatalf("HOME is still the owner's: %s", out)
 	}
 }
+
+// A run's profile has the folders Windows names as usual ones, so a test or tool that asks Windows for one still gets an answer.
+func TestStepEnvProfileHasTheUsualWindowsFolders(t *testing.T) {
+	s := newStore(t)
+	_, cleanup, err := s.StepEnv(nil, "run1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	home := filepath.Join(s.HomesPath(), "run1")
+	for _, rel := range []string{"Desktop", filepath.Join("AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Startup")} {
+		if fi, err := os.Stat(filepath.Join(home, rel)); err != nil || !fi.IsDir() {
+			t.Errorf("profile has no %s folder: %v", rel, err)
+		}
+	}
+}

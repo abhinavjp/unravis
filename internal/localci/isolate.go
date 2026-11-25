@@ -46,7 +46,10 @@ func (s *Store) StepEnv(base []string, runID string, untrusted bool) (env []stri
 	local := filepath.Join(home, "AppData", "Local")
 	tmp := shortTempDir(base, runID)
 	_ = os.RemoveAll(tmp)
-	for _, d := range []string{roaming, local, tmp, filepath.Join(home, "gh"), filepath.Join(home, "config"), filepath.Join(home, "cache"), filepath.Join(home, "data")} {
+	// Windows hands out "usual folders" (Desktop, Start Menu Programs and Startup, ...) by expanding %USERPROFILE% and
+	// refusing a path that does not exist, so a profile without them makes tools that ask Windows for one fail.
+	programs := filepath.Join(roaming, "Microsoft", "Windows", "Start Menu", "Programs")
+	for _, d := range []string{roaming, local, tmp, programs, filepath.Join(programs, "Startup"), filepath.Join(home, "Desktop"), filepath.Join(home, "gh"), filepath.Join(home, "config"), filepath.Join(home, "cache"), filepath.Join(home, "data")} {
 		if err := os.MkdirAll(d, 0o750); err != nil {
 			return nil, nil, err
 		}
