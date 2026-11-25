@@ -108,7 +108,7 @@ func TestHeavyCallsAtOnce(t *testing.T) {
 	b := r.enroll("heavy-b", r.approval(TierAggregate))
 	c := r.enroll("heavy-c", r.approval(TierAggregate))
 	releaseA, outA := r.holdCompare(a, "aaaaaaaa-1")
-	if x := r.call(a, "audit_compare", r.compareArgs()); !overBudget(x) {
+	if x := r.call(a, "audit_compare", r.otherArgs()); !overBudget(x) {
 		t.Errorf("a second comparison of the same host: %d %.300s", x.Status, x.Raw)
 	}
 	// another host may run one; the third host is over the global limit while both run
