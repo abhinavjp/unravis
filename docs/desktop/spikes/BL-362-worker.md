@@ -1,6 +1,6 @@
 # BL-362 design note: the sandbox worker `unravis-sandbox`
 
-Date 2026-11-25. Branch `factory/bl362-worker` (from `origin/develop`). Spec: `docs/desktop/spec/04-code-mode.md` (D1, D2, D12, D24, section 3.3, BL-362). This note is written and committed BEFORE the worker, as the item asks. Facts measured while building are added at the end under "Measured" in a later commit; nothing in the first part is a measurement.
+Date 2026-11-25. Branch `factory/bl362-worker` (from `origin/develop`). Spec: `docs/desktop/spec/04-code-mode.md` (D1, D2, D12, D24, section 3.3, BL-362). This note is written and committed BEFORE the worker, as the item asks. Facts measured while building are added at the end under "Measured"; nothing in the first part is a measurement. Where the build differed from this plan, the section "As built: changes from the plan" says so (the plan text above it is left as written, except the export list and the eval switch-off, which are corrected in place).
 
 ## Verdict: the spec's runtime, built here, no substitute
 
@@ -35,9 +35,9 @@ broker (unravis.exe) <== frames on stdin/stdout ==> worker (Go + wazero) ==> qjs
 
 The worker is a Go program with an event loop that owns all I/O. The wasm module is a WASI **reactor** (`-mexec-model=reactor`, no `main`, no Asyncify). Go calls exports; the module calls back into Go through a few host imports. JavaScript never blocks inside wasm waiting for the broker.
 
-Exports (C, `glue.c`): `qjs_init(heapLimit, stackLimit)`, `qjs_run(js_ptr, js_len, tools_ptr, tools_len)`, `qjs_ret(id, ok, ptr, len)`, `qjs_pump()` (run pending promise jobs; says whether the run promise settled and where its value is), `qjs_alloc/qjs_free` for buffers Go writes into, and `qjs_take_*` for result, log and error text.
+Exports (C, `glue.c`, as built): `qjs_init(heapBytes, stackBytes, maxTicks, pollsPerTick, callBytes, maxCalls)`, `qjs_run(js_ptr, js_len, names_ptr, names_len)`, `qjs_ret(id, ok, ptr, len)`, `qjs_pump()` (run pending promise jobs; says whether the run promise settled), `qjs_report()` (a pointer to a fixed report struct: kind, texts, flags), `qjs_alloc/qjs_free` for buffers Go writes into, and `_initialize`.
 
-Imports (Go, module `env`): `host_call(tool, id, argsPtr, argsLen)` (queue a call; Go decides when it is sent), `host_log(ptr, len)`, `host_fatal(code)` (uncatchable end of run: Go records the code and closes the module), `host_random()` (float64), `host_perf_now()` (float64). Imports are listed in an allow-list test; any other import (for example a wasi function we do not expect) fails the build of the test.
+Imports (Go, module `env`): `host_call(tool, id, argsPtr, argsLen)` (queue a call; Go decides when it is sent), `host_log(ptr, len)`, `host_fatal(code)` (uncatchable end of run: Go records the code and closes the module), `host_random()` (float64), `host_perf_now()` (float64). The module also imports five `wasi_snapshot_preview1` functions (`clock_time_get`, `fd_close`, `fd_fdstat_get`, `fd_seek`, `fd_write`); the Go side provides its own minimal WASI module for them (see Measured). Imports are listed in an allow-list test; any other import (for example a wasi function we do not expect) fails the build of the test.
 
 Event loop in Go: run the script (compile, evaluate, build the `unravis` object), then repeat: `qjs_pump` until nothing is runnable; send queued calls (FIFO, at most `inFlight`, at most `maxCalls + 1` forwarded in all so the broker can count and refuse the 51st); read one frame from stdin when something is in flight; deliver `ret` through `qjs_ret`; stop when the run promise is settled and the job queue is empty. If the promise is pending, nothing is in flight, nothing is queued and no job is left, the script has deadlocked (a promise that never resolves): done with `script_error` instead of hanging.
 
@@ -60,10 +60,7 @@ Event loop in Go: run the script (compile, evaluate, build the `unravis` object)
 
 This is done in the engine, not by scrubbing globals.
 
-QuickJS keeps the compiler behind one function pointer in the context (`ctx->eval_internal`), installed only by `JS_AddIntrinsicEval`. The glue is one translation unit that does `#include "quickjs.c"` (no patch to upstream), so it can reach it. The glue builds TWO contexts:
-
-- **Context A (compile only):** `JS_NewContextRaw` with the Eval and RegExp-compiler intrinsics. It only ever turns the script text into bytecode (`JS_Eval` with `JS_EVAL_FLAG_COMPILE_ONLY`), then `JS_WriteObject` serialises it. The script never runs here.
-- **Context B (the script's world):** `JS_NewContextRaw` with exactly BaseObjects, Date, RegExp (the compiler is needed by the regexp engine, not by user code), JSON, MapSet, TypedArrays, Promise, BigInt. `JS_AddIntrinsicEval` is **not** added, so `eval_internal` is NULL, and `eval`, `new Function`, `AsyncFunction`, `GeneratorFunction`, `AsyncGeneratorFunction` all throw "eval is not supported" at the engine level. The bytecode from A is loaded into B with `JS_ReadObject` and run with `JS_EvalFunction`.
+QuickJS keeps the compiler behind one function pointer in the context (`ctx->eval_internal`), installed by `JS_AddIntrinsicEval`. The glue is one translation unit that does `#include "quickjs.c"` (no patch to upstream), so it can reach the field. **As built there is ONE context, not two** (the first plan above in this note, two contexts and a bytecode round trip, was dropped as more code for no gain): the glue creates the context with the intrinsics, compiles the script with `JS_Eval(... JS_EVAL_FLAG_COMPILE_ONLY)`, then sets `ctx->eval_internal = NULL`, and only then runs the compiled function. After that point `eval`, `new Function`, `AsyncFunction`, `GeneratorFunction` and `AsyncGeneratorFunction` all fail at the engine level, because no code path can compile text any more. Nothing is evaluated before the switch except the prelude (our own text, run before the script is compiled and before `eval_internal` is cleared). No module loader is set, so `import()` fails.
 
 On top of that (belt and braces, and so the globals are visibly gone): `eval`, `Function`, `SharedArrayBuffer` and `Atomics` are deleted from the global object, and the `constructor` property of the four function prototypes is redefined as undefined, non-writable, non-configurable. No module loader is set (`JS_SetModuleLoaderFunc` is never called), so `import()` rejects/throws; `quickjs-libc.c` is not linked, so there is no `std`, `os`, `print`, `setTimeout`, `scriptArgs`. `fetch`, `WebAssembly`, `process`, `require` simply do not exist in QuickJS. A test checks every name in the spec list.
 
@@ -109,3 +106,41 @@ The worker exits after one run, after the `done` frame is written and stdout clo
 The tests run the real built worker as a plain child process (no confined spawner, BL-366/367) with the broker-side `wire` package and a fake host that answers `call` frames from a table and records the largest number of calls in flight. Every read has a deadline and the process is killed in cleanup. Limits are sent small in the `run` frame so the tests are quick. The list is in the item plus the escape list; `TestWorkerDepsAllowList` and `TestAppDoesNotLinkWazero` use `go list -deps` and match on module path segments.
 
 Not covered here (and not claimed): the Windows confinement, the signed exe, and the Windows acceptance run of the item (ticks stay unticked in `docs/BACKLOG.md`).
+
+## As built: changes from the plan
+
+- **One context, `eval_internal = NULL` after compile** (not two contexts); see the section on eval above.
+- **Intrinsics.** BaseObjects, Date, RegExp (with the compiler), JSON, Proxy, MapSet, TypedArrays, Promise and BigInt are present; WeakRef, DOMException, atob/btoa and all of `quickjs-libc` are not. `Proxy` was not in the first plan's list.
+- **Own minimal WASI module.** wazero's `wasi_snapshot_preview1` is not instantiated at all. The Go side registers the five functions the module imports; `clock_time_get` is served from `privacy.ScriptClock`, `fd_close`/`fd_fdstat_get`/`fd_seek`/`fd_write` return EBADF (a write to fd 1 or 2 from wasm goes nowhere). No preopen, args or environment exist because the functions that would list them are not imported.
+- **Heap clamp.** `heapBytes` is clamped to `memPages * 64 KiB` minus a 6 MiB reserve (`memReserveBytes`) for the linked stack, globals and allocator headers, so QuickJS fails before wasm does. A heap above that is a clamp, not a violation.
+- **Exit codes.** 0 for a run that ended with a `done` frame (success or failure); 2 for a protocol violation or a run frame that failed validation (no `done`); 3 for a worker failure (no `done`). stderr is never written.
+- **Stack code has two paths.** wazero has a call-frame ceiling of 2000; deep wasm recursion hits it first and the trap is an uncatchable "stack overflow", mapped to `stack`. QuickJS's own check (an uncaught `RangeError: Maximum call stack size exceeded`) is reported with kind 3 and also gives `stack`. A script can catch the `RangeError` and keep running (it is still bounded by ticks and heap); a script can also throw its own `RangeError` with that exact text and get the `stack` label, which only labels its own failure.
+- **Call limit.** `qjs_init` receives `maxCalls + 1`: the broker sees (and denies) the 51st call; the 52nd is rejected in the worker without touching the pipe.
+- **`hello`.** Mitigations are all `false` (the spawner owns them: BL-366). `wasmSha256` is the SHA-256 of the embedded bytes and a test compares it with `qjs.wasm.sha256`.
+
+## Measured
+
+All numbers are from one Windows 11 x64 machine, Go 1.27, wazero interpreter, on 2026-11-25. They are single runs, not a benchmark.
+
+| What | Value |
+|---|---|
+| `qjs.wasm` | 1,021,359 bytes, SHA-256 `55c00c95...6c01cf8` (full value in `qjs.wasm.sha256`); three builds gave the same hash |
+| worker `.exe` | 10.4 MB plain `go build`; 7.4 MB with `-trimpath -ldflags "-s -w"` (the wasm is embedded in both) |
+| startup (hello to first script instruction) | about 65 ms warm, about 650 ms the first time after a rebuild (wazero compiles the module's function bodies for the interpreter every start; no cache, because a cache writes to disk) |
+| interpreter speed | about 3 million empty-loop iterations in 9 s, i.e. a script has to be small; this is the cost of the interpreter and of no JIT |
+| wasm stack | 1 MiB linked; with `stackBytes` = 256 KiB a plain recursion reaches about 776 JavaScript frames before QuickJS throws |
+| tick | one tick = 10 interrupt polls (`tickPolls = 10`); the interrupt is polled at loop back-edges, calls and some builtin loops; the number 10 is a calibration choice, not derived: with it the limit tests finish in seconds on this machine |
+
+### Known gaps (reviewed candidly)
+
+1. **Ticks do not bound wall time inside native builtins.** `JSON.stringify`/`parse` on big data, `Array.prototype.flat`, `String.prototype.repeat` and similar do their loop in C without polling. A regexp polls only about every 10,000 backtracking steps, so one tick there is far more work than one tick of plain JavaScript: a catastrophic-backtracking pattern took 68 s to hit a 2000-tick limit, and the test uses 40 ticks. The memory limit still stops allocation, but a CPU-only native loop is stopped only by the **broker's wall timer and kill** (BL-363/366). The worker has no timer of its own.
+2. **A caught stack overflow lets the script continue** (see above). It is still limited by ticks and heap.
+3. **The interpreter is slow** (see table). Larger scripts or heavy post-processing will hit `ticks` or the broker's cap early. A JIT is not available in wazero under the no-cache, no-write rule and is not wanted for confinement.
+4. **String concatenation uses ropes.** `s += s` fails with `script_error` ("string too long") rather than `oom` until the string is flattened. Both outcomes are bounded; the code differs.
+5. **Intrinsics are not frozen.** A script can change `Object.prototype`, `Array.prototype` and `JSON` in its own world. It cannot reach the tool names or call ids (held in C function data), and it cannot change the frozen `unravis` object, but it can change what its own later code sees.
+6. **Hello mitigations are all false** because the worker cannot see its token; BL-366 owns that and the broker must check it.
+7. **Nothing here is verified on Windows confinement** (job object, LPAC, handle list, ACG, win32k, signed exe) nor on live data. BL-362 acceptance item 5 (the live PC with the real exe) is not run, so BACKLOG is not ticked.
+
+### Tests run (all against the real built worker as a child process)
+
+`TestFrameTooLargeRefused`, `TestBadFrameEndsRun`, `TestOneRunThenExit`, `TestHelloIsFirstAndHonest`, `TestLimitsDistinctCodes` (memory, stack, ticks, output, script, log cap cases), `TestClockQuantized10ms`, `TestMathRandomSeeded`, `TestGlobalsRemoved`, the escape and queue tests in `behavior_test.go`, `TestWorkerDepsAllowList`, `TestAppDoesNotLinkWazero`, `TestWasmPinnedAndImports`. The escape tests were checked by mutation: with the defenses taken out of the glue (the `eval_internal = NULL` switch-off and the prototype `constructor` removal) they fail; with the glue restored (byte-identical to the committed one) they pass.
