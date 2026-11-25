@@ -29,6 +29,8 @@ var codeModeTexts = map[string]codeText{
 	"code_mode_off": {CodeEndpointUnavailable, "Code mode is switched off, so nothing was run.", "Turn it on in the app's code-mode settings, then run this again."},
 	"denied": {CodePermissionDenied, "Unravis did not allow this run.",
 		"If you gave --allow-identifiers, the operator has to allow identifiers in code runs first. Run again without it."},
+	"cli_closed": {CodePermissionDenied, "The command line is not allowed to run scripts right now.",
+		"In the app, open the code-mode settings and allow the command line for a while, then run this again."},
 	"no_case":          {CodeNotFound, "No case is open to record this run in.", "Open a case in the app, or name an open case with --case ID."},
 	CodeModeManyCases:  {CodeInvalidArgument, "More than one case is open, so Unravis cannot tell which one to record the run in.", "Name one with --case ID ('unravis cases list' shows the ids)."},
 	"busy":             {CodeOwnerBusy, "Code runs are already in progress, or an import is running on the case.", "Wait for them to finish, then run again."},

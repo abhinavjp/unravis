@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/codemode"
@@ -60,12 +61,15 @@ type Options struct {
 	// AllowIdentifiers is the operator's permission, the same value the Broker was built with. It is shown on the settings screen;
 	// the Broker is what enforces it.
 	AllowIdentifiers bool
+	// CLIGate is the command-line window the broker was built with (Config.Authorize = CLIGate.Authorize). The settings route opens and
+	// closes it. Nil: the route refuses cliMinutes, and the broker's own gate (if any) stays as it is.
+	CLIGate *codemode.CLIGate
 }
 
 // Install turns the code routes on: the mount serves them with this package's handler, and a case the app opens gets the broker's
 // sweep of runs a crash left open.
 func Install(o Options) {
-	api := &api{broker: o.Broker, files: o.Settings, allowIdentifiers: o.AllowIdentifiers}
+	api := &api{broker: o.Broker, files: o.Settings, allowIdentifiers: o.AllowIdentifiers, cliGate: o.CLIGate}
 	o.Mount.SetCaseStopper(func(caseID string) { o.Broker.CancelCase(caseID) })
 	o.Mount.Set(api, func(ctx context.Context, store casestore.CodeRunStore) error {
 		_, err := o.Broker.OnCaseOpen(ctx, store)
@@ -77,6 +81,7 @@ type api struct {
 	broker           *codemode.Broker
 	files            *settingsfile.Store
 	allowIdentifiers bool
+	cliGate          *codemode.CLIGate
 	settingsMu       sync.Mutex // a PUT reads, merges and writes: one at a time, so two switches do not lose each other
 	typesOnce        sync.Once
 	types            []byte
@@ -129,7 +134,7 @@ func fail(w http.ResponseWriter, status int, code, message string) {
 // statusOf is the HTTP status of a broker refusal. A script that ran and failed is not a refusal: it is a 200 with its status in the body.
 func statusOf(code string) int {
 	switch code {
-	case codemode.CodeModeOff, codemode.CodeDenied:
+	case codemode.CodeModeOff, codemode.CodeDenied, codemode.CodeCLIClosed:
 		return http.StatusForbidden
 	case codemode.CodeNoCase:
 		return http.StatusConflict
@@ -237,12 +242,21 @@ type settingsDTO struct {
 	KeepResults   bool `json:"keepResults"`
 	// AllowIdentifiers is the operator's permission, read-only here: it is set when the app starts.
 	AllowIdentifiers bool `json:"allowIdentifiers"`
+	// CLIOpenUntil is when the window that lets the command line run scripts ends (RFC 3339, UTC); empty while it is closed. The window
+	// is not a setting: it is kept in memory, so it is closed whenever the app starts.
+	CLIOpenUntil string `json:"cliOpenUntil"`
 	// Damaged is true when code-mode.json cannot be read or trusted: code mode is then off until the settings are saved again.
 	Damaged bool `json:"damaged"`
 }
 
 func (a *api) settingsReply(set codemode.Settings, damaged bool) settingsDTO {
-	return settingsDTO{Enabled: set.Enabled, AllowDegraded: set.AllowDegraded, KeepResults: set.KeepResults, AllowIdentifiers: a.allowIdentifiers, Damaged: damaged}
+	d := settingsDTO{Enabled: set.Enabled, AllowDegraded: set.AllowDegraded, KeepResults: set.KeepResults, AllowIdentifiers: a.allowIdentifiers, Damaged: damaged}
+	if a.cliGate != nil {
+		if until, open := a.cliGate.OpenUntil(); open {
+			d.CLIOpenUntil = until.UTC().Format(time.RFC3339)
+		}
+	}
+	return d
 }
 
 func (a *api) getSettings(w http.ResponseWriter) {
@@ -255,11 +269,17 @@ type settingsPatch struct {
 	Enabled       *bool `json:"enabled"`
 	AllowDegraded *bool `json:"allowDegraded"`
 	KeepResults   *bool `json:"keepResults"`
+	// CLIMinutes opens the window that lets the command line run scripts: 1 to 60 minutes from now, or 0 to close it. Not saved to disk.
+	CLIMinutes *int `json:"cliMinutes"`
 }
 
 func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 	var in settingsPatch
 	if !decode(w, r, maxSettingsBody, &in) {
+		return
+	}
+	if in.CLIMinutes != nil && (a.cliGate == nil || *in.CLIMinutes < 0 || *in.CLIMinutes > int(codemode.MaxCLIWindow/time.Minute)) {
+		fail(w, http.StatusBadRequest, codeBadRequest, "The command line can be allowed for 1 to 60 minutes, or 0 to close it.")
 		return
 	}
 	a.settingsMu.Lock()
@@ -283,6 +303,16 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 	if err := a.files.Save(set); err != nil {
 		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be saved. Nothing was changed.")
 		return
+	}
+	// The window follows the save, so a failed save leaves it as it was. Switching code mode off closes it too: the next time it is
+	// switched on, the command line starts shut again.
+	if a.cliGate != nil {
+		switch {
+		case !set.Enabled:
+			a.cliGate.Close()
+		case in.CLIMinutes != nil:
+			a.cliGate.Open(time.Duration(*in.CLIMinutes) * time.Minute)
+		}
 	}
 	log.Printf("Code mode settings were saved.")
 	reply(w, http.StatusOK, a.settingsReply(set, false))
