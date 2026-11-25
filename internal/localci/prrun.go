@@ -19,6 +19,9 @@ type PROptions struct {
 	Host   Host
 	Repo   string // "owner/name"
 	Number int
+	// ExpectHead, when set, is the head commit the run was asked for. A pull request whose head has moved on is
+	// not run: RunPR returns ErrHeadMoved, because a request for the newer head is (or soon will be) queued.
+	ExpectHead string
 	// OriginURL is where the mirror fetches from; empty means Host.CloneURL(Repo).
 	OriginURL string
 	// Workflows maps a base branch to the workflow file (a name inside .github/workflows) that gates it.
@@ -100,6 +103,12 @@ func (o *PROptions) trustedBases() []string {
 	return bases
 }
 
+// ErrHeadMoved is returned by RunPR when ExpectHead is no longer the head of the pull request.
+var ErrHeadMoved = errors.New("the pull request head moved on")
+
+// ErrPRNotOpen is returned by RunPR for a pull request that is closed or merged.
+var ErrPRNotOpen = errors.New("the pull request is not open")
+
 // failedRun is the record of a run that stopped before any job ran. The pseudo job names the stage; its key
 // starts with "_", which a real job id cannot, and Pseudo is set.
 func failedRun(workflow, stage, reason, logFile string, start, end time.Time) *RunResult {
@@ -136,7 +145,10 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 		return nil, err
 	}
 	if pr.State != "" && !strings.EqualFold(pr.State, "OPEN") {
-		return nil, fmt.Errorf("run-pr: pull request %d is %s, only open ones run", o.Number, strings.ToLower(pr.State))
+		return nil, fmt.Errorf("run-pr: pull request %d is %s, only open ones run: %w", o.Number, strings.ToLower(pr.State), ErrPRNotOpen)
+	}
+	if o.ExpectHead != "" && !strings.EqualFold(pr.HeadSHA, o.ExpectHead) {
+		return nil, fmt.Errorf("run-pr: pull request %d moved from %s to %s: %w", o.Number, shortSHA(o.ExpectHead), shortSHA(pr.HeadSHA), ErrHeadMoved)
 	}
 	file, err := o.workflowFor(pr.BaseRef)
 	if err != nil {

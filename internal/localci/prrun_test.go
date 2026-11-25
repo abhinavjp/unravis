@@ -12,6 +12,7 @@ import (
 
 // fakeHost is a Host that answers from memory: no gh, no network.
 type fakeHost struct {
+	watchStub
 	pr         PullRequest
 	prErr      error
 	collabs    []string

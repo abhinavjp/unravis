@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ type fakeHost struct {
 	url     string
 	commits []localci.PRCommit // nil: one commit by the author of the pull request
 	collabs []string
+	list    []localci.PullRequest // what OpenPullRequests lists
 }
 
 func (f *fakeHost) PullRequest(context.Context, string, int) (localci.PullRequest, error) {
@@ -31,6 +33,18 @@ func (f *fakeHost) Commits(context.Context, string, int) ([]localci.PRCommit, er
 	return []localci.PRCommit{{SHA: f.pr.HeadSHA, AuthorLogin: f.pr.Author, CommitterLogin: f.pr.Author}}, nil
 }
 func (f *fakeHost) CloneURL(string) string { return f.url }
+func (f *fakeHost) OpenPullRequests(context.Context, string, string) (localci.PullList, error) {
+	return localci.PullList{PRs: f.list, ETag: "e1"}, nil
+}
+func (f *fakeHost) BranchTip(context.Context, string, string, string) (localci.BranchInfo, error) {
+	return localci.BranchInfo{}, errors.New("not used")
+}
+func (f *fakeHost) FileAt(context.Context, string, string, string) ([]byte, error) {
+	return nil, errors.New("not used")
+}
+func (f *fakeHost) ListDir(context.Context, string, string, string) ([]string, error) {
+	return nil, errors.New("not used")
+}
 
 func gitC(t *testing.T, dir string, args ...string) string {
 	t.Helper()
