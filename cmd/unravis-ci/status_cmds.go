@@ -115,6 +115,7 @@ func cmdCompare(ctx context.Context, args []string, stdout, stderr io.Writer, en
 	state := fs.String("state", "", "the CI store folder (default: under LOCALAPPDATA)")
 	limit := fs.Int("limit", 30, "how many recent local runs and pull requests to look at")
 	asJSON := fs.Bool("json", false, "print the report as JSON")
+	save := fs.Bool("save", false, "also save the report in the store folder (compare/latest.json), where the Releases app's Overview shows it")
 	var wfFor, pushWf, ctxFlag multiFlag
 	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
 	fs.Var(&pushWf, "push-workflow", "branch=file.yml: a workflow run when branch is pushed (repeatable; replaces the defaults)")
@@ -143,6 +144,12 @@ func cmdCompare(ctx context.Context, args []string, stdout, stderr io.Writer, en
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "compare:", err)
 		return exitUsage
+	}
+	if *save {
+		if err := localci.SaveCompare(dir, rep); err != nil {
+			_, _ = fmt.Fprintln(stderr, "compare: the report could not be saved:", err)
+			return exitUsage
+		}
 	}
 	if *asJSON {
 		if err := rep.WriteJSON(stdout); err != nil {
