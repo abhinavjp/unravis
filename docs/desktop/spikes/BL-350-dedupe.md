@@ -13,6 +13,10 @@ Decided by the factory under the standing rule "small choices are decided and re
 - Only a leader that ended `ok` shares its answer. A leader that was cancelled, timed out, was refused, lost its ledger, or lost its grant gives nothing: each waiting follower tries again (one becomes the new leader; the rest follow it), at most 3 times, then goes the normal way and meets the limiter.
 - A follower that is cancelled or runs out of time while waiting ends with the matching error answer and does not stop the leader.
 
+## Review (Opus, 2026-11-25)
+- A follower that takes over as leader reads the identifiers grant at the time it runs, not at its admit row, and keeps only the time it has left of the host's deadline (real clock). Test: `TestATakeoverReadsTheIdentifiersGrantAtTheTimeItRuns`.
+- The closing row of a follower refused by the limiter carries its duration.
+
 ## What changes for a host
 - An identical comparison while the first runs no longer gets a refusal. It waits and gets the same answer.
 - A different comparison while one runs is refused as before.

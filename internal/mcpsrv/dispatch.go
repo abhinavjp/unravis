@@ -255,6 +255,7 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 
 	// BL-350: an identical comparison of this host that is already running is shared, not run again (docs/desktop/spikes/BL-350-dedupe.md).
 	var lead *flight
+	waitedFrom := time.Now() // the real clock: the host's deadline is wall time, whatever clock the ledger uses
 	var admitted bool
 	var start time.Time
 	if class == ClassLiveCompare {
@@ -278,6 +279,7 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 		ev.Kind, ev.Outcome, ev.Code = mcpaudit.KindDenied, mcpaudit.OutcomeDenied, mcp.WireBudgetExceeded
 		if admitted { // a call that waited on another run already has its admit row: it ends with a closing row
 			ev.Kind, ev.Time = mcpaudit.KindEnd, s.d.Now()
+			ev.DurMs = ev.Time.Sub(start).Milliseconds()
 		}
 		_ = s.d.Recorder.Record(context.WithoutCancel(runCtx), ev)
 		return refuse(http.StatusTooManyRequests, mcp.WireBudgetExceeded, "This host reached its limit for "+over.what+".", "Wait and retry later, or ask the person to review the limits in Unravis > AI access. Do not loop.")
@@ -297,10 +299,17 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 		}
 	}
 
-	tctx, cancelTimeout := context.WithTimeout(runCtx, callTimeout(&req))
+	// A call that waited on another run and now runs itself (the leader gave nothing to share) keeps the time it already used: the host's
+	// deadline is for the whole call. The identifiers switch is read at the moment the work starts, not at the admit row.
+	runAt := s.d.Now()
+	timeout := callTimeout(&req) - time.Since(waitedFrom)
+	if timeout < time.Millisecond {
+		timeout = time.Millisecond
+	}
+	tctx, cancelTimeout := context.WithTimeout(runCtx, timeout)
 	defer cancelTimeout()
-	ranWithIdentifiers := IdentifiersAllowed(p, start) // what the backend is told: the identifiers switch of the bridge is this value
-	result, isError := s.d.Backend.Call(tctx, p, req.Tool, req.Args, start)
+	ranWithIdentifiers := IdentifiersAllowed(p, runAt) // what the backend is told: the identifiers switch of the bridge is this value
+	result, isError := s.d.Backend.Call(tctx, p, req.Tool, req.Args, runAt)
 	elapsed := s.d.Now().Sub(start)
 
 	end := ev

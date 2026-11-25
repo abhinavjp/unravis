@@ -217,3 +217,30 @@ func TestAFollowerWithAShortDeadlineTimesOutAndTheLeaderGoesOn(t *testing.T) {
 		t.Errorf("leader: %.200s", a.Raw)
 	}
 }
+
+// Review of BL-350 (1): a follower that takes over runs the work now, not at its admit time. The grant of identifiers ended while it
+// waited, so its own run is made without identifiers and the answer is served; before the fix it ran as if the grant still held and the
+// end gate then refused it after the heavy work was done.
+func TestATakeoverReadsTheIdentifiersGrantAtTheTimeItRuns(t *testing.T) {
+	r := newRig(t)
+	ap := r.approval(TierAggregate)
+	ap.Identifiers = true
+	h := r.enroll("dd9", ap)
+	release, lead := r.holdCompare(h, "d9000001-aaaa")
+	follow := r.startCompare(h, "d9000002-aaaa", r.compareArgs())
+	eventually(t, "the follower to wait", func() bool { return r.rows("dd9", mcpaudit.KindAdmit) == 2 })
+	r.clk.Add(2 * time.Hour) // the identifiers grant ends; the profile stays active (idle expiry is 8 h)
+	if st, b := r.post("/mcp/v1/cancel", h.header, map[string]string{"callId": "d9000001-aaaa"}); st != 200 || !strings.Contains(string(b), "cancelling") {
+		t.Fatalf("cancel: %d %s", st, b)
+	}
+	waitReply(t, lead)
+	select {
+	case <-r.dash.seen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the follower did not take over")
+	}
+	close(release)
+	if f := waitReply(t, follow); !f.OK || f.IsError {
+		t.Errorf("the taken-over call: %d %.300s", f.Status, f.Raw)
+	}
+}
