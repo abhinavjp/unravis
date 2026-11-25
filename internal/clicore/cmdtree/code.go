@@ -130,7 +130,7 @@ func (st *state) scriptSource(c *cobra.Command, args []string, code string) (str
 		if fi, err := os.Stat(args[0]); err != nil || !fi.Mode().IsRegular() {
 			return "", usage("The script file cannot be read.")
 		}
-		f, err := os.Open(args[0]) //nolint:gosec // the file the person named
+		f, err := os.Open(args[0])
 		if err != nil {
 			return "", usage("The script file cannot be read.")
 		}

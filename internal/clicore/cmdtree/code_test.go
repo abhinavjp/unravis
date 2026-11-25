@@ -110,8 +110,8 @@ func TestCodeRunTakesAFileCodeOrTheInput(t *testing.T) {
 	}
 	// a script in UTF-16 with a byte order mark (what PowerShell 5.1 writes with ">") is read
 	u16 := []byte{0xFF, 0xFE}
-	for _, c := range "return 3" {
-		u16 = append(u16, byte(c), 0)
+	for _, b := range []byte("return 3") {
+		u16 = append(u16, b, 0)
 	}
 	f16 := filepath.Join(t.TempDir(), "u16.ts")
 	if err := os.WriteFile(f16, u16, 0o600); err != nil {

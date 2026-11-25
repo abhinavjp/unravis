@@ -32,10 +32,7 @@ func TestCLICodeCommandsReachTheBrokerMainBuilds(t *testing.T) {
 	if broker == nil {
 		t.Fatal("no broker")
 	}
-	f, err := parseFlags([]string{"--pipe-only"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	f := runFlags{} // the pipe flags only parse on Windows; the handler needs none of them
 	do := func(h http.Handler, op, args string) map[string]any {
 		body := `{"op":"` + op + `","args":` + args + `,"requestId":"req_0123456789abcdef"}`
 		w := httptest.NewRecorder()

@@ -28,7 +28,7 @@ func TestFileOthersCanWriteIsOffNeverOn(t *testing.T) {
 	if err := os.WriteFile(s.Path(), []byte(`{"enabled":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(s.Path(), 0o666); err != nil {
+	if err := os.Chmod(s.Path(), 0o666); err != nil { //nolint:gosec // the test needs a file others can write
 		t.Fatal(err)
 	}
 	if _, err := s.Load(); err != ErrCorrupt {
