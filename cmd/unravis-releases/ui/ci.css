@@ -108,3 +108,23 @@
 @media (forced-colors:active){.mt[aria-current=page]{border-bottom-color:Highlight}}
 #refresh{grid-column:4;justify-self:end}
 .filters input::placeholder{color:var(--mut);opacity:1}
+
+/* The Machines tab: a table on a desktop, one stacked card for each PC on a phone. */
+.ci .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.ci .help.lead{max-width:72ch;margin:0 0 12px}
+.mtable{width:100%;border-collapse:collapse}
+.mtable th{text-align:left;color:var(--mut);font-weight:600;font-size:12px;padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.mtable td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+.mtable .mrow.off td{color:var(--mut)}
+.mtable .mwho{white-space:nowrap}
+.mtable .mid{font-family:"Cascadia Mono",Consolas,monospace;font-weight:600;margin-right:8px}
+.mtable .chip{margin:0 4px 4px 0;display:inline-block}
+.mtable .dim{color:var(--mut)}
+@media (max-width:720px){
+  .mtable,.mtable tbody,.mtable tr,.mtable td{display:block}
+  .mtable thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  .mtable .mrow{padding:8px 0;border-bottom:1px solid var(--line)}
+  .mtable td{border:0;padding:3px 0;display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px}
+  .mtable td::before{content:attr(data-label);color:var(--mut);font-size:12px}
+  .mtable .mwho{white-space:normal}
+}

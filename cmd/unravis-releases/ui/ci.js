@@ -17,10 +17,17 @@ const CI_STATUS = {
   finished: ['✓', 'mut', 'This step ended. The verdict is known when the whole run ends.'],
 };
 const CI_STATUS_FILTER = [['', 'Any status'], ['passed', 'Passed'], ['failed', 'Failed'], ['running', 'Running'], ['waiting', 'Waiting'], ['stopped', 'Stopped'], ['not-recorded', 'Not recorded here']];
-const CI_TABS = [['overview', 'Overview', 'The latest result on each branch, what is running, and how the checks on this PC compare with GitHub.'], ['runs', 'Runs', 'Every check run, newest first. Open one to see its jobs, steps and logs.'], ['releases', 'Releases', 'Every release, its channel and the release steps.']];
+const CI_TABS = [['overview', 'Overview', 'The latest result on each branch, what is running, and how the checks on this PC compare with GitHub.'], ['runs', 'Runs', 'Every check run, newest first. Open one to see its jobs, steps and logs.'], ['machines', 'Machines', 'The PCs that check this repository, what each is doing and when it was last heard from.'], ['releases', 'Releases', 'Every release, its channel and the release steps.']];
+// The words of a PC, the same ones the runs use: Running, Idle, Quiet, Stopped.
+const CI_MACHINE = {
+  Running: ['▶', 'run', 'Checking something right now.'],
+  Idle: ['·', 'mut', 'Awake and ready. Nothing to check at the moment.'],
+  Quiet: ['?', 'warn', 'Has not been heard from for a few minutes. It may be asleep, offline or switched off.'],
+  Stopped: ['■', 'warn', 'Said it was stopping. It takes no work and holds no claims.'],
+};
 const CI_FAST = 4000, CI_SLOW = 30000;
 
-const ci = { projects: [], pid: '', ready: false, tab: '', epoch: 0, busyEp: -1, timer: 0, sig: '', view: null, fast: false, failed: false, ok: false, open: new Set(), opened: '', rs: null };
+const ci = { projects: [], pid: '', ready: false, tab: '', epoch: 0, busyEp: -1, timer: 0, sig: '', view: null, fast: false, failed: false, ok: false, open: new Set(), opened: '', rs: null, machines: {}, mprobe: 0 };
 const first = () => (ci.projects[0] || {}).id || '';
 const proj = () => ci.projects.find((p) => p.id === ci.pid) || ci.projects[0] || null;
 
@@ -126,16 +133,56 @@ function showSection(tab) {
   $('chan-rc').hidden = !rel; $('chan-stable').hidden = !rel || CHANNELS.length < 2;
   const p = proj();
   for (const [id] of CI_TABS) {
-    const a = $('mt-' + id); a.hidden = id === 'releases' && p && !p.releases;
+    const a = $('mt-' + id); a.hidden = (id === 'releases' && p && !p.releases) || (id === 'machines' && id !== tab && !machinesShown(p));
     a.href = hashFor(id); if (id === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   }
+}
+
+// A link names a project this program does not have (a typo, or an old bookmark). Say so, and offer the real ones, instead of
+// quietly showing a different project.
+function unknownProject(asked, tab) {
+  ci.epoch++; clearTimeout(ci.timer); ci.view = null; ci.sig = ''; ci.fast = false; ci.failed = false;
+  ci.pid = first(); applyProject(proj());
+  showSection('overview');
+  for (const [id] of CI_TABS) { const a = $('mt-' + id); a.removeAttribute('aria-current'); }
+  const m = main();
+  const box = emptyBox('There is no project called "' + asked + '".');
+  box.setAttribute('role', 'alert');
+  box.append(para('nl-next', 'The link points to a project this program does not know. It may have been renamed or removed, or the link has a typing mistake. Pick one of the projects below.'));
+  const ul = el('ul', 'lines');
+  for (const p of ci.projects) { const li = el('li'); const a = el('a', '', p.name || p.id); a.href = hashFor(CI_TABS.some((t) => t[0] === tab) && !(tab === 'releases' && !p.releases) && tab !== 'machines' ? tab : 'overview', '', {}, p.id); li.append(a); ul.append(li); }
+  box.append(ul);
+  m.append(box);
+  setFoot(true);
+  $('refresh').classList.remove('primary');
+}
+
+// The Machines tab is shown when the project record asks for it or when this program has seen more than one PC. The answer
+// comes from /api/machines; it is asked again now and then because a second PC can appear while the page is open.
+function machinesShown(p) { return !!(p && (p.machines || ci.machines[p.id])); }
+async function probeMachines(force) {
+  const p = proj(); if (!p) return;
+  const now = Date.now();
+  if (!force && now - ci.mprobe < CI_SLOW) return;
+  ci.mprobe = now;
+  try {
+    const m = await getJSON(apiUrl('/api/machines'));
+    setMachinesShown(p.id, !!m.show);
+  } catch (e) { /* the tab keeps its last state */ }
+}
+function setMachinesShown(pid, on) {
+  if (!!ci.machines[pid] === on) return;
+  ci.machines[pid] = on;
+  const p = proj();
+  if (p && p.id === pid) { const a = $('mt-machines'); a.hidden = !machinesShown(p) && ci.tab !== 'machines'; }
 }
 
 function route(initial) {
   if (!ci.ready) return;
   const r = parseHash();
-  let pid = r.q.get('project') || first();
-  if (!ci.projects.some((p) => p.id === pid)) pid = first();
+  const asked = r.q.get('project') || '';
+  if (asked && !ci.projects.some((p) => p.id === asked)) { unknownProject(asked, r.tab); return; }
+  const pid = asked || first();
   const changed = pid !== ci.pid; ci.pid = pid;
   const p = proj();
   let tab = r.tab;
@@ -151,7 +198,9 @@ function route(initial) {
     else if (snap) render();
     return;
   }
+  probeMachines(true);
   if (tab === 'overview') showOverview();
+  else if (tab === 'machines') showMachines();
   else if (r.id) showRun(r.id);
   else showRuns(r.q);
   if (!initial) focusHead();
@@ -178,6 +227,7 @@ async function tick(force) {
     if (force || s !== ci.sig) { ci.sig = s; view.draw(data); }
     ci.fast = !!view.fast(data);
     setFoot(true);
+    probeMachines(false);
   } catch (e) {
     if (ep !== ci.epoch) return;
     ci.failed = true;
@@ -324,6 +374,70 @@ function postedList(list) {
     li.append(statusTag(x.status, x.word), main2, chips); ul.append(li);
   }
   return ul;
+}
+
+// ---------- Machines ----------
+function machineTag(word) {
+  const s = CI_MACHINE[word] || ['?', 'mut', ''];
+  const t = el('span', 'tag cis ' + s[1]);
+  const g = el('span', 'g', s[0]); g.setAttribute('aria-hidden', 'true');
+  t.append(g, el('span', 'w', word)); t.title = s[2];
+  return t;
+}
+function showMachines() {
+  const p = proj();
+  ci.view = {
+    fetch: () => getJSON(apiUrl('/api/machines')),
+    fast: (m) => m.machines.some((x) => x.state === 'Running'),
+    fail: (e) => { if (!ci.sig) failBox(e); },
+    draw: (m) => drawMachines(m, p),
+  };
+  main().append(el('p', 'note', 'Reading...'));
+  tick(true);
+}
+function machineCell(label, cls) { const td = el('td', cls || ''); td.dataset.label = label; return td; }
+function machineRow(x) {
+  const tr = el('tr', 'mrow' + (x.state === 'Quiet' || x.state === 'Stopped' ? ' off' : ''));
+  const who = machineCell('Machine', 'mwho');
+  who.append(el('span', 'mid', x.id));
+  if (x.self) { const t = el('span', 'chip', 'this PC'); t.title = 'This is the PC you are looking at. Its record is the one the agent here publishes.'; who.append(t); }
+  const labels = machineCell('Labels');
+  if (x.labels.length) { for (const l of x.labels) { const c = el('span', 'chip', l); c.title = 'A label the owner of this PC gave it, such as the kind of work it takes.'; labels.append(c); } }
+  else labels.append(el('span', 'dim', 'none'));
+  const st = machineCell('State'); st.append(machineTag(x.state));
+  if (x.note) st.append(el('div', 'rsub', x.note));
+  const cur = machineCell('Current run');
+  if (x.jobs.length) for (const j of x.jobs) cur.append(el('div', '', j.label + (j.since ? ' (since ' + clock(j.since) + ')' : '')));
+  else cur.append(el('span', 'dim', 'Nothing right now'));
+  if (x.slots) cur.append(el('div', 'rsub', x.slots + (x.slots === 1 ? ' check at a time' : ' checks at a time')));
+  const heard = machineCell('Last heard');
+  const h = el('span', '', x.lastHeard ? ago(x.lastHeard) : 'never'); if (x.lastHeard) h.title = when(x.lastHeard);
+  heard.append(h);
+  tr.append(who, labels, st, cur, heard);
+  return tr;
+}
+function drawMachines(m, p) {
+  $('refresh').classList.remove('primary');
+  setMachinesShown(ci.pid, !!m.show);
+  if (!m.ciFound) { noStoreBox(p); return; }
+  const out = main();
+  out.append(el('h2', 'ctitle', (p && p.name ? p.name + ': ' : '') + 'Machines'));
+  out.append(para('help lead', 'A machine is a PC that runs the agent for this repository. Before a PC checks something it puts a claim on it, so two PCs never do the same check. If a PC goes quiet, another PC takes its check over. Other PCs are shown by a short code only; their names are never shared.'));
+  if (!m.seen) {
+    out.append(emptyBox('No list of PCs has been saved yet.', para('nl-next', 'The agent on this PC writes the list about once a minute while it runs. Start it with ', code('unravis-ci serve'), ', wait a minute, then press Refresh. If it is already running, check that it was not started with ', code('--no-claims'), '; that turns the list off.')));
+    return;
+  }
+  if (m.stale) out.append(para('note warn', 'This list was last saved ' + m.stale + ' ago, so it may be out of date. The agent on this PC may have stopped. Start it with ', code('unravis-ci serve'), '.'));
+  if (m.machines.length === 1) out.append(para('note', 'Only this PC has been seen so far. Other PCs appear here once they run ', code('unravis-ci serve'), ' for the same repository.'));
+  if (!m.machines.length) { out.append(para('none', 'No PC is on the list.')); return; }
+  const c = card('PCs that check this repository', 'Read only. This page cannot start, stop or change a PC.');
+  const tbl = el('table', 'mtable');
+  const cap = el('caption', 'sr', 'PCs that check this repository'); tbl.append(cap);
+  const head = el('tr'); for (const h of ['Machine', 'Labels', 'State', 'Current run', 'Last heard']) { const th = el('th', '', h); th.scope = 'col'; head.append(th); }
+  const th = el('thead'); th.append(head); tbl.append(th);
+  const tb = el('tbody'); for (const x of m.machines) tb.append(machineRow(x)); tbl.append(tb);
+  c.append(tbl);
+  out.append(c);
 }
 
 // ---------- Runs list ----------
