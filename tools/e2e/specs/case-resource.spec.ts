@@ -135,7 +135,9 @@ test('RESCASE-05: visible width uses URS1, JSON fallback draws the same chart, a
   await waitForRead(1);
   await expect.poll(async () => {
     const box = await panel.locator('.lines').boundingBox();
-    return requests.at(-1)?.searchParams.get('width') === String(Math.floor(box!.width));
+    // The chart asks in steps of 64 px (rounded up), so a small width change does not read again.
+    const asked = Number(requests.at(-1)?.searchParams.get('width'));
+    return asked > 0 && asked % 64 === 0 && asked >= Math.floor(box!.width) && asked < Math.floor(box!.width) + 64;
   }).toBe(true);
   const binary = await waitForRead(requests.length);
   const url = new URL(binary.url());
