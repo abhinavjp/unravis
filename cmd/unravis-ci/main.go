@@ -48,6 +48,12 @@ func realMain(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return cmdLint(args[1:], stdout, stderr)
 	case "run":
 		return cmdRun(ctx, args[1:], stdout, stderr, environ)
+	case "run-pr":
+		return cmdRunPR(ctx, args[1:], stdout, stderr, environ)
+	case "runs":
+		return cmdRuns(args[1:], stdout, stderr, environ)
+	case "log":
+		return cmdLog(args[1:], stdout, stderr, environ)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return exitOK
@@ -63,6 +69,9 @@ func usage(w io.Writer) {
   unravis-ci run <workflow.yml> --event push|pull_request|workflow_dispatch|schedule [--local DIR] [--state DIR]
         [--ref REF] [--sha SHA] [--base-ref B] [--head-ref H] [--input k=v]... [--var k=v]... [--job id]...
         [--slots N] [--config FILE] [--dry-run]
+  unravis-ci run-pr <number> --repo owner/name [--state DIR] [--workflow-for base=file.yml]... [--protect PATH]... [--keep] [--slots N]
+  unravis-ci runs [--state DIR] [--limit N]
+  unravis-ci log <runid> [job|checkout] [--state DIR]
   unravis-ci version
 exit codes: 0 pass, 1 workflow failed, 2 usage or I/O error, 3 unsupported
 `)
