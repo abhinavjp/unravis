@@ -37,11 +37,28 @@ func TestUnlistedOpDenied(t *testing.T) {
 	}
 }
 
-func TestCodeIsDeniedEverywhere(t *testing.T) {
-	for _, op := range []string{"code.run", "code.types", "code.replay"} {
-		for _, s := range Surfaces() {
+// code.replay is not built (BL-370): it stays closed everywhere.
+func TestCodeReplayIsDeniedEverywhere(t *testing.T) {
+	for _, s := range Surfaces() {
+		if Check("code.replay", s) != Deny {
+			t.Errorf("code.replay on %s: %s", s, Check("code.replay", s))
+		}
+	}
+}
+
+// code.run and code.types (BL-371) are for the person at the command line and nobody else: not the app window (it has its own routes),
+// not an automation profile, not an MCP host, not a script in the sandbox. No grant opens them either.
+func TestCodeRunAndTypesAreHumanCLIOnly(t *testing.T) {
+	for _, op := range []string{"code.run", "code.types"} {
+		if ok, grant := Gate(op, CLIHuman); !ok || grant {
+			t.Errorf("%s for a person: %v %v", op, ok, grant)
+		}
+		for _, s := range []Surface{GUI, CLIAuto, MCP, Sandbox} {
 			if Check(op, s) != Deny {
 				t.Errorf("%s on %s: %s", op, s, Check(op, s))
+			}
+			if ok, _ := Gate(op, s); ok {
+				t.Errorf("%s: Gate lets %s through", op, s)
 			}
 		}
 	}
@@ -197,8 +214,8 @@ func TestMatrixIsTheSpecTable(t *testing.T) {
 		"grant.approve":           {a, a, d, d, d},
 		"grant.revoke":            {a, a, d, d, d},
 		"blackbox.inspect":        {n, a, n, n, n},
-		"code.run":                {d, d, d, d, d},
-		"code.types":              {d, d, d, d, d},
+		"code.run":                {d, a, d, d, d},
+		"code.types":              {d, a, d, d, d},
 		"code.replay":             {d, d, d, d, d},
 	}
 	if len(Rows()) != len(golden) {

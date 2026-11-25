@@ -677,7 +677,7 @@ func commandOperations() map[string]string {
 
 func TestParityMatrixCoversTheCommandTree(t *testing.T) {
 	commands := commandOperations()
-	unbuilt := map[string]bool{"grant.list": true, "grant.approve": true, "grant.revoke": true, "code.run": true, "code.types": true, "code.replay": true}
+	unbuilt := map[string]bool{"grant.list": true, "grant.approve": true, "grant.revoke": true, "code.replay": true}
 	for op := range commands {
 		row, ok := clicap.Lookup(op)
 		if !ok || !row.Complete() {

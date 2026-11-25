@@ -13,6 +13,8 @@ operation audit.timelines.compare | Cached, no query.
 operation blackbox.inspect | Read a Blackbox recording folder or hourly file from disk, with no running app, and say what it holds.
 operation cases.list | List the cases of the running app, as its window lists them: id, title, dates, size and flags, plus erase n...
 operation cases.show | Show one case: the fields of the list plus the counts of environments and sources and the history (kind and...
+operation code.run | Run one script in the app's code mode, in its sandbox, over the same read tools as the app's window, and re...
+operation code.types | Print what a code-mode script can use: the TypeScript typings of its tools, the hash of the tool list they ...
 operation doctor | Check this command line and its link to the running app: its version and place, the app program, and whethe...
 operation schema | List the operations, or describe one: its input, output and errors.
 operation sources.list | Cached, no query.
@@ -23,6 +25,8 @@ native app.stop | 7d0d4f6bf6901fb5352bd55e152614c559ce90edc6423d7e23f7971db8e9cf
 native blackbox.inspect | f2b5f24b11a619faeff1501ddbf4fe61d7a811f13fd98901c1ce1dff6bb981d2
 native cases.list | db1dce8c4cf001414c49390bf3ec816f668a8436bfbc3f01fe28c80b249a7996
 native cases.show | 0ebcb65e02768c212dff900bd0ca16d2d498cd91035e8fa46cb930fcac7bdfa4
+native code.run | 27c27d1831122883505cf9ef47aeed4b088efe9a53076ce4bbd029bf2718ee4a
+native code.types | 80fc3f0b9d8d36feb82285edb7b5da96b0e1ea6e297ff3578e087f33bef2ddb8
 native doctor | 8656b12a8c6223df0aeee3634e7537113baa89cfabf12104d1eda673e7b04fa8
 native schema | 293b9d1c1e880399a7b7d6be6038a271a26c5a8fe865312135405588c879aeb1
 native version | 38f856f71972336f9a80e624ded97689b21891623d5ecb86f6540ae44964399f
@@ -41,6 +45,8 @@ schema audit.timelines.compare | 000ceae4540b529184eda3299b85903a4abeaab59000159
 schema blackbox.inspect | f2b5f24b11a619faeff1501ddbf4fe61d7a811f13fd98901c1ce1dff6bb981d2
 schema cases.list | db1dce8c4cf001414c49390bf3ec816f668a8436bfbc3f01fe28c80b249a7996
 schema cases.show | 0ebcb65e02768c212dff900bd0ca16d2d498cd91035e8fa46cb930fcac7bdfa4
+schema code.run | 27c27d1831122883505cf9ef47aeed4b088efe9a53076ce4bbd029bf2718ee4a
+schema code.types | 80fc3f0b9d8d36feb82285edb7b5da96b0e1ea6e297ff3578e087f33bef2ddb8
 schema doctor | 8656b12a8c6223df0aeee3634e7537113baa89cfabf12104d1eda673e7b04fa8
 schema schema | 293b9d1c1e880399a7b7d6be6038a271a26c5a8fe865312135405588c879aeb1
 schema sources.list | e5bbabbdb5308b8c92efae70ec5b2a77d8c8c3acebde9fc293d038ce96a787b1
@@ -77,8 +83,8 @@ matrix grant.list | gui=allow human=allow auto=deny mcp=deny sandbox=deny tool=
 matrix grant.approve | gui=allow human=allow auto=deny mcp=deny sandbox=deny tool=
 matrix grant.revoke | gui=allow human=allow auto=deny mcp=deny sandbox=deny tool=
 matrix blackbox.inspect | gui=n/a human=allow auto=n/a mcp=n/a sandbox=n/a tool=
-matrix code.run | gui=deny human=deny auto=deny mcp=deny sandbox=deny tool=
-matrix code.types | gui=deny human=deny auto=deny mcp=deny sandbox=deny tool=
+matrix code.run | gui=deny human=allow auto=deny mcp=deny sandbox=deny tool=
+matrix code.types | gui=deny human=allow auto=deny mcp=deny sandbox=deny tool=
 matrix code.replay | gui=deny human=deny auto=deny mcp=deny sandbox=deny tool=
 command app.start | unravis app start
 command app.status | unravis app status
@@ -95,6 +101,8 @@ command audit.timelines.compare | unravis audit timelines compare
 command blackbox.inspect | unravis blackbox inspect
 command cases.list | unravis cases list
 command cases.show | unravis cases show
+command code.run | unravis code run
+command code.types | unravis code types
 command doctor | unravis doctor
 command schema | unravis schema
 command sources.list | unravis sources list

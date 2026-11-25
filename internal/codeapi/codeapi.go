@@ -198,17 +198,24 @@ type typesDTO struct {
 	Limits       limitsDTO `json:"limits"`
 }
 
+// buildTypes is the document of GET /api/code/types and of the command line's code.types: the typings, their hash and the limits.
+func buildTypes() (typesDTO, error) {
+	res, err := bindings.Types()
+	if err != nil {
+		return typesDTO{}, err
+	}
+	return typesDTO{Namespace: bindings.Namespace, DTS: res.DTS, SchemaSHA256: res.SchemaSHA256, Limits: limitsDTO{
+		MaxInFlight: codemode.MaxInFlight, MaxCalls: codemode.MaxCalls, MaxResultBytes: codemode.MaxResultBytes, MaxLogBytes: codemode.MaxLogBytes,
+		RunCapSeconds: int(codemode.RunCap.Seconds()), MaxSourceBytes: codemode.MaxSource, MaxConcurrentRuns: codemode.MaxConcurrentRuns,
+		DefaultTimeoutMS: codemode.DefaultTimeout.Milliseconds(), MinTimeoutMS: codemode.MinTimeout.Milliseconds(), MaxTimeoutMS: codemode.MaxTimeout.Milliseconds(),
+	}}, nil
+}
+
 func (a *api) getTypes(w http.ResponseWriter) {
 	a.typesOnce.Do(func() {
-		res, err := bindings.Types()
-		if err != nil {
-			return
+		if dto, err := buildTypes(); err == nil {
+			a.types, _ = json.Marshal(dto)
 		}
-		a.types, _ = json.Marshal(typesDTO{Namespace: bindings.Namespace, DTS: res.DTS, SchemaSHA256: res.SchemaSHA256, Limits: limitsDTO{
-			MaxInFlight: codemode.MaxInFlight, MaxCalls: codemode.MaxCalls, MaxResultBytes: codemode.MaxResultBytes, MaxLogBytes: codemode.MaxLogBytes,
-			RunCapSeconds: int(codemode.RunCap.Seconds()), MaxSourceBytes: codemode.MaxSource, MaxConcurrentRuns: codemode.MaxConcurrentRuns,
-			DefaultTimeoutMS: codemode.DefaultTimeout.Milliseconds(), MinTimeoutMS: codemode.MinTimeout.Milliseconds(), MaxTimeoutMS: codemode.MaxTimeout.Milliseconds(),
-		}})
 	})
 	if a.types == nil {
 		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The app hit an internal problem.")

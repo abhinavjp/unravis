@@ -83,11 +83,13 @@ type owner struct {
 	ownerName string          // what hello says of the owner ("" means app)
 	onStop    func()          // what the owner does when app.stop asks it to quit
 	cases     http.Handler    // a dashboard handler for the case reads of an owner with its own backend (see withCases)
+	code      clisrv.Code     // the code-mode broker of the owner (see withCode); nil means the build has none
 }
 
 type ownerOpt func(*owner)
 
 func withCases(h http.Handler) ownerOpt { return func(o *owner) { o.cases = h } }
+func withCode(c clisrv.Code) ownerOpt   { return func(o *owner) { o.code = c } }
 
 func newOwner(t *testing.T, backend clisrv.Backend, opts ...ownerOpt) *owner {
 	t.Helper()
@@ -117,6 +119,7 @@ func newOwner(t *testing.T, backend clisrv.Backend, opts ...ownerOpt) *owner {
 	inner := clisrv.Handler(clisrv.Deps{
 		Backend:  backend,
 		Internal: internal,
+		Code:     o.code,
 		Info: func() clisrv.Info {
 			o.mu.Lock()
 			defer o.mu.Unlock()
