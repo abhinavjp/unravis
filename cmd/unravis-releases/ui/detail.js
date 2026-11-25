@@ -1,6 +1,28 @@
-'use strict';
 // The release page: steps with their logs, tests, CI checks, files and changes. Everything is read from the program's own
 // /api/ routes (read only). Text is always put on the page with textContent, never as HTML.
+// Wrapped so its helper names (dur, clock, bytes, ...) stay out of the page's global scope; the page calls Legacy.renderDetail.
+const Legacy = (() => {
+'use strict';
+const { $, el, link, when, status, WORD, GLYPH, STEP_KIND, OWN, NEXT, STEPS, CHANNELS } = LegacyCore;
+let shown = [], snap = null;
+
+// Links to the CI runs that checked this release's commit, read from the runs the page already holds.
+function releaseRunChips(host, r) {
+  if (!r || r.version === NEXT || typeof D === 'undefined') return;
+  const list = (D.runs || []).filter((x) => x.release === r.version).slice(0, 3);
+  if (!list.length) return;
+  const box = el('p', 'runchips'); box.append(el('span', 'k', "Checks on this release's commit: "));
+  for (const x of list) {
+    const a = el('a'); a.className = 'chip'; a.textContent = (x.word || x.status) + ' · ' + (x.sha ? x.sha.slice(0, 7) : x.id);
+    a.href = '#/run/' + encodeURIComponent(x.id); a.title = 'Open this run in the Runs tab.'; box.append(a, ' ');
+  }
+  host.append(box);
+}
+function ciLogUrl(file, from, n) {
+  const [pid, id, job, step] = file.slice(3).split('|');
+  const q = new URLSearchParams({ project: pid, id, job, step, from: String(from), n: String(n) });
+  return '/api/run/log?' + q.toString();
+}
 
 const TABS = [['steps', 'Steps'], ['tests', 'Tests'], ['checks', 'CI checks'], ['files', 'Files'], ['changes', 'Changes'], ['logs', 'All logs']];
 const STEP_HELP = {
@@ -191,11 +213,12 @@ function stepHdr(s) { return new RegExp('^\\[\\d+/' + STEPS.length + '\\] ').tes
 function mountViewer(holder, v) { holder.replaceChildren(v.root); v.restore(); }
 
 // ---------- page skeleton ----------
-function renderDetail(r) {
+function renderDetail(r, ctx) {
+  shown = (ctx && ctx.releases) || []; snap = (ctx && ctx.snap) || null;
   const d = $('detail');
   // No release at all: the list pane already says why, so this pane stays empty and does not ask for a choice that cannot be made.
   if (!r) { d.replaceChildren(shown.length ? el('div', 'empty', 'Select a release.') : document.createDocumentFragment()); d.dataset.v = ''; ui.ver = ''; return; }
-  if (ui.ver !== r.version) { // a different release: build the frame once
+  if (ui.ver !== r.version || !$('dhead')) { // a different release (or a fresh page): build the frame once
     ui.ver = r.version; ui.data = {}; ui.sig = {}; ui.busy = {}; ui.open = new Set(); ui.seen = false; ui.seenT = false; ui.failed = null;
     d.replaceChildren();
     const head = el('div'); head.id = 'dhead';
@@ -510,3 +533,6 @@ function panelChanges(p, j) {
   }
   p.append(ul);
 }
+
+return { renderDetail };
+})();
