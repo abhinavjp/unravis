@@ -424,7 +424,7 @@ function drawMachines(m, p) {
   if (!m.ciFound) { noStoreBox(p); return; }
   const out = main();
   out.append(el('h2', 'ctitle', (p && p.name ? p.name + ': ' : '') + 'Machines'));
-  out.append(para('help lead', 'A machine is a PC that runs the agent for this repository. Before a PC checks something it puts a claim on it, so two PCs never do the same check. If a PC goes quiet, another PC takes its check over. Other PCs are shown by a short code only; their names are never shared.'));
+  out.append(para('help lead', 'A machine is a PC that runs the agent for this repository. Before a PC checks something it puts a claim on it, so two PCs never do the same check. If a PC goes quiet, another PC takes its check over. Other PCs are shown by a short code only; their names are never shared. The list is refreshed about once a minute, so a change on another PC can take that long to show.'));
   if (!m.seen) {
     out.append(emptyBox('No list of PCs has been saved yet.', para('nl-next', 'The agent on this PC writes the list about once a minute while it runs. Start it with ', code('unravis-ci serve'), ', wait a minute, then press Refresh. If it is already running, check that it was not started with ', code('--no-claims'), '; that turns the list off.')));
     return;
