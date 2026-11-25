@@ -91,6 +91,7 @@ type rig struct {
 	led     *ledger
 	srv     *httptest.Server
 	backend *LocalBackend
+	disp    *Dispatcher
 	now     time.Time
 }
 
@@ -111,11 +112,12 @@ func newRigBudgets(t *testing.T, b Budgets) *rig {
 	r.led = &ledger{DB: e.db}
 	r.backend = NewLocalBackend(r.dash, dashToken)
 	deps := Deps{Grants: e.g, Backend: r.backend, Recorder: r.led, Now: e.clk.Now, Budgets: b}
-	h, err := Handler(deps)
+	disp, err := NewDispatcher(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.srv = httptest.NewServer(h)
+	r.disp = disp
+	r.srv = httptest.NewServer(disp.Handler())
 	t.Cleanup(r.srv.Close)
 	return r
 }

@@ -72,9 +72,16 @@ type Config struct {
 	// RequiredMitigations are the names in the worker's hello that must all be true (spec 3.3), for example win32kOff and
 	// childRestricted. The worker's word is only trusted for these, and only before any script code runs.
 	RequiredMitigations []string
+	// Admit charges every call of a scoped run (one that carries a grant) to the budgets and the call ledger of the grant's profile, the
+	// same ones the host's own tool calls use: the app gives it Dispatcher.AdmitCodeCall. A scoped run is refused when it is nil. A
+	// refused call is recorded as denied and the script gets that error answer; the run goes on. The owner's own runs are not charged.
+	Admit CallAdmitter
 	// Now is the clock of the broker (time.Now when nil).
 	Now func() time.Time
 }
+
+// CallAdmitter is mcpsrv.Dispatcher.AdmitCodeCall: it admits one call, or refuses it, and gives the function to call when it ended.
+type CallAdmitter func(ctx context.Context, pr mcpsrv.Principal, tool string, args []byte) (end func(result []byte, isError bool), refused *mcpsrv.CodeCallRefusal)
 
 // Broker runs scripts. It is safe for concurrent use.
 type Broker struct {
@@ -139,6 +146,12 @@ type RunRequest struct {
 	// the tools the run may call and the detail it sees (counts below the cohort floor, record ids), as the grant does for the host's own
 	// tool calls. It is written into the scope note of the audit record.
 	Tier string
+	// ProfileID, ProfileRev and Tools are the grant's own: the profile the budgets are charged to, its revision (for the call ledger) and
+	// its tool list (Profile.Tools). A scoped run may call only the tools of that list that are also in the tier (mcpsrv.GrantTools),
+	// exactly as the dispatcher decides a call of the host itself.
+	ProfileID  string
+	ProfileRev int
+	Tools      []string
 }
 
 // Stats are the numbers of a run.
@@ -232,8 +245,17 @@ func (b *Broker) cleanRequest(req *RunRequest) *Refusal {
 	if req.Scoped && mcpsrv.ToolsForTier(req.Tier) == nil {
 		return refuse(CodeDenied, "A run with a source scope must carry the tier of its grant (aggregate or evidence).")
 	}
-	if !req.Scoped && req.Tier != "" {
-		return refuse(CodeBadRequest, "A tier goes with a source scope.")
+	if !req.Scoped && (req.Tier != "" || req.ProfileID != "" || req.ProfileRev != 0 || len(req.Tools) != 0) {
+		return refuse(CodeBadRequest, "A tier, a profile and a tool list go with a source scope.")
+	}
+	if req.Scoped {
+		// The grant's own tool list and profile: a run with no tool of its grant, or with no profile to charge, is refused (fail closed).
+		if len(mcpsrv.GrantTools(req.Tier, req.Tools)) == 0 || req.ProfileID == "" {
+			return refuse(CodeDenied, "A run with a source scope must carry the profile and the tool list of its grant.")
+		}
+		if b.cfg.Admit == nil {
+			return refuse(CodeDenied, "A run with a source scope needs the call budgets of its host, and none are set up.")
+		}
 	}
 	req.CallerID = cleanText(req.CallerID, casestore.MaxRunCallerID, false)
 	req.Reason = composeReason(req)
@@ -280,12 +302,12 @@ func scopeNote(req *RunRequest) string {
 }
 
 // toolsFor lists the tools a run may call: all ten for the owner's own run, and for a run that carries a grant only the tools of its
-// tier (in catalog order). The run frame names exactly these, and a call to any other tool is a protocol violation.
+// list within its tier (mcpsrv.GrantTools, the dispatcher's own rule; in catalog order). The run frame names exactly these, and a call to any other tool is a protocol violation.
 func (b *Broker) toolsFor(req *RunRequest) []string {
 	if !req.Scoped {
 		return b.tools
 	}
-	allowed := mcpsrv.ToolsForTier(req.Tier)
+	allowed := mcpsrv.GrantTools(req.Tier, req.Tools)
 	out := make([]string, 0, len(allowed))
 	for _, t := range b.tools {
 		if slices.Contains(allowed, t) {

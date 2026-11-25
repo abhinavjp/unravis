@@ -16,6 +16,7 @@ import (
 	"api-audit-explorer/internal/codemode/wire"
 	"api-audit-explorer/internal/jcs"
 	"api-audit-explorer/internal/mcp"
+	"api-audit-explorer/internal/mcpsrv"
 )
 
 // maxLogLines bounds the lines of console output the broker sweeps one by one (the 64 KiB byte cap applies as well).
@@ -865,7 +866,7 @@ func (r *run) handleCall(id int64, seq int, tool string, args []byte, den *denia
 			limit = min(limit, time.Until(dl))
 		}
 		callCtx, cancel := context.WithTimeout(r.callsCtx, max(limit, time.Millisecond))
-		envelope, isErr = r.safeHostCall(callCtx, tool, args)
+		envelope, isErr, den = r.hostCall(callCtx, tool, args)
 		cancel()
 	}
 	dur := time.Since(started).Milliseconds()
@@ -924,6 +925,29 @@ func (r *run) recordPanicked(seq int, tool string, args []byte) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.parent), AuditWait)
 	defer cancel()
 	_ = r.store.RecordCall(ctx, r.id, rec)
+}
+
+// hostCall runs one call. A call of a scoped run first goes through the host's own budgets and ledger (Config.Admit); when they refuse
+// it, nothing runs and the call is a denial with the refusal's code, which the script sees as an error answer and may go on from.
+func (r *run) hostCall(ctx context.Context, tool string, args []byte) (body []byte, isErr bool, den *denial) {
+	if !r.req.Scoped {
+		body, isErr = r.safeHostCall(ctx, tool, args)
+		return body, isErr, nil
+	}
+	end, refused := r.b.cfg.Admit(ctx, mcpsrv.Principal{ProfileID: r.req.ProfileID, Rev: r.req.ProfileRev}, tool, args)
+	if refused != nil {
+		return nil, false, &denial{status: casestore.CallDenied, wire: refused.Code, msg: refused.Message}
+	}
+	ended := false
+	defer func() {
+		if !ended { // a panic: the slots are given back, the call counts as failed
+			end(nil, true)
+		}
+	}()
+	body, isErr = r.safeHostCall(ctx, tool, args)
+	ended = true
+	end(body, isErr)
+	return body, isErr, nil
 }
 
 // safeHostCall runs the tool and turns a panic of the host into an internal error answer, never into a dead broker.

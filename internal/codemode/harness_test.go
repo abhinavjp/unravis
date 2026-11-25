@@ -18,6 +18,7 @@ import (
 	"api-audit-explorer/internal/casestore/sqlite"
 	"api-audit-explorer/internal/casestore/storetest"
 	"api-audit-explorer/internal/codemode/wire"
+	"api-audit-explorer/internal/mcpsrv"
 	"api-audit-explorer/internal/server"
 )
 
@@ -287,6 +288,8 @@ type env struct {
 	inner    casestore.CodeRunStore
 	hosts    HostFactory
 	operator bool
+	// admit is the call admitter of scoped runs (Config.Admit); nil admits every call.
+	admit CallAdmitter
 }
 
 type envOpt func(*env)
@@ -323,6 +326,12 @@ func newEnv(t *testing.T, script fakeScript, opts ...envOpt) *env {
 			}
 			return DashboardHosts(handler, testToken)(scope)
 		},
+		Admit: func(ctx context.Context, pr mcpsrv.Principal, tool string, args []byte) (func([]byte, bool), *mcpsrv.CodeCallRefusal) {
+			if e.admit != nil {
+				return e.admit(ctx, pr, tool, args)
+			}
+			return func([]byte, bool) {}, nil
+		},
 		Settings:            func() Settings { return e.set },
 		AllowIdentifiers:    e.operator,
 		RequiredMitigations: []string{"win32kOff", "childRestricted"},
@@ -356,7 +365,20 @@ func (e *env) runReq(req RunRequest) (RunResult, error) {
 	if req.Surface == "" {
 		req.Surface = "cli"
 	}
-	return e.b.Run(context.Background(), req)
+	return e.b.Run(context.Background(), withGrant(req))
+}
+
+// withGrant fills the profile and the tool list a scoped run carries (the whole tier) when the test did not set them.
+func withGrant(req RunRequest) RunRequest {
+	if req.Scoped {
+		if req.ProfileID == "" {
+			req.ProfileID = "p1"
+		}
+		if req.Tools == nil {
+			req.Tools = mcpsrv.ToolsForTier(req.Tier)
+		}
+	}
+	return req
 }
 
 func (e *env) runs() []casestore.CodeRun {

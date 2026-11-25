@@ -98,13 +98,14 @@ func TestRunAnswerEqualsTheDispatcherBridgeAnswerForTheGrant(t *testing.T) {
 		direct := mcp.NewLocal(e.handler, testToken, mcpsrv.BridgeOptions(false, []string{"demo-west"}, tier)...)
 		args, _ := json.Marshal(map[string]any{"query": narrowQuery(), "limit": 5})
 		want, isErr := direct.CallEnvelope(t.Context(), "audit_compare", args)
-		if isErr || !sameJSON(t, got, want, "resultId", "provenance") {
+		if isErr || !sameJSON(t, got, want, "resultId") {
 			t.Errorf("%s: the script's answer differs from the dispatcher bridge's:\n%s", tier, firstDiff(got, want))
 		}
 	}
 }
 
-// sameJSON compares two documents after decoding, leaving out the named top-level keys (a result handle is new for every bridge, and provenance holds the elapsed milliseconds of the query).
+// sameJSON compares two documents after decoding, leaving out the named top-level keys (a result handle is new for every bridge) and
+// setting every "elapsedMs" to zero (provenance holds the milliseconds the query took; the rest of provenance is compared).
 func sameJSON(t *testing.T, a, b []byte, skip ...string) bool {
 	t.Helper()
 	var x, y map[string]any
@@ -115,9 +116,28 @@ func sameJSON(t *testing.T, a, b []byte, skip ...string) bool {
 		delete(x, k)
 		delete(y, k)
 	}
+	zeroElapsed(x)
+	zeroElapsed(y)
 	xa, _ := json.Marshal(x)
 	ya, _ := json.Marshal(y)
 	return string(xa) == string(ya)
+}
+
+func zeroElapsed(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, c := range t {
+			if k == "elapsedMs" {
+				t[k] = float64(0)
+			} else {
+				zeroElapsed(c)
+			}
+		}
+	case []any:
+		for _, c := range t {
+			zeroElapsed(c)
+		}
+	}
 }
 
 func TestTierLimitsTheToolsOfARun(t *testing.T) {
