@@ -935,7 +935,11 @@ func (r *run) hostCall(ctx context.Context, tool string, args []byte) (body []by
 		body, isErr = r.safeHostCall(ctx, tool, args)
 		return body, isErr, nil
 	}
-	callCtx, end, refused := r.b.cfg.Admit(ctx, mcpsrv.Principal{ProfileID: r.req.ProfileID, Rev: r.req.ProfileRev}, tool, args, r.req.AllowIdentifiers)
+	admit := r.b.admitter()
+	if admit == nil { // unbound after the run started: fail closed
+		return nil, false, &denial{status: casestore.CallDenied, wire: mcp.WirePermissionRequired, msg: plain[CodeDenied]}
+	}
+	callCtx, end, refused := admit(ctx, mcpsrv.Principal{ProfileID: r.req.ProfileID, Rev: r.req.ProfileRev}, tool, args, r.req.AllowIdentifiers)
 	if refused != nil {
 		return nil, false, &denial{status: casestore.CallDenied, wire: refused.Code, msg: refused.Message}
 	}
