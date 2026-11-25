@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -692,31 +694,76 @@ func TestBridgeWithoutOptionsKeepsRawIDsAndCursors(t *testing.T) {
 	}
 }
 
-// layers returns the cursor as the host can see it at every level of base64 and JSON: the text, the payload, and each string field of
-// the payload decoded as base64 when it is.
+// layers returns the cursor as the host can see it at every level of base64 and JSON, down to depth 6: the text, each dot-separated
+// piece that decodes as base64url (or base64), and, for a decoded text that is JSON, every string value in it (objects, arrays, nested),
+// each of which is taken apart the same way. The dashboard's own cursor is base64url JSON, so a seal that is only an encoding of the
+// position is read here however many levels down it sits. Only the top-level payload and signature must be base64url.
 func layers(t *testing.T, cursor string) []string {
 	t.Helper()
-	out := []string{cursor}
 	payload, sig, _ := strings.Cut(cursor, ".")
 	for _, part := range []string{payload, sig} {
-		raw, err := base64.RawURLEncoding.DecodeString(part)
-		if err != nil {
+		if _, err := base64.RawURLEncoding.DecodeString(part); err != nil {
 			t.Fatalf("cursor part is not base64url: %v", err)
 		}
-		out = append(out, string(raw))
 	}
-	var fields map[string]any
-	if err := json.Unmarshal([]byte(out[1]), &fields); err != nil {
-		t.Fatalf("payload is not JSON: %v", err)
-	}
-	for _, v := range fields {
-		if str, ok := v.(string); ok {
-			if raw, err := base64.RawURLEncoding.DecodeString(str); err == nil {
-				out = append(out, string(raw))
+	var out []string
+	var walk func(text string, depth int)
+	walk = func(text string, depth int) {
+		out = append(out, text)
+		if depth >= 6 {
+			return
+		}
+		for _, piece := range strings.Split(text, ".") {
+			for _, enc := range []*base64.Encoding{base64.RawURLEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.StdEncoding} {
+				raw, err := enc.DecodeString(piece)
+				if err != nil {
+					continue
+				}
+				decoded := string(raw)
+				walk(decoded, depth+1) // a decoded text may itself be an encoding of the position, JSON or not
+				var v any
+				if json.Unmarshal(raw, &v) == nil {
+					strs(v, func(s string) { walk(s, depth+1) })
+				}
 			}
 		}
 	}
+	walk(cursor, 0)
 	return out
+}
+
+// strs calls fn with every string value of a decoded JSON value, however deep.
+func strs(v any, fn func(string)) {
+	switch x := v.(type) {
+	case string:
+		fn(x)
+	case []any:
+		for _, e := range x {
+			strs(e, fn)
+		}
+	case map[string]any:
+		for _, e := range x {
+			strs(e, fn)
+		}
+	}
+}
+
+// The helper sees through three levels of base64url JSON, so a seal replaced by an encoding of the position cannot pass the test below.
+func TestLayersSeesThroughThreeLevels(t *testing.T) {
+	enc := func(v any) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return base64.RawURLEncoding.EncodeToString(b)
+	}
+	cursor := enc(map[string]any{"a": enc(map[string]any{"b": "SECRET-ID"})}) + "." + base64.RawURLEncoding.EncodeToString([]byte("sig"))
+	for _, l := range layers(t, cursor) {
+		if strings.Contains(l, "SECRET-ID") {
+			return
+		}
+	}
+	t.Error("no layer shows SECRET-ID")
 }
 
 // M1 of the review of PR 269: the dashboard's cursor holds the raw id and the source of the last row, so a signed cursor that wraps it in
@@ -753,6 +800,19 @@ func TestCursorShowsNoRecordIDNorSourceID(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A host list that cannot be read still ends the running calls, and says so in one fixed line without the error text.
+func TestCancelAllLogsWhenTheHostListFails(t *testing.T) {
+	e := newEnv(t)
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	_ = e.db.Close() // List now fails
+	e.g.CancelAll()
+	if !strings.Contains(buf.String(), "MCP access: the host list could not be read, so only running calls were ended") {
+		t.Errorf("log %q", buf.String())
 	}
 }
 

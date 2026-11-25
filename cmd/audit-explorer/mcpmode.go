@@ -48,6 +48,10 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 	if _, err := db.Prune(ctx, time.Now()); err != nil {
 		log.Print("The MCP call ledger could not be pruned")
 	}
+	// A crash or a kill runs no shutdown hook, so every alias is cleared when the app starts: none outlives a restart. Not on the 24 h timer.
+	if err := db.DropAllAliases(ctx); err != nil {
+		log.Print("The MCP evidence references could not be cleared")
+	}
 	grants, err := mcpsrv.NewGrants(ctx, db, time.Now)
 	if err != nil {
 		_ = db.Close()

@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"log"
 	"regexp"
 	"slices"
 	"strings"
@@ -439,7 +440,11 @@ func (g *Grants) CancelAll() {
 	defer cancel()
 	g.mu.Lock()
 	ids, cancels, hooks := g.takeAllRunning()
-	all, _ := g.db.List(ctx, MaxProfiles) // a list that fails leaves the running ones, which are the ones with state to cancel
+	all, err := g.db.List(ctx, MaxProfiles)
+	if err != nil {
+		// Idle hosts cannot be named without the list, so their aliases stay; only the running calls end. Fixed text, no error text.
+		log.Print("MCP access: the host list could not be read, so only running calls were ended")
+	}
 	for _, p := range all {
 		if _, ok := cancels[p.ID]; !ok {
 			ids = append(ids, p.ID)

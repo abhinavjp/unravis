@@ -278,6 +278,31 @@ func TestAliasRemoveProfileDropsAliases(t *testing.T) {
 	}
 }
 
+// Every alias of every profile goes, so none outlives an app restart (the owner calls this at startup).
+func TestAliasDropAll(t *testing.T) {
+	db, _ := aliasStore(t)
+	if err := db.Insert(ctx, mcpaudit.Profile{ID: "h2", State: mcpaudit.StateActive, Rev: 1, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range []struct {
+		id  string
+		rev int
+	}{{"h1", 3}, {"h2", 1}} {
+		if _, err := db.MintAliases(ctx, h.id, h.rev, []mcpaudit.EvidenceKey{{SourceID: "s1", RecordID: recID(t)}}, t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, _ := db.CountAliases(ctx, ""); n != 2 {
+		t.Fatalf("%d aliases before, want 2", n)
+	}
+	if err := db.DropAllAliases(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := db.CountAliases(ctx, ""); n != 0 {
+		t.Errorf("%d aliases after DropAllAliases", n)
+	}
+}
+
 func readAll(t *testing.T, dir string) []byte {
 	t.Helper()
 	var all []byte

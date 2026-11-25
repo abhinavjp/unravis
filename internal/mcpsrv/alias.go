@@ -15,7 +15,10 @@ import (
 // (7 days idle, 30 at most), any change of the profile's revision (revoke, reissue, a new approval: the revision changes each time,
 // and a profile that was removed and enrolled again starts above the revision floor), and the hooks that drop a profile's aliases on
 // revoke, reissue, stop, the master-key lock and the owner's shutdown (the last two for every host). The resolver checks the grant as it is now, so a failed delete is not a way to keep an alias
-// alive.
+// alive. An alias never outlives an app restart: the store also clears every alias when it opens at startup (the owner calls
+// DropAllAliases), so a crash or a kill, which run no shutdown hook, does not keep them. Aliases minted while the master key is locked,
+// if any, are not touched by the lock hook (calls are not gated by the lock; spec 03 covers case data only), so "never outlive a lock"
+// means only the ones that existed when the lock happened.
 
 // ErrAliasNotFound is the one answer for every alias that cannot be used.
 var ErrAliasNotFound = mcpaudit.ErrAliasNotFound

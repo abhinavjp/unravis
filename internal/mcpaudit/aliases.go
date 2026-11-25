@@ -193,7 +193,7 @@ func sealRecord(aead cipher.AEAD, alias, profile string, k EvidenceKey) ([]byte,
 
 // GetAlias reads one alias. It answers ErrAliasNotFound for a string that is not an alias, a row that is not there or past its expiry
 // or cap, and a row whose sealed record id does not open (a row copied or changed in the file). It does not check the profile: that is
-// the caller's, who holds the grants (mcpsrv.Aliases). A successful read restarts the idle clock, never past the cap.
+// the caller's, who holds the grants (mcpsrv.Aliases). A read does not touch the row: only TouchAlias (called by ResolveOwner) restarts the idle clock.
 func (d *DB) GetAlias(ctx context.Context, alias string, now time.Time) (Evidence, error) {
 	if !AliasRE.MatchString(alias) {
 		return Evidence{}, ErrAliasNotFound
@@ -246,6 +246,14 @@ func (d *DB) DropAliases(ctx context.Context, profileID string) error {
 	d.amu.Lock()
 	defer d.amu.Unlock()
 	_, err := d.sql.ExecContext(ctx, `DELETE FROM aliases WHERE profile_id=?`, profileID)
+	return err
+}
+
+// DropAllAliases deletes every alias of every profile. The owner calls it once when the app starts, so no alias outlives a restart.
+func (d *DB) DropAllAliases(ctx context.Context) error {
+	d.amu.Lock()
+	defer d.amu.Unlock()
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM aliases`)
 	return err
 }
 
