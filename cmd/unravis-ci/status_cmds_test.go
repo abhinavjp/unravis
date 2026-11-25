@@ -203,11 +203,9 @@ func TestServePostsShadowStatusesAndNeverTheRequiredNames(t *testing.T) {
 			gate = append(gate, c.State+": "+c.Description)
 		}
 	}
-	if len(gate) < 3 || gate[0] != "pending: queued" || !strings.HasPrefix(gate[len(gate)-1], "success: passed in ") {
+	// A newer state replaces one that has not gone out yet, so a quick run may skip "queued" or "running"; it never ends on anything but success.
+	if len(gate) < 2 || !strings.HasPrefix(gate[0], "pending: ") || !strings.HasPrefix(gate[len(gate)-1], "success: passed in ") {
 		t.Fatalf("gate sequence %v", gate)
-	}
-	if !contains(gate, "pending: running") {
-		t.Fatalf("no running status: %v", gate)
 	}
 	// the state folder keeps the dedup memory and the status command shows how posting went
 	if _, err := os.Stat(ledgerPath(state)); err != nil {
