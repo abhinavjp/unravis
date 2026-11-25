@@ -203,11 +203,21 @@ func TestServePostsShadowStatusesAndNeverTheRequiredNames(t *testing.T) {
 			gate = append(gate, c.State+": "+c.Description)
 		}
 	}
-	if len(gate) < 3 || gate[0] != "pending: queued" || !strings.HasPrefix(gate[len(gate)-1], "success: passed in ") {
+	// The poster is asynchronous and a newer state for the same commit and context replaces one that has not gone
+	// out yet (by design, see StatusPoster), so "queued" and "running" can each be replaced before they are sent.
+	// What is guaranteed: the last status is the pass, everything before it is pending, and an old state never
+	// lands after a newer one ("queued" only before the other pending states). The exact sequence is covered
+	// deterministically by TestServiceStatesInOrderForAPassingRun in internal/localci.
+	if len(gate) == 0 || !strings.HasPrefix(gate[len(gate)-1], "success: passed in ") {
 		t.Fatalf("gate sequence %v", gate)
 	}
-	if !contains(gate, "pending: running") {
-		t.Fatalf("no running status: %v", gate)
+	for i, g := range gate[:len(gate)-1] {
+		if !strings.HasPrefix(g, "pending: ") {
+			t.Fatalf("only pending states may come before the pass: %v", gate)
+		}
+		if g == "pending: queued" && i > 0 && gate[i-1] != "pending: queued" {
+			t.Fatalf("an old state landed after a newer one: %v", gate)
+		}
 	}
 	// the state folder keeps the dedup memory and the status command shows how posting went
 	if _, err := os.Stat(ledgerPath(state)); err != nil {
