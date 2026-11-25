@@ -4,7 +4,7 @@
   "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "required": ["code"], "properties": {
     "code": {"type": "string", "minLength": 1, "description": "The script, at most 262144 bytes of UTF-8"},
     "caseId": {"type": "string", "pattern": "^[a-z2-7]{26}$", "description": "The open case to record the run in; needed when more than one case is open"},
-    "timeoutMs": {"type": "integer", "minimum": 1000, "maximum": 120000, "default": 30000, "description": "How long the script itself may run"},
+    "timeoutMs": {"type": "integer", "minimum": 0, "maximum": 120000, "default": 30000, "description": "How long the script itself may run, in milliseconds. 0 or left out means 30000; less than 1000 is raised to 1000. The command option --timeout-ms takes 1000 to 120000"},
     "reason": {"type": "string", "maxLength": 500, "description": "Why the script is run, kept with the run in the case"},
     "allowIdentifiers": {"type": "boolean", "default": false, "description": "Show user identifiers in the result; refused unless the operator allows it in the app"}}},
   "output": {"type": "object", "required": ["v", "runId", "status", "result", "logs", "stats", "sandbox", "identifiers"], "properties": {

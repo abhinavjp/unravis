@@ -160,6 +160,23 @@ func TestCodeRunChecksTheRequestBeforeTheBroker(t *testing.T) {
 	}
 }
 
+// timeoutMs 0 (or none) means the broker's default and a short one is raised by the broker: the owner takes them, the schema says so.
+func TestCodeRunTakesShortAndZeroTimeouts(t *testing.T) {
+	var got []int
+	h := codeHandler(fakeCode{run: func(_ context.Context, in CodeRunInput) (any, error) {
+		got = append(got, in.TimeoutMS)
+		return map[string]any{"status": "ok"}, nil
+	}})
+	for _, a := range []string{`{"code":"1","timeoutMs":0}`, `{"code":"1","timeoutMs":500}`, `{"code":"1"}`, `{"code":"1","timeoutMs":120000}`} {
+		if r := op(t, h, "code.run", a); !r.OK {
+			t.Errorf("%s: %+v", a, r)
+		}
+	}
+	if len(got) != 4 || got[0] != 0 || got[1] != 500 || got[2] != 0 || got[3] != 120000 {
+		t.Errorf("the broker was asked for %v", got)
+	}
+}
+
 // The deadline of the call ends the run: the broker is given the call's own context, so it ends the script, and the answer is TIMEOUT. A
 // cancel from the command line ends it the same way and the answer is CANCELED.
 func TestCodeRunDeadlineAndCancel(t *testing.T) {
