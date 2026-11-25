@@ -283,7 +283,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.beat(true)
 	a.logf("agent %s: %d slots%s", a.Name, a.slots(), labelNote(a.Labels))
 
-	// idle-ok: runs only inside the unravis-ci agent process (not the desktop app); the period is the agent's setting.
+	// idle-ok: runs only inside the separate CI agent process (not the desktop app); the period is the agent setting.
 	t := time.NewTicker(a.claimEvery())
 	defer t.Stop()
 	for {

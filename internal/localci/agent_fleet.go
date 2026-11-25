@@ -111,7 +111,7 @@ func (a *Agent) fleetLoop(ctx context.Context) {
 	if a.Fleet == nil {
 		return
 	}
-	// idle-ok: runs only inside the unravis-ci agent process (not the desktop app); the period is the agent's setting.
+	// idle-ok: runs only inside the separate CI agent process (not the desktop app); the period is the agent setting.
 	t := time.NewTicker(a.fleetEvery())
 	defer t.Stop()
 	var lastClean time.Time
