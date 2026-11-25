@@ -22,6 +22,10 @@ type PROptions struct {
 	// ExpectHead, when set, is the head commit the run was asked for. A pull request whose head has moved on is
 	// not run: RunPR returns ErrHeadMoved, because a request for the newer head is (or soon will be) queued.
 	ExpectHead string
+	// Base, when set, is the base branch the run was asked for. A pull request that was retargeted since is not
+	// run: RunPR returns ErrBaseMoved, because the workflow and the trust of the other branch were never chosen
+	// for it (the poller queues a new request for the new base). Empty (a hand run) accepts any base.
+	Base string
 	// OriginURL is where the mirror fetches from; empty means Host.CloneURL(Repo).
 	OriginURL string
 	// Workflows maps a base branch to the workflow file (a name inside .github/workflows) that gates it.
@@ -113,6 +117,9 @@ func (o *PROptions) trustedBases() []string {
 // ErrHeadMoved is returned by RunPR when ExpectHead is no longer the head of the pull request.
 var ErrHeadMoved = errors.New("the pull request head moved on")
 
+// ErrBaseMoved is returned by RunPR when Base is no longer the base branch of the pull request.
+var ErrBaseMoved = errors.New("the pull request was pointed at another base branch")
+
 // ErrPRNotOpen is returned by RunPR for a pull request that is closed or merged.
 var ErrPRNotOpen = errors.New("the pull request is not open")
 
@@ -156,6 +163,9 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 	}
 	if o.ExpectHead != "" && !strings.EqualFold(pr.HeadSHA, o.ExpectHead) {
 		return nil, fmt.Errorf("run-pr: pull request %d moved from %s to %s: %w", o.Number, shortSHA(o.ExpectHead), shortSHA(pr.HeadSHA), ErrHeadMoved)
+	}
+	if o.Base != "" && pr.BaseRef != o.Base {
+		return nil, fmt.Errorf("run-pr: pull request %d was asked for into %q but now goes into %q: %w", o.Number, o.Base, pr.BaseRef, ErrBaseMoved)
 	}
 	file, err := o.workflowFor(pr.BaseRef)
 	if err != nil {

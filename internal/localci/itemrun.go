@@ -42,7 +42,7 @@ func (ir *ItemRunner) Run(ctx context.Context, r Request) (Outcome, error) {
 	switch r.Kind {
 	case KindPR:
 		res, err = RunPR(ctx, PROptions{
-			Store: ir.Store, Host: ir.Host, Repo: r.Repo, Number: r.Number, ExpectHead: r.SHA, OriginURL: ir.OriginURL,
+			Store: ir.Store, Host: ir.Host, Repo: r.Repo, Number: r.Number, Base: r.Base, ExpectHead: r.SHA, OriginURL: ir.OriginURL,
 			Workflow: r.Workflow, Protect: ir.Protect, TrustedBases: ir.TrustedBases, Keep: ir.Keep, Env: ir.Env, Vars: ir.Vars, Slots: ir.Slots,
 			Redact: ir.Redact, Log: ir.Log, Now: ir.Now, Progress: pw.Event,
 		})
@@ -63,7 +63,7 @@ func (ir *ItemRunner) Run(ctx context.Context, r Request) (Outcome, error) {
 		out.RunID = res.RunID
 	}
 	switch {
-	case errors.Is(err, ErrHeadMoved):
+	case errors.Is(err, ErrHeadMoved), errors.Is(err, ErrBaseMoved):
 		return Outcome{Conclusion: StateSuperseded, Reason: err.Error()}, nil
 	case errors.Is(err, ErrPRNotOpen):
 		return Outcome{Conclusion: StateCancelled, Reason: err.Error()}, nil

@@ -384,3 +384,39 @@ func TestRunPRNonOwnerCodeNeedsATrustedBase(t *testing.T) {
 		t.Fatalf("%v %+v", err, res)
 	}
 }
+
+func TestRunPRRetargetedPullRequestIsRefusedBeforeAnythingRuns(t *testing.T) {
+	o := newOrigin(t)
+	// the request was queued for develop, the pull request now goes into master
+	pr := okPR(o, 1, o.feature, "acme")
+	pr.BaseRef = "master"
+	h := &fakeHost{pr: pr}
+	opts, _ := prOptions(t, o, h)
+	opts.Base = "develop"
+	opts.Workflows = map[string]string{"develop": "fast-gate.yml", "master": "release-gate.yml"}
+	res, err := RunPR(context.Background(), opts)
+	if !errors.Is(err, ErrBaseMoved) || res != nil {
+		t.Fatalf("%v %+v", err, res)
+	}
+	if !strings.Contains(err.Error(), "develop") || !strings.Contains(err.Error(), "master") {
+		t.Fatalf("the message must name both branches: %v", err)
+	}
+	if idx, _ := opts.Store.ReadIndex(); len(idx) != 0 {
+		t.Fatalf("a refused request leaves no run: %+v", idx)
+	}
+	if entries, _ := os.ReadDir(opts.Store.RunsPath()); len(entries) != 0 {
+		t.Fatalf("a refused request creates no run folder: %v", entries)
+	}
+}
+
+func TestRunPRUnchangedBaseStillRuns(t *testing.T) {
+	needBash(t)
+	o := newOrigin(t)
+	h := &fakeHost{pr: okPR(o, 1, o.feature, "acme")}
+	opts, console := prOptions(t, o, h)
+	opts.Base = "develop"
+	res, err := RunPR(context.Background(), opts)
+	if err != nil || res.Run.Conclusion != "success" {
+		t.Fatalf("%v %+v\n%s", err, res, console.String())
+	}
+}
