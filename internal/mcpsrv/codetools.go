@@ -34,7 +34,7 @@ const ClassCode = "code"
 const CodeModeOffMessage = "Code mode is switched off. Turn it on in Settings or run `unravis code enable`."
 
 // CodeNotGrantedMessage is the plain text of the refusal when the owner approved the grant without code mode.
-const CodeNotGrantedMessage = "This access was not given code mode. Approve it with code mode on in Unravis."
+const CodeNotGrantedMessage = "This access was not given code mode. Use Start over on this entry in Unravis and approve it again with code mode on."
 
 // CodeBackend runs the two tools for a grant. The code-mode broker's adapter (internal/codemode) is the only one.
 type CodeBackend interface {

@@ -59,7 +59,7 @@ func TestGrantWithoutCodeModeCannotRunEitherCodeTool(t *testing.T) {
 		if !ans.OK || !ans.IsError || json.Unmarshal(ans.Result, &env) != nil || env.Error.Code != "denied" || env.Error.Message != CodeNotGrantedMessage {
 			t.Fatalf("%s without code mode: %+v %s", tool, ans, ans.Result)
 		}
-		if string(ans.Result) != string(CodeRefusalBody("denied", "This access was not given code mode. Approve it with code mode on in Unravis.")) {
+		if string(ans.Result) != string(CodeRefusalBody("denied", "This access was not given code mode. Use Start over on this entry in Unravis and approve it again with code mode on.")) {
 			t.Errorf("%s: the refusal body is not the stable one: %s", tool, ans.Result)
 		}
 	}
