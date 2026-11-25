@@ -489,13 +489,27 @@ func TestLegacyOptionsAnywhere(t *testing.T) {
 	}
 }
 
+// runTimingOut runs a command whose timeout is 1ns and returns the first answer that is a timeout. A timeout is a timer, and on
+// Windows the clock the timer reads moves only every 0.5 to 15 ms, so a small command can finish before the 1ns deadline is seen
+// to pass (the CI runner does). Nothing is wrong with the product then, so the command is run again until the clock has moved.
+func runTimingOut(t *testing.T, env map[string]string, args ...string) result {
+	t.Helper()
+	stop := time.Now().Add(10 * time.Second)
+	for {
+		r := run(t, env, args...)
+		if r.code == 6 || time.Now().After(stop) {
+			return r
+		}
+	}
+}
+
 func TestTimeoutIsApplied(t *testing.T) {
 	dir := record(t)
-	r := run(t, nil, "blackbox", "inspect", "--offline", "--input", dir, "--timeout", "1ns", "--json")
+	r := runTimingOut(t, nil, "blackbox", "inspect", "--offline", "--input", dir, "--timeout", "1ns", "--json")
 	if r.code != 6 || errCode(t, r) != "TIMEOUT" {
 		t.Errorf("flag: %+v", r)
 	}
-	r = run(t, map[string]string{"UNRAVIS_TIMEOUT": "1ns"}, "blackbox", "inspect", "--offline", "--input", dir, "--json")
+	r = runTimingOut(t, map[string]string{"UNRAVIS_TIMEOUT": "1ns"}, "blackbox", "inspect", "--offline", "--input", dir, "--json")
 	if r.code != 6 || errCode(t, r) != "TIMEOUT" {
 		t.Errorf("variable: %+v", r)
 	}

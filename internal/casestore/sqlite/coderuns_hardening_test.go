@@ -271,7 +271,14 @@ func TestLockWaitHonoursContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(cctx, 100*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if _, err := sealedfile.LockWait(ctx, c.dir); !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 3*time.Second {
+	// Waited on from another goroutine: on Windows the lock is a named mutex that belongs to an OS thread and a thread that
+	// already holds it takes it again at once, so the same goroutine would never be made to wait.
+	waited := make(chan error, 1)
+	go func() {
+		_, err := sealedfile.LockWait(ctx, c.dir)
+		waited <- err
+	}()
+	if err := <-waited; !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 3*time.Second {
 		t.Fatalf("LockWait = %v after %v", err, time.Since(start))
 	}
 	hold()
