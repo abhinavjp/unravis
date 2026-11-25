@@ -156,3 +156,61 @@ func TestAddedHostAndContestedEnrollAreLogged(t *testing.T) {
 		t.Errorf("codes: %q %q %q", rows[0].Code, rows[1].Code, rows[2].Code)
 	}
 }
+
+func TestSameScopeWithCodeModeAfterReissueIsNotAScopeChange(t *testing.T) {
+	e := newEnv(t)
+	withCode := Approval{Tier: TierEvidence, Sources: []string{"src-1"}, Code: true, IdleTTL: DefaultIdleTTL}
+	if _, err := e.g.Enroll(ctx, req("coded", nonce(t))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.g.Approve(ctx, "coded", withCode); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.g.Reissue(ctx, "coded"); err != nil { // switches code mode off until the next approval says again
+		t.Fatal(err)
+	}
+	if _, err := e.g.Enroll(ctx, req("coded", nonce(t))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.g.Approve(ctx, "coded", withCode); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range ledgerOldestFirst(t, e) {
+		if r.Kind == mcpaudit.KindScopeChange {
+			t.Fatalf("the person approved the same scope again; unexpected %+v", r)
+		}
+	}
+}
+
+func TestEndingWhatIsNotLiveLeavesNoRevokeRow(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.g.Enroll(ctx, req("idle", nonce(t))); err != nil {
+		t.Fatal(err)
+	}
+	// Pending: reissuing or revoking it ends no access.
+	if _, err := e.g.Reissue(ctx, "idle"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.g.Enroll(ctx, req("idle", nonce(t))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.g.Approve(ctx, "idle", appr()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.g.Revoke(ctx, "idle"); err != nil {
+		t.Fatal(err)
+	}
+	// Revoking again changes no access.
+	if _, err := e.g.Revoke(ctx, "idle"); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, r := range ledgerOldestFirst(t, e) {
+		if r.Kind == mcpaudit.KindRevoke {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("revoke rows = %d, want 1 (only the live grant ending)", n)
+	}
+}

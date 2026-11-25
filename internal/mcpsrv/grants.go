@@ -178,9 +178,10 @@ func scopeFacts(p Profile) string {
 	return fmt.Sprintf("%s tools=%d sources=%d identifiers=%t code=%t", p.Tier, len(p.Tools), len(p.Sources), p.Identifiers, p.Code)
 }
 
-// sameScope reports whether two profile states grant the same things (the tier, tools, sources, identifiers grant and code mode).
+// sameScope reports whether two profile states grant the same things (the tier, tools, sources and identifiers grant). Code mode is not
+// compared: a revoke or reissue switches it off, so the earlier state is not the person's last choice (the approve row says it anyway).
 func sameScope(a, b Profile) bool {
-	return a.Tier == b.Tier && a.Identifiers == b.Identifiers && a.Code == b.Code &&
+	return a.Tier == b.Tier && a.Identifiers == b.Identifiers &&
 		slices.Equal(slices.Sorted(slices.Values(a.Tools)), slices.Sorted(slices.Values(b.Tools))) &&
 		slices.Equal(slices.Sorted(slices.Values(a.Sources)), slices.Sorted(slices.Values(b.Sources)))
 }
@@ -390,7 +391,9 @@ func (g *Grants) Reissue(ctx context.Context, id string) (Profile, error) {
 
 func (g *Grants) end(ctx context.Context, id, state string) (Profile, error) {
 	g.mu.Lock()
+	wasActive := false
 	p, err := g.db.Update(ctx, id, func(p *Profile) error {
+		wasActive = p.State == mcpaudit.StateActive
 		p.State, p.Rev = state, p.Rev+1
 		p.SecretDigest, p.ClaimDigest, p.Claimed, p.Contested = nil, nil, false, 0
 		p.Code = false // a revoked or reissued grant has no code mode; the next approval says again
@@ -406,10 +409,16 @@ func (g *Grants) end(ctx context.Context, id, state string) (Profile, error) {
 	if state == mcpaudit.StatePending {
 		code = "reissued"
 	}
-	g.note(ctx, p, mcpaudit.KindRevoke, code)
 	cancels, hooks := g.takeRunning(id), slices.Clone(g.onRevoke)
 	g.mu.Unlock()
 	finish(cancels, hooks, id)
+	// The row is written after the running calls are cancelled: a slow or busy ledger must never delay ending access. Only a grant that
+	// was live is a revocation; ending a pending, denied or already ended profile again changes no access and leaves no row.
+	if wasActive {
+		g.mu.Lock()
+		g.note(ctx, p, mcpaudit.KindRevoke, code)
+		g.mu.Unlock()
+	}
 	return p, nil
 }
 
