@@ -52,6 +52,11 @@
   const analysis = $derived(results.analysis);
   const loading = $derived(results.loading);
   const depth = $derived(navigation.depth);
+  const pageHeading = $derived.by(() => {
+    if (app.initError || app.screen === 'loading') return 'Unravis';
+    if (app.screen === 'case') return 'Case home';
+    return screenTitle(app.screen, depth) || 'Unravis';
+  });
   // Each screen names the tab ("All cases - Unravis"); the case page names itself. When the app moves to another screen (or climbs a level of the
   // analysis) the new heading takes the keyboard focus unless a screen has already placed it, so Tab does not start again at the skip link.
   $effect(() => {
@@ -105,6 +110,8 @@
 <svelte:window onkeydown={onWindowKey} />
 
 <div class="app-shell">
+  <!-- The page heading comes first in the document (before the header and the filter panel), so the outline starts at h1 and a screen reader meets the page name first. It is hidden, so nothing moves. -->
+  <h1 class="visually-hidden">{pageHeading}</h1>
   <AppHeader />
   <UpdateBanner />
 

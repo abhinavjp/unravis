@@ -63,6 +63,7 @@
 </script>
 
 <Inspector off={depth !== 2} title={evidenceName} subtitle={operation ? kindLabel(operation.kind ?? 'unknown') + ' · ' + operation.requests.toLocaleString() + ' requests' : ''} tabs={inspectorTabs} active={activeTab} onTab={(id) => evidence.inspectorTab = id} onClose={closeInspector}>
+  {#if contextAnchor}<ActivityContext anchor={contextAnchor} sourceIds={analysis.query.sourceIds} {sourceLabels} {zone} />{/if}
   {#if comparisonWide}<p class="comparison-wide-note">Comparison-wide view: Failures, Slowest and Breakdown cover every operation in this comparison. The request list below follows what you opened.</p>{/if}
   {#if selectedPlain}<PlainLine result={selectedPlain} hints={['p50', 'p95']} />{/if}
   {#if activeTab === 'timeline' && selected}
@@ -106,7 +107,6 @@
     <RequestTable rows={requestRows} {sourceLabels} loading={requestLoading} pageNumber={requestPageNumber} nextCursor={requestPage?.nextCursor ?? ''} truncated={requestPage?.truncated ?? false} recordId={recordLoadingId} onFirst={() => loadRequests('', 1)} onNext={() => loadRequests(requestPage?.nextCursor ?? '', requestPageNumber + 1)} onInspect={showRecord} onContext={async (row) => { evidence.contextAnchor = row; await tick(); document.getElementById('nearby-activity')?.scrollIntoView({ block: 'start' }); }} />
   </section>
   {/if}
-  {#if contextAnchor}<ActivityContext anchor={contextAnchor} sourceIds={analysis.query.sourceIds} {sourceLabels} {zone} />{/if}
 </Inspector>
 
 <style>

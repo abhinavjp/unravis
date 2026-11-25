@@ -166,12 +166,16 @@ test('the CLI exits 0 on the real tree and 1 on a planted fault', () => {
   }
 });
 
-test('the build never inlines an asset as a data: address, and the page icon is a file', () => {
-  const vite = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8');
-  assert.match(vite, /assetsInlineLimit:\s*0/);
-  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  assert.doesNotMatch(html, /href="data:/);
+test('the main and strict Lite pages keep asset URLs same-origin and the page icon is a file', () => {
+  for (const [htmlFile, configFile] of [['index.html', 'vite.config.ts'], ['lite/index.html', 'vite.lite.config.ts']]) {
+    const vite = fs.readFileSync(path.join(root, configFile), 'utf8');
+    assert.match(vite, /assetsInlineLimit:\s*0/);
+    const html = fs.readFileSync(path.join(root, htmlFile), 'utf8');
+    assert.doesNotMatch(html, /data:/, htmlFile + ' must not request an inline asset under strict img-src');
+  }
   assert.ok(fs.existsSync(path.join(root, 'src', 'brand', 'favicon.svg')));
+  const lite = fs.readFileSync(path.join(root, 'lite', 'index.html'), 'utf8');
+  assert.match(lite, /rel="icon"[^>]*href="\.\.\/src\/brand\/favicon\.svg"/);
 });
 
 test('the desktop policy the gate protects (tauri.conf.json) stays strict, and the browser-run spec reads it from there', () => {

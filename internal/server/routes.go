@@ -104,6 +104,10 @@ var routes = []route{
 	{pattern: launchPath, match: exactPath(launchPath), public: true, methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveLaunch(w, r) },
 	}},
+	{pattern: launchStylePath, match: exactPath(launchStylePath), public: true, methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveLaunchStyle(w, r) },
+		http.MethodHead: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveLaunchStyle(w, r) },
+	}},
 	{pattern: sessionproof.Path, match: exactPath(sessionproof.Path), public: true, methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.sessionProof(w, r) },
 	}},
