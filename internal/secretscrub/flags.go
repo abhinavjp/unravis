@@ -179,7 +179,7 @@ func continued(s string, nl int) bool {
 // commaContinued keeps a tool's short-option context across a wrapped argument list, such as "sqlcmd -P,\n-P x" or a quoted array
 // ["sqlcmd","-S","db",\n"-P","x"]. It is wide on purpose: a line that ends in a comma may be a value, a quoted item or an option, and
 // telling them apart would let a password through a wrapped list. The cost is over-masking (an option letter after a tool and a comma
-// at a line end is read as the tool's flag); the caller applies it only while a tool is in force.
+// at a line end is read as the tool's flag); with no tool in force the carry changes nothing.
 func commaContinued(s string, nl int) bool {
 	k := nl - 1
 	if k >= 0 && s[k] == '\r' {
@@ -303,7 +303,7 @@ func maskFlags(s, mask string, w *work) string {
 		}
 		c := s[i]
 		if c == '\n' {
-			if !continued(s, i) && !(tools != 0 && commaContinued(s, i)) {
+			if !continued(s, i) && !commaContinued(s, i) {
 				tools = 0 // a line continuation keeps the tool of the line before
 			}
 			prev, first, listItem = "", true, false
