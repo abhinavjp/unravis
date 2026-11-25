@@ -286,3 +286,24 @@ func TestExpiryLeavesOneRowPerExpiry(t *testing.T) {
 		t.Fatalf("kinds = %s, want one row per expiry", got)
 	}
 }
+
+// An expiry seen by Scope (a call running when the time ran out) leaves the same single row as one seen by Authenticate.
+func TestExpirySeenByScopeLeavesTheSameOneRow(t *testing.T) {
+	e := newEnv(t)
+	h, _ := e.enrolled("h1")
+	pr, err := e.g.Authenticate(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(ledgerOldestFirst(t, e))
+	e.clk.Add(DefaultIdleTTL + time.Hour)
+	for i := 0; i < 3; i++ {
+		_, err := e.g.Scope(ctx, pr)
+		wantDenied(t, err, ReasonExpired)
+	}
+	_, err = e.g.Authenticate(ctx, h)
+	wantDenied(t, err, ReasonExpired)
+	if got := strings.Join(kindsOf(ledgerOldestFirst(t, e)[before:]), ","); got != "expire" {
+		t.Fatalf("kinds = %s, want one expire row", got)
+	}
+}

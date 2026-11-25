@@ -183,7 +183,9 @@ func (g *Grants) noteGlobal(ctx context.Context, kind, code string) {
 
 // noteExpired writes the expire row for the profile's current expiry, once: the calls that follow are refused and recorded as denied rows
 // by the dispatcher, and a renewal moves ExpiresAt, so the next expiry gets its own row. A restart may write the row of an expiry again;
-// the table of noted expiries is cut when it has grown past the most profiles there can be.
+// the table of noted expiries is cut when it has grown past the most profiles there can be, and a cut can write the row of a still-refused expiry
+// a second time (rare: it takes more than twice the most profiles in removed ids). A profile that expires while the app is stopped gets
+// its row at the first refused call after the resume.
 func (g *Grants) noteExpired(ctx context.Context, p Profile) {
 	g.expMu.Lock()
 	if g.expNoted == nil || len(g.expNoted) > 2*MaxProfiles {
