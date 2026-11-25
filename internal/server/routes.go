@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -476,7 +475,7 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 		defer h.power.Begin()()
 		defer func() {
 			if time.Since(started) > 5*time.Second {
-				debug.FreeOSMemory()
+				h.trim.maybe() // at most once per memoryTrimEvery
 			}
 		}()
 	}

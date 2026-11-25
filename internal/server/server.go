@@ -82,6 +82,8 @@ type handler struct {
 	// code is where internal/codeapi hangs the code-mode handler (nil: the code routes answer 503, see code_mount.go).
 	code  *CodeMount
 	power *power.Policy
+	// trim limits the forced memory return after a slow request (see power_trim.go).
+	trim memoryTrimmer
 
 	casesState
 

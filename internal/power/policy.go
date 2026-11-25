@@ -195,9 +195,16 @@ func (p *Policy) tryIdle() bool {
 	activity := p.activity
 	p.mu.Unlock()
 	if err := p.apply(Idle); err != nil {
+		// A failed idle apply may have changed part of the state. Ask for normal once more; if that fails too, the process may be
+		// partly throttled, so keep the mode Idle and the next Touch (or the wake in Run) retries the restore.
+		rollbackErr := p.apply(Normal)
 		p.mu.Lock()
-		p.mode = Normal
-		p.retryAfterTouch = true
+		if rollbackErr != nil {
+			p.mode = Idle
+		} else {
+			p.mode = Normal
+			p.retryAfterTouch = true
+		}
 		p.mu.Unlock()
 		return false
 	}

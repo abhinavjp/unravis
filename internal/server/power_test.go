@@ -71,3 +71,35 @@ func TestPowerPolicyTracksBackgroundJobsWithoutAnUpdater(t *testing.T) {
 	h.jobs.mu.Unlock()
 	waitFor(t, func() bool { return p.Mode() == power.Idle })
 }
+
+// A burst of slow requests that finish together must not run one forced memory return each: at most one per interval.
+func TestMemoryTrimIsRateLimited(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	runs := 0
+	m := &memoryTrimmer{now: func() time.Time { return now }, free: func() { runs++ }}
+	for i := 0; i < 20; i++ {
+		m.maybe()
+	}
+	if runs != 1 {
+		t.Fatalf("20 slow requests at once ran the trim %d times, want 1", runs)
+	}
+	now = now.Add(memoryTrimEvery - time.Second)
+	if m.maybe() || runs != 1 {
+		t.Fatalf("trim ran again inside the interval (%d runs)", runs)
+	}
+	now = now.Add(time.Second)
+	if !m.maybe() || runs != 2 {
+		t.Fatalf("trim did not run after the interval (%d runs)", runs)
+	}
+}
+
+// The real zero value (no test hooks) trims on the first call and not on the second.
+func TestMemoryTrimZeroValueUsesTheDefaults(t *testing.T) {
+	var m memoryTrimmer
+	if !m.maybe() {
+		t.Fatal("the first slow request did not trim")
+	}
+	if m.maybe() {
+		t.Fatal("the second slow request trimmed again at once")
+	}
+}

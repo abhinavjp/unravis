@@ -378,3 +378,38 @@ func TestCasesRealLocks(t *testing.T) {
 		}
 	}
 }
+
+// erased.json is a plain file: a line whose id is not a case id is dropped, and a line without a time shows null, as a case row does.
+func TestCasesErasedLinesAreCheckedAndUndatedIsNull(t *testing.T) {
+	const good, undated, zero = "abcdefghijklmnopqrstuvwxyz", "bcdefghijklmnopqrstuvwxyza", "cdefghijklmnopqrstuvwxyzab"
+	dash := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"cases":[],"archivedTotal":0,"offset":0,"pageSize":50,"oldCases":0,"erased":[`+
+			`{"id":"`+good+`","at":"2026-11-20T10:00:00Z"},`+
+			`{"id":"not a case id","at":"2026-11-20T10:00:00Z"},`+
+			`{"id":"ABCDEFGHIJKLMNOPQRSTUVWXYZ","at":"2026-11-20T10:00:00Z"},`+
+			`{"id":"abc","at":"2026-11-20T10:00:00Z"},`+
+			`{"id":"","at":"2026-11-20T10:00:00Z"},`+
+			`{"id":"`+undated+`"},`+
+			`{"id":"`+zero+`","at":"0001-01-01T00:00:00Z"}]}`)
+	})
+	l := op(t, casesHandler(dash), "cases.list", "")
+	if !l.OK {
+		t.Fatalf("%s", l.Raw)
+	}
+	erased := l.Data["erased"].([]any)
+	if len(erased) != 3 {
+		t.Fatalf("only the lines with a case id stay: %v", erased)
+	}
+	for i, want := range []struct {
+		id string
+		at any
+	}{{good, "2026-11-20T10:00:00Z"}, {undated, nil}, {zero, nil}} {
+		e := erased[i].(map[string]any)
+		if e["id"] != want.id || e["at"] != want.at || len(e) != 2 {
+			t.Errorf("erased[%d] = %v, want id %s at %v", i, e, want.id, want.at)
+		}
+		if _, ok := e["at"]; !ok {
+			t.Errorf("erased[%d] has no at key (null expected): %v", i, e)
+		}
+	}
+}

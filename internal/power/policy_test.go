@@ -311,3 +311,60 @@ func TestBeginRacingIdleApplyClearsIt(t *testing.T) {
 		t.Fatalf("applied modes = %v", modes.snapshot())
 	}
 }
+
+// A failed idle apply whose rollback also fails may leave the process partly throttled: the policy must not call that Normal, and the
+// next request must retry the restore.
+func TestFailedIdleApplyWithFailedRollbackIsRetriedOnTouch(t *testing.T) {
+	clock := newFakeClock()
+	var modes modeLog
+	var mu sync.Mutex
+	failNormal := true
+	p := New(Config{Now: clock.Now, After: clock.After, Apply: func(mode Mode) error {
+		modes.add(mode)
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case mode == Idle:
+			return errors.New("memory priority failed")
+		case failNormal:
+			failNormal = false
+			return errors.New("rollback failed")
+		}
+		return nil
+	}})
+	runPolicy(t, p)
+	eventually(t, func() bool { return clock.AfterCalls() > 0 })
+	clock.Advance(DefaultGrace)
+	eventually(t, func() bool { return len(modes.snapshot()) >= 2 })
+	if got := modes.snapshot(); !reflect.DeepEqual(got[:2], []Mode{Idle, Normal}) {
+		t.Fatalf("a failed idle apply was not followed by a restore: %v", got)
+	}
+	eventually(t, func() bool { return p.Mode() == Idle })
+	p.Touch()
+	if p.Mode() != Normal {
+		t.Fatal("the next request did not retry the failed restore")
+	}
+	if got := modes.snapshot(); got[len(got)-1] != Normal || len(got) != 3 {
+		t.Fatalf("modes = %v, want Idle, Normal (failed), Normal", got)
+	}
+}
+
+// When the restore after a failed idle apply works, the mode is Normal and nothing is retried until a request arrives.
+func TestFailedIdleApplyIsRestoredAtOnce(t *testing.T) {
+	clock := newFakeClock()
+	var modes modeLog
+	p := New(Config{Now: clock.Now, After: clock.After, Apply: func(mode Mode) error {
+		modes.add(mode)
+		if mode == Idle {
+			return errors.New("unsupported")
+		}
+		return nil
+	}})
+	runPolicy(t, p)
+	eventually(t, func() bool { return clock.AfterCalls() > 0 })
+	clock.Advance(DefaultGrace)
+	eventually(t, func() bool { return len(modes.snapshot()) >= 2 })
+	if got := modes.snapshot(); !reflect.DeepEqual(got[:2], []Mode{Idle, Normal}) || p.Mode() != Normal {
+		t.Fatalf("modes = %v, mode %v", got, p.Mode())
+	}
+}

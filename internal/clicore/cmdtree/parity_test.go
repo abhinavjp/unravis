@@ -26,9 +26,12 @@ import (
 	"api-audit-explorer/internal/mcp"
 )
 
-// Parity of the adapters (spec 05 BL-393): the command line, the MCP bridge and the dashboard handler behind both answer the same
-// question with the same data. The data set is the demo owner; the MCP side is a second bridge on the same dashboard handler, with the
-// identifiers the command line of a person shows.
+// Parity of the adapters (spec 05 BL-393). What this proves, and what it does not:
+//   - the command line and the MCP bridge give the same data. Both run the same bridge code on the same dashboard handler, so this
+//     checks the command line's envelope, flags and error mapping, not the tool code itself;
+//   - the tool code is held by an independent side: the dashboard's own routes (compare, timelines, activity) and the pinned
+//     followups.golden (groups, timeline, requests, slowest, breakdown, guide, sources);
+//   - the data set is the demo owner only: no real source, no real Windows pipe.
 
 func (o *owner) bridge() *mcp.Bridge {
 	return mcp.NewLocal(o.dash, ownerToken, mcp.WithIdentifiers(true))
@@ -276,7 +279,7 @@ func checkActivityAgainstDashboard(t *testing.T, o *owner, input map[string]any,
 }
 
 func TestParityCompareAndFollowUps(t *testing.T) {
-	o := newOwner(t, nil)
+	o := newOwner(t, nil, fixedClock)
 	b := o.bridge()
 	args := o.windowArgs()
 
@@ -302,27 +305,35 @@ func TestParityCompareAndFollowUps(t *testing.T) {
 	checkAgainstDashboard(t, o, args["query"], cli)
 	cid, mid := cli["resultId"].(string), mc["resultId"].(string)
 	key := keys(cli)[0]
+	// Each follow-up is run once with its own flags (the way a person types it), not with a raw request, and is compared with the MCP
+	// bridge AND with a pinned golden (followups.golden). The bridge and the command line run the same tool code, so only the golden
+	// (and the raw dashboard legs above and below) can tell that the tool code itself changed.
+	golden := map[string]any{}
 	for _, c := range []struct {
-		op   []string
-		tool string
-		cli  map[string]any
-		mcp  map[string]any
+		op    []string
+		tool  string
+		flags []string
+		mcp   map[string]any
 	}{
-		{[]string{"audit", "groups"}, "audit_get_groups", map[string]any{"resultId": cid, "limit": 5}, map[string]any{"resultId": mid, "limit": 5}},
-		{[]string{"audit", "timeline"}, "audit_get_timeline", map[string]any{"resultId": cid, "apiKey": key}, map[string]any{"resultId": mid, "apiKey": key}},
-		{[]string{"audit", "requests"}, "audit_get_requests", map[string]any{"resultId": cid, "apiKey": key, "limit": 4}, map[string]any{"resultId": mid, "apiKey": key, "limit": 4}},
-		{[]string{"audit", "slowest"}, "audit_get_slowest", map[string]any{"resultId": cid, "limit": 3}, map[string]any{"resultId": mid, "limit": 3}},
-		{[]string{"audit", "breakdown"}, "audit_get_breakdown", map[string]any{"resultId": cid, "dim": "statusCode"}, map[string]any{"resultId": mid, "dim": "statusCode"}},
-		{[]string{"audit", "guide"}, "audit_get_guide", map[string]any{}, map[string]any{}},
+		{[]string{"audit", "groups"}, "audit_get_groups", []string{"--result-id", cid, "--limit", "5"}, map[string]any{"resultId": mid, "limit": 5}},
+		{[]string{"audit", "timeline"}, "audit_get_timeline", []string{"--result-id", cid, "--api-key", key}, map[string]any{"resultId": mid, "apiKey": key}},
+		{[]string{"audit", "requests"}, "audit_get_requests", []string{"--result-id", cid, "--api-key", key, "--limit", "4"}, map[string]any{"resultId": mid, "apiKey": key, "limit": 4}},
+		{[]string{"audit", "slowest"}, "audit_get_slowest", []string{"--result-id", cid, "--limit", "3"}, map[string]any{"resultId": mid, "limit": 3}},
+		{[]string{"audit", "breakdown"}, "audit_get_breakdown", []string{"--result-id", cid, "--dim", "statusCode"}, map[string]any{"resultId": mid, "dim": "statusCode"}},
+		{[]string{"audit", "guide"}, "audit_get_guide", nil, map[string]any{}},
+		{[]string{"sources", "list"}, "audit_list_sources", nil, map[string]any{}},
 	} {
-		got, want := cliRequest(t, o, c.op, c.cli), mcpData(t, b, c.tool, c.mcp)
+		got := data(t, o.run(append(append(append([]string(nil), c.op...), c.flags...), "--json")...))
+		want := mcpData(t, b, c.tool, c.mcp)
 		if len(got) == 0 || len(want) == 0 {
 			t.Errorf("%s: an empty answer (cli %d fields, mcp %d)", c.tool, len(got), len(want))
 		}
 		if !reflect.DeepEqual(strip(got), strip(want)) {
 			t.Errorf("%s differs:\ncli %v\nmcp %v", c.tool, strip(got), strip(want))
 		}
+		golden[c.tool] = relativeTimes(strip(got), o.now)
 	}
+	checkFollowUpGolden(t, golden)
 	selected := keys(cli)
 	if len(selected) < 2 {
 		t.Fatal("the comparison has fewer than two groups")
@@ -341,9 +352,6 @@ func TestParityCompareAndFollowUps(t *testing.T) {
 		t.Errorf("activity differs:\ncli %v\nmcp %v", strip(actCLI), strip(actMCP))
 	}
 	checkActivityAgainstDashboard(t, o, activity, actCLI)
-	if got, want := cliRequest(t, o, []string{"sources", "list"}, map[string]any{}), mcpData(t, b, "audit_list_sources", map[string]any{}); !reflect.DeepEqual(strip(got), strip(want)) {
-		t.Errorf("sources differ:\ncli %v\nmcp %v", got, want)
-	}
 }
 
 // checkAgainstDashboard is the leg that does not go through the MCP bridge: the dashboard's own /api/analyze, the call of the web
@@ -983,4 +991,75 @@ func TestSnapshotCommandTree(t *testing.T) {
 	if strings.ReplaceAll(string(want), "\r\n", "\n") != got { // a Windows checkout may give the file CRLF line ends
 		t.Errorf("the command tree changed. If it is meant, run: UPDATE_GOLDEN=1 go test ./internal/clicore/cmdtree -run SnapshotCommandTree\n--- snapshot\n%s--- now\n%s", strings.ReplaceAll(string(want), "\r\n", "\n"), got)
 	}
+}
+
+// The follow-up answers are pinned in testdata/followups.golden, because the command line and the MCP bridge run the same tool code:
+// a change in that code (a renamed field, a wrong dimension, a changed number) reaches both sides and only a pinned answer shows it.
+// Times are written as an offset from the demo clock, so the file does not depend on the hour the test runs.
+const followUpGolden = "testdata/followups.golden"
+
+func fixedClock(o *owner) { o.now = time.Date(2026, time.November, 24, 12, 0, 0, 0, time.UTC) }
+
+func relativeTimes(v any, now time.Time) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for k, e := range x {
+			out[k] = relativeTimes(e, now)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = relativeTimes(e, now)
+		}
+		return out
+	case string:
+		if at, err := time.Parse(time.RFC3339Nano, x); err == nil {
+			return "now" + fmt.Sprintf("%+d", int64(at.Sub(now)/time.Second)) + "s"
+		}
+	}
+	return v
+}
+
+func checkFollowUpGolden(t *testing.T, got map[string]any) {
+	t.Helper()
+	raw, err := json.MarshalIndent(got, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := string(raw) + "\n"
+	if os.Getenv("UPDATE_GOLDEN") != "" {
+		if err := os.MkdirAll("testdata", 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(followUpGolden, []byte(have), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(followUpGolden)
+	if err != nil {
+		t.Fatalf("no snapshot: run with UPDATE_GOLDEN=1 (%v)", err)
+	}
+	if w := strings.ReplaceAll(string(want), "\r\n", "\n"); w != have {
+		t.Errorf("a follow-up answer changed. If it is meant, run: UPDATE_GOLDEN=1 go test ./internal/clicore/cmdtree -run ParityCompareAndFollowUps\nfirst difference near: %s", firstDifference(w, have))
+	}
+}
+
+// firstDifference shows the lines around the first line where two texts differ, so a failure names the field.
+func firstDifference(a, b string) string {
+	la, lb := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := 0; i < len(la) || i < len(lb); i++ {
+		var x, y string
+		if i < len(la) {
+			x = la[i]
+		}
+		if i < len(lb) {
+			y = lb[i]
+		}
+		if x != y {
+			return fmt.Sprintf("line %d\n  snapshot: %s\n  now:      %s", i+1, strings.TrimSpace(x), strings.TrimSpace(y))
+		}
+	}
+	return "(none)"
 }
