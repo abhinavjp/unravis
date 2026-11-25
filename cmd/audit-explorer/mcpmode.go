@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/appdirs"
+	"api-audit-explorer/internal/mcpadmin"
 	"api-audit-explorer/internal/mcpaudit"
 	"api-audit-explorer/internal/mcpsrv"
 	"api-audit-explorer/internal/sealedfile"
@@ -15,31 +16,53 @@ import (
 	"api-audit-explorer/internal/version"
 )
 
+// mcpOption adjusts openMCPEndpoint.
+type mcpOption func(*mcpOpts)
+
+type mcpOpts struct{ mount *server.MCPMount }
+
+// withMCPMount hands the AI access screen's routes (BL-347) to the dashboard server through m once the store is open; when the store
+// stays closed, m learns why (a short code, never a path or an error text).
+func withMCPMount(m *server.MCPMount) mcpOption { return func(o *mcpOpts) { o.mount = m } }
+
 // openMCPEndpoint builds the MCP routes of the ag pipe (/mcp/v1/*, BL-344): the grants store (mcp.db, its server key sealed for the
 // current Windows user), the dispatcher over the dashboard handler in this process, and the ledger. It returns a nil handler, and the
 // routes stay a 404, whenever the store cannot be opened safely: there is no sealing off Windows, a newer store, a folder that cannot be
 // restricted. A demo run that was given no folder of its own does not touch the person's real store. closeFn cancels the running calls
 // and closes the store; call it after the servers have stopped.
-func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard http.Handler, token string, demo bool, prot func() (sealedfile.Protector, error)) (h http.Handler, closeFn func()) {
+func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard http.Handler, token string, demo bool, prot func() (sealedfile.Protector, error), options ...mcpOption) (h http.Handler, closeFn func()) {
+	var o mcpOpts
+	for _, option := range options {
+		option(&o)
+	}
+	off := func(reason string) {
+		if o.mount != nil {
+			o.mount.SetOff(reason)
+		}
+	}
 	noop := func() {}
 	if demo && getenv(appdirs.EnvMCPDir) == "" && getenv("AUDIT_CONFIG_DIR") == "" {
 		log.Print("MCP access is off in a demo run with no folder of its own (set AUDIT_CONFIG_DIR)")
+		off(server.MCPOffStore)
 		return nil, noop
 	}
 	p, err := prot()
 	if err != nil {
 		log.Print("MCP access is off: this PC cannot seal the grant key for the current user")
+		off(server.MCPOffSealing)
 		return nil, noop
 	}
 	dir, err := appdirs.MCPDir(getenv)
 	if err != nil {
 		log.Print("MCP access is off: the MCP folder is not known")
+		off(server.MCPOffStore)
 		return nil, noop
 	}
 	db, recovered, err := mcpaudit.Open(ctx, dir, p, time.Now)
 	if err != nil {
 		// A fixed line: the error text of the store never names a path or a driver message.
 		log.Printf("MCP access is off: %v", err)
+		off(server.MCPOffStore)
 		return nil, noop
 	}
 	if recovered != "" {
@@ -56,6 +79,7 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 	if err != nil {
 		_ = db.Close()
 		log.Print("MCP access is off: the grant store could not be read")
+		off(server.MCPOffStore)
 		return nil, noop
 	}
 	gen := ""
@@ -86,7 +110,21 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 		server.SetMasterKeyLockHook(dashboard, nil)
 		_ = db.Close()
 		log.Print("MCP access is off: the endpoint could not be built")
+		off(server.MCPOffStore)
 		return nil, noop
+	}
+	if o.mount != nil {
+		admin, aerr := mcpadmin.Handler(mcpadmin.Deps{Grants: grants, Logf: log.Printf})
+		if aerr != nil {
+			grants.CancelAll()
+			server.SetEvidenceResolver(dashboard, nil)
+			server.SetMasterKeyLockHook(dashboard, nil)
+			_ = db.Close()
+			log.Print("MCP access is off: the approval screen could not be built")
+			off(server.MCPOffStore)
+			return nil, noop
+		}
+		o.mount.Set(admin)
 	}
 	// Idle work: expired comparison results leave memory, and the ledger and the aliases are pruned once a day.
 	stop, stopped := make(chan struct{}), make(chan struct{})

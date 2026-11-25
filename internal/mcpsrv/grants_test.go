@@ -795,7 +795,11 @@ func TestRecheckSeesANewRevisionAndExpiry(t *testing.T) {
 	}
 	wantDenied(t, e.g.Recheck(ctx, pr), ReasonRevision)
 	// Expiry is part of the gate too.
-	pr2 := Principal{"h1", 4}
+	cur, err := e.g.db.Get(ctx, "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr2 := Principal{"h1", cur.Rev}
 	if err := e.g.Recheck(ctx, pr2); err != nil {
 		t.Fatal(err)
 	}
@@ -813,6 +817,61 @@ func TestRevokeAndReissueDropTheDigest(t *testing.T) {
 		p, _ := e.db.Get(ctx, "h1")
 		if len(p.SecretDigest) != 0 || len(p.ClaimDigest) != 0 || p.Claimed || !p.ExpiresAt.IsZero() {
 			t.Fatalf("credential material kept after the step: %+v", p)
+		}
+	}
+}
+
+// Review of #273, M1: a host that enrolls again with other text or a wider identifiers request while the card is on screen makes the
+// card stale: an approval with the revision the person saw is refused, so an approval is always for the text that was shown.
+// A new parent process id is not text the person reads: it must not make the card stale (review of #273, SHOULD 1).
+func TestReEnrollWithOnlyANewParentProcessKeepsTheCard(t *testing.T) {
+	e := newEnv(t)
+	first := req("h1", nonce(t))
+	r1, err := e.g.Enroll(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again := first
+	again.PPID = first.PPID + 100
+	if r2, err := e.g.Enroll(ctx, again); err != nil || r2.Rev != r1.Rev {
+		t.Errorf("a new ppid changed the rev: %d then %d (%v)", r1.Rev, r2.Rev, err)
+	}
+}
+
+func TestReEnrollWithChangedTextMakesTheCardStale(t *testing.T) {
+	e := newEnv(t)
+	n := nonce(t)
+	first := req("h1", n)
+	first.HostName, first.Exe = "Claude Desktop", `C:\Program Files\Claude\claude.exe`
+	r1, err := e.g.Enroll(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same text again changes nothing.
+	if r, _ := e.g.Enroll(ctx, first); r.Rev != r1.Rev {
+		t.Errorf("same text: rev %d then %d", r1.Rev, r.Rev)
+	}
+	for name, change := range map[string]func(*EnrollReq){
+		"name":        func(r *EnrollReq) { r.HostName = "Something else" },
+		"path":        func(r *EnrollReq) { r.Exe = `C:\Temp\evil.exe` },
+		"version":     func(r *EnrollReq) { r.HostVersion = "9.9.9" },
+		"identifiers": func(r *EnrollReq) { r.RequestIdentifiers = !r.RequestIdentifiers },
+	} {
+		cur, _ := e.g.db.Get(ctx, "h1")
+		again := first
+		again.HostName, again.Exe, again.HostVersion, again.RequestIdentifiers = cur.HostName, cur.Exe, cur.HostVersion, cur.RequestedIdentifiers
+		change(&again)
+		r2, err := e.g.Enroll(ctx, again)
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		if r2.Rev <= cur.Rev {
+			t.Errorf("%s: rev stayed %d", name, r2.Rev)
+		}
+		a := appr()
+		a.ExpectRev = cur.Rev // what the card showed
+		if _, err := e.g.Approve(ctx, "h1", a); err == nil {
+			t.Errorf("%s: an approval for the old card was accepted", name)
 		}
 	}
 }

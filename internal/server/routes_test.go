@@ -162,6 +162,10 @@ var routeCases = []routeCase{
 	{"/api/blackbox/{id}/host-reading", "/api/blackbox/bb-1/host-reading", "POST"},
 	{"/api/blackbox/{id}/series", "/api/blackbox/bb-1/series", "POST"},
 	{"/api/blackbox/{id}", "/api/blackbox/bb-1", "DELETE"},
+	{"/api/mcp/profiles", "/api/mcp/profiles", "GET"},
+	{"/api/mcp/profiles/{id}/{action}", "/api/mcp/profiles/claude/approve", "POST"},
+	{"/api/mcp/stop", "/api/mcp/stop", "POST"},
+	{"/api/mcp/resume", "/api/mcp/resume", "POST"},
 }
 
 var routeTestMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}

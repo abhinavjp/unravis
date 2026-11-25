@@ -32,6 +32,7 @@
   const ExportPanel = lazyComponent(() => import('./components/ExportPanel.svelte'));
   const ImportPopup = lazyComponent(() => import('./lib/components/importPopup/ImportPopup.svelte'));
   const BlackboxPanel = lazyComponent(() => import('./components/BlackboxPanel.svelte'));
+  const McpAccessPanel = lazyComponent(() => import('./components/McpAccessPanel.svelte'));
   const CaseHome = lazyComponent(() => import('./lib/components/CaseHome.svelte'));
   const analysisViews = [
     () => import('./components/Pulse.svelte'), () => import('./components/RollupView.svelte'), () => import('./components/WhereView.svelte'), () => import('./components/EvidenceView.svelte'),
@@ -133,6 +134,7 @@
     {#if panels.sidePanel === 'export'}<ExportPanel query={scope.query} {zone} {sourceLabels} onClose={closeSidePanel} />{/if}
     {#if panels.importPopup}<ImportPopup caseId={panels.importPopup.caseId} caseTitle={panels.importPopup.caseTitle} query={scope.query} {zone} retryServerName={panels.importPopup.retryServerName} onClose={() => void closeImportPopup()} onOpenTimeline={openTimeline} />{/if}
     {#if panels.sidePanel === 'blackbox'}<BlackboxPanel onClose={closeSidePanel} />{/if}
+    {#if panels.sidePanel === 'mcp'}<McpAccessPanel onClose={closeSidePanel} />{/if}
 
     <main id="main-content" tabindex="-1" class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
       <div class="stage-inner">
