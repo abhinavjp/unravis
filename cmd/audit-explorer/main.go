@@ -197,6 +197,10 @@ func run(args []string, getenv func(string) string) error {
 	for _, note := range demoNotes {
 		log.Print(note)
 	}
+	// A real run (not --version, --quit, --check-update or a refused demo setting) records an unhandled panic locally (crashwire.go).
+	// CloseUnlessPanic keeps the file open while a panic unwinds, so a panic on this goroutine still gets its dump.
+	crash := startCrashCapture(getenv)
+	defer crash.CloseUnlessPanic()
 	if f.mcp {
 		return runMCP(f, getenv)
 	}
