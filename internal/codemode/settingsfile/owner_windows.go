@@ -45,7 +45,7 @@ func ownerOnly(f *os.File, _ os.FileInfo) bool {
 			}
 			return false // an entry kind this check does not understand is not trusted
 		}
-		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart)) //nolint:gosec // the SID starts at SidStart inside the entry GetAce returned
 		if !sid.Equals(user.User.Sid) && !sid.Equals(system) && !sid.Equals(admins) {
 			return false
 		}
