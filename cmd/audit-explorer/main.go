@@ -394,7 +394,7 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 	if pipes != nil {
-		pipeOpts := []pipesrv.Option{pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel))}
+		pipeOpts := []pipesrv.Option{pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel, codeBroker))}
 		mcpHandler, closeMCP := openMCPEndpoint(appCtx, getenv, served, token, f.demo, sealedfile.CurrentUser, withMCPMount(mcpMount), withCodeBroker(codeBroker))
 		defer closeMCP() // runs after the servers have stopped (awaitShutdownWithin below)
 		if mcpHandler != nil {

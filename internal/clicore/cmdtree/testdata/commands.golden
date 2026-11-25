@@ -19,6 +19,9 @@ unravis blackbox |
 unravis cases list | --archived bool, --offset int
 unravis cases show | 
 unravis cases | 
+unravis code run | --allow-identifiers bool, --case string, --code string, --reason string, --timeout-ms int
+unravis code types | 
+unravis code | 
 unravis completion | 
 unravis doctor | 
 unravis schema | 
