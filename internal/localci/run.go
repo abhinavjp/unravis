@@ -68,6 +68,8 @@ type JobResult struct {
 	Outputs map[string]string `json:"outputs,omitempty"`
 	Start   time.Time         `json:"start"`
 	End     time.Time         `json:"end"`
+	// Pseudo marks a record of the runner itself (the stage a run stopped at), not a job of the workflow.
+	Pseudo bool `json:"pseudo,omitempty"`
 
 	coe bool // continue-on-error, evaluated for this instance
 }
@@ -916,7 +918,7 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 	if sr.Err != "" {
 		// keep the reason in the log file too
 		if f, err := os.OpenFile(sr.LogFile, os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
-			_, _ = fmt.Fprintln(f, "[unravis-ci] "+sr.Err)
+			_, _ = fmt.Fprintln(f, "[ci] "+sr.Err)
 			_ = f.Close()
 		}
 	}
@@ -958,10 +960,10 @@ func (in *instance) processEnv(stepEnv map[string]string, files map[string]strin
 	for k, v := range files {
 		e.set(k, v)
 	}
-	// never a token
+	// never a token (NoTokenPlaceholder, which StepEnv sets, is not one: it only keeps gh from using the owner's login)
 	var items []string
 	for _, kv := range e.items {
-		if k, _, ok := splitKV(kv); ok && (strings.EqualFold(k, "GITHUB_TOKEN") || strings.EqualFold(k, "GH_TOKEN")) {
+		if k, v, ok := splitKV(kv); ok && v != NoTokenPlaceholder && (strings.EqualFold(k, "GITHUB_TOKEN") || strings.EqualFold(k, "GH_TOKEN")) {
 			continue
 		}
 		items = append(items, kv)

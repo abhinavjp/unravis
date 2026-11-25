@@ -19,20 +19,65 @@ func cli(t *testing.T, env []string, args ...string) (code int, out, errOut stri
 	return code, so.String(), se.String()
 }
 
-func TestScrubEnv(t *testing.T) {
+func TestScrubEnvIsAnAllowList(t *testing.T) {
+	kept := []string{
+		"PATH=/usr/bin", "Path=C:/bin", "SystemRoot=C:/Windows", "TEMP=C:/t", "USERPROFILE=C:/u", "GOPATH=/g", "GOCACHE=/c",
+		"GOMODCACHE=/m", "HOME=/h", "LOCALAPPDATA=C:/l", "=C:=C:/", "LC_ALL=C", "ComSpec=C:/cmd.exe", "PATHEXT=.EXE",
+	}
 	dropped := []string{
+		// secret names
 		"GH_TOKEN=x", "GITHUB_TOKEN=x", "gh_token=x", "NPM_TOKEN=x", "my_secret=x", "DB_PASSWORD=x", "SIGNING_PASSPHRASE=x",
 		"GPG_PASSPHRASE_FILE=x", "PROTON_BRIDGE_USER=x", "ProtonPass=x", "SIGNPATH_API_TOKEN=x", "SIGNPATH_ORG=x",
-		"UNRAVIS_RELEASE_KEY=x", "unravis_release=x", "AWS_SESSION_TOKEN=x",
+		"UNRAVIS_RELEASE_KEY=x", "unravis_release=x", "AWS_SESSION_TOKEN=x", "AWS_ACCESS_KEY_ID=x", "STRIPE_API_KEY=x",
+		"GOOGLE_APPLICATION_CREDENTIALS=x",
+		// names nobody listed: a deny-list would keep these, an allow-list does not
+		"MYSQL_PWD=x", "DATABASE_URL=postgres://u:p@h/db", "SSH_AUTH_SOCK=/s", "GITHUB_WORKSPACE=/w", "UNRAVIS_HOME=1",
+		"GIT_ASKPASS=/a", "GIT_CONFIG_GLOBAL=/g", "NODE_OPTIONS=--x", "TOKENIZER=1",
 	}
-	kept := []string{
-		"PATH=/usr/bin", "SystemRoot=C:\\Windows", "TEMP=C:\\t", "USERPROFILE=C:\\u", "GOPATH=/g", "GOCACHE=/c", "GOMODCACHE=/m",
-		"HOME=/h", "TOKENIZER=1", "SECRETARY=1", "UNRAVIS_HOME=1", "=C:=C:\\", "GITHUB_WORKSPACE=/w", "LOCALAPPDATA=C:\\l",
-	}
-	got := scrubEnv(append(append([]string{}, dropped...), kept...))
+	got := scrubEnv(append(append([]string{}, dropped...), kept...), nil)
 	if !reflect.DeepEqual(got, kept) {
 		t.Fatalf("scrubEnv\n got %v\nwant %v", got, kept)
 	}
+}
+
+func TestScrubEnvExtraAllow(t *testing.T) {
+	env := []string{"PATH=/bin", "MY_FLAG=1", "OTHER=2", "DEPLOY_TOKEN=sekret-value"}
+	got := scrubEnv(env, []string{"my_flag", " DEPLOY_TOKEN "})
+	want := []string{"PATH=/bin", "MY_FLAG=1", "DEPLOY_TOKEN=sekret-value"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+	// a name that is not listed stays out, and the extra list is not a pattern
+	if got := scrubEnv(env, []string{"MY"}); !reflect.DeepEqual(got, []string{"PATH=/bin"}) {
+		t.Fatalf("got %v", got)
+	}
+	// allowing a secret by name keeps it out of every log all the same
+	if red := newRedactor(secretValues(env)); red("x sekret-value y") != "x *** y" {
+		t.Fatal("an explicitly allowed secret must still be masked")
+	}
+}
+
+func TestSecretsIncludeTheGhLoginToken(t *testing.T) {
+	old := ghAuthToken
+	t.Cleanup(func() { ghAuthToken = old })
+	ghAuthToken = func([]string) string { return "gho_loginTokenValue123" }
+	vals := secrets([]string{"NPM_TOKEN=abcdef123", "PATH=/bin"})
+	if len(vals) != 2 || vals[0] != "gho_loginTokenValue123" || vals[1] != "abcdef123" {
+		t.Fatalf("values %q", vals)
+	}
+	if got := newRedactor(vals)("a gho_loginTokenValue123 b abcdef123"); got != "a *** b ***" {
+		t.Fatalf("got %q", got)
+	}
+	ghAuthToken = func([]string) string { return "" } // no gh, or not logged in: nothing added
+	if vals := secrets([]string{"PATH=/bin"}); len(vals) != 0 {
+		t.Fatalf("values %q", vals)
+	}
+}
+
+func TestMain(m *testing.M) {
+	// the tests never run the real gh
+	ghAuthToken = func([]string) string { return "" }
+	os.Exit(m.Run())
 }
 
 func TestVersionAndUsage(t *testing.T) {
@@ -277,5 +322,33 @@ jobs:
 	}
 	if b, _ := os.ReadFile(filepath.Join(state, "run.json")); !strings.Contains(string(b), `"o": "***"`) { //nolint:gosec // reading the test's own state folder
 		t.Fatalf("job output must be masked in run.json: %s", b)
+	}
+}
+
+func TestRunKeepsOnlyAllowedVariables(t *testing.T) {
+	needBash(t)
+	work := checkout(t)
+	wf := writeWF(t, "e.yml", `name: e
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "kept=[$KEEP_ME] dropped=[$DROP_ME] db=[$DATABASE_URL] path=${PATH:+set}"
+`)
+	env := append(os.Environ(), "KEEP_ME=one", "DROP_ME=two", "DATABASE_URL=postgres://u:pw@h/db")
+	state := filepath.Join(t.TempDir(), "st")
+	code, out, errOut := cli(t, env, "run", wf, "--event", "push", "--local", work, "--state", state, "--allow-env", "KEEP_ME")
+	if code != exitOK {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	logs, _ := filepath.Glob(filepath.Join(state, "*", "*", "*.log"))
+	all := out
+	for _, l := range logs {
+		b, _ := os.ReadFile(l) //nolint:gosec // a log file the test just listed
+		all += string(b)
+	}
+	if !strings.Contains(all, "kept=[one] dropped=[] db=[] path=set") {
+		t.Fatalf("only the allowed variables reach a step:\n%s", all)
 	}
 }

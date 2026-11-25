@@ -486,6 +486,9 @@ func (p *wfParser) parseOn(w *Workflow, n *yaml.Node) {
 func (p *wfParser) parseJobs(w *Workflow, n *yaml.Node) {
 	for _, e := range p.pairs(n, "jobs") {
 		j := &Job{ID: e.key, Line: e.k.Line}
+		if strings.HasPrefix(e.key, "_") {
+			p.fail(e.k.Line, "job id %q starts with _, which this runner keeps for its own records (for example _checkout)", e.key)
+		}
 		hasUses, hasRunsOn := false, false
 		for _, f := range p.pairs(e.v, "job "+e.key) {
 			ctx := "job " + e.key + "." + f.key
