@@ -158,7 +158,7 @@ func needBash(t *testing.T) {
 func writeWF(t *testing.T, name, body string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil { //nolint:gosec // a file in the test's own temp folder
 		t.Fatal(err)
 	}
 	return p
