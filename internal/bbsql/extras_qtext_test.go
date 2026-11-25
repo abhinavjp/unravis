@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -197,7 +199,7 @@ func TestXTRunnerNeverSendsTextWithoutTheFlag(t *testing.T) {
 	if err := r.Tick(now); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
-	if q.count(stmtQText) != 0 || sampleCount(t, r.Dir, qtextKind) != 0 {
+	if q.count(stmtQText) != 0 || sampleCount(t, r.Dir, qtextKind) != 0 || len(textSampleLines(t, r.Dir)) != 0 {
 		t.Errorf("text was sent (%d) or written (%d) with QueryTextMaxChars = 0", q.count(stmtQText), sampleCount(t, r.Dir, qtextKind))
 	}
 	// A text sampler injected with the flag off is refused and switched off.
@@ -231,7 +233,10 @@ func TestXTRunnerSendsAndScrubsWithTheFlag(t *testing.T) {
 		t.Fatalf("the text statement was sent %d times, want 1", q.count(stmtQText))
 	}
 	var rows []QText
-	for _, d := range readSampleLines(t, r.Dir) {
+	if n := sampleCount(t, r.Dir, qtextKind); n != 0 {
+		t.Errorf("%d text lines went into a bb-sql file, which the read key can fetch", n)
+	}
+	for _, d := range textSampleLines(t, r.Dir) {
 		if d.Kind != qtextKind {
 			continue
 		}
@@ -337,5 +342,60 @@ func TestXTDecodeRowCapAndValidation(t *testing.T) {
 		if _, _, err := (&qtextSampler{maxChars: 100}).Decode([]Row{r}); err == nil {
 			t.Errorf("%s: Decode accepted the row", name)
 		}
+	}
+}
+
+// textSampleLines reads the bb-sqlq-<hour> files, the only place statement text may be written.
+func textSampleLines(t *testing.T, dir string) []SampleDoc {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, TextSamplePrefix+"*"+SampleSuffix))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	var out []SampleDoc
+	for _, p := range matches {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		for _, raw := range strings.Split(string(data), "\n") {
+			raw = strings.TrimSuffix(raw, "\r")
+			if raw == "" {
+				continue
+			}
+			var doc SampleDoc
+			if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+				t.Fatalf("bad ndjson line %q: %v", raw, err)
+			}
+			out = append(out, doc)
+		}
+	}
+	return out
+}
+
+// The text file is never one of the files the read key can fetch, and the folder sweep keeps it to the same age and byte bounds.
+func TestXTTextFileIsNotAServedSampleNameAndIsSwept(t *testing.T) {
+	now := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	name := filepath.Base(TextSamplePath(t.TempDir(), now))
+	if strings.HasPrefix(name, SamplePrefix) {
+		t.Fatalf("%q looks like a served sample file", name)
+	}
+	q := &recQuery{replies: map[string][]Row{Statements["bb:waits"]: fakeWaitRows(1)}}
+	r := xtTickRunner(t, q, now)
+	old := filepath.Join(r.Dir, TextSamplePrefix+"20260301-00"+SampleSuffix)
+	cur := TextSamplePath(r.Dir, now)
+	for _, p := range []string{old, cur} {
+		if err := os.WriteFile(p, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.rotate(now); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("an old text file survived the age sweep (%v)", err)
+	}
+	if _, err := os.Stat(cur); err != nil {
+		t.Errorf("the current text file was removed: %v", err)
 	}
 }

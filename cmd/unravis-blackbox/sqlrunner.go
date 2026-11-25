@@ -85,6 +85,7 @@ func runSQLServiceLoop(ctx context.Context, o sqlRunOptions) error {
 	}
 	r := bbsql.NewRunner(o.Dir, conn)
 	r.EnabledExtras = sqlEnabledExtras(o.Config)
+	r.QueryTextMaxChars = sqlQueryTextChars(o.Config)
 	r.MinFreePercent, r.KeepHours, r.MaxBytes = sqlDiskBounds(o.Config)
 	r.FreePercent = sqlFreePercent
 	r.Log = log
@@ -159,4 +160,13 @@ func sqlConnConfig(p blackbox.Probe) bbsql.ConnConfig {
 		Certificate:           p.Certificate,
 		HostNameInCertificate: p.HostNameInCertificate,
 	}
+}
+
+// sqlQueryTextChars is the size cap of one kept statement, or 0 when query text is off. It is nonzero only for the deep profile with
+// sql.queryText set (Config.SQLQueryText); the one value that switches the text sampler on in bbsql.
+func sqlQueryTextChars(c blackbox.Config) int {
+	if on, n := c.SQLQueryText(); on {
+		return n
+	}
+	return 0
 }

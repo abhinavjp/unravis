@@ -125,3 +125,23 @@ func TestSQLConnForRefusesALoginPathThatIsNotAFile(t *testing.T) {
 		t.Fatal("an unreadable login path fell back to Windows sign-in")
 	}
 }
+
+// Query text is on only for the deep profile with the flag set; every other config leaves the cap at 0, which keeps the sampler unbuilt.
+func TestSQLQueryTextCharsIsOnlyForDeepWithTheFlag(t *testing.T) {
+	for name, c := range map[string]blackbox.Config{
+		"no sql":           {},
+		"flag, standard":   {SQL: &blackbox.SQLSettings{QueryText: true}},
+		"flag, everything": {SQL: &blackbox.SQLSettings{Profile: blackbox.SQLProfileEverything, QueryText: true}},
+		"deep, no flag":    {SQL: &blackbox.SQLSettings{Profile: blackbox.SQLProfileDeep}},
+	} {
+		if n := sqlQueryTextChars(c); n != 0 {
+			t.Errorf("%s: cap %d, want 0", name, n)
+		}
+	}
+	if n := sqlQueryTextChars(blackbox.Config{SQL: &blackbox.SQLSettings{Profile: blackbox.SQLProfileDeep, QueryText: true, QueryTextMaxChars: 700}}); n != 700 {
+		t.Errorf("deep with the flag: cap %d, want 700", n)
+	}
+	if n := sqlQueryTextChars(blackbox.Config{SQL: &blackbox.SQLSettings{Profile: blackbox.SQLProfileDeep, QueryText: true}}); n <= 0 {
+		t.Errorf("deep with the flag and no cap: %d, want the default", n)
+	}
+}

@@ -452,3 +452,10 @@ func sqlGet(t *testing.T, g *srvRig, path, key string) (int, []byte) {
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, b
 }
+
+// The query-text file of the SQL service (bb-sqlq-<hour>) is not a downloadable sample file: /sql/files/ serves on the read key alone.
+func TestTheQueryTextFileIsNotADownloadableSQLSample(t *testing.T) {
+	if ValidSQLFileName("bb-sqlq-20261123-10.ndjson") {
+		t.Fatal("the statement-text file name is served as a SQL sample")
+	}
+}

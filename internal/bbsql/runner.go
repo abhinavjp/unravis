@@ -759,6 +759,7 @@ func (r *Runner) rotate(now time.Time) error {
 		return err
 	}
 	currentName := filepath.Base(SamplePath(r.Dir, now))
+	currentText := filepath.Base(TextSamplePath(r.Dir, now))
 	cutoff := now.Add(-time.Duration(r.keepHours()) * time.Hour).Format(hourLayout)
 	// A wall/monotonic discontinuity makes every file look old (forward jump) or
 	// hides expiry (backward jump): defer the age rule for this pass. The byte
@@ -774,11 +775,8 @@ func (r *Runner) rotate(now time.Time) error {
 	ageRemoved := 0
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasPrefix(name, "bb-sql-") || !strings.HasSuffix(name, ".ndjson") {
-			continue
-		}
-		hh := strings.TrimSuffix(strings.TrimPrefix(name, "bb-sql-"), ".ndjson")
-		if !validHour(hh) {
+		hh, ok := sampleFileHour(name)
+		if e.IsDir() || !ok {
 			continue
 		}
 		info, err := e.Info()
@@ -787,7 +785,7 @@ func (r *Runner) rotate(now time.Time) error {
 		}
 		// Age purge: never the current writing hour, bounded per pass, deferred
 		// on a clock jump. Future-dated files (hh > now) are not age-expired.
-		if !skipAge && hh < cutoff && name != currentName && ageRemoved < maxAgeRemovalsPerPass {
+		if !skipAge && hh < cutoff && name != currentName && name != currentText && ageRemoved < maxAgeRemovalsPerPass {
 			if err := os.Remove(filepath.Join(r.Dir, name)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -809,7 +807,7 @@ func (r *Runner) rotate(now time.Time) error {
 	for r.MaxBytes > 0 && total > r.MaxBytes && byteRemoved < maxByteRemovalsPerPass {
 		idx := -1
 		for i, f := range kept {
-			if f.name == currentName {
+			if f.name == currentName || f.name == currentText {
 				continue
 			}
 			if idx == -1 || f.hour < kept[idx].hour {
@@ -1108,4 +1106,25 @@ func itemLimit(interval time.Duration) time.Duration {
 		return quickLimit
 	}
 	return longLimit
+}
+
+// TextSamplePrefix frames the hourly file of the query-text sampler: bb-sqlq-<hour>.ndjson. Statement text never goes into a bb-sql-<hour>
+// file: those are served on the read key alone (/sql/files/, ValidSQLFileName) and hold numbers only, and the text file's name does not
+// parse as one of them, so no route lists or serves it. Only the recorder host and a future opt-in reader can open it.
+const TextSamplePrefix = "bb-sqlq-"
+
+// TextSamplePath is the hourly NDJSON file of query text for t.
+func TextSamplePath(dir string, t time.Time) string {
+	return filepath.Join(dir, TextSamplePrefix+t.UTC().Format(hourLayout)+SampleSuffix)
+}
+
+// sampleFileHour splits a file name of the folder into its hour when it is one of the two sample families.
+func sampleFileHour(name string) (string, bool) {
+	for _, p := range []string{SamplePrefix, TextSamplePrefix} {
+		if strings.HasPrefix(name, p) && strings.HasSuffix(name, SampleSuffix) {
+			hh := strings.TrimSuffix(strings.TrimPrefix(name, p), SampleSuffix)
+			return hh, validHour(hh)
+		}
+	}
+	return "", false
 }

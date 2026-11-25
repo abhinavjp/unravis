@@ -473,7 +473,11 @@ func (r *Runner) tickExtras(ctx, parent context.Context, now time.Time) error {
 			}
 			continue
 		}
-		if err := r.appendSample(SamplePath(r.Dir, now), SampleDoc{
+		path := SamplePath(r.Dir, now)
+		if kind == qtextKind {
+			path = TextSamplePath(r.Dir, now) // statement text never shares a file with the numbers the read key can fetch
+		}
+		if err := r.appendSample(path, SampleDoc{
 			V: 1, T: now.UTC(), Kind: kind, Truncated: truncated, Rows: payload,
 		}); err != nil {
 			r.fsWriteFailures++
