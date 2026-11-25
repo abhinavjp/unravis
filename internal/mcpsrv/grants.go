@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log"
 	"regexp"
 	"slices"
@@ -157,7 +158,32 @@ func (g *Grants) CreatePending(ctx context.Context, id string) error {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.insertPending(ctx, &mcpaudit.Profile{ID: id})
+	np := mcpaudit.Profile{ID: id}
+	if err := g.insertPending(ctx, &np); err != nil {
+		return err
+	}
+	g.note(ctx, np, mcpaudit.KindEnroll, "added")
+	return nil
+}
+
+// note writes one lifecycle row to the call ledger (BL-351) in the same store as the grants. It is best effort and must be called with
+// g.mu held, after the change it records is stored: a full or broken ledger never blocks a revoke or an approval, and the rows hold
+// only the profile id, its revision and a short fixed fact (never a credential, digest, nonce, host text or path).
+func (g *Grants) note(ctx context.Context, p Profile, kind, code string) {
+	_ = g.db.Record(context.WithoutCancel(ctx), mcpaudit.Event{Time: g.now(), ProfileID: p.ID, ProfileRev: p.Rev, Kind: kind, Outcome: mcpaudit.OutcomeOK, Code: code})
+}
+
+// scopeFacts says what a profile may do in words with no source ids, tool names or other free text: the tier and counts.
+func scopeFacts(p Profile) string {
+	return fmt.Sprintf("%s tools=%d sources=%d identifiers=%t code=%t", p.Tier, len(p.Tools), len(p.Sources), p.Identifiers, p.Code)
+}
+
+// sameScope reports whether two profile states grant the same things (the tier, tools, sources and identifiers grant). Code mode is not
+// compared: a revoke or reissue switches it off, so the earlier state is not the person's last choice (the approve row says it anyway).
+func sameScope(a, b Profile) bool {
+	return a.Tier == b.Tier && a.Identifiers == b.Identifiers &&
+		slices.Equal(slices.Sorted(slices.Values(a.Tools)), slices.Sorted(slices.Values(b.Tools))) &&
+		slices.Equal(slices.Sorted(slices.Values(a.Sources)), slices.Sorted(slices.Values(b.Sources)))
 }
 
 func (g *Grants) insertPending(ctx context.Context, p *mcpaudit.Profile) error {
@@ -203,12 +229,14 @@ func (g *Grants) Enroll(ctx context.Context, r EnrollReq) (EnrollResp, error) {
 		if err := g.insertPending(ctx, &np); err != nil {
 			return EnrollResp{}, err
 		}
+		g.note(ctx, np, mcpaudit.KindEnroll, "new_host")
 		return EnrollResp{State: mcpaudit.StatePending, Rev: np.Rev}, nil
 	case err != nil:
 		return EnrollResp{}, err
 	}
 	same := subtle.ConstantTimeCompare(p.ClaimDigest, digest) == 1
 	if p.State == mcpaudit.StatePending && (len(p.ClaimDigest) == 0 || same) {
+		firstSeen := len(p.ClaimDigest) == 0 // after "Add host" or a reissue: the host this profile waits for has now appeared
 		p, err = g.db.Update(ctx, p.ID, func(p *Profile) error {
 			// The revision is what an approval is tied to (ExpectRev): when the text the person is looking at changes, the card they
 			// have is stale and Approve answers 409, so a host cannot swap its name or path after the card was shown (review of #273, M1).
@@ -224,6 +252,9 @@ func (g *Grants) Enroll(ctx context.Context, r EnrollReq) (EnrollResp, error) {
 		if err != nil {
 			return EnrollResp{}, err
 		}
+		if firstSeen {
+			g.note(ctx, p, mcpaudit.KindEnroll, "host_seen")
+		}
 	} else if len(p.ClaimDigest) != 0 && !same && p.Contested < maxContested && (p.State == mcpaudit.StatePending || p.State == mcpaudit.StateActive) {
 		// Another process enrolled this id with a nonce that is not the first one's. It changes nothing (the first enroller keeps the
 		// claim), but the person approving must be able to see that two processes asked: Reissue, not Approve, is the answer then.
@@ -231,6 +262,7 @@ func (g *Grants) Enroll(ctx context.Context, r EnrollReq) (EnrollResp, error) {
 		if err != nil {
 			return EnrollResp{}, err
 		}
+		g.note(ctx, p, mcpaudit.KindEnroll, "contested")
 	}
 	return EnrollResp{State: p.State, Rev: p.Rev}, nil
 }
@@ -293,6 +325,7 @@ func (g *Grants) Approve(ctx context.Context, id string, a Approval) (Profile, e
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now().UTC()
+	var before Profile // the scope this profile held before this approval (a reissued profile keeps its old scope for the card)
 	p, err := g.db.Update(ctx, id, func(p *Profile) error {
 		if p.State != mcpaudit.StatePending {
 			return ErrNotApprovable
@@ -306,6 +339,7 @@ func (g *Grants) Approve(ctx context.Context, id string, a Approval) (Profile, e
 		if p.Contested > 0 && !a.AcceptContested {
 			return ErrContested
 		}
+		before = *p
 		p.State, p.Rev = mcpaudit.StateActive, p.Rev+1
 		p.Tier, p.Tools, p.Sources = a.Tier, a.Tools, a.Sources
 		p.Code = a.Code // always what this approval says: never carried over from an earlier approval
@@ -323,6 +357,10 @@ func (g *Grants) Approve(ctx context.Context, id string, a Approval) (Profile, e
 		return Profile{}, err
 	}
 	g.secrets[id] = pendingSecret{secret: secret, until: now.Add(ClaimTTL)}
+	g.note(ctx, p, mcpaudit.KindApprove, scopeFacts(p))
+	if before.Tier != "" && !sameScope(before, p) {
+		g.note(ctx, p, mcpaudit.KindScopeChange, scopeFacts(p))
+	}
 	return p, nil
 }
 
@@ -353,7 +391,9 @@ func (g *Grants) Reissue(ctx context.Context, id string) (Profile, error) {
 
 func (g *Grants) end(ctx context.Context, id, state string) (Profile, error) {
 	g.mu.Lock()
+	wasActive := false
 	p, err := g.db.Update(ctx, id, func(p *Profile) error {
+		wasActive = p.State == mcpaudit.StateActive
 		p.State, p.Rev = state, p.Rev+1
 		p.SecretDigest, p.ClaimDigest, p.Claimed, p.Contested = nil, nil, false, 0
 		p.Code = false // a revoked or reissued grant has no code mode; the next approval says again
@@ -365,9 +405,20 @@ func (g *Grants) end(ctx context.Context, id, state string) (Profile, error) {
 		return Profile{}, err
 	}
 	delete(g.secrets, id)
+	code := "revoked"
+	if state == mcpaudit.StatePending {
+		code = "reissued"
+	}
 	cancels, hooks := g.takeRunning(id), slices.Clone(g.onRevoke)
 	g.mu.Unlock()
 	finish(cancels, hooks, id)
+	// The row is written after the running calls are cancelled: a slow or busy ledger must never delay ending access. Only a grant that
+	// was live is a revocation; ending a pending, denied or already ended profile again changes no access and leaves no row.
+	if wasActive {
+		g.mu.Lock()
+		g.note(ctx, p, mcpaudit.KindRevoke, code)
+		g.mu.Unlock()
+	}
 	return p, nil
 }
 

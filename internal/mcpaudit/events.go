@@ -12,11 +12,18 @@ import (
 // result, a path or a credential: the arguments are kept only as a keyed digest (Fingerprint), so two equal calls can be recognised and
 // nothing can be read back. BL-351 adds the screen, the query and the 90-day prune; here only the writes and a hard row cap.
 
-// Kinds of an audit row written by the dispatcher.
+// Kinds of an audit row. The first three are written by the dispatcher for a call.
 const (
 	KindAdmit  = "admit"  // the call passed the gate and is about to run
 	KindEnd    = "end"    // the call ended (Outcome says how)
 	KindDenied = "denied" // the call was refused before it ran, or its answer was withheld
+
+	// The lifecycle rows of a profile (BL-351), written by the grants: who was enrolled, approved, given a different scope, and revoked or
+	// reissued. They carry the profile id, its revision and a short non-secret fact in Code, never a credential, digest, nonce or path.
+	KindEnroll      = "enroll"       // a host was added or seen for the first time, or a second process contested it
+	KindApprove     = "approve"      // the person approved a pending host
+	KindScopeChange = "scope_change" // an approval gave a host a different scope than it had before
+	KindRevoke      = "revoke"       // the host's credential ended (revoke or reissue)
 )
 
 // Outcomes of an audit row.
@@ -67,7 +74,7 @@ func (d *DB) Fingerprint(args []byte) []byte { return d.MAC("args", args) }
 // Record writes one ledger row. It is one statement; the row is on disk when it returns (synchronous=FULL).
 func (d *DB) Record(ctx context.Context, e Event) error {
 	switch e.Kind {
-	case KindAdmit, KindEnd, KindDenied:
+	case KindAdmit, KindEnd, KindDenied, KindEnroll, KindApprove, KindScopeChange, KindRevoke:
 	default:
 		return ErrBadEvent
 	}

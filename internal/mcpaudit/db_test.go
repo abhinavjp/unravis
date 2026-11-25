@@ -189,7 +189,7 @@ func TestLedgerRowsAreBoundedAndValidated(t *testing.T) {
 	if err != nil || len(rows) != 1 || len(rows[0].Tool) > 64 || len(rows[0].CorrID) > 64 || !utf8.ValidString(rows[0].Tool) {
 		t.Fatalf("%+v %v", rows, err)
 	}
-	for _, e := range []mcpaudit.Event{{ProfileID: "p", Kind: "enroll"}, {ProfileID: "p", Kind: ""}, {Kind: mcpaudit.KindEnd}} {
+	for _, e := range []mcpaudit.Event{{ProfileID: "p", Kind: "bogus"}, {ProfileID: "p", Kind: "stop"}, {ProfileID: "p", Kind: ""}, {Kind: mcpaudit.KindEnd}, {Kind: mcpaudit.KindEnroll}} {
 		if err := db.Record(ctx, e); !errors.Is(err, mcpaudit.ErrBadEvent) {
 			t.Errorf("%+v: %v", e, err)
 		}
@@ -307,5 +307,31 @@ func TestVersionFourStoreReadsCodeAsOff(t *testing.T) {
 	}
 	if p, err = db.Get(ctx, "h1"); err != nil || !p.Code {
 		t.Fatalf("Code did not persist: %+v %v", p, err)
+	}
+}
+
+func TestLifecycleKindsAreAcceptedAndOthersStillRefused(t *testing.T) {
+	db, _, err := mcpaudit.Open(ctx, t.TempDir(), prot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	kinds := []string{mcpaudit.KindEnroll, mcpaudit.KindApprove, mcpaudit.KindScopeChange, mcpaudit.KindRevoke}
+	for _, k := range kinds {
+		if err := db.Record(ctx, mcpaudit.Event{ProfileID: "p", ProfileRev: 3, Kind: k, Outcome: mcpaudit.OutcomeOK, Code: "x"}); err != nil {
+			t.Errorf("%s: %v", k, err)
+		}
+	}
+	if err := db.Record(ctx, mcpaudit.Event{ProfileID: "p", Kind: "nonsense"}); !errors.Is(err, mcpaudit.ErrBadEvent) {
+		t.Errorf("an unknown kind must still be refused: %v", err)
+	}
+	rows, err := db.RecentEvents(ctx, 10)
+	if err != nil || len(rows) != len(kinds) {
+		t.Fatalf("%d rows, %v", len(rows), err)
+	}
+	for i, r := range rows { // newest first
+		if r.Kind != kinds[len(kinds)-1-i] || r.ProfileID != "p" || r.ProfileRev != 3 {
+			t.Errorf("row %d: %+v", i, r)
+		}
 	}
 }
