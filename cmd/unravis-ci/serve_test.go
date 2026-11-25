@@ -353,3 +353,15 @@ func TestServeRunsAPullRequestEndToEnd(t *testing.T) {
 		t.Fatalf("a head that already has a result must not be queued again on restart:\n%s", so2.String())
 	}
 }
+
+func TestTrustCfgArgvReachesTheChild(t *testing.T) {
+	got := trustCfg{protect: []string{"a/b"}, trusted: []string{"develop", "master"}, allowEnv: []string{"MY_TOKEN"}}.argv()
+	want := []string{"--protect", "a/b", "--trusted-base", "develop", "--trusted-base", "master", "--allow-env", "MY_TOKEN"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	// and run-item accepts every flag the agent hands a child
+	if code, _, e := cli(t, nil, append([]string{"run-item", "q-none", "--state", t.TempDir()}, got...)...); code != exitUsage || strings.Contains(e, "flag provided but not defined") {
+		t.Fatalf("run-item must know the flags of a child: %d %s", code, e)
+	}
+}

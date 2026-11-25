@@ -86,8 +86,9 @@ func usage(w io.Writer) {
   unravis-ci log <runid> [job|_checkout|_trust] [--state DIR]
   unravis-ci serve [--repo owner/name] [--state DIR] [--name N] [--slots N] [--label L]... [--interval 30s] [--quiet 60s]
         [--workflow-for base=file.yml]... [--push-workflow branch=file.yml]... [--schedule file.yml]... [--in-process]
-        [--pause-file FILE] [--no-push] [--protect PATH]...
-  unravis-ci run-item <id> [--state DIR] [--child]
+        [--pause-file FILE] [--release-dir DIR] [--no-release-pause] [--no-push] [--job-slots N] [--grace 30s] [--keep]
+        [--protect PATH]... [--trusted-base B]... [--allow-env NAME]... [--var k=v]...
+  unravis-ci run-item <id> [--state DIR] [--child] [--origin URL] [--job-slots N] [--protect PATH]... [--trusted-base B]... [--allow-env NAME]...
   unravis-ci status [--state DIR] [--recent N]
   unravis-ci cancel <id|pr> [--state DIR] [--reason TEXT]
   unravis-ci rerun <runid|pr> [--state DIR] [--repo owner/name]
