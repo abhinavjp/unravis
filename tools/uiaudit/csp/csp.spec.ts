@@ -10,19 +10,12 @@
 // the browser's "Refused to ..." console line (frames a sandbox keeps scripts out of, such as the report preview), and `pageerror`.
 // CSSOM writes (`element.style.x = ...`, `style:left={v}` in Svelte, ECharts positioning) are not blocked by `style-src`; markup `style="..."` is.
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runSteps, expandMacros, type Screen, type Env, type Step } from '../lib/steps';
-import { CSP, CHARTS, arm, frames, hoverChart, trackRequests, type Violation } from './harness';
+import { runSteps, type Env } from '../lib/steps';
+import { CSP, CHARTS, arm, frames, hoverChart, loadScreens, trackRequests, type Violation } from './harness';
 
-const root = join(__dirname, '..');
-
-const base: Screen[] = JSON.parse(readFileSync(join(root, '..', 'screens', 'screens.json'), 'utf8')).screens;
-const extraFile: { macros?: Record<string, Step[]>; screens: Screen[] } = JSON.parse(readFileSync(join(root, 'extra-screens.json'), 'utf8'));
-const extra: Screen[] = extraFile.screens.map((s) => ({ ...s, steps: expandMacros(s.steps, extraFile.macros ?? {}), after: s.after && expandMacros(s.after, extraFile.macros ?? {}) }));
-const only = (process.env.UIAUDIT_ONLY ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-// The other programs (setup window, Releases dashboard, Lite) are not shown in the desktop shell: only the full app.
-const screens = [...base, ...extra].filter((s) => !s.app && !s.retired && (!only.length || only.includes(s.id)));
+// Only the full app (the other programs are not shown in the desktop shell).
+const screens = loadScreens();
 
 /** Screens whose charts must draw a hover tooltip in this run: a sweep that misses every chart fails them (a tooltip no one drew is a tooltip no one checked). */
 const TOOLTIP_SCREENS: string[] = ['x-case-analysis', 'x-analysis-daily-hourly', 'x-where-groups', 'x-where-volume', 'x-blackbox-charts', 'x-blackbox-charts-sql'];
