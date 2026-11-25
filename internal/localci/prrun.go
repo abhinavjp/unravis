@@ -31,6 +31,11 @@ type PROptions struct {
 	// is not all the owner's. A pull request of anybody else into another base is refused, whatever Workflow
 	// says. When empty, the keys of Workflows are the trusted bases.
 	TrustedBases []string
+	// TrustOwnerBranch skips the per-commit author check for a pull request the owner opened from a branch in
+	// the same repository. It is for a run the owner starts by hand at their own console (the agent never sets
+	// it): commits made by tools often carry no GitHub login, and without it the pull request would run from
+	// the base branch's runner definition.
+	TrustOwnerBranch bool
 	// Keep leaves the worktree in place after the run.
 	Keep bool
 	// Env is the environment the caller allows steps to see (already an allow-list; nil means the current one).
@@ -207,7 +212,7 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 		note("not run: %s", trust.Reason)
 		return finish(failedRun(file, TrustJobKey, trust.Reason, logPath, start, o.now()), "", trust.Reason, nil)
 	}
-	if !trust.FromBase {
+	if !trust.FromBase && !o.TrustOwnerBranch {
 		// The owner opened it, but a commit on the branch may be somebody else's (a collaborator pushed to the
 		// owner's branch). Only a branch written start to end by the owner gets the owner's trust.
 		commits, cerr := o.Host.Commits(ctx, o.Repo, pr.Number)
