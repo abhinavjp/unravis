@@ -52,6 +52,8 @@ type rig struct {
 	ag     *httptest.Server
 	grants *mcpsrv.Grants
 	credDr string
+	// claimFail is how many of the next claim requests the backend answers with a 500 (a transient fault).
+	claimFail atomic.Int32
 }
 
 func newRig(t *testing.T) *rig {
@@ -83,7 +85,13 @@ func newRig(t *testing.T) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.ag = httptest.NewServer(h)
+	r.ag = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
+		if q.URL.Path == "/mcp/v1/enroll/claim" && r.claimFail.Add(-1) >= 0 {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		h.ServeHTTP(w, q)
+	}))
 	t.Cleanup(r.ag.Close)
 	return r
 }
@@ -559,5 +567,34 @@ func TestNothingOfTheSecretInAnyAnswer(t *testing.T) {
 		if bytes.Contains(b, []byte(c.Secret)) || bytes.Contains(b, []byte(dashToken)) || bytes.Contains(b, []byte(r.credDr)) {
 			t.Errorf("an answer holds a secret or a path: %.300s", b)
 		}
+	}
+}
+
+// Review of #273, S1: a server error on the claim says nothing about the nonce, so it is kept: the next call claims with the same one
+// and the person's card is not marked contested by a new enroll.
+func TestATransientClaimFailureKeepsTheNonce(t *testing.T) {
+	r := newRig(t)
+	a := r.agent("agent-5")
+	_ = call(t, a, "audit_get_guide") // enrolls, waits for approval
+	r.approve("agent-5")
+	path := filepath.Join(r.credDr, "bridge-agent-5.cred")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.claimFail.Store(1)
+	e := call(t, a, "audit_get_guide")
+	if !e.isError || code(e) != "backend_unavailable" {
+		t.Fatalf("on a claim fault: %.300s", e.body)
+	}
+	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("the nonce was not kept: %v", err)
+	}
+	// the next call claims with the same nonce and gets the secret
+	if e := call(t, a, "audit_get_guide"); e.isError {
+		t.Fatalf("after the fault: %.300s", e.body)
+	}
+	if _, m := r.screen("GET", "/api/mcp/profiles", nil); m["profiles"].([]any)[0].(map[string]any)["contested"] != float64(0) {
+		t.Errorf("a transient fault made the host contested: %v", m)
 	}
 }

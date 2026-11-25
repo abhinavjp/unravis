@@ -132,6 +132,8 @@ func (a *Agent) CallEnvelope(ctx context.Context, tool string, args json.RawMess
 		return fail(mcp.WirePermissionRequired, "This host is waiting for approval in Unravis.", "Open Unravis > AI access and approve this host.")
 	case errors.Is(err, errNeedReissue):
 		return fail(mcp.WirePermissionRequired, "This host could not collect its credential.", "Open Unravis > AI access, reissue this host, then retry.")
+	case errors.Is(err, errUnavailable):
+		return fail(mcp.WireBackendUnavailable, "Unravis could not take this host's request just now.", "Retry in a moment. If it keeps failing, open Unravis > AI access.")
 	case err != nil:
 		return fail(mcp.WireBackendUnavailable, "Unravis could not store this host's credential.", "Check that this Windows user can write to the Unravis folder, then retry.")
 	}
@@ -168,6 +170,7 @@ func (a *Agent) CallEnvelope(ctx context.Context, tool string, args json.RawMess
 var (
 	errWaiting     = errors.New("waiting for approval")
 	errNeedReissue = errors.New("claim refused")
+	errUnavailable = errors.New("backend did not take the request") // transient: the nonce is kept and the next call tries again
 )
 
 // credential returns the secret of this host, enrolling and claiming when it has none. It runs on a connection that passed hello.
@@ -195,12 +198,12 @@ func (a *Agent) credential(ctx context.Context, s *session) (Cred, error) {
 		"claimNonce": c.Nonce, "requestIdentifiers": a.RequestIdentifiers,
 	})
 	if r, _, err := s.do(ctx, http.MethodPost, "/mcp/v1/enroll", "", enroll); err != nil || r.status != http.StatusOK {
-		return Cred{}, errNeedReissue
+		return Cred{}, errUnavailable // not "reissue this host": nothing says the person's card is wrong
 	}
 	claim, _ := json.Marshal(map[string]string{"profile": a.Profile, "claimNonce": c.Nonce})
 	r, _, err := s.do(ctx, http.MethodPost, "/mcp/v1/enroll/claim", "", claim)
 	if err != nil {
-		return Cred{}, errNeedReissue
+		return Cred{}, errUnavailable // the nonce stays: a claim the server may have taken is not spent
 	}
 	switch r.status {
 	case http.StatusOK:
@@ -220,10 +223,15 @@ func (a *Agent) credential(ctx context.Context, s *session) (Cred, error) {
 		return got2, nil
 	case http.StatusConflict: // still pending
 		return Cred{}, errWaiting
-	default:
-		// Gone (already claimed, or the host was reissued) or a nonce that is not ours: the nonce is spent. A new one is made next time.
+	case http.StatusGone, http.StatusForbidden, http.StatusNotFound:
+		// Gone (already claimed, or the host was reissued), a nonce that is not ours, or a profile that no longer exists: the nonce is
+		// spent. A new one is made next time.
 		_ = a.Store.Delete(a.Profile)
 		return Cred{}, errNeedReissue
+	default:
+		// A server error, a limit or anything else that says nothing about the nonce: keep it, so the claim can still be made. Deleting
+		// it here would make the next call enroll with a new one and mark the person's card contested.
+		return Cred{}, errUnavailable
 	}
 }
 

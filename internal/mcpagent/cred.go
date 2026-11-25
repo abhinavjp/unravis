@@ -73,15 +73,18 @@ func (s Store) Load(profile string) (Cred, error) {
 	if err != nil {
 		return Cred{}, sealedfile.ErrUnavailable
 	}
-	defer func() { _ = f.Close() }()
-	buf := make([]byte, maxCred+1)
-	n, _ := f.Read(buf)
+	// The file is closed before it can be removed: Windows does not delete an open file. One Read can return less than the file holds.
+	buf, rerr := io.ReadAll(io.LimitReader(f, maxCred+1))
+	_ = f.Close()
+	if rerr != nil {
+		return Cred{}, sealedfile.ErrUnavailable
+	}
 	var c Cred
-	if n > maxCred || n == 0 {
+	if len(buf) > maxCred || len(buf) == 0 {
 		_ = os.Remove(p)
 		return Cred{}, ErrNoCred
 	}
-	plain, err := s.Prot.Unprotect(buf[:n])
+	plain, err := s.Prot.Unprotect(buf)
 	if err == nil {
 		err = json.Unmarshal(plain, &c)
 	}

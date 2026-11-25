@@ -208,6 +208,12 @@ func (g *Grants) Enroll(ctx context.Context, r EnrollReq) (EnrollResp, error) {
 	same := subtle.ConstantTimeCompare(p.ClaimDigest, digest) == 1
 	if p.State == mcpaudit.StatePending && (len(p.ClaimDigest) == 0 || same) {
 		p, err = g.db.Update(ctx, p.ID, func(p *Profile) error {
+			// The revision is what an approval is tied to (ExpectRev): when the text the person is looking at changes, the card they
+			// have is stale and Approve answers 409, so a host cannot swap its name or path after the card was shown (review of #273, M1).
+			if p.HostName != r.HostName || p.HostVersion != r.HostVersion || p.Exe != r.Exe || p.PPID != r.PPID ||
+				p.RequestedIdentifiers != r.RequestIdentifiers || subtle.ConstantTimeCompare(p.ClaimDigest, digest) != 1 {
+				p.Rev++
+			}
 			p.HostName, p.HostVersion, p.Exe, p.PPID = r.HostName, r.HostVersion, r.Exe, r.PPID
 			p.RequestedIdentifiers = r.RequestIdentifiers
 			p.ClaimDigest = digest
@@ -219,7 +225,7 @@ func (g *Grants) Enroll(ctx context.Context, r EnrollReq) (EnrollResp, error) {
 	} else if len(p.ClaimDigest) != 0 && !same && p.Contested < maxContested && (p.State == mcpaudit.StatePending || p.State == mcpaudit.StateActive) {
 		// Another process enrolled this id with a nonce that is not the first one's. It changes nothing (the first enroller keeps the
 		// claim), but the person approving must be able to see that two processes asked: Reissue, not Approve, is the answer then.
-		p, err = g.db.Update(ctx, p.ID, func(p *Profile) error { p.Contested++; return nil })
+		p, err = g.db.Update(ctx, p.ID, func(p *Profile) error { p.Contested++; p.Rev++; return nil }) // the card shows the warning, so it is stale now
 		if err != nil {
 			return EnrollResp{}, err
 		}
