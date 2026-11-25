@@ -307,18 +307,23 @@ func (q *Queue) Get(id string) (Request, error) {
 	if !validRequestID(id) {
 		return Request{}, fmt.Errorf("%q is not a request id", id)
 	}
-	for _, f := range []string{"running", "queued", "done"} {
-		r, err := q.read(q.path(f, id))
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
+	// A request moves queued -> running -> done and is written in its new folder before it is removed from the old
+	// one. Looking in the same order therefore never misses one that moves while we look; a second pass covers a
+	// request that was put back (running -> queued) in the meantime.
+	for pass := 0; pass < 2; pass++ {
+		for _, f := range []string{"queued", "running", "done"} {
+			r, err := q.read(q.path(f, id))
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return Request{}, err
+			}
+			if f != "done" {
+				r.State = f
+			}
+			return r, nil
 		}
-		if err != nil {
-			return Request{}, err
-		}
-		if f != "done" {
-			r.State = f
-		}
-		return r, nil
 	}
 	return Request{}, fmt.Errorf("%w: %s", ErrNoRequest, id)
 }
