@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"api-audit-explorer/internal/casestore"
@@ -190,5 +192,62 @@ func TestOwnersRunIsNotCharged(t *testing.T) {
 	e.wantStatus(e.run("1"), casestore.RunOK, "")
 	if called {
 		t.Error("an unscoped run was charged to a host")
+	}
+}
+
+// The host call of a scoped run runs under the context the admitter hands back (it ends on a revoke), not under the run's own (review 6
+// of #267, M1).
+func TestScopedCallRunsUnderTheAdmittersContext(t *testing.T) {
+	type key struct{}
+	var seen atomic.Bool
+	admit := func(ctx context.Context, _ mcpsrv.Principal, _ string, _ []byte, _ bool) (context.Context, func([]byte, bool) *mcpsrv.CodeCallRefusal, *mcpsrv.CodeCallRefusal) {
+		return context.WithValue(ctx, key{}, "admitted"), func([]byte, bool) *mcpsrv.CodeCallRefusal { return nil }, nil
+	}
+	host := func(ctx context.Context, _ string, _ json.RawMessage) ([]byte, bool) {
+		seen.Store(ctx.Value(key{}) == "admitted")
+		return []byte(`{"ok":true}`), false
+	}
+	e, res, _ := grantRun(t, mcpsrv.ToolsForTier(mcpsrv.TierEvidence), func(w *fakeWorker) {
+		_, _ = w.Call("audit_get_guide", map[string]any{})
+		w.done(1)
+	}, withHost(host), func(e *env) { e.admit = admit })
+	e.wantStatus(res, casestore.RunOK, "")
+	if !seen.Load() {
+		t.Error("the host call did not run under the context of the admitter")
+	}
+}
+
+// When the admitter's end refuses (the grant changed while the call ran), the script gets that refusal and never the host's answer, and
+// the call is a denied row.
+func TestScopedCallAnswerIsWithheldWhenEndRefuses(t *testing.T) {
+	var ends atomic.Int32
+	admit := func(ctx context.Context, _ mcpsrv.Principal, _ string, _ []byte, _ bool) (context.Context, func([]byte, bool) *mcpsrv.CodeCallRefusal, *mcpsrv.CodeCallRefusal) {
+		return ctx, func([]byte, bool) *mcpsrv.CodeCallRefusal {
+			ends.Add(1)
+			return &mcpsrv.CodeCallRefusal{Code: mcp.WirePermissionRequired, Message: "This host's access changed while the call ran."}
+		}, nil
+	}
+	host := func(context.Context, string, json.RawMessage) ([]byte, bool) {
+		return []byte(`{"ok":true,"result":"HOST-SECRET"}`), false
+	}
+	var answer json.RawMessage
+	e, res, _ := grantRun(t, mcpsrv.ToolsForTier(mcpsrv.TierEvidence), func(w *fakeWorker) {
+		answer, _ = w.Call("audit_get_guide", map[string]any{})
+		w.done(1)
+	}, withHost(host), func(e *env) { e.admit = admit })
+	e.wantStatus(res, casestore.RunOK, "")
+	if strings.Contains(string(answer), "HOST-SECRET") {
+		t.Errorf("the script got the host's answer: %.200s", answer)
+	}
+	var env struct{ Error struct{ Code string } }
+	if json.Unmarshal(answer, &env) != nil || env.Error.Code != mcp.WirePermissionRequired {
+		t.Errorf("the script's answer: %.200s", answer)
+	}
+	rows := e.calls(res.RunID)
+	if len(rows) != 1 || rows[0].Status != casestore.CallDenied {
+		t.Errorf("rows %+v", rows)
+	}
+	if n := ends.Load(); n < 1 {
+		t.Errorf("end called %d times", n)
 	}
 }

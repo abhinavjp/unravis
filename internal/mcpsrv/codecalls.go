@@ -111,8 +111,9 @@ func (s *Dispatcher) AdmitCodeCall(ctx context.Context, pr Principal, tool strin
 			elapsed := s.d.Now().Sub(start)
 			closing := ev
 			closing.Kind, closing.Time, closing.DurMs = mcpaudit.KindEnd, start.Add(elapsed), elapsed.Milliseconds()
-			// The revoke gate, as in CallAs: the script gets the answer only if the grant is still the one that admitted the call.
-			if s.d.Grants.RecheckIdentifiers(ctx, pr, withIdentifiers) != nil || errors.Is(context.Cause(runCtx), ErrAccessEnded) {
+			// The revoke gate, as in CallAs: the script gets the answer only if the grant is still the one that admitted the call. The read does
+			// not use the call's own deadline: a call that timed out is not an access change (review 6 of #267).
+			if s.d.Grants.RecheckIdentifiers(context.WithoutCancel(ctx), pr, withIdentifiers) != nil || errors.Is(context.Cause(runCtx), ErrAccessEnded) {
 				closing.Outcome, closing.Code = mcpaudit.OutcomeDenied, mcp.WirePermissionRequired
 				s.recordEnd(ctx, closing)
 				answer = &CodeCallRefusal{mcp.WirePermissionRequired, "This host's access changed while the call ran."}

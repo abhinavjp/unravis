@@ -272,3 +272,54 @@ func TestCodeCallEndGivesTheSlotBack(t *testing.T) {
 		t.Errorf("a direct call: %.200s", c.Raw)
 	}
 }
+
+// A call that ran into its own deadline is not an access change: its end row is not a permission denial and the host is not told to
+// check its access (review 6 of #267, S2).
+func TestCodeCallEndAfterTheCallsOwnDeadlineIsNotAnAccessChange(t *testing.T) {
+	r := newRig(t)
+	r.enroll("cc-dl", r.approval(TierAggregate))
+	pr := r.principal("cc-dl")
+	callCtx, cancel := context.WithCancel(ctx)
+	_, end, refused := r.disp.AdmitCodeCall(callCtx, pr, "audit_get_guide", []byte(`{}`), false)
+	if refused != nil {
+		t.Fatal(refused)
+	}
+	cancel() // the broker's per-call deadline passed
+	if ref := end(nil, true); ref != nil {
+		t.Errorf("end after the call's own deadline: %v", ref)
+	}
+	for _, e := range r.events() {
+		if e.ProfileID == "cc-dl" && e.Kind == mcpaudit.KindEnd && e.Code == mcp.WirePermissionRequired {
+			t.Errorf("a timed-out call was written as a permission denial: %+v", e)
+		}
+	}
+}
+
+// CancelAll (the lock, the shutdown) ends a running call without changing the profile: the script gets no answer and the end row is a
+// denial (review 6 of #267, S3).
+func TestCodeCallCancelAllRefusesTheAnswer(t *testing.T) {
+	r := newRig(t)
+	r.enroll("cc-cancel", r.approval(TierAggregate))
+	pr := r.principal("cc-cancel")
+	callCtx, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`), false)
+	if refused != nil {
+		t.Fatal(refused)
+	}
+	r.g.CancelAll()
+	if callCtx.Err() == nil {
+		t.Error("the call's context did not end on CancelAll")
+	}
+	ref := end([]byte(`{}`), false)
+	if ref == nil || ref.Code != mcp.WirePermissionRequired {
+		t.Fatalf("end after CancelAll: %v", ref)
+	}
+	denied := 0
+	for _, e := range r.events() {
+		if e.ProfileID == "cc-cancel" && e.Kind == mcpaudit.KindEnd && e.Outcome == mcpaudit.OutcomeDenied {
+			denied++
+		}
+	}
+	if denied != 1 {
+		t.Errorf("%d denied end rows", denied)
+	}
+}
