@@ -112,16 +112,24 @@ func TestScopedCallsAreChargedToTheHostBudgets(t *testing.T) {
 	var seen []admitted
 	var ended [][]byte
 	compares := 0
-	admit := func(_ context.Context, pr mcpsrv.Principal, tool string, _ []byte) (func([]byte, bool), *mcpsrv.CodeCallRefusal) {
+	admit := func(ctx context.Context, pr mcpsrv.Principal, tool string, _ []byte, _ bool) (context.Context, func([]byte, bool) *mcpsrv.CodeCallRefusal, *mcpsrv.CodeCallRefusal) {
 		mu.Lock()
 		defer mu.Unlock()
 		seen = append(seen, admitted{pr, tool})
 		if tool == "audit_compare" {
 			if compares++; compares > 2 {
-				return nil, &mcpsrv.CodeCallRefusal{Code: mcp.WireBudgetExceeded, Message: "This host reached its limit for comparisons in the last hour."}
+				return nil, nil, &mcpsrv.CodeCallRefusal{Code: mcp.WireBudgetExceeded, Message: "This host reached its limit for comparisons in the last hour."}
 			}
 		}
-		return func(result []byte, _ bool) { mu.Lock(); ended = append(ended, result); mu.Unlock() }, nil
+		var once sync.Once // like the real end: the broker also defers it, for a panic
+		return ctx, func(result []byte, _ bool) *mcpsrv.CodeCallRefusal {
+			once.Do(func() {
+				mu.Lock()
+				ended = append(ended, result)
+				mu.Unlock()
+			})
+			return nil
+		}, nil
 	}
 	var answers []json.RawMessage
 	e, res, _ := grantRun(t, mcpsrv.ToolsForTier(mcpsrv.TierEvidence), func(w *fakeWorker) {
@@ -174,9 +182,9 @@ func TestScopedCallsAreChargedToTheHostBudgets(t *testing.T) {
 func TestOwnersRunIsNotCharged(t *testing.T) {
 	called := false
 	e := newEnv(t, func(w *fakeWorker) { _, _ = w.Call("audit_get_guide", map[string]any{}); w.done(1) }, func(e *env) {
-		e.admit = func(context.Context, mcpsrv.Principal, string, []byte) (func([]byte, bool), *mcpsrv.CodeCallRefusal) {
+		e.admit = func(ctx context.Context, _ mcpsrv.Principal, _ string, _ []byte, _ bool) (context.Context, func([]byte, bool) *mcpsrv.CodeCallRefusal, *mcpsrv.CodeCallRefusal) {
 			called = true
-			return func([]byte, bool) {}, nil
+			return ctx, func([]byte, bool) *mcpsrv.CodeCallRefusal { return nil }, nil
 		}
 	})
 	e.wantStatus(e.run("1"), casestore.RunOK, "")

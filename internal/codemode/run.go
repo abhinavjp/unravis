@@ -803,7 +803,7 @@ func (r *run) onCall(c wire.Call) (stops bool) {
 	case len(tool) <= maxToolNameBytes && slices.Contains(r.b.tools, tool) && !r.known(tool):
 		// A real tool the grant's tier does not include. The run frame never named it, so a worker that calls it broke the protocol: the
 		// call is recorded under its own name, as denied, and the run ends. Nothing reaches the host.
-		den = &denial{status: casestore.CallDenied, wire: mcp.WireInvalidArguments, msg: "That tool is outside the tier of the grant.", stop: CodeBadFrame}
+		den = &denial{status: casestore.CallDenied, wire: mcp.WireInvalidArguments, msg: "That tool is outside the grant.", stop: CodeBadFrame}
 	case len(tool) > maxToolNameBytes || !r.known(tool):
 		tool = "unknown"
 		den = &denial{status: casestore.CallDenied, wire: mcp.WireInvalidArguments, msg: "Unknown tool.", stop: CodeBadFrame}
@@ -934,19 +934,15 @@ func (r *run) hostCall(ctx context.Context, tool string, args []byte) (body []by
 		body, isErr = r.safeHostCall(ctx, tool, args)
 		return body, isErr, nil
 	}
-	end, refused := r.b.cfg.Admit(ctx, mcpsrv.Principal{ProfileID: r.req.ProfileID, Rev: r.req.ProfileRev}, tool, args)
+	callCtx, end, refused := r.b.cfg.Admit(ctx, mcpsrv.Principal{ProfileID: r.req.ProfileID, Rev: r.req.ProfileRev}, tool, args, r.req.AllowIdentifiers)
 	if refused != nil {
 		return nil, false, &denial{status: casestore.CallDenied, wire: refused.Code, msg: refused.Message}
 	}
-	ended := false
-	defer func() {
-		if !ended { // a panic: the slots are given back, the call counts as failed
-			end(nil, true)
-		}
-	}()
-	body, isErr = r.safeHostCall(ctx, tool, args)
-	ended = true
-	end(body, isErr)
+	defer end(nil, true) // a panic: the slots are given back, the call counts as failed; a no-op after the real end
+	body, isErr = r.safeHostCall(callCtx, tool, args)
+	if ref := end(body, isErr); ref != nil {
+		return nil, false, &denial{status: casestore.CallDenied, wire: ref.Code, msg: ref.Message}
+	}
 	return body, isErr, nil
 }
 

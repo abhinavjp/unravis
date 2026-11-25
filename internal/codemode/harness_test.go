@@ -326,11 +326,11 @@ func newEnv(t *testing.T, script fakeScript, opts ...envOpt) *env {
 			}
 			return DashboardHosts(handler, testToken)(scope)
 		},
-		Admit: func(ctx context.Context, pr mcpsrv.Principal, tool string, args []byte) (func([]byte, bool), *mcpsrv.CodeCallRefusal) {
+		Admit: func(ctx context.Context, pr mcpsrv.Principal, tool string, args []byte, withIdentifiers bool) (context.Context, func([]byte, bool) *mcpsrv.CodeCallRefusal, *mcpsrv.CodeCallRefusal) {
 			if e.admit != nil {
-				return e.admit(ctx, pr, tool, args)
+				return e.admit(ctx, pr, tool, args, withIdentifiers)
 			}
-			return func([]byte, bool) {}, nil
+			return ctx, func([]byte, bool) *mcpsrv.CodeCallRefusal { return nil }, nil
 		},
 		Settings:            func() Settings { return e.set },
 		AllowIdentifiers:    e.operator,

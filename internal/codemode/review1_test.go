@@ -344,8 +344,8 @@ func TestPanickingHostFactoryLeavesNothingOpen(t *testing.T) {
 func TestScopeNoteSurvivesTheStoresOwnCleaningOfAnyReason(t *testing.T) {
 	pieces := []string{"x", "xx", " ", "::1", "::f", "::ffff:1.2.3.4", "::ffff:", "1.2.3.4", "10.0.0.1.443", "[", "]", "[ip]", "[sources: all]", "fe80::1%eth0", "\u202e", "\u200b", "\u2028", "é", "😀", "0:0:0:0:0:0:0:1", "a::", "::", "1.1.1.1"}
 	scopes := [][]string{nil, {}, {"demo-west"}, {"demo-west2"}, {"10.0.0.1"}, {"a]b", "c"}, {strings.Repeat("s", 90)}}
-	b := &Broker{minTime: MinTimeout, cfg: Config{Admit: func(context.Context, mcpsrv.Principal, string, []byte) (func([]byte, bool), *mcpsrv.CodeCallRefusal) {
-		return nil, nil
+	b := &Broker{minTime: MinTimeout, cfg: Config{Admit: func(context.Context, mcpsrv.Principal, string, []byte, bool) (context.Context, func([]byte, bool) *mcpsrv.CodeCallRefusal, *mcpsrv.CodeCallRefusal) {
+		return nil, nil, nil
 	}}}
 	rng := rand.New(rand.NewPCG(88172645463325252, 1)) //nolint:gosec // a seeded generator makes the fuzz repeatable
 	next := func(n int) int { return rng.IntN(max(n, 1)) }

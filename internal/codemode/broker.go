@@ -80,8 +80,8 @@ type Config struct {
 	Now func() time.Time
 }
 
-// CallAdmitter is mcpsrv.Dispatcher.AdmitCodeCall: it admits one call, or refuses it, and gives the function to call when it ended.
-type CallAdmitter func(ctx context.Context, pr mcpsrv.Principal, tool string, args []byte) (end func(result []byte, isError bool), refused *mcpsrv.CodeCallRefusal)
+// CallAdmitter is mcpsrv.Dispatcher.AdmitCodeCall: it admits one call, or refuses it, and gives the context the call must run under and the function to call when it ended (non-nil answer: the grant changed, the script gets no answer).
+type CallAdmitter func(ctx context.Context, pr mcpsrv.Principal, tool string, args []byte, withIdentifiers bool) (callCtx context.Context, end func(result []byte, isError bool) *mcpsrv.CodeCallRefusal, refused *mcpsrv.CodeCallRefusal)
 
 // Broker runs scripts. It is safe for concurrent use.
 type Broker struct {

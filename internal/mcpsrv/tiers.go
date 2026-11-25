@@ -37,7 +37,7 @@ func ToolsForTier(tier string) []string {
 func GrantTools(tier string, tools []string) []string {
 	var out []string
 	for _, t := range ToolsForTier(tier) {
-		if slices.Contains(tools, t) {
+		if ToolAllowed(tier, tools, t) {
 			out = append(out, t)
 		}
 	}

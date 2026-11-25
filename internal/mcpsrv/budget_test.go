@@ -1,11 +1,12 @@
 package mcpsrv
 
 import (
-	"api-audit-explorer/internal/mcp"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"api-audit-explorer/internal/mcp"
 )
 
 // BL-350 budget tests, on the real path: HTTP routes, SQLite, the real dashboard handler over the demo repository.
@@ -223,7 +224,7 @@ func TestCodeRunCallsShareTheHostBudgets(t *testing.T) {
 	r := newRigBudgets(t, DefaultBudgets)
 	h := r.enroll("code-a", r.approval(TierAggregate))
 	other := r.enroll("code-b", r.approval(TierAggregate))
-	pr := Principal{ProfileID: "code-a", Rev: 1}
+	pr := r.principal("code-a")
 	args, _ := json.Marshal(r.compareArgs())
 
 	// Ten direct comparisons and two from a script are the host's twelve of the hour.
@@ -234,7 +235,7 @@ func TestCodeRunCallsShareTheHostBudgets(t *testing.T) {
 		r.clk.Add(time.Minute)
 	}
 	for i := 0; i < 2; i++ {
-		end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", args)
+		_, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", args, false)
 		if refused != nil {
 			t.Fatalf("script comparison %d refused: %v", i+1, refused)
 		}
@@ -246,7 +247,7 @@ func TestCodeRunCallsShareTheHostBudgets(t *testing.T) {
 	if c := r.call(h, "audit_compare", r.compareArgs()); !overBudget(c) {
 		t.Errorf("13th direct comparison: %d %.300s", c.Status, c.Raw)
 	}
-	end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", args)
+	_, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", args, false)
 	if refused == nil || end != nil || refused.Code != mcp.WireBudgetExceeded || refused.Message == "" {
 		t.Fatalf("13th script comparison: %v", refused)
 	}
@@ -254,7 +255,7 @@ func TestCodeRunCallsShareTheHostBudgets(t *testing.T) {
 		t.Error("a refused comparison reached the dashboard")
 	}
 	// Other hosts and cheap tools are not affected; the refusal leaves a denied row, like a direct one.
-	if end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`)); refused != nil {
+	if _, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`), false); refused != nil {
 		t.Errorf("guide: %v", refused)
 	} else {
 		end([]byte(`{}`), false)
@@ -281,7 +282,7 @@ func TestCodeRunCallsShareTheHostBudgets(t *testing.T) {
 	}
 	// An hour later the oldest leave the window.
 	r.clk.Add(time.Hour)
-	if end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", args); refused != nil {
+	if _, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", args, false); refused != nil {
 		t.Errorf("after the hour: %v", refused)
 	} else {
 		end([]byte(`{}`), false)
@@ -294,24 +295,24 @@ func TestCodeRunCallsHonourAtOnceAndBytes(t *testing.T) {
 	small.CumulativeBytes = 1000
 	r := newRigBudgets(t, small)
 	r.enroll("code-c", r.approval(TierAggregate))
-	pr := Principal{ProfileID: "code-c", Rev: 1}
-	end1, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`))
+	pr := r.principal("code-c")
+	_, end1, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`), false)
 	if refused != nil {
 		t.Fatal(refused)
 	}
-	if _, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`)); refused == nil || refused.Code != mcp.WireBudgetExceeded {
+	if _, _, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`), false); refused == nil || refused.Code != mcp.WireBudgetExceeded {
 		t.Errorf("a second comparison at once: %v", refused)
 	}
 	end1(make([]byte, 2000), false) // the answer was bigger than the 10-minute budget
-	if _, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`)); refused == nil || refused.Code != mcp.WireBudgetExceeded {
+	if _, _, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`), false); refused == nil || refused.Code != mcp.WireBudgetExceeded {
 		t.Errorf("after the byte budget: %v", refused)
 	}
-	if _, refused := r.disp.AdmitCodeCall(ctx, pr, "not_a_tool", []byte(`{}`)); refused == nil || refused.Code != mcp.WirePermissionRequired {
+	if _, _, refused := r.disp.AdmitCodeCall(ctx, pr, "not_a_tool", []byte(`{}`), false); refused == nil || refused.Code != mcp.WirePermissionRequired {
 		t.Errorf("a tool outside the catalog: %v", refused)
 	}
 	// In-flight slots are given back: after the end of the call another may start (once the byte window is over).
 	r.clk.Add(11 * time.Minute)
-	if end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`)); refused != nil {
+	if _, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`), false); refused != nil {
 		t.Errorf("after the window: %v", refused)
 	} else {
 		end(nil, true)
