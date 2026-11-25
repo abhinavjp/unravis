@@ -128,6 +128,8 @@ type StatusPoster struct {
 	// Timeout bounds one post with all its retries; default 2 minutes.
 	Timeout time.Duration
 	Now     func() time.Time
+	// syncPosts makes Post wait until the poster is idle, so a test sees every state go out and none is replaced by a newer one.
+	syncPosts bool
 
 	once   sync.Once
 	mu     sync.Mutex
@@ -170,8 +172,8 @@ func (p *StatusPoster) Post(repo, sha, name, state, desc string) {
 	p.init()
 	it := postItem{repo, sha, name, state, desc}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed {
+		p.mu.Unlock()
 		return
 	}
 	k := it.key()
@@ -180,6 +182,10 @@ func (p *StatusPoster) Post(repo, sha, name, state, desc string) {
 	}
 	p.items[k] = it
 	p.cond.Broadcast()
+	p.mu.Unlock()
+	if p.syncPosts {
+		p.Flush(10 * time.Second)
+	}
 }
 
 func (p *StatusPoster) loop() {

@@ -410,7 +410,7 @@ func newSvcRig(t *testing.T, naming StatusNaming) *svcRig {
 		t.Fatal(err)
 	}
 	r := &svcRig{t: t, dir: dir, q: q, fake: &FakeReporter{}, now: time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)}
-	r.poll = &StatusPoster{Reporter: r.fake}
+	r.poll = &StatusPoster{Reporter: r.fake, syncPosts: true}
 	t.Cleanup(func() { r.poll.Close(time.Second) })
 	r.svc = &StatusService{Poster: r.poll, Naming: naming, Dir: dir, Now: func() time.Time { return r.now }}
 	return r
