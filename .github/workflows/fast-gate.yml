@@ -17,12 +17,16 @@ name: Fast gate
 #   fast-build  the gate: passes only when go and web passed.
 # Not in this gate (it is in the full run on develop and on promotion): Windows tests, the race run, the exe build,
 # screenshots, the docs check, govulncheck, osv, the desktop shell. See "What the fast gate does not check" in the spec.
-# A push to develop runs the same job once to compile everything and save the Go cache, so pull requests start warm.
+# A push to develop runs the same job once to compile everything and save the Go cache, so pull requests start warm
+# (only the local pipeline does that now; GitHub no longer starts this workflow on a push).
 on:
-  pull_request:
-    branches: [develop]
-  push:
-    branches: [develop]
+  # Cutover (docs/ci/CUTOVER.md): GitHub no longer runs this workflow by itself. The local pipeline (unravis-ci, on the owner's PC)
+  # runs it for every pull request into develop and every push to develop and posts the required status `fast-build`.
+  # "Run workflow" (or `unravis-ci fallback <pr>`) is the way back to GitHub when that PC is away: run it on the branch of the pull
+  # request. A manual run checks the branch merged into develop, the same shape as the merge commit of a pull request (see the
+  # "Merge develop into the checkout" step), so the gate is as strict as it is for a pull request. The job keeps the name
+  # `fast-build`: only a job with that name satisfies the required check.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -42,6 +46,28 @@ jobs:
         with:
           # The checked-out commit of a pull request is the merge with develop; its first parent is the develop tip.
           fetch-depth: 2
+
+      - name: Merge develop into the checkout (manual runs only)
+        # A pull request is checked as its merge commit with develop (first parent = the develop tip; every HEAD^1 below relies on it).
+        # A manual run (the fallback, `unravis-ci fallback <pr>`) checks out the branch alone, where HEAD^1 would be an older commit of
+        # the same branch and the scope would be wrong. So the manual run builds the same merge commit here and fails if there is none.
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+          branch_sha="$(git rev-parse HEAD)"
+          # The merge needs the history of both sides; a shallow checkout (GitHub) is completed first, a full clone (the local runner) is not.
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then git fetch --no-tags --unshallow origin; fi
+          git fetch --no-tags origin "+refs/heads/develop:refs/remotes/origin/develop"
+          if git merge-base --is-ancestor "$branch_sha" origin/develop; then
+            echo "::error::This branch has nothing that develop does not have, so there is nothing to check. Run the workflow on the branch of the pull request."
+            exit 1
+          fi
+          git checkout --quiet --detach origin/develop
+          if ! git -c user.name=fast-gate -c user.email=fast-gate@localhost merge --no-ff --no-edit "$branch_sha"; then
+            echo "::error::The branch does not merge into develop without conflicts (the pull request could not be merged either). Merge develop into the branch and run again."
+            exit 1
+          fi
+          echo "Checked ${branch_sha} merged into develop $(git rev-parse --short HEAD^1)."
 
       - name: Set up Go
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
@@ -87,11 +113,11 @@ jobs:
 
       - name: Scope - what does this change affect?
         id: scope
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ github.event_name != 'push' }}
         run: node tools/ci/fast-scope.mjs --base HEAD^1 --head HEAD
 
       - name: Go - formatting of changed files
-        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.gofiles != '' }}
+        if: ${{ github.event_name != 'push' && steps.scope.outputs.gofiles != '' }}
         run: |
           set -euo pipefail
           # Judged on the committed text, like ci.yml. Older files on master that are not gofmt-clean are a separate pass (BL-032).
@@ -111,7 +137,7 @@ jobs:
           echo "All changed Go files are gofmt-clean."
 
       - name: Go - vet (Linux) and cross-vet (Windows) of the affected packages
-        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
+        if: ${{ github.event_name != 'push' && steps.scope.outputs.go == 'true' }}
         env:
           PACKAGES: ${{ steps.scope.outputs.packages }}
         run: |
@@ -124,7 +150,7 @@ jobs:
 
       # BL-422: the sidecar tag (no embedded dashboard) must keep compiling. Only the root package differs between the two builds.
       - name: Go - build with the tauri_sidecar tag
-        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
+        if: ${{ github.event_name != 'push' && steps.scope.outputs.go == 'true' }}
         env:
           CGO_ENABLED: "0"
         run: |
@@ -133,7 +159,7 @@ jobs:
           go test -count=1 -tags tauri_sidecar .
 
       - name: Go - tests of the affected packages (Linux, compared with the baseline)
-        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
+        if: ${{ github.event_name != 'push' && steps.scope.outputs.go == 'true' }}
         env:
           CGO_ENABLED: "0"
           PACKAGES: ${{ steps.scope.outputs.packages }}
@@ -152,12 +178,12 @@ jobs:
       # BL-451: how much of the changed code do the tests run? A report in the job summary for now; it blocks nothing.
       # Only Linux-visible code is counted (a Windows-only file is not in the profile), and only the affected packages ran.
       - name: Go - diff coverage (report only)
-        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' && hashFiles('go.cover') != '' }}
+        if: ${{ github.event_name != 'push' && steps.scope.outputs.go == 'true' && hashFiles('go.cover') != '' }}
         # Exit 2 (the tool could not run) must not go unseen, and must not turn the gate red while this is a report.
         run: node tools/ci/diff-cover.mjs --base HEAD^1 --head HEAD --go go.cover --min 80 --min-lines 10 --report-only || echo "::warning::diff-cover could not run (exit $?)"
 
       - name: Go - modules are tidy
-        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
+        if: ${{ github.event_name != 'push' && steps.scope.outputs.go == 'true' }}
         run: |
           set -euo pipefail
           git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
@@ -197,13 +223,35 @@ jobs:
         with:
           fetch-depth: 2
 
+      - name: Merge develop into the checkout (manual runs only)
+        # A pull request is checked as its merge commit with develop (first parent = the develop tip; every HEAD^1 below relies on it).
+        # A manual run (the fallback, `unravis-ci fallback <pr>`) checks out the branch alone, where HEAD^1 would be an older commit of
+        # the same branch and the scope would be wrong. So the manual run builds the same merge commit here and fails if there is none.
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+          branch_sha="$(git rev-parse HEAD)"
+          # The merge needs the history of both sides; a shallow checkout (GitHub) is completed first, a full clone (the local runner) is not.
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then git fetch --no-tags --unshallow origin; fi
+          git fetch --no-tags origin "+refs/heads/develop:refs/remotes/origin/develop"
+          if git merge-base --is-ancestor "$branch_sha" origin/develop; then
+            echo "::error::This branch has nothing that develop does not have, so there is nothing to check. Run the workflow on the branch of the pull request."
+            exit 1
+          fi
+          git checkout --quiet --detach origin/develop
+          if ! git -c user.name=fast-gate -c user.email=fast-gate@localhost merge --no-ff --no-edit "$branch_sha"; then
+            echo "::error::The branch does not merge into develop without conflicts (the pull request could not be merged either). Merge develop into the branch and run again."
+            exit 1
+          fi
+          echo "Checked ${branch_sha} merged into develop $(git rev-parse --short HEAD^1)."
+
       - name: Generated web files are not part of this pull request
         # Policy (docs/pipeline/dist-on-promotion.md): the promotion rebuilds and commits web/dist, cmd/unravis-setup/ui and
         # cmd/unravis-lite/ui. A pull request that changes them would conflict with the promotion's rebuild. The one allowed case is a
         # back-merge of master into develop (a hotfix, or the fix for a promotion conflict): there the three folders, as they are after
         # the merge, must be byte for byte master's. That is a rule about content, not about a branch name or an author, so a pull
         # request cannot get through with other files in those folders.
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ github.event_name != 'push' }}
         run: |
           set -euo pipefail
           # Names are matched case-insensitively (a Windows checkout would put cmd/unravis-setup/UI/x.js inside the embedded ui folder).
@@ -230,7 +278,7 @@ jobs:
         id: scope
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then echo "web=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then echo "web=false" >> "$GITHUB_OUTPUT"; exit 0; fi
           # The list of files outside web/ that the web tests read is tools/ci/web-scope.mjs; test-web-scope.mjs (go job) fails
           # when a web test reads a path that list lacks. An empty diff is a doubt: it runs the web checks.
           node tools/ci/web-scope.mjs --base HEAD^1 --head HEAD
