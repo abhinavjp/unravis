@@ -121,6 +121,9 @@ type Grants struct {
 	onRevoke []func(profileID string)
 
 	stopped atomic.Bool
+
+	expMu    sync.Mutex           // guards expNoted
+	expNoted map[string]time.Time // profile id -> the expiry a ledger row was written for (so a flood of refused calls writes one row)
 }
 
 // NewGrants opens the rules over a store. The global stop survives a restart.
@@ -171,6 +174,28 @@ func (g *Grants) CreatePending(ctx context.Context, id string) error {
 // only the profile id, its revision and a short fixed fact (never a credential, digest, nonce, host text or path).
 func (g *Grants) note(ctx context.Context, p Profile, kind, code string) {
 	_ = g.db.Record(context.WithoutCancel(ctx), mcpaudit.Event{Time: g.now(), ProfileID: p.ID, ProfileRev: p.Rev, Kind: kind, Outcome: mcpaudit.OutcomeOK, Code: code})
+}
+
+// noteGlobal writes a row that belongs to no profile (the stop and its release). Same rules as note.
+func (g *Grants) noteGlobal(ctx context.Context, kind, code string) {
+	_ = g.db.Record(context.WithoutCancel(ctx), mcpaudit.Event{Time: g.now(), ProfileID: mcpaudit.GlobalProfile, Kind: kind, Outcome: mcpaudit.OutcomeOK, Code: code})
+}
+
+// noteExpired writes the expire row for the profile's current expiry, once: the calls that follow are refused and recorded as denied rows
+// by the dispatcher, and a renewal moves ExpiresAt, so the next expiry gets its own row. A restart may write the row of an expiry again;
+// the table of noted expiries is cut when it has grown past the most profiles there can be.
+func (g *Grants) noteExpired(ctx context.Context, p Profile) {
+	g.expMu.Lock()
+	if g.expNoted == nil || len(g.expNoted) > 2*MaxProfiles {
+		g.expNoted = map[string]time.Time{}
+	}
+	if at, ok := g.expNoted[p.ID]; ok && at.Equal(p.ExpiresAt) {
+		g.expMu.Unlock()
+		return
+	}
+	g.expNoted[p.ID] = p.ExpiresAt
+	g.expMu.Unlock()
+	g.note(ctx, p, mcpaudit.KindExpire, "idle-or-cap")
 }
 
 // scopeFacts says what a profile may do in words with no source ids, tool names or other free text: the tier and counts.
@@ -461,7 +486,7 @@ func (g *Grants) Stop(ctx context.Context) error {
 	// Fail closed: the stop takes effect in memory first. If the flag cannot be written, the stop still holds until the owner
 	// restarts, and the error says only that.
 	g.mu.Lock()
-	g.stopped.Store(true)
+	was := g.stopped.Swap(true)
 	ids, cancels, hooks := g.takeAllRunning()
 	// Every profile's handles and aliases go, not only those of profiles with a call running: after Resume nothing from before is usable.
 	all, listErr := g.db.List(ctx, MaxProfiles)
@@ -471,6 +496,9 @@ func (g *Grants) Stop(ctx context.Context) error {
 		}
 	}
 	setErr := g.db.SetMeta(ctx, metaStop, []byte("1"))
+	if !was {
+		g.noteGlobal(ctx, mcpaudit.KindStop, "stop")
+	}
 	g.mu.Unlock()
 	for _, id := range ids {
 		finish(cancels[id], hooks, id)
@@ -488,7 +516,9 @@ func (g *Grants) Resume(ctx context.Context) error {
 	if err := g.db.SetMeta(ctx, metaStop, []byte("0")); err != nil {
 		return err
 	}
-	g.stopped.Store(false)
+	if g.stopped.Swap(false) {
+		g.noteGlobal(ctx, mcpaudit.KindResume, "resume")
+	}
 	return nil
 }
 
@@ -550,6 +580,7 @@ func (g *Grants) Authenticate(ctx context.Context, header string) (Principal, er
 		return Principal{}, denied(ReasonStopped)
 	}
 	if expired(p, now) {
+		g.noteExpired(ctx, p)
 		return Principal{}, denied(ReasonExpired)
 	}
 	if now.Sub(p.LastCallAt) >= touchEvery {
@@ -612,6 +643,7 @@ func (g *Grants) Scope(ctx context.Context, pr Principal) (Profile, error) {
 	case p.Rev != pr.Rev:
 		return Profile{}, denied(ReasonRevision)
 	case expired(p, g.now().UTC()):
+		g.noteExpired(ctx, p)
 		return Profile{}, denied(ReasonExpired)
 	}
 	return p, nil
