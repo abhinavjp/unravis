@@ -75,6 +75,15 @@ func (s *Store) Load() (codemode.Settings, error) {
 		return codemode.Settings{}, err
 	}
 	defer func() { _ = f.Close() }()
+	// The checks are made again on the open handle, so a swap between the Lstat and the Open (a link or another file put in the place)
+	// is caught: what is read is the file that was checked.
+	hfi, err := f.Stat()
+	if err != nil {
+		return codemode.Settings{}, err
+	}
+	if !hfi.Mode().IsRegular() || hfi.Size() > MaxBytes || !os.SameFile(fi, hfi) || !ownerOnly(hfi) {
+		return codemode.Settings{}, ErrCorrupt
+	}
 	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
 	if err != nil {
 		return codemode.Settings{}, err
