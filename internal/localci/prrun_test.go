@@ -43,7 +43,7 @@ func okPR(o *origin, number int, head, author string) PullRequest {
 	return PullRequest{Number: number, State: "OPEN", BaseRef: "develop", HeadRef: "feature", HeadSHA: head, Author: author, HeadRepoOwner: "acme"}
 }
 
-// logOf reads every log of a job of a stored run, as `unravis-ci log` does.
+// logOf reads every log of a job of a stored run, as the `log` command does.
 func logOf(t *testing.T, s *Store, runID, job string) string {
 	t.Helper()
 	parts, err := s.JobLogs(runID, job)

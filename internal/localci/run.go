@@ -916,7 +916,7 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 	if sr.Err != "" {
 		// keep the reason in the log file too
 		if f, err := os.OpenFile(sr.LogFile, os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
-			_, _ = fmt.Fprintln(f, "[unravis-ci] "+sr.Err)
+			_, _ = fmt.Fprintln(f, "[ci] "+sr.Err)
 			_ = f.Close()
 		}
 	}
