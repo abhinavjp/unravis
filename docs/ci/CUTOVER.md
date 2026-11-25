@@ -164,7 +164,7 @@ Try it first on a throwaway draft pull request into master that only touches a d
 Only after phase 1 (and 2 if done) ran clean for a full release cycle:
 
 - Look at the trigger table below once more; remove nothing that a release tool reads.
-- `BL-586` sub-items: the release manager's own wait for the `build` status (spec phase 3) is a separate, owner-approved release change and is not part of this runbook.
+- `BL-586p` sub-items: the release manager's own wait for the `build` status (spec phase 3) is a separate, owner-approved release change and is not part of this runbook.
 - Delete the merged workflow branches (`claude/local-ci-dispatch-ready`, `claude/local-ci-trigger-removal`).
 - Keep the weekly `compare` for a month; the streak is not valid after step 2, but "agent alive" and "no github-only" still are.
 
