@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/mcpaudit"
 )
@@ -212,5 +213,97 @@ func TestEndingWhatIsNotLiveLeavesNoRevokeRow(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("revoke rows = %d, want 1 (only the live grant ending)", n)
+	}
+}
+
+// BL-351: the global stop and its release belong to no profile, so they carry the global marker; pressing the switch twice is one row.
+func TestStopAndResumeLeaveOneGlobalRowEach(t *testing.T) {
+	e := newEnv(t)
+	e.enrolled("h1")
+	before := len(ledgerOldestFirst(t, e))
+	for i := 0; i < 2; i++ {
+		if err := e.g.Stop(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if err := e.g.Resume(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := ledgerOldestFirst(t, e)[before:]
+	if got := strings.Join(kindsOf(rows), ","); got != mcpaudit.KindStop+","+mcpaudit.KindResume {
+		t.Fatalf("kinds = %s, want one stop then one resume", got)
+	}
+	for _, r := range rows {
+		if r.ProfileID != mcpaudit.GlobalProfile || r.ProfileRev != 0 || r.Outcome != mcpaudit.OutcomeOK {
+			t.Errorf("global row: %+v", r)
+		}
+	}
+}
+
+// A stop that was already in force when the app started (loaded from the store) is still released with one resume row.
+func TestResumeAfterARestartedStopIsRecorded(t *testing.T) {
+	e := newEnv(t)
+	if err := e.g.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e.restart()
+	before := len(ledgerOldestFirst(t, e))
+	if err := e.g.Resume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rows := ledgerOldestFirst(t, e)[before:]; len(rows) != 1 || rows[0].Kind != mcpaudit.KindResume {
+		t.Fatalf("rows after resume: %+v", rows)
+	}
+}
+
+// The first call after the access ran out writes one expire row for that profile, however many calls follow; a renewal and a second expiry
+// write a second row. The calls themselves are refused as before.
+func TestExpiryLeavesOneRowPerExpiry(t *testing.T) {
+	e := newEnv(t)
+	h, _ := e.enrolled("h1")
+	before := len(ledgerOldestFirst(t, e))
+	e.clk.Add(DefaultIdleTTL + time.Hour)
+	for i := 0; i < 5; i++ {
+		_, err := e.g.Authenticate(ctx, h)
+		wantDenied(t, err, ReasonExpired)
+	}
+	rows := ledgerOldestFirst(t, e)[before:]
+	if len(rows) != 1 || rows[0].Kind != mcpaudit.KindExpire || rows[0].ProfileID != "h1" || rows[0].Outcome != mcpaudit.OutcomeOK {
+		t.Fatalf("after five refused calls: %+v", rows)
+	}
+	if _, err := e.g.Renew(ctx, "h1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.g.Authenticate(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	e.clk.Add(DefaultIdleTTL + time.Hour)
+	_, err := e.g.Authenticate(ctx, h)
+	wantDenied(t, err, ReasonExpired)
+	if got := strings.Join(kindsOf(ledgerOldestFirst(t, e)[before:]), ","); got != "expire,expire" {
+		t.Fatalf("kinds = %s, want one row per expiry", got)
+	}
+}
+
+// An expiry seen by Scope (a call running when the time ran out) leaves the same single row as one seen by Authenticate.
+func TestExpirySeenByScopeLeavesTheSameOneRow(t *testing.T) {
+	e := newEnv(t)
+	h, _ := e.enrolled("h1")
+	pr, err := e.g.Authenticate(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(ledgerOldestFirst(t, e))
+	e.clk.Add(DefaultIdleTTL + time.Hour)
+	for i := 0; i < 3; i++ {
+		_, err := e.g.Scope(ctx, pr)
+		wantDenied(t, err, ReasonExpired)
+	}
+	_, err = e.g.Authenticate(ctx, h)
+	wantDenied(t, err, ReasonExpired)
+	if got := strings.Join(kindsOf(ledgerOldestFirst(t, e)[before:]), ","); got != "expire" {
+		t.Fatalf("kinds = %s, want one expire row", got)
 	}
 }

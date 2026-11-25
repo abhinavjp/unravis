@@ -24,7 +24,17 @@ const (
 	KindApprove     = "approve"      // the person approved a pending host
 	KindScopeChange = "scope_change" // an approval gave a host a different scope than it had before
 	KindRevoke      = "revoke"       // the host's credential ended (revoke or reissue)
+	KindExpire      = "expire"       // the first call after a host's access ran out was refused (written once per expiry; a renewal starts a new one)
+
+	// The global rows: the stop switch and its release affect every host, so they belong to no profile and carry GlobalProfile instead of
+	// a profile id. Only these two kinds may use it. The ledger is append-only and keyed by row number, so a global row sits in the same
+	// order as the rest and is told apart from a host row by that marker alone.
+	KindStop   = "stop"   // the person pressed "Stop all AI access"
+	KindResume = "resume" // the person lifted the stop
 )
+
+// GlobalProfile is the profile marker of a global row (KindStop, KindResume). It is not a valid profile id (those are random hex).
+const GlobalProfile = "*"
 
 // Outcomes of an audit row.
 const (
@@ -74,12 +84,13 @@ func (d *DB) Fingerprint(args []byte) []byte { return d.MAC("args", args) }
 // Record writes one ledger row. It is one statement; the row is on disk when it returns (synchronous=FULL).
 func (d *DB) Record(ctx context.Context, e Event) error {
 	switch e.Kind {
-	case KindAdmit, KindEnd, KindDenied, KindEnroll, KindApprove, KindScopeChange, KindRevoke:
+	case KindAdmit, KindEnd, KindDenied, KindEnroll, KindApprove, KindScopeChange, KindRevoke, KindExpire, KindStop, KindResume:
 	default:
 		return ErrBadEvent
 	}
-	if e.ProfileID == "" {
-		return ErrBadEvent
+	global := e.Kind == KindStop || e.Kind == KindResume
+	if e.ProfileID == "" || (e.ProfileID == GlobalProfile) != global {
+		return ErrBadEvent // a host row names its profile; a global row names GlobalProfile and nothing else may
 	}
 	if e.Time.IsZero() {
 		e.Time = time.Now()
