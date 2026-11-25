@@ -238,6 +238,8 @@ func TestExtraSourcesArePinned(t *testing.T) {
 		"sys.dm_resource_governor_resource_pools":                  true,
 		"sys.dm_tran_active_transactions":                          true,
 		"sys.dm_tran_locks":                                        true,
+		"sys.dm_exec_query_stats":                                  true,
+		"sys.dm_exec_query_stats AS qs CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st": true,
 	}
 	if !maps.Equal(extraSources, want) {
 		t.Errorf("extraSources = %v, want exactly %v", extraSources, want)

@@ -205,3 +205,25 @@ func TestThirdReviewRegressions(t *testing.T) {
 		t.Errorf("ordinary block text changed: %q", got)
 	}
 }
+
+// A -- comment ends at its line break: what follows on the next line is kept.
+func TestScrubLineCommentEndsAtLineBreak(t *testing.T) {
+	got := Scrub("SELECT a -- note\nFROM t WHERE x = 1", 2000)
+	if got != "SELECT a FROM t WHERE x = ?" {
+		t.Errorf("got %q", got)
+	}
+	got = Scrub("SELECT a -- note\r\nFROM t WHERE x = 1", 2000)
+	if got != "SELECT a FROM t WHERE x = ?" {
+		t.Errorf("CRLF: got %q", got)
+	}
+}
+
+// A bracketed name holding a space or a quote may be a person name (a pivot column): it is masked.
+func TestScrubMasksBracketedPersonNames(t *testing.T) {
+	got := Scrub("SELECT a FROM t PIVOT (SUM(x) FOR emp IN ([Alice Smith], [O'Brien], [Bob])) p", 2000)
+	for _, bad := range []string{"Alice", "Smith", "Brien"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("name %q kept in %q", bad, got)
+		}
+	}
+}
