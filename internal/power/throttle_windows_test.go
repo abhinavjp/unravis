@@ -244,3 +244,58 @@ func TestPowerStructureLayout(t *testing.T) {
 		t.Fatalf("power throttling state size = %d", unsafe.Sizeof(state))
 	}
 }
+
+// Windows 10 and Server 2022 reject the ignore-timer-resolution bit. Idle already retries without it; the restore has to as
+// well, or Normal returns "The parameter is incorrect" and leaves EcoQoS switched on.
+func TestRestoreRetriesInvalidParameterWithoutTimerBit(t *testing.T) {
+	throttled := false
+	throttler := &windowsThrottler{
+		build: func() uint32 { return 20348 },
+		setInfo: func(class, first, control, state uint32) error {
+			if class != processPowerThrottling {
+				return nil
+			}
+			if control&ignoreTimerResolution != 0 {
+				return windows.ERROR_INVALID_PARAMETER
+			}
+			throttled = state&executionSpeed != 0
+			return nil
+		},
+		setPriority: func(uint32) error { return nil },
+	}
+	if err := throttler.apply(Idle); err != nil {
+		t.Fatal(err)
+	}
+	if !throttled {
+		t.Fatal("idle did not switch EcoQoS on")
+	}
+	if err := throttler.apply(Normal); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if throttled {
+		t.Fatal("restore left EcoQoS switched on")
+	}
+}
+
+// A restore that fails for any other reason is still reported, with no retry.
+func TestRestoreDoesNotRetryOtherErrors(t *testing.T) {
+	failure := errors.New("power clear failed")
+	powerCalls := 0
+	throttler := &windowsThrottler{
+		build: func() uint32 { return 20348 },
+		setInfo: func(class, first, control, state uint32) error {
+			if class == processPowerThrottling {
+				powerCalls++
+				return failure
+			}
+			return nil
+		},
+		setPriority: func(uint32) error { return nil },
+	}
+	if err := throttler.apply(Normal); !errors.Is(err, failure) {
+		t.Fatalf("restore error = %v, want the power failure", err)
+	}
+	if powerCalls != 1 {
+		t.Fatalf("power calls = %d, want 1", powerCalls)
+	}
+}

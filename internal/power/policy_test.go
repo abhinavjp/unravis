@@ -112,18 +112,24 @@ func eventually(t *testing.T, fn func() bool) {
 func TestPolicyThrottlesAfterGrace(t *testing.T) {
 	clock := newFakeClock()
 	var modes modeLog
-	p := New(Config{Now: clock.Now, After: clock.After, Apply: func(mode Mode) error {
+	// A 1ns check makes the next timer fall due exactly on the clock reading the test sets, so the grace boundary is tested
+	// without depending on how the check interval lines up with it.
+	p := New(Config{Now: clock.Now, After: clock.After, Check: time.Nanosecond, Apply: func(mode Mode) error {
 		modes.add(mode)
 		return nil
 	}})
 	runPolicy(t, p)
-	eventually(t, func() bool { return clock.AfterCalls() > 0 })
+	eventually(t, func() bool { return clock.AfterCalls() >= 1 })
 	clock.Advance(DefaultGrace - time.Nanosecond)
+	// The second timer is armed only after the check at grace-1ns has run and refused.
+	eventually(t, func() bool { return clock.AfterCalls() >= 2 })
 	if p.Mode() != Normal {
 		t.Fatal("throttled before the grace period")
 	}
 	clock.Advance(time.Nanosecond)
 	eventually(t, func() bool { return p.Mode() == Idle })
+	// The mode is set to Idle before Apply runs, so wait for the call itself.
+	eventually(t, func() bool { return len(modes.snapshot()) >= 1 })
 	if !reflect.DeepEqual(modes.snapshot(), []Mode{Idle}) {
 		t.Fatalf("applied modes = %v", modes.snapshot())
 	}
@@ -240,15 +246,19 @@ func TestApplyFailureWaitsForTouch(t *testing.T) {
 		t.Fatalf("failed throttle ran %d idle hooks", got)
 	}
 	clock.Advance(time.Hour)
+	// The third timer is armed only after the check due in that hour has run and refused; wait for it, so the next Advance
+	// cannot land before the loop has a timer to fire.
+	eventually(t, func() bool { return clock.AfterCalls() >= 3 })
 	if p.Mode() != Normal {
 		t.Fatal("failed throttle retried without new activity")
 	}
 	attempts := len(modes.snapshot())
 	p.Touch()
 	clock.Advance(DefaultGrace)
-	clock.Advance(DefaultGrace)
 	eventually(t, func() bool { return len(modes.snapshot()) > attempts })
 	eventually(t, func() bool { return p.Mode() == Idle })
+	// The mode is set to Idle before the hooks run, so wait for the hook.
+	eventually(t, func() bool { return idleCalls.Load() >= 1 })
 	if got := idleCalls.Load(); got != 1 {
 		t.Fatalf("idle hooks = %d, want 1", got)
 	}
@@ -364,6 +374,8 @@ func TestFailedIdleApplyIsRestoredAtOnce(t *testing.T) {
 	eventually(t, func() bool { return clock.AfterCalls() > 0 })
 	clock.Advance(DefaultGrace)
 	eventually(t, func() bool { return len(modes.snapshot()) >= 2 })
+	// Apply(Normal) is recorded before the mode is set back to Normal.
+	eventually(t, func() bool { return p.Mode() == Normal })
 	if got := modes.snapshot(); !reflect.DeepEqual(got[:2], []Mode{Idle, Normal}) || p.Mode() != Normal {
 		t.Fatalf("modes = %v, mode %v", got, p.Mode())
 	}
