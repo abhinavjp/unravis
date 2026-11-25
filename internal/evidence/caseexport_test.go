@@ -193,10 +193,13 @@ func TestBuildCaseShape(t *testing.T) {
 			t.Fatal("events not sorted by start")
 		}
 	}
-	for _, want := range []string{"Some events came from a source without an export policy", "Each user is shown as a keyed pseudonym", "withheld\" is 20 or more"} {
+	for _, want := range []string{"Some events came from a source without an export policy", "Each user is shown as a keyed pseudonym", "withheld\" is 20 or more", "Known gaps are cleaned like theory text"} {
 		if !hasStatementPart(e, want) {
 			t.Errorf("missing statement %q", want)
 		}
+	}
+	if bytes.Contains(bytes.ToLower(raw), []byte("hypothes")) {
+		t.Errorf("a current case export still uses hypothesis wording")
 	}
 	for _, s := range e.Manifest.Masking.Statements {
 		if err := LintCausal(s); err != nil || containsProven(s) || containsStrong(s) {

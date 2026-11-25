@@ -58,7 +58,9 @@ func TestUITokenPassesThroughUnchanged(t *testing.T) {
 func TestAGOnlyBridgeRoutesAndPrefixes(t *testing.T) {
 	ag := RoleAG
 	h := Handler(echoToken())
-	for _, p := range []string{"/api/cases", "/", "/api/shutdown", "/mcp/v1", "/cli/v1", "/api/info/x", "/mcp/v1/../api/cases", "/mcp/v1//x", "/api/keeper/x"} {
+	for _, p := range []string{"/api/cases", "/", "/api/shutdown", "/mcp/v1", "/cli/v1", "/api/info/x", "/mcp/v1/../api/cases", "/mcp/v1//x", "/api/keeper/x",
+		// BL-347: the person's approval routes are never reachable by a host (the ag pipe), whatever the token
+		"/api/mcp/profiles", "/api/mcp/profiles/claude/approve", "/api/mcp/stop", "/api/mcp/resume"} {
 		if w := do(h, &ag, p, tok); w.Code != 404 {
 			t.Errorf("%s: code %d, want 404", p, w.Code)
 		}
@@ -397,5 +399,44 @@ func TestCLIRoutesNeedACLIImageAndOnlyOnAG(t *testing.T) {
 	plain.ServeHTTP(w, r)
 	if strings.HasPrefix(w.Body.String(), "cli:") {
 		t.Errorf("no option, but the cli handler answered")
+	}
+}
+
+func TestMCPRoutesNeedAnMCPImageAndOnlyOnAG(t *testing.T) {
+	var reached string
+	mcpH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = r.URL.Path; _, _ = io.WriteString(w, "mcp") })
+	h := Handler(echoToken(), WithMCP(mcpH))
+	req := func(role Role, image, p string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", p, nil)
+		r = r.WithContext(WithPeerImage(WithRole(r.Context(), role), image))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := req(RoleAG, `C:\App\unravis.exe`, "/mcp/v1/call"); w.Code != 200 || w.Body.String() != "mcp" || reached != "/mcp/v1/call" {
+		t.Errorf("the host's program: %d %q", w.Code, w.Body.String())
+	}
+	for _, image := range []string{`C:\App\unravis-desktop.exe`, `C:\App\other.exe`, ""} {
+		if w := req(RoleAG, image, "/mcp/v1/call"); w.Code != 403 {
+			t.Errorf("image %q: %d", image, w.Code)
+		}
+	}
+	if w := req(RoleAG, `C:\App\unravis.exe`, "/mcp/v1/../api/cases"); w.Code != 404 {
+		t.Errorf("an unclean path: %d", w.Code)
+	}
+	// the dashboard's own routes stay unreachable on ag
+	if w := req(RoleAG, `C:\App\unravis.exe`, "/api/cases"); w.Code != 404 {
+		t.Errorf("a gui route on ag: %d", w.Code)
+	}
+	if w := req(RoleUI, `C:\App\unravis.exe`, "/mcp/v1/call"); w.Body.String() == "mcp" {
+		t.Errorf("the ui pipe reached the mcp handler")
+	}
+	plain := Handler(echoToken())
+	r := httptest.NewRequest("POST", "/mcp/v1/call", nil)
+	r = r.WithContext(WithPeerImage(WithRole(r.Context(), RoleAG), `C:\App\unravis.exe`))
+	w := httptest.NewRecorder()
+	plain.ServeHTTP(w, r)
+	if w.Body.String() == "mcp" {
+		t.Errorf("no option, but the mcp handler answered")
 	}
 }

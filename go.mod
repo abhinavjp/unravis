@@ -3,6 +3,7 @@ module api-audit-explorer
 go 1.27.4
 
 require (
+	github.com/evanw/esbuild v0.28.2
 	github.com/klauspost/compress v1.20.3
 	github.com/microsoft/go-mssqldb v1.12.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0

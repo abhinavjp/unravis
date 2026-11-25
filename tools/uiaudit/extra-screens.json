@@ -1360,6 +1360,122 @@
           "waitFor": "role=combobox[name=\"Longest text kept for one query\"]"
         }
       ]
+    },
+    {
+      "id": "x-ai-access",
+      "phase": "X",
+      "note": "AI access: a program that needs a decision (approval card with the choices), another that a second program tried to register as, one approved and one revoked, and the Stop all AI access button.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "waitFor": "role=button[name=\"Stop all AI access\"s]"
+        },
+        {
+          "waitFor": "text=Needs your decision"
+        }
+      ]
+    },
+    {
+      "id": "x-ai-access-identifiers",
+      "phase": "X",
+      "note": "AI access: the approval card with the user ids and addresses switch on (the length-of-time choice shows).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "waitFor": "role=button[name=\"Stop all AI access\"s]"
+        },
+        {
+          "waitFor": "text=Needs your decision"
+        },
+        {
+          "click": "role=checkbox[name=\"Also allow user ids and addresses\"] >> nth=0"
+        },
+        {
+          "waitFor": "role=combobox[name=\"Allow them for\"] >> nth=0"
+        }
+      ]
+    },
+    {
+      "id": "x-ai-access-stopped",
+      "phase": "X",
+      "note": "AI access after Stop all AI access: the stopped banner with the Resume button.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "waitFor": "role=button[name=\"Stop all AI access\"s]"
+        },
+        {
+          "waitFor": "text=Needs your decision"
+        },
+        {
+          "click": "role=button[name=\"Stop all AI access\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Resume AI access\"s]"
+        }
+      ],
+      "after": [
+        {
+          "click": "role=button[name=\"Resume AI access\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Stop all AI access\"s]"
+        }
+      ]
     }
   ]
 }

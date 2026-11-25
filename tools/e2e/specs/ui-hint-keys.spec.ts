@@ -70,7 +70,31 @@ test('HINTKEY-04 a click opens the hint, a click elsewhere closes it, and the bu
   await expect(b).toHaveAttribute('aria-haspopup', 'dialog');
   await b.click();
   await expect(popover(page)).toBeVisible();
-  // A press on a neutral place (the page heading), not a coordinate that may hold a control after a layout change.
-  await page.getByRole('heading', { name: 'Unravis', level: 1 }).click();
+  // A press on neutral page chrome, not a coordinate that may hold a control after a layout change.
+  await page.locator('.brand-name').click();
   await expect(popover(page)).toHaveCount(0);
+});
+
+test('SETUP-A11Y-15: the screen has one page heading, the brand is not a heading, and hint buttons sit beside headings', async ({ page }) => {
+  const nestedHints = () => page.locator('h1,h2,h3,h4,h5,h6').evaluateAll(heads => heads.flatMap(head => [...head.querySelectorAll('.hint-button')]).map(button => button.textContent));
+  await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
+  await page.getByRole('button', { name: /^\d+ Payroll\.Run synchronous/ }).click();
+  const panel = page.getByRole('complementary', { name: 'Payroll.Run' });
+  await panel.getByRole('tab', { name: 'Incomplete' }).click();
+  await expect(panel.getByRole('heading', { name: 'Incomplete requests' })).toBeVisible();
+  expect(await nestedHints(), 'request view hint buttons nested in headings').toEqual([]);
+  await page.getByRole('button', { name: 'Patterns', exact: true }).click();
+  await expect(page.locator('.patterns-drawer')).toBeVisible();
+  expect(await nestedHints(), 'patterns hint buttons nested in headings').toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.patterns-drawer')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByRole('button', { name: 'Preview export', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'What is hidden' })).toBeVisible();
+  expect(await nestedHints(), 'export hint buttons nested in headings').toEqual([]);
+  await expect(page.locator('h1')).toHaveCount(1);
+  await expect(page.locator('h1')).toHaveText('Evidence');
+  // the h1 is the first heading of the document, ahead of the filter panel's h2 and h3 headings
+  expect(await page.locator('h1, h2, h3, h4, h5, h6').first().evaluate((el) => el.tagName)).toBe('H1');
+  await expect(page.locator('.brand-lockup h1')).toHaveCount(0);
 });

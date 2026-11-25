@@ -48,6 +48,13 @@ async function openBlackbox(page: Page): Promise<void> {
   await expect(page.locator('#blackbox-title')).toBeVisible();
 }
 
+let styleSequence = 0;
+async function addCspStyle(page: Page, content: string) {
+  const url = `/__e2e_style_${++styleSequence}.css`;
+  await page.route('**' + url, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: content }));
+  return page.addStyleTag({ url });
+}
+
 test('UIFIX-01 Place a Blackbox: the close button keeps clear of every step name', async ({ page }) => {
   await openBlackbox(page);
   await page.getByRole('button', { name: 'Open status: web-a' }).waitFor();
@@ -82,7 +89,7 @@ for (const touch of [false, true]) {
       return { q: r(q), i: r(i) };
     });
     expect(overlap(boxes.q, boxes.i), JSON.stringify(boxes)).toBe(0);
-    // the heading carries its "?" and the "i" follows it on the same line
+    // the "?" and the "i" share one line
     expect(boxes.i.x).toBeGreaterThanOrEqual(boxes.q.x + boxes.q.w - 0.5);
   });
 }
@@ -151,14 +158,14 @@ test('UIFIX-04b Sources pop-up: the demo note starts on the same line as the lis
 
 test('UIFIX-05 The selected-lines notes of the Where is it? timeline are at least 11px', async ({ page }) => {
   await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Where is it?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Where is it?', level: 2 })).toBeVisible();
   const sizes = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.timeline-selected small, .canvas-bar small')].filter((e) => e.offsetParent).map((e) => parseFloat(getComputedStyle(e).fontSize)));
   for (const s of sizes) expect(s).toBeGreaterThanOrEqual(11);
 });
 
 test('UIFIX-06a Where is it?: the Daily view buttons are 24 x 24 px or more', async ({ page }) => {
   await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Where is it?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Where is it?', level: 2 })).toBeVisible();
   await page.locator('summary', { hasText: 'API groups' }).click();
   const buttons = page.locator('button.daily-open');
   await expect(buttons.first()).toBeVisible();
@@ -300,7 +307,7 @@ async function shapes(page: Page, table: string): Promise<{ now: Shape; old: Sha
     }
     void document.body.offsetHeight;
     const old = shape();
-    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style); }
+    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.style.cssText = style; }
     return { now, old, touched: saved.length };
   }, DEVELOP_RULES);
 }
@@ -435,7 +442,7 @@ const important = (css: string) => css.replace(/;(?=\s*(\}|$))/g, ';').replace(/
 /** The same screenshots with the new rules and with the old ones put back. */
 async function paintedBoth(page: Page, take: () => Promise<Buffer[]>): Promise<{ now: Buffer[]; old: Buffer[] }> {
   const now = await take();
-  const style = await page.addStyleTag({ content: important(OLD_HEATMAP_CSS) + OFF_NEW_CSS });
+  const style = await addCspStyle(page, important(OLD_HEATMAP_CSS) + OFF_NEW_CSS);
   const old = await take();
   await style.evaluate((el) => el.remove());
   return { now, old };
@@ -500,7 +507,7 @@ test('UIFIX-13c Daily and hourly view: the size and place of every row and squar
     return { grid: box(g), slots: [...g.querySelectorAll('.hm-cell-wrap')].map(box), rows: [...g.querySelectorAll('.hm-row')].map(box) };
   });
   const now = await measure();
-  const style = await page.addStyleTag({ content: important(OLD_HEATMAP_CSS) + OFF_NEW_CSS });
+  const style = await addCspStyle(page, important(OLD_HEATMAP_CSS) + OFF_NEW_CSS);
   const old = await measure();
   await style.evaluate((el) => el.remove());
   const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.05);
@@ -636,12 +643,12 @@ test('UIFIX-16b Blackbox charts: nothing outside the side column moves, and the 
     const inSide = () => [...side.children].map((e) => e.getBoundingClientRect().top);
     const now = snap(), nowSide = sideBox(), nowIn = inSide(), nowH = tabs.getBoundingClientRect().height;
     // the old rule put back: the strip may shrink again
-    const sheet = document.createElement('style');
-    sheet.textContent = '.bbc-tabs { flex-shrink: 1 !important; transition: none !important; }'; // no transition, or the computed value is still on its way from the new value
-    document.head.appendChild(sheet);
+    const tabStyle = tabs.style.cssText;
+    tabs.style.setProperty('flex-shrink', '1', 'important');
+    tabs.style.setProperty('transition', 'none', 'important');
     void document.body.offsetHeight;
     const old = snap(), oldSide = sideBox(), oldIn = inSide(), oldH = tabs.getBoundingClientRect().height;
-    sheet.remove();
+    tabs.style.cssText = tabStyle;
     const moved = now.filter((n, i) => !old[i] || n.box.some((v, j) => Math.abs(v - old[i].box[j]) > 0.05)).map((n) => n.name);
     return { moved, total: now.length, sideSame: nowSide.every((v, i) => Math.abs(v - oldSide[i]) < 0.05), nowH, oldH, shift: nowIn.map((t, i) => Math.round((t - oldIn[i]) * 10) / 10) };
   });
@@ -715,7 +722,7 @@ async function scallRects(page: Page): Promise<{ now: Record<string, Rect[]>; ol
     });
     void document.body.offsetHeight;
     const old = grab();
-    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style); }
+    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.style.cssText = style; }
     return { now, old, labels: saved.length };
   }, SCALL_LABELS);
 }
@@ -787,8 +794,8 @@ for (const width of [320, 360, 390]) {
 type Rules = [string, Record<string, string>][];
 
 /** Every box inside `root` now and with `rules` put back. `moved` lists the boxes that differ; targets are compared by margin box. */
-async function layoutMoves(page: Page, root: string, rules: Rules, hideCss = ''): Promise<{ touched: number; moved: string[]; total: number }> {
-  return page.locator(root).first().evaluate((container, [rs, css]) => {
+async function layoutMoves(page: Page, root: string, rules: Rules): Promise<{ touched: number; moved: string[]; total: number }> {
+  return page.locator(root).first().evaluate((container, rs) => {
     const targets = new Set<Element>();
     for (const [selector] of rs) container.querySelectorAll(selector).forEach((e) => targets.add(e));
     // Boxes inside a closed <details> are skipped: the browser lays them out only when something asks, so the first read can say 0 x 0 and the second a real size (seen in the Slow call screen's closed "How to read" notes). They are not on screen, so they cannot have moved.
@@ -806,21 +813,23 @@ async function layoutMoves(page: Page, root: string, rules: Rules, hideCss = '')
         for (const [k, v] of Object.entries(declarations)) el.style.setProperty(k, v, 'important');
       });
     }
-    const sheet = document.createElement('style');
-    sheet.textContent = css;
-    document.head.appendChild(sheet);
     void document.body.offsetHeight;
     const old = snap();
-    sheet.remove();
-    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style); }
+    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.style.cssText = style; }
     const moved: string[] = [];
     now.forEach((n, i) => { if (!old[i] || n.box.some((v, j) => Math.abs(v - old[i].box[j]) > 0.05)) moved.push(n.name + ' now ' + n.box.map((v) => v.toFixed(2)).join(',') + ' old ' + (old[i]?.box ?? []).map((v) => v.toFixed(2)).join(',')); });
     return { touched: saved.length, moved: moved.slice(0, 6), total: now.length };
-  }, [rules, hideCss] as [Rules, string]);
+  }, rules);
 }
 
 async function expectNothingMoved(page: Page, root: string, rules: Rules, label: string, hideCss = ''): Promise<void> {
-  const facts = await layoutMoves(page, root, rules, hideCss);
+  const style = hideCss ? await addCspStyle(page, hideCss) : null;
+  let facts: { touched: number; moved: string[]; total: number };
+  try {
+    facts = await layoutMoves(page, root, rules);
+  } finally {
+    await style?.evaluate((el) => el.remove());
+  }
   expect(facts.touched, label + ': no target found to compare').toBeGreaterThan(0);
   expect(facts.total, label + ': nothing measured').toBeGreaterThan(5);
   expect(facts.moved, label + ': boxes that moved against the old rules').toEqual([]);
@@ -974,7 +983,7 @@ for (const scheme of ['dark', 'light'] as const) {
         const fx = Math.max(0, Math.floor(x)), fy = Math.max(0, Math.floor(y)); // whole pixels: a fractional clip is resampled
         return { x: fx, y: fy, width: Math.ceil(x + r.width + parseFloat(s.marginLeft) + parseFloat(s.marginRight) + 28 - fx), height: Math.ceil(y + r.height + parseFloat(s.marginTop) + parseFloat(s.marginBottom) + 28 - fy) };
       });
-      await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+      await addCspStyle(page, '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }');
       const take = async (): Promise<Buffer[]> => {
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
         await page.mouse.move(0, 0);
@@ -986,7 +995,7 @@ for (const scheme of ['dark', 'light'] as const) {
         return [rest, focused];
       };
       const now = await take();
-      const style = await page.addStyleTag({ content: important(OLD_FOCUS[name].css) });
+      const style = await addCspStyle(page, important(OLD_FOCUS[name].css));
       const old = await take();
       await style.evaluate((el) => el.remove());
       // Byte for byte, except the rounded ring of the Review link: a positioned control rasterises the four arcs of its ring a hair differently
@@ -1314,7 +1323,7 @@ for (const scheme of ['dark', 'light'] as const) {
       await openSlowCallScreen(page);
       const lanes = page.getByTestId('scall-lanes');
       await lanes.scrollIntoViewIfNeeded();
-      await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+      await addCspStyle(page, '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }');
       await page.mouse.move(0, 0);
       const snap = () => page.evaluate(() => [...document.querySelectorAll('[data-testid=slow-call-screen] *')]
         .filter((e) => !e.matches('.bar-hit, .bar-g') && !e.closest('.bar-hit') && (!e.closest('details:not([open])') || e.matches('details, summary')))
@@ -1323,7 +1332,7 @@ for (const scheme of ['dark', 'light'] as const) {
       if (!clip) throw new Error('no lanes box');
       const now = await snap();
       const shotNow = await page.screenshot({ clip: { x: Math.max(0, clip.x), y: Math.max(0, clip.y), width: clip.width, height: clip.height } });
-      const sheet = await page.addStyleTag({ content: '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; }' });
+      const sheet = await addCspStyle(page, '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; }');
       const old = await snap();
       const shotOld = await page.screenshot({ clip: { x: Math.max(0, clip.x), y: Math.max(0, clip.y), width: clip.width, height: clip.height } });
       await sheet.evaluate((el) => el.remove());
@@ -1382,7 +1391,7 @@ for (const scheme of ['dark', 'light'] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width: 1440, height: 900 });
     await openSlowCallScreen(page);
-    await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+    await addCspStyle(page, '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }');
     for (const [name, selector] of [['crumb', '[data-testid=scall-back]'], ['minimap box', '[data-testid=scall-map-box]'], ['lane bar', '.bar-g']] as const) {
       const target = page.locator(selector).first();
       await target.scrollIntoViewIfNeeded();
@@ -1402,7 +1411,7 @@ for (const scheme of ['dark', 'light'] as const) {
         return [rest, focused];
       };
       const now = await take();
-      const style = await page.addStyleTag({ content: '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; } .scall-crumb .link { position: static !important; }' });
+      const style = await addCspStyle(page, '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; } .scall-crumb .link { position: static !important; }');
       const old = await take();
       await style.evaluate((el) => el.remove());
       for (const [i, what] of ['at rest', 'focused'].entries()) {
@@ -1771,7 +1780,7 @@ test('UIFIX-40d Slow call screen, all sources: Tab, Enter and Space press a row 
 
 test('UIFIX-40e Where is it?: "Show only" of the Request volume table is a real button; Tab and Enter filter the histogram once', async ({ page }) => {
   await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Where is it?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Where is it?', level: 2 })).toBeVisible();
   await page.locator('summary', { hasText: 'Request volume' }).click();
   const only = page.getByRole('button', { name: /^Show only .* in histogram$/ });
   await expect(only.first()).toBeVisible();
@@ -1919,6 +1928,23 @@ for (const key of ['Enter', 'Space'] as const) {
     await expect(page.locator(OP_BUTTONS).nth(1), 'the button gets the focus back').toBeFocused();
   });
 }
+
+// UIFIX-54 (BL-495e): Nearby activity belongs before the request list, not after a list that can fill the drawer.
+test('UIFIX-54 All operations: Nearby activity precedes the request history in the drawer', async ({ page }) => {
+  await openRequestList(page);
+  await page.locator(OP_BUTTONS).first().click();
+  await expect(page.locator('#nearby-activity')).toBeVisible();
+  const order = await page.evaluate(() => {
+    const nearby = document.querySelector('#nearby-activity')!;
+    const history = document.querySelector('#request-history')!;
+    return {
+      beforeHistory: (nearby.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+      historyAfterNearby: history.getBoundingClientRect().top >= nearby.getBoundingClientRect().top
+    };
+  });
+  expect(order.beforeHistory, 'Nearby activity comes before request history in the DOM').toBe(true);
+  expect(order.historyAfterNearby, 'the request list starts below Nearby activity').toBe(true);
+});
 
 for (const size of OP_SIZES) {
   test('UIFIX-50d Where is it? at ' + size.width + ' px: "Show only" is a quiet button with a visible edge, one size in the column, a 24 px press area, and the table fits its box', async ({ page }) => {

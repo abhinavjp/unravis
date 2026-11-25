@@ -144,7 +144,7 @@ test('tickOffsets still answers in whole slots for the same windows', () => {
 test('the chart draws labels from axisTicks at their own position', () => {
   const chart = read('src/components/TracingChart.svelte');
   assert.match(chart, /\{#each ticks as tick \(tick\.ms\)\}/);
-  assert.match(chart, /left:\{tick\.offset \* widthPct\}%">\{at\(tick\.ms\)\}/);
+  assert.match(chart, /<span class="axtick" style:left="\{tick\.offset \* widthPct\}%">\{at\(tick\.ms\)\}<\/span>/);
 });
 
 // UI-R5-01
@@ -191,7 +191,7 @@ test('only an archived case falls back to the case page; a closed case stays on 
 // UI-R5-05
 test('the lane swatch sits inline in front of the lane name', () => {
   const chart = read('src/components/TracingChart.svelte');
-  assert.match(chart, /<span class="lane-title"><span class="swatch" style=\{SWATCH_STYLE\[lane\.key\]\} aria-hidden="true"><\/span><strong>\{LANE_NAME\[lane\.key\]\}<\/strong>(<button[^>]*>\?<\/button>)?<\/span>/);
+  assert.match(chart, /<span class="lane-title"><span class="swatch" style:background=\{SWATCH_STYLE\[lane\.key\]\} aria-hidden="true"><\/span><strong>\{LANE_NAME\[lane\.key\]\}<\/strong>(<button[^>]*>\?<\/button>)?<\/span>/);
   assert.match(chart, /\.lane-label \.lane-title \{ display: flex; align-items: center;/);
   assert.match(chart, /\.lane-label \.swatch \{ flex: none; width: 10px; height: 10px;/);
 });

@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"api-audit-explorer/internal/audit"
 	_ "api-audit-explorer/internal/mcp/envguard" // before the SDK: see the package comment
 	"api-audit-explorer/internal/version"
 	"bufio"
@@ -238,18 +237,11 @@ func newSDKServer(b *Bridge, life context.Context, workers *sync.WaitGroup) *sdk
 		}, func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
 			workers.Add(1)
 			defer workers.Done()
-			callCtx, cancel := context.WithTimeout(life, audit.OperationTimeout)
+			callCtx, cancel := context.WithCancel(life)
 			defer cancel()
 			defer context.AfterFunc(ctx, cancel)() // a cancel notification still ends the call
-			result, err := b.call(callCtx, req.Params.Name, req.Params.Arguments)
-			var body []byte
-			if err == nil {
-				body, err = encodeResult(name, result)
-			}
-			if err != nil {
-				return toolResult(encodeError(name, err), true), nil
-			}
-			return toolResult(body, false), nil
+			body, isError := b.CallEnvelope(callCtx, req.Params.Name, req.Params.Arguments)
+			return toolResult(body, isError), nil
 		})
 	}
 	srv.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {

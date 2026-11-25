@@ -910,7 +910,7 @@ func caseStatements(w caseWithholding, includeSensitive bool) []string {
 	return append(s,
 		"Event times and durations are exact, and the number of events is the number in this file. Anyone who holds the original logs can match events to log lines by time and value. This export is for a trusted counterparty, not for publication.",
 		fmt.Sprintf("The acknowledgement the analyst ticked is not copied: each import carries a banner id (the SHA-256 of a standard banner text, or \"%s\" for any other text). A version string is kept only when it looks like a version number. Free-text recording thresholds and sampling notes are not copied.", customBannerID),
-		fmt.Sprintf("Known gaps are cleaned like hypothesis text: identifiers, email addresses, IP addresses, host names, paths and links become \"%s\", and a gap that still looks like it holds an identifier is replaced by \"%s\".", removedText, gapWithheld),
+		fmt.Sprintf("Known gaps are cleaned like theory text: identifiers, email addresses, IP addresses, host names, paths and links become \"%s\", and a gap that still looks like it holds an identifier is replaced by \"%s\".", removedText, gapWithheld),
 		keyStatement,
 		hashStatement,
 	)
