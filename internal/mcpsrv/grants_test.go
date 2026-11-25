@@ -823,6 +823,21 @@ func TestRevokeAndReissueDropTheDigest(t *testing.T) {
 
 // Review of #273, M1: a host that enrolls again with other text or a wider identifiers request while the card is on screen makes the
 // card stale: an approval with the revision the person saw is refused, so an approval is always for the text that was shown.
+// A new parent process id is not text the person reads: it must not make the card stale (review of #273, SHOULD 1).
+func TestReEnrollWithOnlyANewParentProcessKeepsTheCard(t *testing.T) {
+	e := newEnv(t)
+	first := req("h1", nonce(t))
+	r1, err := e.g.Enroll(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again := first
+	again.PPID = first.PPID + 100
+	if r2, err := e.g.Enroll(ctx, again); err != nil || r2.Rev != r1.Rev {
+		t.Errorf("a new ppid changed the rev: %d then %d (%v)", r1.Rev, r2.Rev, err)
+	}
+}
+
 func TestReEnrollWithChangedTextMakesTheCardStale(t *testing.T) {
 	e := newEnv(t)
 	n := nonce(t)

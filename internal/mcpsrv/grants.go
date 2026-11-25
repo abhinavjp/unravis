@@ -210,7 +210,7 @@ func (g *Grants) Enroll(ctx context.Context, r EnrollReq) (EnrollResp, error) {
 		p, err = g.db.Update(ctx, p.ID, func(p *Profile) error {
 			// The revision is what an approval is tied to (ExpectRev): when the text the person is looking at changes, the card they
 			// have is stale and Approve answers 409, so a host cannot swap its name or path after the card was shown (review of #273, M1).
-			if p.HostName != r.HostName || p.HostVersion != r.HostVersion || p.Exe != r.Exe || p.PPID != r.PPID ||
+			if p.HostName != r.HostName || p.HostVersion != r.HostVersion || p.Exe != r.Exe ||
 				p.RequestedIdentifiers != r.RequestIdentifiers || subtle.ConstantTimeCompare(p.ClaimDigest, digest) != 1 {
 				p.Rev++
 			}

@@ -54,6 +54,8 @@ type rig struct {
 	credDr string
 	// claimFail is how many of the next claim requests the backend answers with a 500 (a transient fault).
 	claimFail atomic.Int32
+	// enrollStatus and claimStatus, when not 0, are the status the backend answers the next enroll or claim with.
+	enrollStatus, claimStatus atomic.Int32
 }
 
 func newRig(t *testing.T) *rig {
@@ -86,6 +88,14 @@ func newRig(t *testing.T) *rig {
 		t.Fatal(err)
 	}
 	r.ag = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
+		if st := r.enrollStatus.Load(); st != 0 && q.URL.Path == "/mcp/v1/enroll" {
+			http.Error(w, "no", int(st))
+			return
+		}
+		if st := r.claimStatus.Load(); st != 0 && q.URL.Path == "/mcp/v1/enroll/claim" {
+			http.Error(w, "no", int(st))
+			return
+		}
 		if q.URL.Path == "/mcp/v1/enroll/claim" && r.claimFail.Add(-1) >= 0 {
 			http.Error(w, "boom", http.StatusInternalServerError)
 			return
@@ -596,5 +606,43 @@ func TestATransientClaimFailureKeepsTheNonce(t *testing.T) {
 	}
 	if _, m := r.screen("GET", "/api/mcp/profiles", nil); m["profiles"].([]any)[0].(map[string]any)["contested"] != float64(0) {
 		t.Errorf("a transient fault made the host contested: %v", m)
+	}
+}
+
+// Review of #273, SHOULD 3: a refused enroll (the list is full, a text is refused) is not "try again in a moment": the host is told what to
+// do. A server fault is still retry, and the nonce stays in both cases.
+func TestARefusedEnrollTellsThePersonWhatToDo(t *testing.T) {
+	for status, wantCode := range map[int32]string{http.StatusTooManyRequests: "permission_required", http.StatusBadRequest: "permission_required", http.StatusInternalServerError: "backend_unavailable"} {
+		r := newRig(t)
+		a := r.agent("agent-6")
+		r.enrollStatus.Store(status)
+		e := call(t, a, "audit_get_guide")
+		if !e.isError || code(e) != wantCode {
+			t.Errorf("enroll %d: %.300s (want %s)", status, e.body, wantCode)
+		}
+		if status != http.StatusInternalServerError && !strings.Contains(string(e.body), "did not accept") {
+			t.Errorf("enroll %d: the answer does not say where to go: %.300s", status, e.body)
+		}
+		r.enrollStatus.Store(0)
+		if e := call(t, a, "audit_get_guide"); strings.Contains(string(e.body), "did not accept") || strings.Contains(string(e.body), "could not take") {
+			t.Errorf("enroll %d: still refused once the backend takes it: %.300s", status, e.body)
+		}
+	}
+}
+
+// Review of #273, SHOULD 5: a claim that finds no entry is not a reason to ask the person to reissue; the nonce goes and the next call
+// enrolls afresh.
+func TestAClaimOfAMissingEntryRetriesInsteadOfAskingToReissue(t *testing.T) {
+	r := newRig(t)
+	a := r.agent("agent-7")
+	_ = call(t, a, "audit_get_guide")
+	r.approve("agent-7")
+	r.claimStatus.Store(http.StatusNotFound)
+	e := call(t, a, "audit_get_guide")
+	if !e.isError || code(e) != "backend_unavailable" {
+		t.Fatalf("on a 404 claim: %.300s", e.body)
+	}
+	if _, err := os.Stat(filepath.Join(r.credDr, "bridge-agent-7.cred")); err == nil {
+		t.Error("the spent nonce was kept")
 	}
 }

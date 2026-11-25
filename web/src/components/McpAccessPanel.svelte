@@ -48,8 +48,9 @@
     for (const k of Object.keys(drafts)) if (!live.has(k)) delete drafts[k];
   }
 
+  let reloadAgain = false;
   async function load(initial = false) {
-    if (refreshing) return;
+    if (refreshing) { reloadAgain = true; return; } // a read that began before an action must not be the last word
     refreshing = true;
     if (initial) loading = true;
     try {
@@ -64,6 +65,7 @@
       refreshing = false;
       loading = false;
     }
+    if (reloadAgain) { reloadAgain = false; await load(); }
   }
 
   onMount(() => {
