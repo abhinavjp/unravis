@@ -1,6 +1,6 @@
 {
   "operation": "code.run",
-  "description": "Run one script in the app's code mode, in its sandbox, over the same read tools as the app's window, and record the run in the open case. A script that was accepted but failed answers with its result (status error, timeout, cancelled or crashed) and the command line then exits with the code of the failure. Needs code mode switched on in the app.",
+  "description": "Run one script in the app's code mode, in its sandbox, over the same read tools as the app's window, and record the run in the open case. A script that was accepted but failed answers with its result (status error, timeout, limit_exceeded, cancelled or crashed) and the command line then exits with the code of the failure. Needs code mode switched on in the app.",
   "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "required": ["code"], "properties": {
     "code": {"type": "string", "minLength": 1, "description": "The script, at most 262144 bytes of UTF-8"},
     "caseId": {"type": "string", "pattern": "^[a-z2-7]{26}$", "description": "The open case to record the run in; needed when more than one case is open"},
@@ -8,7 +8,7 @@
     "reason": {"type": "string", "maxLength": 500, "description": "Why the script is run, kept with the run in the case"},
     "allowIdentifiers": {"type": "boolean", "default": false, "description": "Show user identifiers in the result; refused unless the operator allows it in the app"}}},
   "output": {"type": "object", "required": ["v", "runId", "status", "result", "logs", "stats", "sandbox", "identifiers"], "properties": {
-    "v": {"type": "integer"}, "runId": {"type": "string"}, "status": {"enum": ["ok", "error", "timeout", "cancelled", "crashed"]}, "result": {}, "logs": {"type": "array", "items": {"type": "string"}},
+    "v": {"type": "integer"}, "runId": {"type": "string"}, "status": {"enum": ["ok", "error", "timeout", "limit_exceeded", "cancelled", "crashed"]}, "result": {}, "logs": {"type": "array", "items": {"type": "string"}},
     "stats": {"type": "object", "properties": {"calls": {"type": "integer"}, "durationMs": {"type": "integer"}, "scriptMs": {"type": "integer"}, "truncated": {"type": "boolean"}, "logsTruncated": {"type": "boolean"}}},
     "sandbox": {"type": "object", "properties": {"mode": {"type": "string"}, "runtime": {"type": "string"}, "worker": {"type": "string"}}},
     "identifiers": {"enum": ["hidden", "shown"]}, "error": {"type": "object", "properties": {"code": {"type": "string"}, "message": {"type": "string"}}}}},

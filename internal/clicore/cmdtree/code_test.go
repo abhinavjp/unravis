@@ -284,7 +284,7 @@ func TestCodeRunFailedScriptPrintsAndExitsNonzero(t *testing.T) {
 		{"timeout", "wall", "TIMEOUT", clicore.ExitStopped},
 		{"cancelled", "cancelled", "CANCELED", clicore.ExitStopped},
 		{"crashed", "worker_crashed", "INTERNAL", clicore.ExitInternal},
-		{"error", "call_budget", "BUDGET_EXCEEDED", clicore.ExitDependency},
+		{"limit_exceeded", "call_budget", "BUDGET_EXCEEDED", clicore.ExitDependency},
 		{"error", "a_code_from_the_future", "INTERNAL", clicore.ExitInternal},
 	} {
 		o := newOwner(t, nil, withCode(failed(c.status, c.code)))
