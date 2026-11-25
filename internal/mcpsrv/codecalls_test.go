@@ -218,7 +218,7 @@ func TestCodeCallPanicInEndLeavesNoSlotAndEndRunsOnce(t *testing.T) {
 		t.Fatal(refused)
 	}
 	rec.onEnd = true
-	if !panics(func() { end([]byte(`{}`), false) }) {
+	if !panics(func() { _ = end([]byte(`{}`), false) /* panics before returning */ }) {
 		t.Fatal("end did not panic")
 	}
 	rec.onEnd = false
@@ -249,7 +249,9 @@ func TestCodeCallEndTwiceDoesNotGoNegative(t *testing.T) {
 	if r.disp.total != 1 || r.disp.perProf["cc-twice"] != 1 {
 		t.Errorf("after two ends of one call: total %d, per profile %v (the other call is still running)", r.disp.total, r.disp.perProf)
 	}
-	other(nil, false)
+	if ref := other(nil, false); ref != nil {
+		t.Error("the second call was refused at its end")
+	}
 	if r.disp.total != 0 || len(r.disp.perProf) != 0 {
 		t.Errorf("at the end: total %d, %v", r.disp.total, r.disp.perProf)
 	}
