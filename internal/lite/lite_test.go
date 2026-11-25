@@ -187,7 +187,18 @@ func TestPageFilesAreNotCachedAndRefusalsCarryHeaders(t *testing.T) {
 	}
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/sources", nil))
-	if rec.Code != 404 || rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Content-Security-Policy") == "" {
+	if rec.Code != 404 || rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Content-Security-Policy") != "default-src 'none'" {
 		t.Fatalf("refusal: %d %v", rec.Code, rec.Header())
+	}
+}
+
+func TestLitePagesKeepTheStrictAppPolicy(t *testing.T) {
+	ui := fstest.MapFS{"index.html": {Data: []byte("lite")}}
+	h := Wrap(server.New(NoData{}, ui, "0123456789abcdef0123456789abcdef", false))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1/", nil))
+	want := "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	if rec.Code != 200 || rec.Header().Get("Content-Security-Policy") != want {
+		t.Fatalf("page: %d %v", rec.Code, rec.Header())
 	}
 }

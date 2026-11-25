@@ -48,9 +48,9 @@ export function unlisted(found) {
 for (const f of ['web/src/App.svelte', 'web/package.json', 'internal/audit/models.go', 'internal/casestore/plan.go', 'internal/audit/thresholds.go',
   'internal/server/routes.go', 'internal/blackbox/sample.go', 'internal/calltrace/types.go', 'internal/collect/collect.go',
   'internal/collect/testdata/wording.golden.json', 'internal/importer/reasons.go', 'tools/e2e/archive/guided/a.json', 'docs/user/cases.md',
-  '.gitattributes', 'cmd/unravis-releases/ui/app.js', 'internal\\casestore\\plan.go']) assert.equal(touchesWeb(f), true, f);
+  '.gitattributes', 'cmd/unravis-releases/ui/app.js', 'internal/codemode/bindings/testdata/unravis.d.ts', 'internal/codemode/bindings/testdata/scripts/ok.ts', 'tools/codemode/check-dts.mjs', 'internal\\casestore\\plan.go']) assert.equal(touchesWeb(f), true, f);
 for (const f of ['internal/store/q.go', 'internal/casestore/other.go', 'internal/audit/other.go', 'internal/collect/other.go', 'docs/ci/RELEASE-TRAIN.md',
-  'tools/ci/web-scope.mjs', 'README.md', 'cmd/unravis-releases/main.go', 'go.mod']) assert.equal(touchesWeb(f), false, f);
+  'tools/ci/web-scope.mjs', 'internal/codemode/tsgen/tsgen.go', 'internal/codemode/bindings/bindings.go', 'README.md', 'cmd/unravis-releases/main.go', 'go.mod']) assert.equal(touchesWeb(f), false, f);
 
 // The scanner, on a throwaway repo: it finds the three ways a test names a repo file, and the guard reports a path nobody listed.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'web-scope-'));

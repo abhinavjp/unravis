@@ -22,7 +22,7 @@
 
 {#if rollups.length}
 <section class="data-section incomplete-panel" id="incomplete-work" aria-label="Incomplete requests">
-  <div class="section-heading"><div><h3>Incomplete requests<Hint termId="incomplete-request" /></h3><p>Completion % is completed / (completed + incomplete + pending). Unusable rows are counted apart and never in that share. A dash means there was nothing to measure, not 0%.</p></div></div>
+  <div class="section-heading"><div><div class="heading-with-hint"><h3>Incomplete requests</h3><Hint termId="incomplete-request" /></div><p>Completion % is completed / (completed + incomplete + pending). Unusable rows are counted apart and never in that share. A dash means there was nothing to measure, not 0%.</p></div></div>
   <div class="group-toolbar">
     <label>Stale after (minutes)<input type="text" inputmode="decimal" bind:value={minutesText} aria-invalid={minutes == null} aria-describedby="stale-threshold-note" /></label>
     <button type="button" class="secondary-button" disabled={minutes == null || !(totals.incomplete + totals.pending)} title={incompleteButton.tip} onclick={() => open(null, 'incomplete')}>{incompleteButton.text}</button>
@@ -58,6 +58,7 @@
 
 <style>
   .incomplete-panel { margin-bottom: 14px; }
+  .heading-with-hint { display: flex; align-items: center; }
   .stale-error { color: var(--bad); }
   .incomplete-note { margin: 0; padding: 8px 12px; color: var(--text-2); font-size: 12px; }
   /* 24px wide tap target (BL-475): a one-digit count is 8px wide. The hit area grows 8px each side in a pseudo-element, so the number, the column and the focus ring stay exactly as they were. */

@@ -67,7 +67,7 @@
       {#if !invalidWindows.some(field => field === 'start' || field === 'end')}<p class="utc-echo">UTC <time datetime={query.start}>{query.start}</time> – <time datetime={query.end}>{query.end}</time></p>{/if}
     </section>
     <section class="when-window" aria-labelledby="reference-range-label">
-      <div class="label-line"><h3 id="reference-range-label">Reference<Hint termId="reference-period" /></h3><FieldHelp id="reference-range" /></div>
+      <div class="label-line"><div class="heading-with-hint"><h3 id="reference-range-label">Reference</h3><Hint termId="reference-period" /></div><FieldHelp id="reference-range" /></div>
       <p class="when-sub">An earlier period to compare with.</p>
       <div class="window-bounds">
         <DateTimeField id="reference-start" label="From" help="reference-start" helpLabel="Reference from" zone={zoneAt(query.baselineStart)} value={localValue(query.baselineStart)} invalid={invalidWindows.includes('baselineStart')} errorId="when-time-error" onChange={(date, time) => setWindow('baselineStart', date, time)} />
@@ -83,10 +83,11 @@
   .when-windows { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px var(--space-8); min-width: 0; }
   .when-window { display: grid; gap: 6px; align-content: start; min-width: 0; }
   .when-window h3 { display: flex; align-items: center; margin: 0; font-size: 12px; font-weight: 600; }
-  /* The "?" hint sits inside the heading and the "i" button follows the heading, so the gap has to come from the heading: the hint's 24px box
+  .heading-with-hint { display: flex; align-items: center; }
+  /* The "?" hint sits beside the heading and the "i" button follows it, so the gap has to come from the wrapper: the hint's 24px box
      reaches 4px past the heading, and the "i" button on a touch or narrow screen reaches 4px back into it (BL-474). */
-  .when-window h3 { margin-inline-end: var(--space-1); }
-  @media (pointer: coarse), (max-width: 720px) { .when-window h3 { margin-inline-end: var(--space-2); } }
+  .heading-with-hint { margin-inline-end: var(--space-1); }
+  @media (pointer: coarse), (max-width: 720px) { .heading-with-hint { margin-inline-end: var(--space-2); } }
   .when-sub { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.45; }
   .window-bounds { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
   .utc-echo { margin: 0; color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }

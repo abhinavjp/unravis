@@ -96,7 +96,7 @@
 
 {#if term}
   <span class="hint-wrap">
-    <button type="button" class="hint-button" bind:this={trigger} aria-label={'What does ' + term.term + ' mean?'} aria-expanded={open} aria-controls={open ? popId : undefined} onclick={toggle} onfocusout={leave}><span class="hint-glyph" aria-hidden="true">?</span></button>
+    <button type="button" class="hint-button" bind:this={trigger} aria-label={'What does ' + term.term + ' mean?'} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? popId : undefined} onclick={toggle} onfocusout={leave}><span class="hint-glyph" aria-hidden="true">?</span></button>
   </span>
   {#if open}
     <div class="hint-popover" id={popId} role="dialog" aria-labelledby={titleId} tabindex="-1" bind:this={pop} use:portal onfocusout={leave} onkeydown={popKey} style:left={pos.left + 'px'} style:top={pos.top + 'px'}>

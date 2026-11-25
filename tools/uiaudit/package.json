@@ -6,7 +6,8 @@
   "scripts": {
     "audit": "node run-audit.mjs",
     "test": "node --test tests/*.test.mjs",
-    "selftest": "playwright test -c playwright.selftest.config.ts"
+    "selftest": "playwright test -c playwright.selftest.config.ts",
+    "csp": "playwright test -c playwright.csp.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1"

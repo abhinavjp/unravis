@@ -1,5 +1,6 @@
 // The analysis page: filters, chips, request type buttons and the response-time target.
 import { test, expect, type Page } from '../support/fixtures';
+import { sweepTip } from '../support/chart-tip';
 
 async function run(page: Page) {
   const done = page.waitForResponse((r) => r.url().includes('/api/analyze'));
@@ -93,17 +94,10 @@ test('INV-11: a response-time target of 100 ms draws a target line', async ({ pa
   const list = await ops(page);
   // The target line is on the chart of one operation: open the worst one.
   await list.getByRole('button').first().click();
-  // The chart is a canvas, so the line is read from its tooltip: moving over the chart lists every line, the target included.
+  // The chart is a canvas, so the line is read from its tooltip: moving over the chart lists every line, the target included. The tooltip is drawn on the
+  // canvas too (rich text, BL-323), so its text is read from the chart (support/chart-tip.ts).
   const chart = page.getByRole('img', { name: 'Selected API response times over time' });
   await expect(chart).toBeVisible();
-  await chart.scrollIntoViewIfNeeded();
-  const box = (await chart.boundingBox())!;
-  const tip = page.getByText(/Response-time target: ≈ 100\.00 ms/);
-  for (const f of [0.3, 0.5, 0.7]) {
-    await page.mouse.move(box.x + box.width * (f - 0.05), box.y + box.height * 0.5);
-    await page.mouse.move(box.x + box.width * f, box.y + box.height * 0.5, { steps: 8 });
-    await page.waitForTimeout(250);
-    if (await tip.count()) break;
-  }
-  await expect(tip.first()).toBeVisible();
+  const tip = await sweepTip(page, '[aria-label="Selected API response times over time"]', /Response-time target: ≈ 100\.00 ms/, { from: 40, to: 40, step: 8 });
+  expect(tip).toMatch(/Response-time target: ≈ 100\.00 ms/);
 });

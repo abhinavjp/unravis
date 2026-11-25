@@ -28,6 +28,9 @@
   // The date the person chose, which may not be in the query yet while the time is refused; it is sent with the next valid time instead of being lost.
   const dateNow = () => dateBox?.value ?? value.slice(0, 10);
   const hintId = $derived(`${id}-time-hint`);
+  // BL-506: when a date change lands in the hour the clocks skip, the query keeps its old value and the box keeps the date the person chose (it is sent with the next
+  // valid time, never lost and never replaced by the old one). The refusal belongs to the pair, so the Date box is marked too for every refusal of the pair (the skipped hour, a cleared Date or Time box, a window that is too long or out of order), unless the time text itself is what is bad.
+  const dateRefused = $derived(invalid && !bad);
 
   const commit = (typed: string) => {
     const parsed = parseTime24(typed);
@@ -69,7 +72,7 @@
 <fieldset class="date-time-field">
   <legend>{label}</legend>
   <div class="date-time-controls">
-    <div class="date-time-control"><label for={`${id}-date`}>Date</label><input id={`${id}-date`} type="date" bind:this={dateBox} value={value.slice(0, 10)} onchange={(event) => onChange(event.currentTarget.value, timeForQuery(text))} /></div>
+    <div class="date-time-control"><label for={`${id}-date`}>Date</label><input id={`${id}-date`} type="date" bind:this={dateBox} value={value.slice(0, 10)} aria-invalid={dateRefused ? 'true' : undefined} aria-describedby={dateRefused && errorId ? errorId : undefined} onchange={(event) => onChange(event.currentTarget.value, timeForQuery(text))} /></div>
     <div class="date-time-control">
       <label for={`${id}-time`}>Time{#if zone}{' '}({zone}){/if}</label>
       <input

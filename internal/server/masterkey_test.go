@@ -577,8 +577,8 @@ func TestLockedGateCoversEveryCaseRoute(t *testing.T) {
 				}
 				continue
 			}
-			if public {
-				continue
+			if public || c.pattern == mcpEvidencePattern {
+				continue // the evidence resolver is gated too (mcp_evidence_test.go), but it is not a case route
 			}
 			other++
 			if res := request(withoutStore, method, c.path, "", true); res.Code == http.StatusLocked {
