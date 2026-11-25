@@ -207,6 +207,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, environ []string) int {
 		}
 		_, _ = fmt.Fprintf(stdout, "  %-12s %-9s slots %d  running %d  pid %d  seen %s ago%s\n", h.Name, st, h.Slots, len(h.Jobs), h.PID, ago(now, h.LastSeen), labelText(h.Labels))
 	}
+	statusLines(stdout, hbs, now)
 
 	queue := &localci.Queue{Dir: localci.QueueDir(dir)}
 	all, err := queue.List()

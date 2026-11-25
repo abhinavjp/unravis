@@ -51,6 +51,8 @@ type Heartbeat struct {
 	Started  time.Time  `json:"started"`
 	LastSeen time.Time  `json:"lastSeen"`
 	Jobs     []AgentJob `json:"jobs"`
+	// Status is how posting commit statuses goes; nil when this agent posts none.
+	Status *StatusHealth `json:"status,omitempty"`
 }
 
 // AgentsDir is where heartbeats and drain marks live.
@@ -125,6 +127,9 @@ type Agent struct {
 	Slots  int
 	Labels []string
 	Runner Runner
+	// Status, when set, posts commit statuses for what the agent sees and does (shadow phase). A posting problem
+	// never reaches a run.
+	Status *StatusService
 
 	// Paused, when it says true, stops the agent from claiming; what runs keeps running.
 	Paused func() bool
@@ -318,6 +323,7 @@ func (a *Agent) tick(ctx context.Context) {
 		a.requeueStale(true)
 		a.prune(now)
 	}
+	a.statusTick()
 	a.claim(ctx)
 	a.keepAwake()
 	a.beat(false)
@@ -378,9 +384,29 @@ func (a *Agent) claim(ctx context.Context) {
 	}
 }
 
+// statusTick posts what changed since the last look: new requests in the queue, jobs that ended in the runs.
+func (a *Agent) statusTick() {
+	if a.Status == nil {
+		return
+	}
+	a.Status.ObserveQueue(a.Queue)
+	a.mu.Lock()
+	reqs := make([]Request, 0, len(a.jobs))
+	for _, j := range a.jobs {
+		reqs = append(reqs, j.req)
+	}
+	a.mu.Unlock()
+	for _, r := range reqs {
+		a.Status.Progress(r)
+	}
+}
+
 func (a *Agent) start(ctx context.Context, r Request) {
 	jctx, cancel := context.WithCancel(ctx)
 	j := &agentJob{req: r, since: a.now(), cancel: cancel}
+	if a.Status != nil {
+		a.Status.Started(r)
+	}
 	a.mu.Lock()
 	a.jobs[r.ID] = j
 	a.dirty = true
@@ -391,7 +417,7 @@ func (a *Agent) start(ctx context.Context, r Request) {
 		defer a.wg.Done()
 		defer cancel()
 		out, err := a.runSafely(jctx, r)
-		a.finish(ctx, r, out, err)
+		a.finish(ctx, r, j.since, out, err)
 		a.mu.Lock()
 		delete(a.jobs, r.ID)
 		a.dirty = true
@@ -409,9 +435,12 @@ func (a *Agent) runSafely(ctx context.Context, r Request) (out Outcome, err erro
 	return a.Runner(ctx, r)
 }
 
-func (a *Agent) finish(agentCtx context.Context, r Request, out Outcome, err error) {
+func (a *Agent) finish(agentCtx context.Context, r Request, since time.Time, out Outcome, err error) {
 	_, _, marked := a.Queue.CancelRequested(r.ID)
 	if !marked && agentCtx.Err() != nil {
+		if a.Status != nil {
+			a.Status.Forget(r)
+		}
 		if rerr := a.Queue.Requeue(r.ID); rerr != nil {
 			a.logf("%s: could not put it back: %v", r.ID, rerr)
 			return
@@ -430,6 +459,9 @@ func (a *Agent) finish(agentCtx context.Context, r Request, out Outcome, err err
 	if cerr != nil {
 		a.logf("%s: could not record the end: %v", r.ID, cerr)
 		return
+	}
+	if a.Status != nil {
+		a.Status.Finished(r, since, err, done)
 	}
 	a.logf("%s: %s%s%s", r.ID, done.State, noteIf(done.Conclusion != "" && done.Conclusion != done.State, " ("+done.Conclusion+")"), noteIf(done.Reason != "", ": "+done.Reason))
 }
@@ -505,7 +537,7 @@ func (a *Agent) Snapshot() Heartbeat {
 	st := a.state()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	hb := Heartbeat{Name: a.Name, PID: os.Getpid(), Slots: a.slots(), Labels: a.Labels, State: st, Started: a.started, LastSeen: a.now(), Jobs: []AgentJob{}}
+	hb := Heartbeat{Name: a.Name, PID: os.Getpid(), Slots: a.slots(), Labels: a.Labels, State: st, Started: a.started, LastSeen: a.now(), Jobs: []AgentJob{}, Status: a.Status.Health()}
 	for _, j := range a.jobs {
 		hb.Jobs = append(hb.Jobs, AgentJob{ID: j.req.ID, Label: j.req.Label(), Since: j.since})
 	}

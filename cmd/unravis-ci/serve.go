@@ -88,13 +88,16 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	keep := fs.Bool("keep", false, "keep the worktrees after the runs")
 	noKeepAwake := fs.Bool("no-keep-awake", false, "do not stop Windows from sleeping while there is work")
 	noPush := fs.Bool("no-push", false, "do not run workflows for pushes")
+	postRequired := fs.Bool("post-required", false, "post the REAL required status names (cutover phase 1/2 only; the default is shadow mode: local/<name> only)")
+	noStatus := fs.Bool("no-status", false, "post no commit statuses at all")
 	schedBranch := fs.String("schedule-branch", "master", "branch the schedule workflows are read from")
-	var wfFor, pushWf, protect, vars, labels, schedule, trustedBase, allowEnv multiFlag
+	var wfFor, pushWf, protect, vars, labels, schedule, trustedBase, allowEnv, ctxFlag multiFlag
 	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
 	fs.Var(&pushWf, "push-workflow", "branch=file.yml: a workflow run when branch is pushed (repeatable; replaces the defaults)")
 	fs.Var(&protect, "protect", "extra path read from the base branch for pull requests of non-owners (repeatable; added to the defaults)")
 	fs.Var(&trustedBase, "trusted-base", "extra base branch a pull request of a non-owner may run into (repeatable; the bases of --workflow-for are always trusted)")
 	fs.Var(&allowEnv, "allow-env", "NAME of an environment variable steps may see (repeatable; the default is a short allow-list)")
+	fs.Var(&ctxFlag, "context", "file.yml=name: the status name GitHub requires for the gate of a workflow (repeatable; added to the defaults fast-gate.yml=fast-build, ci.yml=build)")
 	fs.Var(&vars, "var", "vars context value k=v (repeatable)")
 	fs.Var(&labels, "label", "a label of this agent (repeatable)")
 	fs.Var(&schedule, "schedule", "a workflow file whose on.schedule entries run here (repeatable; off by default)")
@@ -141,6 +144,12 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	if *noPush {
 		pushWorkflows = map[string][]string{}
 	}
+	ctxFor, err := contextMap(ctxFlag)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "serve:", err)
+		return exitUsage
+	}
+	naming := statusNaming(prWorkflows, pushWorkflows, ctxFor, *postRequired)
 	varMap, err := kvList(vars)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "serve: --var:", err)
@@ -200,6 +209,22 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return exitUsage
 	}
 
+	var statusSvc *localci.StatusService
+	var poster *localci.StatusPoster
+	if *noStatus {
+		_, _ = fmt.Fprintln(logw, statusBanner(naming, true))
+	} else {
+		_, _ = fmt.Fprintln(logw, statusBanner(naming, false))
+		rep := &localci.ShadowGuard{Next: &localci.DedupReporter{
+			Path: ledgerPath(store.Dir),
+			Next: &localci.RetryReporter{Next: newReporter(environ, redact)},
+		}, Prefix: naming.Prefix, PostRequired: *postRequired}
+		poster = &localci.StatusPoster{Reporter: rep, Log: func(format string, a ...any) {
+			_, _ = fmt.Fprintf(logw, "%s status: %s\n", time.Now().Format("15:04:05"), redact(fmt.Sprintf(format, a...)))
+		}}
+		statusSvc = &localci.StatusService{Poster: poster, Naming: naming, Dir: store.Dir}
+	}
+
 	var lastPause string
 	var pauseMu sync.Mutex
 	agent := &localci.Agent{
@@ -220,6 +245,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		},
 		PIDAlive: func(pid int) bool { return releasedash.ProcessAlive(pid, time.Now()) },
 		Log:      logw,
+		Status:   statusSvc,
 	}
 	if !*noKeepAwake {
 		ka := localci.NewKeepAwake()
@@ -270,6 +296,9 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	}()
 	_, _ = fmt.Fprintf(logw, "watching %s every %s (state %s)\n", *repo, *interval, store.Dir)
 	runErr := agent.Run(hard)
+	if poster != nil {
+		poster.Close(30 * time.Second)
+	}
 	close(finished)
 	pollStop()
 	pollDone.Wait()

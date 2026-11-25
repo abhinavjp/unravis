@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// GHHost is the Host that asks the `gh` command line tool. It is the only place that runs gh.
+// GHHost is the Host that asks the `gh` command line tool. ghExec is the only place that runs gh.
 type GHHost struct {
 	// Env is the process environment gh runs with (it carries the gh token); nil means the current one.
 	Env []string
@@ -18,9 +18,14 @@ type GHHost struct {
 }
 
 func (h *GHHost) gh(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "gh", args...) //nolint:gosec // fixed binary, arguments built by this file
-	if h.Env != nil {
-		cmd.Env = h.Env
+	return ghExec(ctx, h.Env, args...)
+}
+
+// ghExec runs the gh command line tool with env (nil: the current environment) and returns its output.
+func ghExec(ctx context.Context, env []string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "gh", args...) //nolint:gosec // fixed binary, arguments built by this package
+	if env != nil {
+		cmd.Env = env
 	}
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
