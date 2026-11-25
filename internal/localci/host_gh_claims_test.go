@@ -272,8 +272,12 @@ func TestGHClaimHostRefusesOutsideItsNamespaces(t *testing.T) {
 
 func TestGHClaimHostTellsAboutRights(t *testing.T) {
 	r := &ghResponse{Status: 403, Body: []byte(`{"message":"Resource not accessible by personal access token"}`)}
-	if !strings.Contains(noWriteHint(r), "write access") || noWriteHint(&ghResponse{Status: 500}) != "" {
-		t.Fatal("the hint belongs to 403 and 404 only")
+	err := refused(r, "create it")
+	if !errors.Is(err, ErrClaimDenied) || !strings.Contains(err.Error(), "write access") {
+		t.Fatalf("a refusal for want of rights is ErrClaimDenied: %v", err)
+	}
+	if errors.Is(refused(&ghResponse{Status: 500}, "create it"), ErrClaimDenied) {
+		t.Fatal("a server error is not a missing right")
 	}
 }
 

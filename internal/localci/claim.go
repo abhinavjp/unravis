@@ -66,6 +66,8 @@ const (
 var (
 	ErrRefExists = errors.New("the ref already exists")
 	ErrRefGone   = errors.New("the ref does not exist")
+	// ErrClaimDenied: the host refused to take records from this PC (the token cannot write the repository).
+	ErrClaimDenied = errors.New("the host does not let this PC write claim records")
 )
 
 // FleetRecord is what a claim ref or an agent ref says. It is public (the repository's refs and commits are
@@ -512,6 +514,16 @@ func (f *Fleet) Publish(ctx context.Context, hb Heartbeat, state string) error {
 	for _, j := range hb.Jobs {
 		rec.Jobs = append(rec.Jobs, FleetJob{Item: cleanText(j.Label, 80), Since: j.Since})
 	}
+	return f.putAgent(ctx, rec)
+}
+
+// Probe writes a first agent record (state "ready", nothing running). It is the check at start that the host
+// takes records from this PC: a token that cannot write the repository's contents fails here with ErrClaimDenied.
+func (f *Fleet) Probe(ctx context.Context) error {
+	return f.putAgent(ctx, FleetRecord{V: 1, Agent: f.ID, State: "ready", Labels: cleanLabels(f.Labels), Started: time.Now(), Beat: time.Now()})
+}
+
+func (f *Fleet) putAgent(ctx context.Context, rec FleetRecord) error {
 	err := f.Host.UpdateRef(ctx, f.Repo, RefNSAgent, f.ID, rec)
 	if errors.Is(err, ErrRefGone) {
 		err = f.Host.CreateRef(ctx, f.Repo, RefNSAgent, f.ID, rec)

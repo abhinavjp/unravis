@@ -25,6 +25,11 @@ var (
 // newHost builds the git host client. Tests replace it with a fake.
 var newHost = func(environ []string) localci.Host { return &localci.GHHost{Env: environ} }
 
+// newClaimHost builds the store of claims and agent records the PCs share. Tests replace it with a fake.
+var newClaimHost = func(environ []string) localci.ClaimHost {
+	return localci.NewGHClaimHost(&localci.GHHost{Env: environ})
+}
+
 func defaultStoreDir(environ []string) string {
 	base := getenv(environ, "LOCALAPPDATA")
 	if base == "" {

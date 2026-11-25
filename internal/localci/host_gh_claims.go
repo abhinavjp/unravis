@@ -175,7 +175,7 @@ func (c *GHClaimHost) newCommit(ctx context.Context, repo string, rec FleetRecor
 		return "", err
 	}
 	if resp.Status != 201 {
-		return "", resp.failed("write a claim record to " + repo + noWriteHint(resp))
+		return "", refused(resp, "write a claim record to "+repo)
 	}
 	var v struct {
 		SHA string `json:"sha"`
@@ -186,12 +186,14 @@ func (c *GHClaimHost) newCommit(ctx context.Context, repo string, rec FleetRecor
 	return v.SHA, nil
 }
 
-// noWriteHint says what to check when the host refused for a lack of rights.
-func noWriteHint(r *ghResponse) string {
-	if r.Status == 403 || r.Status == 404 {
-		return " (does the token have write access to the repository's contents?)"
+// refused is the error of a write the host did not take. A refusal for want of rights (401, 403, and 404 for a
+// repository the token cannot write) is ErrClaimDenied, so the caller can tell it from a network problem.
+func refused(r *ghResponse, what string) error {
+	err := r.failed(what)
+	if r.Status == 401 || r.Status == 403 || r.Status == 404 {
+		return fmt.Errorf("%w: %v; the token needs write access to the repository's contents", ErrClaimDenied, err)
 	}
-	return ""
+	return err
 }
 
 func (c *GHClaimHost) CreateRef(ctx context.Context, repo, ns, name string, rec FleetRecord) error {
@@ -213,7 +215,7 @@ func (c *GHClaimHost) CreateRef(ctx context.Context, repo, ns, name string, rec 
 	case resp.Status == 422 && strings.Contains(strings.ToLower(string(resp.Body)), "already exists"):
 		return ErrRefExists
 	}
-	return resp.failed("create refs/" + ns + "/" + name + noWriteHint(resp))
+	return refused(resp, "create refs/"+ns+"/"+name)
 }
 
 func (c *GHClaimHost) UpdateRef(ctx context.Context, repo, ns, name string, rec FleetRecord) error {
