@@ -226,13 +226,29 @@ export function parseResource(value: unknown): ResourceView | null {
   return { fromMs, toMs, partial: value.partial, hosts, rules, gaps, markers, episodes };
 }
 
-export interface SeriesPoint { t: number; min: number; mean: number; max: number; count: number }
+export interface SeriesPoint {
+  t: number; min: number; mean: number; max: number; count: number;
+  first?: number; last?: number; q?: number; byClass?: Record<string, number>;
+}
 export interface SeriesItem { sel: string; unit: string; unitMixed: boolean; count: number; points: SeriesPoint[] }
-export interface SeriesView { fromMs: number; toMs: number; bucketMs: number; buckets: number; partial: boolean; scanned: number; series: SeriesItem[] }
+export interface SeriesView { fromMs: number; toMs: number; bucketMs: number; buckets: number; width?: number; partial: boolean; scanned: number; series: SeriesItem[] }
 
 function parsePoint(value: unknown): SeriesPoint | null {
   if (!isObject(value) || !isNumber(value.t) || !isNumber(value.min) || !isNumber(value.mean) || !isNumber(value.max) || !isNumber(value.count)) return null;
-  return { t: value.t, min: value.min, mean: value.mean, max: value.max, count: value.count };
+  let byClass: Record<string, number> | undefined;
+  if (value.byClass != null) {
+    if (!isObject(value.byClass)) return null;
+    byClass = {};
+    for (const [name, count] of Object.entries(value.byClass)) {
+      if (!isNumber(count) || count < 0) return null;
+      byClass[name] = count;
+    }
+  }
+  return {
+    t: value.t, min: value.min, mean: value.mean, max: value.max, count: value.count,
+    ...(isNumber(value.first) ? { first: value.first } : {}), ...(isNumber(value.last) ? { last: value.last } : {}),
+    ...(isNumber(value.q) ? { q: value.q } : {}), ...(byClass ? { byClass } : {})
+  };
 }
 function parseSeriesItem(value: unknown): SeriesItem | null {
   if (!isObject(value) || !isText(value.sel) || !isNumber(value.count)) return null;
@@ -248,7 +264,66 @@ export function parseSeries(value: unknown): SeriesView | null {
   const fromMs = timeMs(value.from), toMs = timeMs(value.to);
   const series = parseList(value.series, parseSeriesItem);
   if (fromMs == null || toMs == null || !series) return null;
-  return { fromMs, toMs, bucketMs: value.bucketMs, buckets: value.buckets, partial: value.partial, scanned: isNumber(value.scanned) ? value.scanned : 0, series };
+  return { fromMs, toMs, bucketMs: value.bucketMs, buckets: value.buckets, ...(isNumber(value.width) ? { width: value.width } : {}), partial: value.partial, scanned: isNumber(value.scanned) ? value.scanned : 0, series };
+}
+
+const SERIES_BINARY_MAGIC = 'URS1';
+const SERIES_BINARY_HEAD_CAP = 1 << 20;
+const SERIES_BINARY_BODY_CAP = 64 << 20;
+const whole = (value: unknown): value is number => isNumber(value) && Number.isSafeInteger(value) && value >= 0;
+
+/** Decode the opt-in URS1 frame: magic, padded JSON metadata, then eight little-endian doubles per point. */
+export function parseSeriesBinary(buffer: ArrayBuffer): SeriesView | null {
+  if (buffer.byteLength < 16 || buffer.byteLength > SERIES_BINARY_BODY_CAP) return null;
+  const bytes = new Uint8Array(buffer);
+  const magic = String.fromCharCode(...bytes.subarray(0, 4));
+  if (magic !== SERIES_BINARY_MAGIC) return null;
+  const view = new DataView(buffer);
+  const headBytes = view.getUint32(4, true);
+  if (headBytes < 2 || headBytes > SERIES_BINARY_HEAD_CAP || headBytes % 8 !== 0 || 8 + headBytes > buffer.byteLength) return null;
+  let header: unknown;
+  try {
+    header = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(8, 8 + headBytes)));
+  } catch { return null; }
+  if (!isObject(header) || header.version !== 1 || !Array.isArray(header.series)) return null;
+  const payload = new DataView(buffer, 8 + headBytes);
+  if (payload.byteLength % 64 !== 0) return null;
+  let nextOffset = 0;
+  const series = header.series.map(value => {
+    if (!isObject(value) || !isText(value.sel) || !isText(value.unit) || !whole(value.count) || !whole(value.points) || !whole(value.offset) || value.offset !== nextOffset) return null;
+    const count = value.points, start = value.offset * 64;
+    if (!Number.isSafeInteger(start) || start + count * 64 > payload.byteLength) return null;
+    const classes = new Map<number, Record<string, number>>();
+    if (value.byClass != null) {
+      if (!Array.isArray(value.byClass)) return null;
+      for (const entry of value.byClass) {
+        if (!isObject(entry) || !whole(entry.point) || entry.point >= count || !isObject(entry.counts) || classes.has(entry.point)) return null;
+        const counts: Record<string, number> = {};
+        for (const [name, n] of Object.entries(entry.counts)) {
+          if (!whole(n)) return null;
+          counts[name] = n;
+        }
+        classes.set(entry.point, counts);
+      }
+    }
+    const points: SeriesPoint[] = [];
+    for (let i = 0; i < count; i++) {
+      const at = start + i * 64;
+      const numbers = Array.from({ length: 8 }, (_, column) => payload.getFloat64(at + column * 8, true));
+      if (!numbers.slice(0, 5).every(isNumber)) return null;
+      if (numbers.slice(5).some(n => !Number.isNaN(n) && !isNumber(n))) return null;
+      const byClass = classes.get(i);
+      points.push({
+        t: numbers[0], min: numbers[1], mean: numbers[2], max: numbers[3], count: numbers[4],
+        ...(Number.isNaN(numbers[5]) ? {} : { first: numbers[5] }), ...(Number.isNaN(numbers[6]) ? {} : { last: numbers[6] }),
+        ...(Number.isNaN(numbers[7]) ? {} : { q: numbers[7] }), ...(byClass ? { byClass } : {})
+      });
+    }
+    nextOffset += count;
+    return { sel: value.sel, unit: value.unit, unitMixed: value.unitMixed === true, count: value.count, points };
+  });
+  if (series.some(item => item == null) || nextOffset * 64 !== payload.byteLength) return null;
+  return parseSeries({ ...header, series });
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -409,7 +484,7 @@ export function chunkSelectors<T>(items: T[], size = MAX_SELECTORS): T[][] {
   return out;
 }
 
-export interface SeriesQuery { fromMs: number; toMs: number; bucketMs: number; sels: string[] }
+export interface SeriesQuery { fromMs: number; toMs: number; bucketMs: number; sels: string[]; width?: number }
 export type SeriesFetcher = (request: SeriesQuery, signal?: AbortSignal) => Promise<SeriesView>;
 export interface SeriesRead { items: Map<string, SeriesItem>; bucketMs: number; partial: boolean }
 
@@ -417,19 +492,19 @@ export interface SeriesRead { items: Map<string, SeriesItem>; bucketMs: number; 
  * Read the lines for one view window: bucket = span ÷ 600, selectors in requests of at most 50. When the server names a larger least bucket
  * ("Use a bucket of at least N ms.") the read is repeated once with it. The fetcher is passed in, so nothing here touches the network.
  */
-export async function readSeries(fetcher: SeriesFetcher, view: ViewWindow, sels: string[], signal?: AbortSignal): Promise<SeriesRead> {
+export async function readSeries(fetcher: SeriesFetcher, view: ViewWindow, sels: string[], signal?: AbortSignal, width?: number): Promise<SeriesRead> {
   const items = new Map<string, SeriesItem>();
   let partial = false;
   let bucketMs = bucketFor(view.toMs - view.fromMs);
   for (const chunk of chunkSelectors(sels)) {
     let answer: SeriesView;
     try {
-      answer = await fetcher({ fromMs: view.fromMs, toMs: view.toMs, bucketMs, sels: chunk }, signal);
+      answer = await fetcher({ fromMs: view.fromMs, toMs: view.toMs, bucketMs, sels: chunk, width }, signal);
     } catch (error) {
       const least = error instanceof Error ? leastBucketFrom(error.message) : null;
       if (least == null || least <= bucketMs || (error as { reason?: string }).reason !== 'too-many-buckets') throw error;
       bucketMs = bucketFor(view.toMs - view.fromMs, least);
-      answer = await fetcher({ fromMs: view.fromMs, toMs: view.toMs, bucketMs, sels: chunk }, signal);
+      answer = await fetcher({ fromMs: view.fromMs, toMs: view.toMs, bucketMs, sels: chunk, width }, signal);
     }
     if (answer.partial) partial = true;
     bucketMs = answer.bucketMs || bucketMs;

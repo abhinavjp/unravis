@@ -7,8 +7,8 @@
 import { SQL_DMV_GROUP, sqlDmvLine, type SeriesSql } from './blackboxSqlNames';
 
 export type SeriesUnit = 'pct' | 'bytes' | 'bytesPerSec' | 'ms' | 'sec' | 'perSec' | 'count';
-/** [bucket start in ms, average, lowest, highest]. */
-export type SeriesPoint = [number, number, number, number];
+/** [bucket start in ms, average, lowest, highest, first?, last?]. */
+export type SeriesPoint = [number, number, number, number, number?, number?]
 
 export interface SeriesLine { key: string; group: string; label: string; unit: string; points: SeriesPoint[] }
 /** partial: samples whose reading covered only part of what it sums (some network adapters, for example). Absent from an older server. */
@@ -26,13 +26,13 @@ export interface SeriesAnswer {
   /** What the SQL service's part of the answer rests on. Absent from an older server. */
   sql?: SeriesSql;
 }
-export interface SeriesRequest { start: string; end: string; points?: number }
+export interface SeriesRequest { start: string; end: string; points?: number; width?: number; shape?: 'm4' }
 
 /** An own property of a plain lookup table, never one inherited from Object (recorded text can say "constructor"). */
 export const own = <T>(rec: Record<string, T>, key: unknown): T | undefined => (typeof key === 'string' && Object.prototype.hasOwnProperty.call(rec, key) ? rec[key] : undefined);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isArr = Array.isArray;
-const isPoint = (p: unknown): p is SeriesPoint => isArr(p) && p.length === 4 && p.every((x) => typeof x === 'number' && Number.isFinite(x));
+const isPoint = (p: unknown): p is SeriesPoint => isArr(p) && (p.length === 4 || p.length === 6) && p.every((x) => typeof x === 'number' && Number.isFinite(x));
 const points = (v: unknown): SeriesPoint[] | null => (isArr(v) && v.every(isPoint) ? (v as SeriesPoint[]) : null);
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -73,6 +73,51 @@ export function readSeriesAnswer(v: unknown): SeriesAnswer | null {
       dropped: isArr(read.dropped) ? (read.dropped as string[]) : null, missing: isArr(read.missing) ? (read.missing as string[]) : null
     }
   };
+}
+
+export const SERIES_BINARY_TYPE = 'application/vnd.unravis.series+f64';
+const SERIES_BINARY_HEAD_CAP = 1 << 20;
+const SERIES_BINARY_BODY_CAP = 64 << 20;
+const SERIES_BINARY_CELL = 48;
+const whole = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+
+/** Decode the opt-in Blackbox M4 frame: u32 header length, JSON point counts, then six little-endian doubles per point. */
+export function readSeriesBinary(buffer: ArrayBuffer): SeriesAnswer | null {
+  if (buffer.byteLength < 4 || buffer.byteLength > SERIES_BINARY_BODY_CAP) return null;
+  const view = new DataView(buffer);
+  const headBytes = view.getUint32(0, true);
+  if (headBytes < 2 || headBytes > SERIES_BINARY_HEAD_CAP || 4 + headBytes > buffer.byteLength) return null;
+  let header: unknown;
+  try {
+    header = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(buffer, 4, headBytes)));
+  } catch { return null; }
+  if (!isObj(header) || !Array.isArray(header.lines)) return null;
+  const payload = new DataView(buffer, 4 + headBytes);
+  let at = 0;
+  const readPoints = (ref: unknown): SeriesPoint[] | null => {
+    if (!isObj(ref) || !whole(ref.n) || ref.n > (payload.byteLength - at) / SERIES_BINARY_CELL) return null;
+    const out: SeriesPoint[] = [];
+    for (let i = 0; i < ref.n; i++) {
+      const values = Array.from({ length: 6 }, (_, column) => payload.getFloat64(at + column * 8, true));
+      if (!values.every((value) => Number.isFinite(value))) return null;
+      out.push(values as SeriesPoint);
+      at += SERIES_BINARY_CELL;
+    }
+    return out;
+  };
+  const lines = header.lines.map((line) => {
+    if (!isObj(line)) return null;
+    const points = readPoints(line.points);
+    return points && { ...line, points };
+  });
+  if (lines.some((line) => line === null)) return null;
+  const processes = (Array.isArray(header.processes) ? header.processes : []).map((proc) => {
+    if (!isObj(proc)) return null;
+    const cpu = readPoints(proc.cpu), workingSet = readPoints(proc.workingSet), privateBytes = readPoints(proc.privateBytes);
+    return cpu && workingSet && privateBytes && { ...proc, cpu, workingSet, privateBytes };
+  });
+  if (processes.some((proc) => proc === null) || at !== payload.byteLength) return null;
+  return readSeriesAnswer({ ...header, lines, processes });
 }
 
 /* ------------------------------------------------------------------ names */

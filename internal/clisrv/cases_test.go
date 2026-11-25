@@ -63,6 +63,9 @@ func TestCasesOverTheRealDashboardHandler(t *testing.T) {
 	if l.Meta["identifiers"] == "" {
 		t.Errorf("meta: %v", l.Meta)
 	}
+	if erased, ok := l.Data["erased"].([]any); !ok || len(erased) != 0 || l.Data["oldCases"] != float64(0) {
+		t.Errorf("erase and old-layout fields: %s", l.Raw)
+	}
 
 	s := op(t, h, "cases.show", `{"id":"`+string(a.ID)+`"}`)
 	if !s.OK || s.Data["id"] != string(a.ID) || s.Data["title"] != "Payroll slowdown" {
@@ -116,7 +119,7 @@ func TestCasesProjectionAndErrorsCarryNoExtraText(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/cases" {
-			_, _ = io.WriteString(w, `{"cases":[`+full+`],"archivedTotal":4,"offset":0,"pageSize":50,"erased":[{"line":"`+marker+`"}],"oldCases":2}`)
+			_, _ = io.WriteString(w, `{"cases":[`+full+`],"archivedTotal":4,"offset":0,"pageSize":50,"erased":[{"id":"abcdefghijklmnopqrstuvwxyz","at":"2026-11-20T10:00:00+02:00","line":"`+marker+`"}],"oldCases":2}`)
 			return
 		}
 		_, _ = io.WriteString(w, view)
@@ -135,6 +138,17 @@ func TestCasesProjectionAndErrorsCarryNoExtraText(t *testing.T) {
 	}
 	if _, has := c["state"]; has {
 		t.Errorf("state is not in the spec: %v", c)
+	}
+	if l.Data["oldCases"] != float64(2) {
+		t.Errorf("oldCases: %v", l.Data)
+	}
+	erased := l.Data["erased"].([]any)
+	if len(erased) != 1 {
+		t.Fatalf("erased: %v", erased)
+	}
+	e := erased[0].(map[string]any)
+	if len(e) != 2 || e["id"] != "abcdefghijklmnopqrstuvwxyz" || e["at"] != "2026-11-20T08:00:00Z" {
+		t.Errorf("erased projection: %v", e)
 	}
 	h0 := s.Data["history"].([]any)[0].(map[string]any)
 	if len(h0) != 2 || h0["kind"] != "created" || s.Data["envs"] != float64(1) || s.Data["sources"] != float64(2) {
@@ -274,7 +288,7 @@ func TestCasesProjectionKeys(t *testing.T) {
 		return strings.Join(ks, ",")
 	}
 	l := op(t, h, "cases.list", "")
-	if got := keys(l.Data); got != "archivedTotal,cases,offset,pageSize" {
+	if got := keys(l.Data); got != "archivedTotal,cases,erased,offset,oldCases,pageSize" {
 		t.Errorf("list keys: %s", got)
 	}
 	if got := keys(l.Data["cases"].([]any)[0].(map[string]any)); got != "archived,bytes,closed,created,id,imports,keyLocked,missing,ownKey,title,untrusted" {

@@ -2,6 +2,7 @@ import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
 import type { SqlAccessReport } from './types';
 import { utcToWall } from './zoneStamp';
 import { zoneAbbreviation } from './time';
+import { readSeriesBinary, SERIES_BINARY_TYPE, type SeriesRequest } from './blackboxSeries';
 
 /**
  * Client for the Blackbox routes (internal/server/blackbox.go) and the pure rules the Blackbox panel follows.
@@ -357,11 +358,12 @@ async function readRefusal(response: Response): Promise<Refusal> {
   };
 }
 
-async function send(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
+async function send(method: string, path: string, body?: unknown, signal?: AbortSignal, accept?: string): Promise<Response> {
   const token = readSessionToken();
   if (!token) throw new BlackboxError({ status: 401, error: NO_SESSION_MESSAGE, reason: 'no_session' });
   const headers: Record<string, string> = { 'X-Audit-Token': token };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (accept) headers.Accept = accept;
   let response: Response;
   try {
     response = await fetch(base + path, { method, credentials: 'same-origin', signal, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -413,9 +415,16 @@ export const blackboxApi = {
   updateThisPc: () => call<UpdateAnswer>('POST', '/this-pc/update', {}),
   hostReading: (id: string, body: { incident: { start: string; end: string }; reference: { start: string; end: string } }) =>
     call<HostAnswer>('POST', '/' + encodeURIComponent(id) + '/host-reading', body),
-  /** Every recorded measurement for one window, downsampled to at most `points` buckets (server cap 600). Check the shape with readSeriesAnswer. */
-  series: (id: string, body: { start: string; end: string; points?: number }, signal?: AbortSignal) =>
-    call<unknown>('POST', '/' + encodeURIComponent(id) + '/series', body, signal),
+  /** Every recorded measurement for one window. Browser charts opt into packed M4 data; JSON remains the fallback. */
+  series: async (id: string, body: SeriesRequest, signal?: AbortSignal, binary = false): Promise<unknown> => {
+    const path = '/' + encodeURIComponent(id) + '/series';
+    const response = await send('POST', path, body, signal, binary ? SERIES_BINARY_TYPE : undefined);
+    if (!response.headers.get('Content-Type')?.includes(SERIES_BINARY_TYPE)) return response.json();
+    const decoded = readSeriesBinary(await response.arrayBuffer());
+    if (decoded) return decoded;
+    const fallback = await send('POST', path, body, signal);
+    return fallback.headers.get('Content-Type')?.includes(SERIES_BINARY_TYPE) ? null : fallback.json();
+  },
   /**
    * The sealed read key of the Blackbox installed on this PC, for Show and Copy (A33, wireframe 65). A POST that is never
    * cached. The caller holds the answer only while it is on view and never stores it.

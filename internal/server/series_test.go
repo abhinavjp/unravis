@@ -3,11 +3,15 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,6 +122,87 @@ func TestSeriesAnswersBucketStatistics(t *testing.T) {
 	// Without field= the aggregate is the event value, which toy events do not carry.
 	if c := out.Series[2]; c.Count != 0 || len(c.Points) != 0 {
 		t.Errorf("default field series: %+v", c)
+	}
+}
+
+func decodeSeriesBinary(t *testing.T, body []byte) casestore.SeriesResult {
+	t.Helper()
+	if len(body) < 16 || string(body[:4]) != seriesBinaryMagic {
+		t.Fatalf("bad binary frame: %d bytes", len(body))
+	}
+	headBytes := int(binary.LittleEndian.Uint32(body[4:8]))
+	if headBytes%8 != 0 || headBytes+16 > len(body) || (len(body)-8-headBytes)%64 != 0 {
+		t.Fatalf("bad frame lengths: header %d, body %d", headBytes, len(body))
+	}
+	var header seriesBinaryHeader
+	if err := json.Unmarshal(body[8:8+headBytes], &header); err != nil {
+		t.Fatal(err)
+	}
+	out := casestore.SeriesResult{From: header.From, To: header.To, BucketMs: header.BucketMs, Buckets: header.Buckets, Width: header.Width, Partial: header.Partial, Scanned: header.Scanned, Series: make([]casestore.SeriesOut, len(header.Series))}
+	payload := body[8+headBytes:]
+	for i, item := range header.Series {
+		encoded := casestore.SeriesOut{Sel: item.Sel, Unit: item.Unit, UnitMixed: item.UnitMixed, Count: item.Count, Points: make([]casestore.SeriesPoint, item.Points)}
+		for p := 0; p < item.Points; p++ {
+			at := int(item.Offset)*seriesBinaryCellSize + p*seriesBinaryCellSize
+			values := make([]float64, seriesBinaryColumns)
+			for k := range values {
+				values[k] = math.Float64frombits(binary.LittleEndian.Uint64(payload[at+k*8:]))
+			}
+			point := casestore.SeriesPoint{T: int64(values[0]), Min: values[1], Mean: values[2], Max: values[3], Count: int64(values[4])}
+			if !math.IsNaN(values[5]) {
+				point.First = &values[5]
+			}
+			if !math.IsNaN(values[6]) {
+				point.Last = &values[6]
+			}
+			if !math.IsNaN(values[7]) {
+				point.Q = &values[7]
+			}
+			encoded.Points[p] = point
+		}
+		for _, class := range item.ByClass {
+			encoded.Points[class.Point].ByClass = class.Counts
+		}
+		out.Series[i] = encoded
+	}
+	return out
+}
+
+func TestSeriesBinaryMatchesJSONIncludingM4QuantilesAndClasses(t *testing.T) {
+	e := newCaseEnv(t, envConfig{})
+	id := seriesCase(t, e)
+	path := seriesURL(id, seriesFrom, seriesTo, "1", "kind=toy;field=duration;q=95;group=statusclass", "kind=nothing") + "&width=2"
+	jsonRes := e.get(path)
+	if jsonRes.Code != http.StatusOK {
+		t.Fatalf("json = %d %s", jsonRes.Code, jsonRes.Body)
+	}
+	var want casestore.SeriesResult
+	decodeBody(t, jsonRes, &want)
+	binaryRes := e.get(path + "&format=binary")
+	if binaryRes.Code != http.StatusOK {
+		t.Fatalf("binary = %d %s", binaryRes.Code, binaryRes.Body)
+	}
+	if got := binaryRes.Header().Get("Content-Type"); got != "application/octet-stream" {
+		t.Errorf("content type %q", got)
+	}
+	if got := binaryRes.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("cache control %q", got)
+	}
+	got := decodeSeriesBinary(t, binaryRes.Body.Bytes())
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("binary answer differs from JSON:\n got: %#v\nwant: %#v", got, want)
+	}
+	if got.Width != 2 || got.Series[0].Points[0].First == nil || got.Series[0].Points[0].Last == nil || got.Series[0].Points[0].Q == nil || got.Series[0].Points[0].ByClass["other"] == 0 {
+		t.Errorf("M4 fields missing: %#v", got)
+	}
+}
+
+func TestSeriesBinaryRefusalsStayJSON(t *testing.T) {
+	e := newCaseEnv(t, envConfig{})
+	id := seriesCase(t, e)
+	res := e.get(seriesURL(id, seriesFrom, seriesTo, "10", "kind=toy") + "&format=binary")
+	if res.Code != http.StatusBadRequest || failureOf(t, res).Reason != "too-many-buckets" || !strings.HasPrefix(res.Header().Get("Content-Type"), "application/json") {
+		t.Errorf("refusal = %d %s (%s)", res.Code, res.Body, res.Header().Get("Content-Type"))
 	}
 }
 

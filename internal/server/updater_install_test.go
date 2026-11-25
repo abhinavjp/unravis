@@ -121,6 +121,26 @@ func TestInstallFlowDownloadThenInstall(t *testing.T) {
 	}
 }
 
+func TestUpdateDownloadAndInstallTouchPower(t *testing.T) {
+	rg := newInstallRig(t)
+	var touches atomic.Int32
+	rg.u.SetPowerTouch(func() { touches.Add(1) })
+	rg.u.CheckNow(t.Context())
+	if code, _ := rg.post("/api/update/download"); code != http.StatusOK {
+		t.Fatalf("download = %d", code)
+	}
+	rg.waitFor("ready")
+	if got := touches.Load(); got != 1 {
+		t.Fatalf("download touched power %d times", got)
+	}
+	if code, _ := rg.post("/api/update/install"); code != http.StatusOK {
+		t.Fatalf("install = %d", code)
+	}
+	if got := touches.Load(); got != 2 {
+		t.Fatalf("download and install touched power %d times", got)
+	}
+}
+
 func TestInstallRefusesAFileChangedAfterDownload(t *testing.T) {
 	rg := newInstallRig(t)
 	rg.u.CheckNow(t.Context())

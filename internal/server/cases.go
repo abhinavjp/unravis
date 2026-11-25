@@ -1866,6 +1866,10 @@ func (h *handler) caseSeries(w http.ResponseWriter, r *http.Request, raw string)
 		writeStoreError(w, err)
 		return
 	}
+	if query.Get("format") == "binary" {
+		writeSeriesBinary(w, res)
+		return
+	}
 	writeJSON(w, http.StatusOK, res, maxResponseBytes)
 }
 

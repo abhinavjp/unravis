@@ -155,6 +155,11 @@ type caseShow struct {
 	History []history `json:"history"`
 }
 
+type erasedCase struct {
+	ID string    `json:"id"`
+	At time.Time `json:"at"`
+}
+
 // busyReasons are the reasons of a 409 that pass by themselves: the case is being erased, freed, archived or imported into, or is held by
 // another call. The reason is compared with this closed list and never copied.
 var busyReasons = map[string]bool{"case-erasing": true, "case-freeing": true, "case-in-use": true, "archive-running": true, "case-import-running": true, "cancel-archive-first": true}
@@ -253,10 +258,12 @@ func (s *server) casesList(ctx context.Context, args json.RawMessage) (any, *cli
 		return nil, e
 	}
 	var wire struct {
-		Cases         []caseWire `json:"cases"`
-		ArchivedTotal int        `json:"archivedTotal"`
-		Offset        int        `json:"offset"`
-		PageSize      int        `json:"pageSize"`
+		Cases         []caseWire   `json:"cases"`
+		ArchivedTotal int          `json:"archivedTotal"`
+		Offset        int          `json:"offset"`
+		PageSize      int          `json:"pageSize"`
+		Erased        []erasedCase `json:"erased"`
+		OldCases      int          `json:"oldCases"`
 	}
 	if json.Unmarshal(body, &wire) != nil {
 		return nil, clicore.NewErrorAfterWork(clicore.CodeInternal, "The case store gave an answer this command line does not understand.", "")
@@ -265,7 +272,12 @@ func (s *server) casesList(ctx context.Context, args json.RawMessage) (any, *cli
 	for i, c := range wire.Cases {
 		rows[i] = c.row()
 	}
-	return map[string]any{"cases": rows, "archivedTotal": wire.ArchivedTotal, "offset": wire.Offset, "pageSize": wire.PageSize}, nil
+	erased := make([]erasedCase, len(wire.Erased))
+	for i, e := range wire.Erased {
+		erased[i] = erasedCase{ID: e.ID, At: e.At.UTC()}
+	}
+	return map[string]any{"cases": rows, "archivedTotal": wire.ArchivedTotal, "offset": wire.Offset, "pageSize": wire.PageSize,
+		"erased": erased, "oldCases": wire.OldCases}, nil
 }
 
 func (s *server) casesShow(ctx context.Context, args json.RawMessage) (any, *clicore.Error) {

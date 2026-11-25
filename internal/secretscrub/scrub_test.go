@@ -168,6 +168,14 @@ func TestCarryMasksWhatGoesOnOverTheNextLines(t *testing.T) {
 		{"yaml client_secret", []string{"client_secret:", "  FAKEPW", "next: 1"}, []string{"client_secret:", "  [m]", "next: 1"}},
 		{"yaml api_key", []string{"api_key:", "  FAKEPW"}, []string{"api_key:", "  [m]"}},
 		{"xml element on its own lines", []string{"<Password>", "  FAKEPW", "</Password>"}, []string{"<Password>", "  [m]", "</Password>"}},
+		{"quoted json value over lines", []string{`{"password":"FAKEPW one`, `FAKEPW two", "user":"bob"}`}, []string{`{"password":"[m]`, `[m]", "user":"bob"}`}},
+		{"quoted env value over lines", []string{`DB_PASSWORD='FAKEPW one`, `FAKEPW two'`}, []string{`DB_PASSWORD='[m]`, `[m]'`}},
+		{"escaped quote in a carried value", []string{`{"password":"FAKEPW \" one`, `FAKEPW two","user":"bob"}`}, []string{`{"password":"[m]`, `[m]","user":"bob"}`}},
+		{"json array over lines", []string{`{"password":[`, `"FAKEPW",`, `"FAKEPW two"`, `],"user":"bob"}`}, []string{`{"password":[m]`, `[m]`, `[m]`, `[m]],"user":"bob"}`}},
+		{"split xml tag", []string{`<Password`, `>FAKEPW</Password>`}, []string{`<Password`, `>[m]</Password>`}},
+		{"split xml tag with attributes", []string{`<Password`, ` type="plain">FAKEPW</Password>`}, []string{`<Password`, ` type="plain">[m]</Password>`}},
+		{"xml text over several lines", []string{`<Password>`, `FAKEPW one`, `FAKEPW two`, `</Password>`}, []string{`<Password>`, `[m]`, `[m]`, `</Password>`}},
+		{"ordinary split tag is not carried", []string{`<Host`, `>db01</Host>`}, []string{`<Host`, `>db01</Host>`}},
 		{"unindented line after a compound name is kept", []string{"api_key:", "see the docs"}, []string{"api_key:", "see the docs"}},
 		{"blank line ends the search", []string{"DB_PASSWORD=", "", "later line"}, []string{"DB_PASSWORD=", "", "later line"}},
 		{"ordinary lines", []string{"token_count=5", "  indented text", "password was reset"}, []string{"token_count=5", "  indented text", "password was reset"}},
@@ -432,6 +440,7 @@ func TestMaskXML(t *testing.T) {
 		{"self closing", "<Password/><Host>h</Host>", "<Password/><Host>h</Host>"},
 		{"self closing with value attribute", `<Password value="FAKEPW"/>`, `<Password value="[m]"/>`},
 		{"appSettings add key", `<add key="password" value="FAKEPW"/>`, `<add key="password" value="[m]"/>`},
+		{"appSettings key with a descriptive suffix", `<add key="password reset" value="FAKEPW"/>`, `<add key="password reset" value="[m]"/>`},
 		{"appSettings add key, other order", `<add value="FAKEPW" key="DbPassword" />`, `<add value="[m]" key="DbPassword" />`},
 		{"appSettings with single quotes", `<add key='Password' value='FAKEPW x'/>`, `<add key='Password' value='[m]'/>`},
 		{"appSettings api key", `<add key="Stripe.ApiKey" value="FAKEPW" />`, `<add key="Stripe.ApiKey" value="[m]" />`},
@@ -441,6 +450,8 @@ func TestMaskXML(t *testing.T) {
 		{"password attribute", `<Login user="bob" password="FAKEPW x" />`, `<Login user="bob" password="[m]" />`},
 		{"pwd attribute single quote", `<Login pwd='FAKEPW' user='bob'/>`, `<Login pwd='[m]' user='bob'/>`},
 		{"connectionString attribute with a password", `<add name="Db" connectionString="Server=a;Database=b;User Id=sa;Password=FAKEPW;" providerName="System.Data.SqlClient"/>`, `<add name="Db" connectionString="[m]" providerName="System.Data.SqlClient"/>`},
+		{"connectionString attribute with a password but no assignment", `<add name="Db" connectionString="Server=a;Password FAKEPW"/>`, `<add name="Db" connectionString="[m]"/>`},
+		{"connectionString attribute with a long prefix", `<add name="Db" connectionString="Server=a;` + strings.Repeat("x", 600) + `;Password=FAKEPW"/>`, `<add name="Db" connectionString="[m]"/>`},
 		{"connectionString attribute with Pwd and spaces", `<add name="Db" connectionString="Data Source=a;Pwd=FAKEPW x y;"/>`, `<add name="Db" connectionString="[m]"/>`},
 		{"connectionString attribute with a url login", `<add name="Db" connectionString="mongodb://u:FAKEPW@h/db"/>`, `<add name="Db" connectionString="[m]"/>`},
 		{"connectionString attribute with account key", `<add name="St" connectionString="AccountName=a;AccountKey=FAKEPW=="/>`, `<add name="St" connectionString="[m]"/>`},
@@ -743,6 +754,56 @@ func TestCarryEmptyKeyKeepsSibling(t *testing.T) {
 				if got := c.Line(l, m); got != tc.want[i] {
 					t.Errorf("line %d: got %q, want %q", i, shown(got), shown(tc.want[i]))
 				}
+			}
+		})
+	}
+}
+
+func TestCarryStrongNextLineMasksLongValue(t *testing.T) {
+	var c Carry
+	if got := c.Line("DB_PASSWORD=", m); got != "DB_PASSWORD=" {
+		t.Fatalf("key changed: %q", shown(got))
+	}
+	value := "FAKEPW" + strings.Repeat("x", 600)
+	if got := c.Line(value, m); got != m {
+		t.Errorf("long next-line value survived: %q", shown(got))
+	}
+}
+
+func TestCarryClosedValueScansSuffix(t *testing.T) {
+	for name, lines := range map[string][]string{
+		"quote":   {"DB_PASSWORD=\"FAKEPW one", "FAKEPW two\" token=\"", "FAKEPW three\""},
+		"bracket": {`{"password":[`, `"FAKEPW"], "token":"`, `FAKEPW two"}`},
+		"xml":     {"<Password>", "FAKEPW</Password> token=\"", "FAKEPW three\""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var c Carry
+			var out []string
+			for _, line := range lines {
+				out = append(out, c.Line(line, m))
+			}
+			if got := strings.Join(out, "\n"); strings.Contains(got, "FAKEPW") {
+				t.Errorf("a carried or suffix secret survived: %q", shown(got))
+			}
+		})
+	}
+}
+
+func TestCarrySplitTagMasksPartialAttributes(t *testing.T) {
+	for name, lines := range map[string][]string{
+		"value before close":       {"<Password value=\"FAKEPW\"", ">FAKEPW</Password>"},
+		"value on the next line":   {"<Password", "value=\"FAKEPW\"", ">FAKEPW</Password>"},
+		"value split across lines": {"<Password value=\"FAKE", "PW more\">FAKE</Password>"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var c Carry
+			var out []string
+			for _, line := range lines {
+				out = append(out, c.Line(line, m))
+			}
+			got := strings.Join(out, "\n")
+			if strings.Contains(got, "FAKE") || strings.Contains(got, "PW more") {
+				t.Errorf("a split tag attribute survived: %q", shown(got))
 			}
 		})
 	}

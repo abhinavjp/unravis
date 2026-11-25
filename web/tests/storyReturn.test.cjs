@@ -57,11 +57,12 @@ test('Case home reads on return, keeps what it shows when the read fails, and re
   const reread = page.slice(page.indexOf('async function rereadFiles'), page.indexOf('function backOnPage'));
   assert.match(reread, /getCaseView\(id\)/);
   assert.match(reread, /listImports\(id\)/);
-  assert.match(reread, /fetchHealthRuns\(id\)\.catch\(\(\) => null\)/);
+  assert.match(reread, /Promise\.allSettled\(\[[^\n]*listImports\(id\)[^\n]*fetchHealthRuns\(id\)/);
   assert.match(reread, /everything && reads \? refreshLedger\(\)/);
-  // The answers are put in only when they all came and say something new; a failure goes to the catch and puts in nothing.
+  // Each successful answer is taken on its own; a failed file or health read puts nothing in and cannot discard a good case answer.
   assert.ok(reread.indexOf('const fresh = await getCaseView') < reread.indexOf('info = fresh'));
-  assert.match(reread, /if \(!sameRead\(info, fresh\)\) info = fresh/);
+  assert.match(reread, /caseReads\.accept\(caseToken\) && !sameRead\(info, fresh\)/);
+  assert.match(reread, /fileResult\.status === 'fulfilled' && fileReads\.accept\(fileToken\) && !sameRead\(imports, fileResult\.value\)/);
   assert.match(reread, /catch \(error\) \{[\s\S]*lockedUnder\(error\)/);
   // The last read starts the gap; the listeners are taken off when the page goes.
   assert.match(reread, /lastReadAt = Date\.now\(\)/);
@@ -89,15 +90,43 @@ test('newestWins: a read that fails or is thrown away holds nothing back', () =>
   assert.equal(reads.accept(pageRead), true, 'the page read is still put in');
 });
 
-test('Case home gives every read of the health checks a number, and a case erased elsewhere shows as gone', () => {
-  assert.match(page, /const healthReads = newestWins\(\)/);
+test('Case home gives every read of the case, files and health checks a number, and a case erased elsewhere shows as gone', () => {
+  assert.match(page, /let caseReads = newestWins\(\)/);
+  assert.match(page, /let fileReads = newestWins\(\)/);
+  assert.match(page, /let healthReads = newestWins\(\)/);
+  const load = page.slice(page.indexOf('async function loadPage'), page.indexOf('function refusedWith'));
+  assert.match(load, /const caseToken = caseReads\.begin\(\)/);
+  assert.match(load, /const fileToken = fileReads\.begin\(\)/);
+  assert.match(load, /if \(found && caseReads\.accept\(caseToken\)\) info = found/);
+  assert.match(load, /if \(files\.status === 'fulfilled' && fileReads\.accept\(fileToken\)\) imports = files\.value/);
   const reread = page.slice(page.indexOf('async function rereadFiles'), page.indexOf('function backOnPage'));
+  assert.match(reread, /const caseToken = caseReads\.begin\(\)/);
+  assert.match(reread, /const fileToken = fileReads\.begin\(\)/);
+  assert.match(reread, /caseReads\.accept\(caseToken\)/);
+  assert.match(reread, /fileReads\.accept\(fileToken\)/);
   assert.match(reread, /healthReads\.begin\(\)[\s\S]*fetchHealthRuns\(id\)/);
-  assert.match(reread, /runs && healthReads\.accept\(healthToken\)/);
+  assert.match(reread, /healthResult\.status === 'fulfilled' && healthResult\.value && healthReads\.accept\(healthToken\)/);
   const finished = page.slice(page.indexOf('async function rereadHealth'), page.indexOf('// The case was locked'));
   assert.match(finished, /healthReads\.begin\(\)[\s\S]*healthReads\.accept\(token\)\) health = runs/);
   assert.match(page, /healthReads\.begin\(\);\n\s*const \[files, runs, theory\][\s\S]*healthReads\.accept\(healthToken\)\) health = /, 'the page read takes a number too');
   assert.match(reread, /getCaseView\(id\)\.catch\(\(error: unknown\) => \{ if \(isCaseGone\(error\)\) return null; throw error; \}\);\s*if \(!fresh\) \{ if \(id === caseId && mine === rereadRun\) gone\(\); return; \}/);
+});
+
+test('case and file answers: a newer failed read does not displace the newest successful answer', () => {
+  const cases = newestWins();
+  const files = newestWins();
+  const slowCase = cases.begin();
+  const slowFiles = files.begin();
+  cases.begin();
+  files.begin();
+  assert.equal(cases.accept(slowCase), true);
+  assert.equal(files.accept(slowFiles), true);
+  const nextCase = cases.begin();
+  const nextFiles = files.begin();
+  assert.equal(cases.accept(nextCase), true);
+  assert.equal(files.accept(nextFiles), true);
+  assert.equal(cases.accept(slowCase), false);
+  assert.equal(files.accept(slowFiles), false);
 });
 
 function ledgerStore(listCalls) {
@@ -173,19 +202,21 @@ test('the ledger panel tells the store about each local write', () => {
 
 test('a thrown-away re-read takes no health number, and another case starts with none of the last one\'s checks', () => {
   const reread = page.slice(page.indexOf('async function rereadFiles'), page.indexOf('function backOnPage'));
-  // The case is read first; only then, while the read is still wanted (same case, newest re-read), does it take its number.
-  const guard = reread.indexOf('if (id !== caseId || mine !== rereadRun) return;');
+  // The whole re-read takes its turns before awaiting the case, so a slower older read cannot become newest after it answers.
+  const guard = reread.indexOf('if (id !== caseId) return;');
   const take = reread.indexOf('healthReads.begin()');
-  assert.ok(guard > reread.indexOf('await getCaseView') && guard < take, 'the guard comes before begin()');
+  assert.ok(take < reread.indexOf('await getCaseView'), 'the turns are taken before the case answer');
+  assert.ok(guard > reread.indexOf('await getCaseView') && guard < reread.indexOf('Promise.allSettled'), 'a read for a page that went away starts no file or health read');
   // Opening another case on the same page (restore as new, then Open the new case) lets go of the last case's health checks and files at once.
-  assert.match(page, /if \(loadedFor !== id\) \{ health = \[\]; imports = \[\]; \}\n\s*loadedFor = id;/);
+  assert.match(page, /if \(loadedFor !== id\) \{\n\s*health = \[\];\n\s*imports = \[\];\n\s*caseReads = newestWins\(\);\n\s*fileReads = newestWins\(\);\n\s*healthReads = newestWins\(\);\n\s*\}/);
 });
 
 test('the page read: a failed health read puts nothing in and takes no turn', () => {
   const load = page.slice(page.indexOf('async function loadPage'), page.indexOf('function refusedWith'));
   assert.match(load, /if \(runs\.status === 'fulfilled' && healthReads\.accept\(healthToken\)\) health = runs\.value;/);
   assert.doesNotMatch(load, /health = [^;]*: \[\]/, 'a failed read no longer blanks the checks');
-  assert.doesNotMatch(load, /overtaken/, 'no newest-wins rule for the case and file list on the page read (open item in BL-164)');
+  assert.match(load, /caseReads\.accept\(caseToken\)/, 'the case record uses newest-successful-wins');
+  assert.match(load, /fileReads\.accept\(fileToken\)/, 'the file list uses newest-successful-wins');
 });
 
 test('a finished check puts its list in only for the case the page still shows', () => {

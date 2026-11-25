@@ -161,6 +161,23 @@ test('bigSeriesPerf: nothing below 2000 points; large and chunked from 2000', ()
   assert.deepEqual(cp.bigSeriesPerf(2000), { large: true, largeThreshold: 2000, progressive: 400, progressiveThreshold: 3000 });
 });
 
+test('series read timing reports a nearest-rank p95 for pan and zoom latency', () => {
+  assert.equal(cp.seriesTimingP95([]), 0);
+  assert.equal(cp.seriesTimingP95([12]), 12);
+  assert.equal(cp.seriesTimingP95(Array.from({ length: 100 }, (_, i) => i + 1)), 95);
+  const messages = [];
+  const original = console.info;
+  console.info = (message) => messages.push(message);
+  try {
+    cp.logSeriesReadTiming('host', 125.25);
+    cp.logSeriesReadTiming('process', 75);
+    cp.logSeriesReadTiming('ignored', NaN);
+  } finally { console.info = original; }
+  assert.equal(messages.length, 2);
+  assert.match(messages[0], /host: p95 125\.3 ms/);
+  assert.match(messages[1], /process: p95 125\.3 ms/);
+});
+
 test('watchSize does nothing while hidden and resizes once on show', () => {
   const calls = [];
   let observerCallback;

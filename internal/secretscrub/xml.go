@@ -51,6 +51,22 @@ func maskXML(s, mask string, w *work) (string, int) {
 		name := s[i+1 : n]
 		attrs, end, selfClose, plain, ok := parseTag(s, n, w)
 		if !ok {
+			to := len(s)
+			if k := strings.IndexByte(s[n:], '<'); k >= 0 {
+				to = n + k
+			}
+			spans, _, _ := tagSpans(s, name, attrs)
+			for _, sp := range sortEdits(spans) {
+				if sp.to > sp.from {
+					edits = append(edits, sp)
+				}
+			}
+			if possibleSecretTag(s[i:to]) {
+				// A line reader can see only an unfinished tag. Mask secret attributes already present and carry its name
+				// to the next line.
+				pending = pendTag
+				w.carry = carryHint{tag: s[i:to]}
+			}
 			pos = n
 			continue
 		}
@@ -81,34 +97,7 @@ func maskXML(s, mask string, w *work) (string, int) {
 			}
 			continue
 		}
-		local := name
-		if c := strings.LastIndexByte(local, ':'); c >= 0 {
-			local = local[c+1:]
-		}
-		var spans []edit
-		keyHit := false
-		for _, a := range attrs {
-			if !a.hasValue {
-				continue
-			}
-			lname := strings.ToLower(a.name)
-			switch {
-			case keyClass(a.name) != classNone:
-				spans = append(spans, edit{a.vFrom, a.vTo})
-			case isConnStringName(lname) && secretfulConnString(s[a.vFrom:a.vTo]):
-				spans = append(spans, edit{a.vFrom, a.vTo})
-			case keyAttrNames[lname] && plainName(s[a.vFrom:a.vTo]) && keyClass(s[a.vFrom:a.vTo]) != classNone:
-				keyHit = true
-			}
-		}
-		elementHit := keyClass(local) != classNone
-		if keyHit || elementHit {
-			for _, a := range attrs {
-				if a.hasValue && valueAttrNames[strings.ToLower(a.name)] {
-					spans = append(spans, edit{a.vFrom, a.vTo})
-				}
-			}
-		}
+		spans, keyHit, elementHit := tagSpans(s, name, attrs)
 		if (keyHit || elementHit) && !selfClose && !trunc {
 			if from, to, found := textNode(s, end, w); found {
 				spans = append(spans, edit{from, to})
@@ -116,7 +105,8 @@ func maskXML(s, mask string, w *work) (string, int) {
 					pos = to
 				}
 			} else if onlySpace(s, end) {
-				pending = pendNextText // the tag ends the text: the value is on the next line
+				pending = pendXMLText
+				w.carry = carryHint{tag: name}
 			}
 		}
 		for _, sp := range sortEdits(spans) {
@@ -129,6 +119,61 @@ func maskXML(s, mask string, w *work) (string, int) {
 		}
 	}
 	return apply(s, mask, sortEdits(edits)), pending
+}
+
+func tagSpans(s, name string, attrs []attr) (spans []edit, keyHit, elementHit bool) {
+	local := name
+	if c := strings.LastIndexByte(local, ':'); c >= 0 {
+		local = local[c+1:]
+	}
+	for _, a := range attrs {
+		if !a.hasValue {
+			continue
+		}
+		lname := strings.ToLower(a.name)
+		switch {
+		case keyClass(a.name) != classNone:
+			spans = append(spans, edit{a.vFrom, a.vTo})
+		case isConnStringName(lname) && secretfulConnString(s[a.vFrom:a.vTo]):
+			spans = append(spans, edit{a.vFrom, a.vTo})
+		case keyAttrNames[lname] && plainName(s[a.vFrom:a.vTo]) && keyClass(s[a.vFrom:a.vTo]) != classNone:
+			keyHit = true
+		}
+	}
+	elementHit = keyClass(local) != classNone
+	if keyHit || elementHit {
+		for _, a := range attrs {
+			if a.hasValue && valueAttrNames[strings.ToLower(a.name)] {
+				spans = append(spans, edit{a.vFrom, a.vTo})
+			}
+		}
+	}
+	return spans, keyHit, elementHit
+}
+
+func possibleSecretTag(s string) bool {
+	if len(s) < 2 || s[0] != '<' {
+		return false
+	}
+	name := s[1:]
+	if i := strings.IndexAny(name, " \t\r\n/>"); i >= 0 {
+		name = name[:i]
+	}
+	if name == "" || IsSecretKey(name) {
+		return name != ""
+	}
+	low := lowerASCII(name)
+	for start := 0; start < len(low); start++ {
+		if !isNameStart(low[start]) {
+			continue
+		}
+		for _, word := range secretWords {
+			if strings.HasPrefix(word, low[start:]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // plainName says whether v reads as the name of a setting ("db.password", "Admin Password"), not as a value.
@@ -221,6 +266,11 @@ func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain
 					// where this attribute starts, and what follows is read as the text after the tag.
 					end = st
 					i = limit // the search read up to the limit: charged
+					if !full {
+						a.hasValue, a.vFrom, a.vTo = true, j+1, limit
+						attrs = append(attrs, a)
+						return attrs, 0, false, plain, false
+					}
 					return w.cut(attrs, end, plain, full)
 				}
 				if lt := strings.IndexByte(s[j+1:j+1+c], '<'); lt >= 0 && w.rescan == 0 {
@@ -251,7 +301,7 @@ func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain
 // the attributes read so far are kept and the rest of it is masked. Without one the text ends inside the tag, which is not a tag.
 func (w *work) cut(attrs []attr, end int, plain, full bool) ([]attr, int, bool, bool, bool) {
 	if !full {
-		return attrs[:0], 0, false, false, false
+		return attrs, 0, false, false, false
 	}
 	w.truncated = true
 	return attrs, end, false, plain, true

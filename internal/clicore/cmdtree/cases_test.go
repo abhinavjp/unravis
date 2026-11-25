@@ -135,17 +135,19 @@ func TestCasesTableCellsAndFooters(t *testing.T) {
 		}
 		if r.URL.Path == "/api/cases" {
 			_, _ = io.WriteString(w, `{"cases":[{"id":"`+id+`","title":"Bell\u0007 case","created":"2026-11-20T10:00:00.123456789Z","closed":"2026-11-21T10:00:00Z","bytes":1234,"imports":3,`+
-				`"ownKey":true,"keyLocked":true,"missing":true,"untrusted":true},{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbb","title":"(locked)","created":"0001-01-01T00:00:00Z","keyLocked":true,"ownKey":true}],"archivedTotal":7,"offset":0,"pageSize":50}`)
+				`"ownKey":true,"keyLocked":true,"missing":true,"untrusted":true},{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbb","title":"(locked)","created":"0001-01-01T00:00:00Z","keyLocked":true,"ownKey":true}],"archivedTotal":7,"offset":0,"pageSize":50,`+
+				`"erased":[{"id":"cccccccccccccccccccccccccc","at":"2026-11-22T12:00:00+02:00","line":"SECRET-ERASED-LINE"}],"oldCases":3}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"id":"`+id+`","title":"T","created":"2026-11-20T10:00:00.5Z","closed":"2026-11-21T10:00:00Z","bytes":1,"imports":2,"envs":4,"sources":5,"history":[{"at":"2026-11-20T10:00:00.9Z","kind":"created"}]}`)
 	})
 	o := newOwner(t, fakeBackend(func(context.Context, string, json.RawMessage) (any, *clicore.Error) { return map[string]any{}, nil }), withCases(dash))
 	l := o.run("cases", "list")
-	if l.code != 0 || strings.Contains(l.out, "\a") || strings.Contains(l.out, ".123") {
+	if l.code != 0 || strings.Contains(l.out, "\a") || strings.Contains(l.out, ".123") || strings.Contains(l.out, "SECRET-ERASED-LINE") {
 		t.Errorf("control text or nanoseconds in the table: %q", l.out)
 	}
-	for _, want := range []string{"2026-11-20T10:00:00Z", "1234", "closed, own key, key locked, working copy missing, untrusted", "7 archived (use --archived)", "own key, key locked"} {
+	for _, want := range []string{"2026-11-20T10:00:00Z", "1234", "closed, own key, key locked, working copy missing, untrusted", "7 archived (use --archived)", "own key, key locked",
+		"3 cases from before the shared layout", "ERASED CASE", "cccccccccccccccccccccccccc", "2026-11-22T10:00:00Z"} {
 		if !strings.Contains(l.out, want) {
 			t.Errorf("list table has no %q:\n%s", want, l.out)
 		}

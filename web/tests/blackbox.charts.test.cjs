@@ -8,6 +8,7 @@ const { loadTypeScript } = require('./helpers/loadTs.cjs');
 // value formats, gap breaks, the log-scale rule, figures, windows, and the wiring into the panel.
 
 const s = loadTypeScript('src/lib/blackboxSeries.ts');
+const bb = loadTypeScript('src/lib/blackbox.ts');
 const { BBC_TEXT } = loadTypeScript('src/lib/copy/blackboxChartsCopy.ts');
 const { lintCopy } = loadTypeScript('src/lib/copy/copylint.ts');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
@@ -20,6 +21,20 @@ const answer = (extra = {}) => ({
   read: { files: 1, samples: 3, torn: 0, dropped: [], missing: [] }, state: {}, ...extra
 });
 
+function binaryFrame(header, rows) {
+  const metadata = Buffer.from(JSON.stringify(header));
+  const body = Buffer.alloc(4 + metadata.length + rows.length * 48);
+  body.writeUInt32LE(metadata.length, 0);
+  metadata.copy(body, 4);
+  rows.forEach((row, index) => row.forEach((value, column) => body.writeDoubleLE(value, 4 + metadata.length + index * 48 + column * 8)));
+  return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+}
+
+const bytes = (frame) => {
+  const value = Buffer.from(frame);
+  return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+};
+
 test('readSeriesAnswer keeps a documented answer and refuses one with a bad point, so the view never draws a guess', () => {
   assert.equal(s.readSeriesAnswer(answer()).lines[0].key, 'cpu');
   assert.equal(s.readSeriesAnswer(answer({ lines: [{ key: 'cpu', unit: 'pct', points: [[T0, 'x', 1, 2]] }] })), null);
@@ -28,6 +43,95 @@ test('readSeriesAnswer keeps a documented answer and refuses one with a bad poin
   assert.equal(s.readSeriesAnswer(null), null);
   // a server that sends null for an empty list (Go nil slice) still reads
   assert.deepEqual(s.readSeriesAnswer(answer({ processes: null, markers: null })).processes, []);
+});
+
+test('readSeriesBinary reads six-value M4 lines and process series, including an empty answer', () => {
+  const header = {
+    ...answer({ lines: [], processes: [] }),
+    lines: [{ key: 'cpu', group: 'host', label: 'cpu', unit: 'pct', points: { n: 2 } }],
+    processes: [{ name: 'w3wp.exe', peakCpuPct: 99, cpu: { n: 1 }, workingSet: { n: 1 }, privateBytes: { n: 1 } }]
+  };
+  const rows = [
+    [T0, 10, 5, 20, 5, 20], [T0 + 15000, 30, 25, 40, 25, 40],
+    [T0 + 30000, 99, 99, 99, 99, 99], [T0, 1024, 1024, 1024, 1024, 1024], [T0, 512, 512, 512, 512, 512]
+  ];
+  const got = s.readSeriesBinary(binaryFrame(header, rows));
+  const want = s.readSeriesAnswer({
+    ...header,
+    lines: [{ ...header.lines[0], points: rows.slice(0, 2) }],
+    processes: [{ ...header.processes[0], cpu: [rows[2]], workingSet: [rows[3]], privateBytes: [rows[4]] }]
+  });
+  assert.deepEqual(got, want);
+
+  const emptyHeader = { ...answer({ lines: [], processes: [] }) };
+  const empty = s.readSeriesBinary(binaryFrame(emptyHeader, []));
+  assert.ok(empty);
+  assert.deepEqual(empty.lines, []);
+  assert.deepEqual(empty.processes, []);
+});
+
+test('readSeriesBinary refuses malformed, truncated, trailing and unbounded frames', () => {
+  const header = { ...answer({ lines: [{ key: 'cpu', group: 'host', label: 'cpu', unit: 'pct', points: { n: 1 } }], processes: [] }) };
+  const row = [T0, 10, 5, 20, 5, 20];
+  const valid = Buffer.from(binaryFrame(header, [row]));
+  const badCount = Buffer.from(valid);
+  const metadata = JSON.parse(valid.subarray(4, 4 + valid.readUInt32LE(0)).toString('utf8'));
+  metadata.lines[0].points.n = 2;
+  const replacement = Buffer.from(JSON.stringify(metadata));
+  badCount.writeUInt32LE(replacement.length, 0);
+  replacement.copy(badCount, 4);
+  const badUtf8 = Buffer.from(valid);
+  badUtf8[4] = 0xff;
+  const nan = Buffer.from(valid);
+  nan.writeDoubleLE(NaN, 4 + valid.readUInt32LE(0));
+  const trailing = Buffer.concat([valid, Buffer.alloc(1)]);
+  const hugeHeader = Buffer.alloc(4 + (1 << 20) + 1);
+  hugeHeader.writeUInt32LE((1 << 20) + 1, 0);
+  for (const frame of [valid.subarray(0, 3), badCount, badUtf8, nan, trailing, valid.subarray(0, valid.length - 1), hugeHeader,
+    new ArrayBuffer((64 << 20) + 1)]) {
+    assert.equal(s.readSeriesBinary(bytes(frame)), null);
+  }
+});
+
+test('the Blackbox client asks for binary M4 only on opt-in and accepts a JSON fallback', async () => {
+  const realFetch = globalThis.fetch;
+  const hadStorage = Object.prototype.hasOwnProperty.call(globalThis, 'sessionStorage');
+  const oldStorage = globalThis.sessionStorage;
+  globalThis.sessionStorage = { getItem: () => 'test-token', setItem() {}, removeItem() {} };
+  const calls = [];
+  const header = { ...answer({ lines: [{ key: 'cpu', group: 'host', label: 'cpu', unit: 'pct', points: { n: 1 } }], processes: [] }) };
+  const rows = [[T0, 10, 5, 20, 5, 20]];
+  const jsonAnswer = { ...header, lines: [{ ...header.lines[0], points: rows }] };
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), headers: new Headers(init.headers), body: JSON.parse(init.body) });
+    if (calls.length === 1) return new Response(binaryFrame(header, rows), { headers: { 'Content-Type': s.SERIES_BINARY_TYPE } });
+    if (calls.length === 3) {
+      const malformed = { ...header, lines: [{ ...header.lines[0], points: { n: 2 } }] };
+      return new Response(binaryFrame(malformed, rows), { headers: { 'Content-Type': s.SERIES_BINARY_TYPE } });
+    }
+    return new Response(JSON.stringify(jsonAnswer), { headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const request = { start: answer().start, end: answer().end, width: 60, shape: 'm4' };
+    const binary = await bb.blackboxApi.series('bb-test', request, undefined, true);
+    assert.deepEqual(binary, s.readSeriesAnswer(jsonAnswer));
+    const fallback = await bb.blackboxApi.series('bb-test', request);
+    assert.deepEqual(fallback, jsonAnswer);
+    assert.equal(calls[0].url, '/api/blackbox/bb-test/series');
+    assert.equal(calls[0].headers.get('Accept'), s.SERIES_BINARY_TYPE);
+    assert.equal(calls[0].headers.get('X-Audit-Token'), 'test-token');
+    assert.deepEqual(calls[0].body, request);
+    assert.equal(calls[1].headers.get('Accept'), null);
+    const retried = await bb.blackboxApi.series('bb-test', request, undefined, true);
+    assert.deepEqual(retried, jsonAnswer);
+    assert.equal(calls[2].headers.get('Accept'), s.SERIES_BINARY_TYPE);
+    assert.equal(calls[3].headers.get('Accept'), null);
+    assert.equal(calls.length, 4, 'a malformed binary answer gets exactly one JSON retry');
+  } finally {
+    globalThis.fetch = realFetch;
+    if (hadStorage) globalThis.sessionStorage = oldStorage;
+    else delete globalThis.sessionStorage;
+  }
 });
 
 test('names follow the key shape the server writes: host fields, named things, the CPU split, TCP states and event levels', () => {
@@ -147,7 +251,7 @@ test('the panel opens the charts for a Blackbox with facts, and the client posts
   assert.match(panel, /<BlackboxCharts item=\{chartsFor\}/);
   assert.match(panel, /chartsFor = item/);
   assert.doesNotMatch(panel, /PROTOTYPE \(throwaway/);
-  assert.match(read('src/lib/blackbox.ts'), /series: \(id: string[^\n]*\n\s*call<unknown>\('POST', '\/' \+ encodeURIComponent\(id\) \+ '\/series'/);
+  assert.match(read('src/lib/blackbox.ts'), /send\('POST', path, body, signal, binary \? SERIES_BINARY_TYPE : undefined\)/);
   const view = read('src/components/BlackboxCharts.svelte');
   assert.match(view, /readSeriesAnswer\(raw\)/, 'every answer goes through the shape check');
   assert.match(view, /type: log \? 'log' : 'value'/);

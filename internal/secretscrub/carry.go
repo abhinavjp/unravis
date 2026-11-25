@@ -9,23 +9,40 @@ const maxBlockLines = 200
 const maxCommentLines = 4
 
 // Carry lets a reader that sees one line at a time mask the forms that go on to the next line: a YAML block scalar ("password: |"
-// and the indented lines under it) and a key with nothing after it whose value is on the next line ("DB_PASSWORD=" then the value,
-// "<Password>" then the value, "client_secret:" then an indented value). Use one Carry for one stream of lines and call Line for
-// each line in order. A reader that has the whole text calls Mask instead.
+// and the indented lines under it), a key with nothing after it whose value is on the next line ("DB_PASSWORD=" then the value,
+// "<Password>" then the value, "client_secret:" then an indented value), a quoted value, a JSON array or object, and a split XML
+// tag. Use one Carry for one stream of lines and call Line for each line in order. A reader that has the whole text calls Mask instead.
 //
 // A value on the next line is masked only when that line can be a value: one word, or text in quotes. A sentence or a test runner line
 // after "Password:" ("sudo: 3 incorrect password attempts", "--- FAIL: TestLogin") is kept, because it is ordinary text.
-//
-// Not carried: a quoted value or a JSON array that runs over several lines, and a tag split over lines.
 type Carry struct {
 	pend     int
 	indent   int // the indent of the line that opened a block
 	lines    int // lines of the block masked so far
 	comments int // comment lines passed while waiting for the value
+	quote    byte
+	nest     int
+	literal  bool
+	depth    int
+	tag      string
+}
+
+func (c *Carry) set(pend int, hint carryHint) {
+	c.pend, c.quote, c.nest, c.literal, c.depth, c.tag = pend, hint.quote, hint.nest, hint.literal, hint.depth, hint.tag
 }
 
 // Line returns line with its secrets masked, including the value it carries over from the lines before.
 func (c *Carry) Line(line, mask string) string {
+	switch c.pend {
+	case pendQuote:
+		return c.quotedLine(line, mask)
+	case pendBracket:
+		return c.bracketLine(line, mask)
+	case pendXMLText:
+		return c.xmlLine(line, mask)
+	case pendTag:
+		return c.tagLine(line, mask)
+	}
 	if c.pend != pendNone {
 		text := strings.TrimRight(line, " \t\r")
 		ind := indentOf(line)
@@ -49,16 +66,101 @@ func (c *Carry) Line(line, mask string) string {
 		}
 		c.pend = pendNone
 	}
-	out, pend := maskPend(line, mask)
+	out, pend, hint := maskPend(line, mask)
+	c.set(pend, hint)
 	if pend != pendNone {
-		c.pend, c.indent, c.lines, c.comments = pend, indentOf(line), 0, 0
+		c.indent, c.lines, c.comments = indentOf(line), 0, 0
 	}
 	return out
 }
 
+func (c *Carry) quotedLine(line, mask string) string {
+	ind := indentOf(line)
+	combined := string(c.quote) + line
+	end, after := closingQuote(combined, 0, c.nest, c.literal)
+	if end == len(combined) && after == len(combined) {
+		return line[:ind] + mask
+	}
+	out := line[:ind] + mask + line[end-1:]
+	c.pend = pendNone
+	out, pend, hint := maskPend(out, mask)
+	c.set(pend, hint)
+	return out
+}
+
+func (c *Carry) bracketLine(line, mask string) string {
+	ind := indentOf(line)
+	depth, quote := c.depth, c.quote
+	closeAt := -1
+	for i := 0; i < len(line); i++ {
+		if quote != 0 {
+			if line[i] == '\\' {
+				i++
+			} else if line[i] == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch line[i] {
+		case '[', '{':
+			depth++
+		case ']', '}':
+			depth--
+			if depth == 0 {
+				closeAt = i
+			}
+		case '"', '\'':
+			quote = line[i]
+		}
+		if closeAt >= 0 {
+			break
+		}
+	}
+	if closeAt < 0 {
+		c.depth, c.quote = depth, quote
+		return line[:ind] + mask
+	}
+	out := line[:ind] + mask + line[closeAt:]
+	c.pend = pendNone
+	out, pend, hint := maskPend(out, mask)
+	c.set(pend, hint)
+	return out
+}
+
+func (c *Carry) xmlLine(line, mask string) string {
+	ind := indentOf(line)
+	close := "</" + c.tag
+	if at := strings.Index(line, close); at >= 0 {
+		if end := strings.IndexByte(line[at:], '>'); end >= 0 {
+			out := line
+			if strings.TrimSpace(line[:at]) != "" {
+				out = line[:ind] + mask + line[at:]
+			}
+			c.pend = pendNone
+			out, pend, hint := maskPend(out, mask)
+			c.set(pend, hint)
+			return out
+		}
+	}
+	return line[:ind] + mask
+}
+
+func (c *Carry) tagLine(line, mask string) string {
+	if len(c.tag)+len(line)+1 > 2*maxTag {
+		c.pend = pendNone
+		return mask
+	}
+	out, pend, hint := maskPend(c.tag+"\n"+line, mask)
+	c.set(pend, hint)
+	if at := strings.LastIndexByte(out, '\n'); at >= 0 {
+		return out[at+1:]
+	}
+	return mask
+}
+
 // nextLineIsValue says whether the line after a key with no value is that key's value.
 //
-//   - A name that is clearly a secret ("DB_PASSWORD=", "client_secret:", "<Password>"): an indented line, a quoted line or a list item
+//   - A name that is clearly a secret ("DB_PASSWORD=", "<Password>"): an indented line, a quoted line or a list item
 //     ("- x") is the value whatever it holds (a password may hold spaces); so is one word. A line that is none of those ("--- FAIL:
 //     TestLogin") is ordinary text.
 //   - A bare word that is also a sentence word ("Password:", "token:"): only one word or quoted text; for "token:" and "secret:" only

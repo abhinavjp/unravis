@@ -523,6 +523,14 @@ jobs:
           go test -count=1 -v -run '^(TestShutdown.*|TestKillDuringWriteReopens)$' ./cmd/audit-explorer/... ./internal/pipesrv/...
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      - name: Adapter parity and Windows power policy
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./internal/power
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go test -count=1 -v -run '^(TestParity.*|TestSnapshot.*)$' ./internal/clicore/cmdtree
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Real exe in pipe-only mode (no port, no session file, both pipes)
         shell: pwsh
         run: ./tools/desktop/Test-Sidecar.ps1 -Check NoPort
