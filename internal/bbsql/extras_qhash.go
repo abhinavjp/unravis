@@ -13,7 +13,7 @@
 // the server: the statement groups the cached statements by hash in SQL and
 // reads nothing else.
 //
-// Known limits, stated on purpose (live proof owed, BACKLOG BL-555):
+// Known limits, stated on purpose (live proof owed, BACKLOG BL-575):
 //   - The hash is SQL Server's own query_hash, not salted: it holds no literal value, but it is the same on every server and in every case, so
 //     two recordings can be matched by it, and anyone with a SQL Server can confirm a guessed query shape. A per-install salt is a later choice.
 //   - It keeps the TOP 50 hashes by CUMULATIVE CPU, not by CPU this interval. A

@@ -354,7 +354,7 @@ func textSampleLines(t *testing.T, dir string) []SampleDoc {
 	}
 	var out []SampleDoc
 	for _, p := range matches {
-		data, err := os.ReadFile(p)
+		data, err := os.ReadFile(p) //nolint:gosec // test reads files it globbed in its own temp dir
 		if err != nil {
 			t.Fatalf("read %s: %v", p, err)
 		}
