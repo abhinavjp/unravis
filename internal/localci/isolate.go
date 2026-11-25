@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// NoTokenPlaceholder is the value steps get for GH_TOKEN and GITHUB_TOKEN. It is not a credential.
+const NoTokenPlaceholder = "ci-step-has-no-token" //nolint:gosec // G101: a fixed marker, not a credential
+
 // StepEnv returns the environment the steps of one run get, built from base (which the caller has already
 // reduced to what steps may see):
 //
@@ -18,11 +21,15 @@ import (
 //   - the persistent caches: GOCACHE, GOMODCACHE, GOPATH and the npm cache come from the store. A run whose
 //     code is not all the owner's (untrusted) gets caches of its own, apart from the owner's.
 //
+// GH_TOKEN and GITHUB_TOKEN are set to NoTokenPlaceholder: `gh` prefers them to the login it keeps in the
+// operating system's credential store, so a step that just calls `gh` does not get the owner's login.
+//
 // cleanup deletes the profile folder; call it when the run is over.
 //
 // This stops casual access only. A step still runs as the runner's Windows user and can call the Windows
 // Credential Manager API, read files elsewhere in the profile by absolute path, or start a credential helper
-// by name. Only a separate Windows user for the runner closes that.
+// by name. A step that unsets GH_TOKEN and runs `gh auth token` gets the owner's login back, because gh
+// keeps it in the Credential Manager. Only a separate Windows user for the runner closes that.
 func (s *Store) StepEnv(base []string, runID string, untrusted bool) (env []string, cleanup func(), err error) {
 	if !ValidRunID(runID) {
 		return nil, nil, fmt.Errorf("%q is not a run id", runID)
@@ -62,6 +69,7 @@ func (s *Store) StepEnv(base []string, runID string, untrusted bool) (env []stri
 		{"GIT_CONFIG_COUNT", "1"}, {"GIT_CONFIG_KEY_0", "credential.helper"}, {"GIT_CONFIG_VALUE_0", ""},
 		{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_ASKPASS", ""}, {"GCM_INTERACTIVE", "never"},
 		{"GOPATH", goPath}, {"GOENV", filepath.Join(home, "go-env")},
+		{"GH_TOKEN", NoTokenPlaceholder}, {"GITHUB_TOKEN", NoTokenPlaceholder}, {"GH_PROMPT_DISABLED", "1"},
 		{"npm_config_userconfig", filepath.Join(home, "npmrc")}, {"npm_config_globalconfig", filepath.Join(home, "npmrc-global")},
 	}
 	set = append(set, cacheKV(cached)...)

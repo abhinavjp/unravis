@@ -1034,3 +1034,27 @@ jobs:
 		t.Fatalf("run.json leaked: %s", b)
 	}
 }
+
+func TestStepsKeepOnlyThePlaceholderToken(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: f
+on: push
+jobs:
+  f:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "gh=[$GH_TOKEN] github=[$GITHUB_TOKEN] other=[$MY_TOKEN]"
+        env:
+          MY_TOKEN: from-the-workflow
+`)
+	h.opts.Env = append(os.Environ(), "GH_TOKEN="+NoTokenPlaceholder, "GITHUB_TOKEN=leak")
+	res := h.run()
+	j := job(t, res, "f")
+	if j.Status != "success" {
+		t.Fatalf("job %+v\n%s", j, h.logText())
+	}
+	if got := stepLog(t, j.Steps[0]); !strings.Contains(got, "gh=["+NoTokenPlaceholder+"] github=[] other=[from-the-workflow]") {
+		t.Fatalf("only the placeholder survives the token strip:\n%s", got)
+	}
+}

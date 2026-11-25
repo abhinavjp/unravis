@@ -960,10 +960,10 @@ func (in *instance) processEnv(stepEnv map[string]string, files map[string]strin
 	for k, v := range files {
 		e.set(k, v)
 	}
-	// never a token
+	// never a token (NoTokenPlaceholder, which StepEnv sets, is not one: it only keeps gh from using the owner's login)
 	var items []string
 	for _, kv := range e.items {
-		if k, _, ok := splitKV(kv); ok && (strings.EqualFold(k, "GITHUB_TOKEN") || strings.EqualFold(k, "GH_TOKEN")) {
+		if k, v, ok := splitKV(kv); ok && v != NoTokenPlaceholder && (strings.EqualFold(k, "GITHUB_TOKEN") || strings.EqualFold(k, "GH_TOKEN")) {
 			continue
 		}
 		items = append(items, kv)
