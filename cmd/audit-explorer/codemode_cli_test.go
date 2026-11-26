@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -308,5 +310,70 @@ func TestCLIFileEditedOffShutsTheOpenCommandLineOnTheNextRun(t *testing.T) {
 	}
 	if unlimited() != false {
 		t.Fatal("the settings still say no time limit")
+	}
+}
+
+// BL-371: each change of the window is one app-log line. The settings hook that shuts the command line when a run finds code mode off logs
+// it once (when it was open), not on every run and not when it was already shut.
+func TestCLIHookLogsTheCloseOnceAndOnlyWhenTheWindowWasOpen(t *testing.T) {
+	const token = "tok-0123456789abcdef0123456789abcdef"
+	cfg := t.TempDir()
+	getenv := func(k string) string {
+		if k == "AUDIT_CONFIG_DIR" {
+			return cfg
+		}
+		return ""
+	}
+	files := settingsfile.New(cfg)
+	if err := files.Save(codemode.Settings{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	mount := server.NewCodeMount()
+	dash := server.New(audit.NewDemo(time.Now()), nil, token, true, server.WithCodeMount(mount))
+	broker := mountCodeMode(getenv, dash, token, mount)
+	if broker == nil {
+		t.Fatal("no broker")
+	}
+	h := cliHandlerFor(runFlags{}, dash, token, nil, broker)
+	run := func() {
+		body := `{"op":"code.run","args":{"code":"1"},"requestId":"req_0123456789abcdef"}`
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/cli/v1/op", strings.NewReader(body)))
+	}
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(old) })
+	const line = "Command line window: closed because code mode is off."
+
+	// Code mode off and the window never opened: runs are refused, and nothing was closed, so nothing is logged.
+	if err := files.Save(codemode.Settings{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	run()
+	if strings.Contains(buf.String(), line) {
+		t.Fatalf("logged a close of a window that was never open: %q", buf.String())
+	}
+	// Open with no time limit (code mode back on), then off by a hand edit: the next run closes it and says so, once.
+	if err := files.Save(codemode.Settings{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("PUT", "/api/code/settings", strings.NewReader(`{"cliUnlimited":true}`))
+	req.Host = "127.0.0.1:8765"
+	req.Header.Set("X-Audit-Token", token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	dash.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("unlimited = %d %s", w.Code, w.Body)
+	}
+	buf.Reset()
+	if err := files.Save(codemode.Settings{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	run()
+	run()
+	run()
+	if n := strings.Count(buf.String(), line); n != 1 {
+		t.Fatalf("%d close lines after three runs, want 1: %q", n, buf.String())
 	}
 }

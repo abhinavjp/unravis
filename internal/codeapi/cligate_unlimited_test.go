@@ -402,3 +402,58 @@ func TestReadingTheSettingsWhileCodeModeIsOffShutsTheCommandLine(t *testing.T) {
 		t.Fatal("a read closed the command line while code mode was on")
 	}
 }
+
+// Follow-up to the Opus re-review of PR 339: a PUT whose read or save fails while code mode reads as off (the file is damaged, or cannot be
+// reached at all) shuts the command line, the same as a read of the settings does. Switching code mode on is the body here, so nothing in
+// the request itself closes the gate first.
+func TestAFailedReadOrSaveWhileCodeModeReadsAsOffShutsTheCommandLine(t *testing.T) {
+	damage := map[string]func(t *testing.T, dir string){
+		// The file is a folder: it reads as damaged (off), and saving over it is refused.
+		"save refused": func(t *testing.T, dir string) {
+			path := filepath.Join(dir, settingsfile.FileName)
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
+		// The settings folder is a plain file: the settings file cannot be reached, so reading it fails.
+		"read fails": func(t *testing.T, dir string) {
+			if err := os.RemoveAll(dir); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dir, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, breakIt := range damage {
+		for _, open := range []string{`{"cliUnlimited":true}`, `{"cliMinutes":30}`} {
+			dir := filepath.Join(t.TempDir(), "cfg")
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			r := newRig(t, rigOpts{spawner: &spawn{}, cliShut: true, settingsIn: dir})
+			r.enable()
+			if res := r.setCLI(open); res.Code != http.StatusOK || !r.gate.Allows() {
+				t.Fatalf("%s %s: not open: %d", name, open, res.Code)
+			}
+			breakIt(t, dir)
+			buf := captureLog(t)
+			res := r.setCLI(`{"enabled":true}`)
+			if res.Code != http.StatusInternalServerError {
+				t.Fatalf("%s %s: = %d %s, want 500", name, open, res.Code, res.Body)
+			}
+			if r.gate.Allows() || r.gate.Unlimited() {
+				t.Errorf("%s %s: the command line stayed open after a failed request while code mode read as off", name, open)
+			}
+			if !strings.Contains(res.Body.String(), "command line was shut") {
+				t.Errorf("%s %s: the reply does not say the command line was shut: %s", name, open, res.Body)
+			}
+			if n := strings.Count(buf.String(), "Command line window: closed because code mode is off."); n != 1 {
+				t.Errorf("%s %s: %d log lines about the close, want 1: %q", name, open, n, buf.String())
+			}
+		}
+	}
+}
