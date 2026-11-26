@@ -290,6 +290,12 @@ jobs:
           Compress-Archive -Path (Join-Path $Stage '*') -DestinationPath $Zip -CompressionLevel Optimal
           Remove-Item -LiteralPath $Stage -Recurse -Force
 
+      - name: No test-only switch in any shipped program (RV-SEC-7)
+        # Every .exe in dist and every program inside the zips (the setup exe holds its payload raw). A build made with -tags e2e carries
+        # UNRAVIS_E2E_ALLOW_IMAGE and pipesec.TestAllow; the scan fails the release when either is there, or when it found nothing to scan.
+        shell: bash
+        run: node tools/ci/check-no-e2e-switch.mjs dist
+
       - name: Collect the release assets and write SHA256SUMS.txt
         id: assets
         shell: pwsh

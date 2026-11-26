@@ -55,6 +55,8 @@ const NOTE_TITLES: Record<string, { title: string; tone: Tone }> = {
   'write-still-failing': { title: 'Samples still cannot be saved', tone: 'bad' },
   'write-recovered': { title: 'Samples are being saved again', tone: 'info' },
   'settings-applied': { title: 'New settings were applied', tone: 'info' },
+  'diag-log-stopped': { title: "The recorder's diagnostics file stopped growing", tone: 'warn' },
+  'diag-log-resumed': { title: "The recorder's diagnostics file is growing again", tone: 'info' },
   'recorder-crashed': { title: 'The recorder crashed and was started again', tone: 'bad' }
 };
 const RESTART_DETAIL: Record<string, string> = {
@@ -79,6 +81,8 @@ const roundsWords = (n: number) => n + (n === 1 ? ' round' : ' rounds');
  */
 export function failureDetail(kind: string, detail: unknown): string {
   if (typeof detail !== 'string') return '';
+  if (kind === 'diag-log-stopped') return detail === 'diag-log-stuck' ? 'Your recordings are not affected. Another program may be holding the file diagnostics.log in the recordings folder. The recorder checks again every minute and adds a note here when it is writing to the file again.' : '';
+  if (kind === 'diag-log-resumed') return detail === 'diag-log-ok' ? 'The recorder can write to the file diagnostics.log in the recordings folder again.' : '';
   const slow = kind === 'host-still-slow' || kind === 'host-recovered';
   if (kind === 'collect-still-failing' || kind === 'write-still-failing' || kind === 'host-still-slow') {
     const m = /^code=([a-z-]{1,30}) rounds=(\d{1,9})$/.exec(detail);

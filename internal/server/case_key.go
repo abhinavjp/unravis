@@ -39,6 +39,10 @@ type caseKeyDTO struct {
 	// Ending is the last four characters of the key's check value ("Key ending
 	// xxxx"). Empty when the case has no key of its own.
 	Ending string `json:"ending"`
+	// Erased is true when the key was right but the case had been closed for over 30 days, so the unlock
+	// erased it (RV-DAT-8). ClosedAt is when it was closed. The other fields are then those of a case with no key.
+	Erased   bool       `json:"erased,omitempty"`
+	ClosedAt *time.Time `json:"closedAt,omitempty"`
 }
 
 // caseKeyFailure is the body of a refused key request.
@@ -328,7 +332,14 @@ func (h *handler) caseKeyUnlock(w http.ResponseWriter, r *http.Request, raw stri
 	}
 	defer b.wipe()
 	h.keyOp.Lock()
-	defer h.keyOp.Unlock()
+	keyOpHeld := true
+	releaseKeyOp := func() {
+		if keyOpHeld {
+			keyOpHeld = false
+			h.keyOp.Unlock()
+		}
+	}
+	defer releaseKeyOp()
 	th, ok := h.caseKeyJudged(w, ck, id, b.secret("passphrase"))
 	if !ok {
 		return
@@ -355,6 +366,15 @@ func (h *handler) caseKeyUnlock(w http.ResponseWriter, r *http.Request, raw stri
 		if _, err := h.recoverer.RecoverOne(r.Context(), id); err != nil && !errors.Is(err, casestore.ErrNotFound) {
 			log.Printf("Case recovery after a case unlock did not run for %s: %v", id, err)
 		}
+	}
+	// The start-up sweep could not see this case's close date while its key was locked. If the 30 days
+	// ran out meanwhile, the same sweep rule applies now, as it would have at start (RV-DAT-8).
+	// It may wait some seconds for the case to be free, so another case's key is not held back meanwhile.
+	releaseKeyOp()
+	if closed, erased := h.eraseIfExpired(r, id); erased {
+		closed = closed.UTC()
+		writeJSON(w, http.StatusOK, caseKeyDTO{Erased: true, ClosedAt: &closed}, 4096)
+		return
 	}
 	info, err := ck.CaseKey(id)
 	if err != nil && !info.Has {

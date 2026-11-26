@@ -569,7 +569,8 @@ func newHTTPServer(handler http.Handler) *http.Server {
 }
 
 // writeSessionFile writes the session file --mcp reads (port and token) and returns the function that removes it. When the file
-// cannot be written it logs that and returns a no-op.
+// cannot be written the dashboard keeps running: it logs the reason, leaves a note that `--mcp` reads ("the session file could not be
+// written: ...", RV-SEC-7) and returns a function that only removes that note.
 func writeSessionFile(getenv func(string) string, listener net.Listener, token string) (remove func()) {
 	sessionPath, sessionErr := mcp.SessionFilePath(getenv)
 	if sessionErr == nil {
@@ -577,9 +578,12 @@ func writeSessionFile(getenv func(string) string, listener net.Listener, token s
 		sessionErr = mcp.WriteSessionFileSecured(sessionPath, listener.Addr().(*net.TCPAddr).Port, token, casestore.SecureFile)
 	}
 	if sessionErr != nil {
-		log.Printf("Session file not written; --mcp needs --port and AUDIT_SESSION_TOKEN to reach this dashboard")
-		return func() {}
+		code := mcp.SessionFailureCode(sessionErr)
+		log.Printf("The session file could not be written: %s (%v). --mcp needs --port and AUDIT_SESSION_TOKEN to reach this dashboard", mcp.SessionFailureText(code), sessionErr)
+		mcp.RecordSessionFailure(sessionPath, code)
+		return func() { mcp.ClearSessionFailure(sessionPath) }
 	}
+	mcp.ClearSessionFailure(sessionPath) // a note left by an earlier run that could not write it
 	return func() { _ = mcp.RemoveSessionFile(sessionPath, token) }
 }
 

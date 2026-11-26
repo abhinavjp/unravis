@@ -76,8 +76,29 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	// A temporary file with its own name in the same folder: two writers never share one, a stale file from a killed run cannot block
+	// this one, and the rename stays on one volume. Sync before the rename so a power cut cannot leave an empty file under the real name.
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	fail := func(err error) error {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	// CreateTemp makes the file private to the writer; these files are read by the person's own app after the installer (a different
+	// account, possibly elevated) wrote them, so keep the permissions the plain write gave.
+	_ = f.Chmod(0o644)
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {

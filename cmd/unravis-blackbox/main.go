@@ -60,6 +60,10 @@ Commands that change the service (run as administrator):
   enable-sql  Activate the installed SQL service after the owner grant:
               confirms the installed settings and folder, clears the
               persisted off latch (owner-only) and starts the service.
+  sql-status  Read-only: say in plain words where SQL recording stands (not
+              installed, needs the grant, working, turned off) and the one
+              next step. Prints the grant text when that is the next step.
+              Never connects to SQL and never starts anything.
   set-sql-login    Save one SQL login (or a server on another machine) sealed
               inside the locked SQL folder. Reads {"server","user","password",
               "trustServerCertificate"} from --login-stdin, or from
@@ -72,7 +76,19 @@ Commands that change the service (run as administrator):
   remove-sql  Stop and remove the SQL service, then print the revoke script.
               --confirm-name <name>  the Blackbox name, required.
 
+Redis password (only when Redis on this PC asks for one):
+  set-redis-password    Read the password from standard input, test it against
+              Redis on this PC, and save it sealed for this PC. Never printed.
+              Administrator only.
+  clear-redis-password  Remove the saved password.
+
 Other commands:
+  config set  Change one collector (on, off, --every) or add or remove an extra
+              counter. Checked, applied, watched for a minute, and rolled back
+              by itself if the recorder is not healthy. Administrator only.
+  config validate <file>  Check a settings file. Changes nothing.
+  config history          The last 20 changes. Says if the chain does not verify.
+  config rollback         Put the settings from before the last change back.
   config show Print the settings in force and every collector with its id, what
               it reads, and whether it is on. Read-only: changes nothing.
   snapshot    Copy the recordings into <folder>\snapshots\<name>-<date>-<time>.
@@ -104,6 +120,8 @@ type deps struct {
 	// reads; nil means the console. Both are test seams.
 	sealer func() (sealedfile.Protector, error)
 	stdin  io.Reader
+	// redisCheck tests a Redis password against this PC's Redis (set-redis-password). Nil means the real check.
+	redisCheck func(port int, password string) error
 	// confirmDir proves the SQL data folder for a saved login (see sqlLoginDir); nil means SQLManager.ConfirmLoginDir. Test seam.
 	confirmDir func(cfg blackbox.Config, configPath string) (string, error)
 	// vmProbe is the vm-probe reading. nil means the real PDH probe (BL-113).
@@ -327,13 +345,14 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	if cmd == "diag-probe" {
 		return runDiagProbe(rest, stdout, stderr, d)
 	}
+	var cfgWords []string
 	if cmd == "config" {
-		// "config show" is one read-only command; its flags follow it.
-		if len(rest) == 0 || rest[0] != "show" {
-			_, _ = fmt.Fprintln(stderr, `usage: unravis-blackbox config show [--json] [--config <file>]`)
+		sub, words, flags, ok := configSub(rest)
+		if !ok {
+			_, _ = fmt.Fprintln(stderr, configUsage)
 			return exitUsage
 		}
-		cmd, rest = "config-show", rest[1:]
+		cmd, cfgWords, rest = sub, words, flags
 	}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -353,11 +372,35 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	confirm := fs.String("confirm-name", "", "the Blackbox name, to confirm deleting the recordings (remove)")
 	answerFile := fs.String(strings.TrimPrefix(blackbox.AnswerFileFlag, "--"), "", "write the answer to this file instead of the console (set by Unravis)")
 	expectSHA := fs.String("expect-sha256", "", "SHA-256 the new program must have (update)")
+	every := fs.String("every", "", "how often a collector runs: seconds or 60s, 5m (config set)")
 	configSHA := fs.String("config-sha256", "", "SHA-256 of the settings file Unravis checked (install, apply)")
 	if err := fs.Parse(rest); err != nil {
 		return exitUsage
 	}
-	if fs.NArg() > 0 {
+	if strings.HasPrefix(cmd, "config-") {
+		// The config verbs take only the flags they name. In particular they never take --answer-file (which would
+		// open and overwrite a file as the caller) or the install flags, which would be ignored without a word.
+		allowed := map[string]bool{"json": true}
+		switch cmd {
+		case "config-show":
+			allowed["config"] = true
+		case "config-set":
+			allowed["every"] = true
+		}
+		bad := ""
+		fs.Visit(func(f *flag.Flag) {
+			if !allowed[f.Name] && bad == "" {
+				bad = f.Name
+			}
+		})
+		if bad != "" {
+			_, _ = fmt.Fprintf(stderr, "config %s does not take --%s\n", strings.TrimPrefix(cmd, "config-"), bad)
+			return exitUsage
+		}
+	}
+	if cmd == "config-set" || cmd == "config-validate" {
+		cfgWords = append(cfgWords, fs.Args()...)
+	} else if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "unexpected argument %q\n", fs.Arg(0))
 		return exitUsage
 	}
@@ -395,7 +438,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 				return filepath.Join(progDir, name)
 			}
 		}
-		if cmd == "apply" || cmd == "remove" || cmd == "setup-sql" || cmd == "clear-sql-login" || cmd == "set-sql-login" {
+		if cmd == "apply" || cmd == "remove" || cmd == "setup-sql" || cmd == "clear-sql-login" || cmd == "set-sql-login" ||
+			cmd == "set-redis-password" || cmd == "clear-redis-password" {
 			// SEC-15: these run elevated from the app, whose folder an ordinary
 			// user can write to on a per-user install. Never take settings or a
 			// key file from there: use the installed copy (which may be missing,
@@ -542,6 +586,61 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 			extra["note"] = res.SQLNote
 		}
 		return ans.ok(text, extra)
+	case "config-set":
+		op, perr := parseSetArgs(cfgWords, *every)
+		if perr != nil {
+			return ans.fail(fmt.Errorf("%s: %w", perr.Error(), blackbox.ErrInvalidConfig))
+		}
+		res, err := d.mgr.ChangeConfig(op)
+		if err != nil {
+			return ans.fail(err)
+		}
+		text := "Changed: " + res.Line.Detail + "."
+		if res.Restarted {
+			text += " The recorder restarted and was healthy for the whole check."
+		} else {
+			text += " The recorder is stopped; the change applies at its next start."
+		}
+		return ans.ok(text, map[string]any{"change": res.Line, "restarted": res.Restarted})
+	case "config-rollback":
+		res, err := d.mgr.RollbackConfig()
+		if err != nil {
+			return ans.fail(err)
+		}
+		return ans.ok("The previous settings are back. "+map[bool]string{true: "The recorder restarted and was healthy.", false: "The recorder is stopped; they apply at its next start."}[res.Restarted],
+			map[string]any{"change": res.Line, "restarted": res.Restarted})
+	case "config-history":
+		h, err := d.mgr.History()
+		if err != nil {
+			return ans.fail(err)
+		}
+		return ans.ok(historyText(h), map[string]any{"history": h})
+	case "config-validate":
+		if len(cfgWords) != 1 {
+			return ans.fail(fmt.Errorf("usage: config validate <file>: %w", blackbox.ErrInvalidConfig))
+		}
+		cfg, err := validateFile(cfgWords[0])
+		if err != nil {
+			return ans.fail(err)
+		}
+		return ans.ok("The settings are valid. Nothing was changed.", map[string]any{"valid": true, "collectors": cfg.CollectorStates()})
+	case "sql-status":
+		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
+		if err != nil {
+			return ans.fail(err)
+		}
+		st, serr := d.sqlMgr.Svc.State(blackbox.SQLServiceName)
+		w := blackbox.DescribeSQL(st, serr, blackbox.ReadSQLStatus(cfg.Folder, d.now()))
+		text := w.Say
+		if w.Next != "" {
+			text += "\nNext: unravis-blackbox " + w.Next
+		}
+		extra := map[string]any{"sql": w}
+		if w.ShowGrant {
+			text += "\n\nRun this grant in SSMS as an admin (the Blackbox never runs it for you):\n" + grantScript
+			extra["grantScript"] = grantScript
+		}
+		return ans.ok(text, extra)
 	case "config-show":
 		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
 		if err != nil {
@@ -549,6 +648,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		}
 		states := cfg.CollectorStates()
 		return ans.ok(configShowText(cfg, states), map[string]any{"config": cfg, "collectors": states})
+	case "set-redis-password", "clear-redis-password":
+		return runRedisPassword(cmd, paths.ConfigPath, d, ans)
 	case "snapshot":
 		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
 		if err != nil {
