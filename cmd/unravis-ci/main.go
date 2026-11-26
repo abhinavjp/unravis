@@ -68,6 +68,10 @@ func realMain(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return cmdExclusive(ctx, args[1:], stdout, stderr, environ)
 	case "fallback":
 		return cmdFallback(ctx, args[1:], stdout, stderr, environ)
+	case "hold":
+		return cmdHold(args[1:], stdout, stderr, environ)
+	case "activity":
+		return cmdActivity(args[1:], stdout, stderr, environ)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return exitOK
@@ -104,8 +108,13 @@ func usage(w io.Writer) {
   unravis-ci compare [--repo owner/name] [--state DIR] [--limit N] [--json] [--workflow-for base=file.yml]... [--context file.yml=name]...
   unravis-ci claims [--repo owner/name] [--clean]
   unravis-ci fallback <pr> [--repo owner/name] [--dry-run] [--workflow-for base=file.yml]...
+  unravis-ci hold add --project P|--all --until T --reason R [--from T] [--owner O] [--actor A] [--state-dir DIR] [--json]
+  unravis-ci hold lift <id> [--reason R] [--by NAME] [--actor A] [--state-dir DIR] [--json]
+  unravis-ci hold list [--all] [--project P] [--state-dir DIR] [--json]
+  unravis-ci hold check [--project P] [--state-dir DIR] [--json]   (exit 5 while a hold is active)
+  unravis-ci activity [--actor ui|cli|claude] [--limit N] [--state-dir DIR] [--json]
   unravis-ci version
-exit codes: 0 pass, 1 workflow failed, 2 usage or I/O error, 3 unsupported (4 stopped and 5 held are reserved)
+exit codes: 0 pass, 1 workflow failed, 2 usage or I/O error, 3 unsupported, 5 held by a hold (4 stopped is reserved)
 `)
 }
 

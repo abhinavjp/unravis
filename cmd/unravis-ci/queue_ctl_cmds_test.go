@@ -272,7 +272,7 @@ func TestReservedExitCodesAreDistinctAndUnused(t *testing.T) {
 	}
 	var out strings.Builder
 	usage(&out)
-	if !strings.Contains(out.String(), "4 stopped and 5 held are reserved") {
-		t.Fatal("the usage text must say 4 and 5 are reserved")
+	if !strings.Contains(out.String(), "5 held by a hold (4 stopped is reserved)") {
+		t.Fatal("the usage text must name 5 held and say 4 is reserved")
 	}
 }
