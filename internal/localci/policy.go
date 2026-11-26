@@ -202,7 +202,7 @@ func without(list []string, m string) []string {
 // LoadPolicy reads the policy of a state folder. A missing file is an empty policy (any machine everywhere).
 func LoadPolicy(stateDir string) (*Policy, error) {
 	var b []byte
-	err := retryFS(func() (e error) { b, e = os.ReadFile(PolicyPath(stateDir)); return e }) //nolint:gosec // the policy file of the state folder
+	err := retryFS(func() (e error) { b, e = os.ReadFile(PolicyPath(stateDir)); return e })
 	if errors.Is(err, fs.ErrNotExist) {
 		return &Policy{V: PolicyVersion, Projects: map[string]ProjectPolicy{}}, nil
 	}
