@@ -3,3 +3,7 @@ Copyright 2026 the Unravis authors
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 It includes third-party software under their own licences (BSD, MIT and Apache-2.0).
+
+Sandbox worker (cmd/unravis-sandbox): includes QuickJS-ng (MIT, Copyright Fabrice Bellard, Charlie Gordon and the quickjs-ng contributors),
+the wazero WebAssembly runtime (Apache-2.0, Copyright the wazero authors) and the wasi-libc C library from wasi-sdk (Apache-2.0 with LLVM
+exceptions, MIT and BSD parts), compiled into the embedded qjs.wasm. See tools/codemode/BUILD-WASM.md.
