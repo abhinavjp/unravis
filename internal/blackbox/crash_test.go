@@ -1,6 +1,7 @@
 package blackbox
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +21,7 @@ const (
 // crashChild is the test binary acting as a crashing recorder: it turns the
 // capture on exactly as RunHost does, then panics without recovering.
 func crashChild(folder string) {
-	defer startCrashCapture(folder, func(string, ...any) {}).CloseUnlessPanic()
+	defer startCrashCapture(folder, func(f string, a ...any) { fmt.Fprintf(os.Stderr, "crash record: "+f+"\n", a...) }).CloseUnlessPanic()
 	panic("collector failed: password=" + crashPlanted)
 }
 
@@ -92,7 +93,8 @@ func crashReportedOnce(t *testing.T, folder string, restart func(t *testing.T, f
 	}
 	pend, _ := filepath.Glob(filepath.Join(CrashDir(folder), "*.pending"))
 	if len(pend) != 1 {
-		t.Fatalf("expected one raw dump, got %v", pend)
+		all, _ := filepath.Glob(filepath.Join(CrashDir(folder), "*"))
+		t.Fatalf("expected one raw dump, got %v (crash folder holds %v)\nchild output:\n%s", pend, all, out)
 	}
 	old := time.Now().Add(-time.Minute) // past the grace
 	if err := os.Chtimes(pend[0], old, old); err != nil {
