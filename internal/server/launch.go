@@ -16,6 +16,7 @@ const launchPath = "/launch"
 
 // LaunchTargets are the screens a start link may open straight away (/launch?c=...&to=updates). The page shows nothing else.
 var LaunchTargets = map[string]bool{"updates": true, "whatsnew": true, "blackbox": true}
+
 const launchStylePath = "/launch.css"
 
 // launchState holds the pending launch code. The code is random, valid once and

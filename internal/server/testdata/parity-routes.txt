@@ -1,0 +1,181 @@
+GET /	ui-only	window or tray only
+HEAD /	ui-only	window or tray only
+POST /api/activity	cli	audit.activity
+POST /api/analyze	ui-only	undecided, no plan item yet
+GET /api/blackbox	planned	OPS-14
+POST /api/blackbox	ui-only	holds a secret
+POST /api/blackbox/pack	planned	OPS-05
+POST /api/blackbox/test	ui-only	holds a secret
+GET /api/blackbox/this-pc	planned	OPS-05
+POST /api/blackbox/this-pc/apply	planned	OPS-05
+GET /api/blackbox/this-pc/drives	ui-only	window only, wizard pickers
+GET /api/blackbox/this-pc/folders	ui-only	window only, wizard pickers
+POST /api/blackbox/this-pc/install	planned	OPS-05
+POST /api/blackbox/this-pc/remove	planned	OPS-05
+POST /api/blackbox/this-pc/snapshot	planned	OPS-05
+POST /api/blackbox/this-pc/sql/login/clear	ui-only	holds a secret
+POST /api/blackbox/this-pc/sql/setup	ui-only	holds a secret
+POST /api/blackbox/this-pc/start	planned	OPS-05
+POST /api/blackbox/this-pc/stop	planned	OPS-05
+GET /api/blackbox/this-pc/targets	ui-only	window only, wizard pickers
+POST /api/blackbox/this-pc/update	planned	OPS-08
+POST /api/blackbox/validate	planned	OPS-14
+DELETE /api/blackbox/{id}	planned	OPS-14
+POST /api/blackbox/{id}/check	planned	OPS-14
+GET /api/blackbox/{id}/diagnostics	planned	OPS-14
+POST /api/blackbox/{id}/host-reading	planned	OPS-14
+PUT /api/blackbox/{id}/key	ui-only	holds a secret
+POST /api/blackbox/{id}/reveal-key	ui-only	holds a secret
+POST /api/blackbox/{id}/series	planned	OPS-14
+POST /api/breakdown	cli	audit.breakdown
+POST /api/call-trace	planned	OPS-13
+GET /api/cases	cli	cases.list
+POST /api/cases	planned	OPS-11
+DELETE /api/cases/erased/{id}	ui-only	undecided, no plan item yet
+GET /api/cases/orphan-files	ui-only	undecided, no plan item yet
+POST /api/cases/restore	ui-only	undecided, no plan item yet
+DELETE /api/cases/{id}	ui-only	undecided, no plan item yet
+GET /api/cases/{id}	cli	cases.show
+DELETE /api/cases/{id}/archive	planned	OPS-11
+GET /api/cases/{id}/archive	planned	OPS-11
+POST /api/cases/{id}/archive	planned	OPS-11
+POST /api/cases/{id}/call-trace	planned	OPS-13
+GET /api/cases/{id}/checklist	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/checklist	ui-only	undecided, no plan item yet
+DELETE /api/cases/{id}/checklist/{iid}	ui-only	undecided, no plan item yet
+PUT /api/cases/{id}/checklist/{iid}	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/close	planned	OPS-11
+GET /api/cases/{id}/collect	planned	OPS-14
+POST /api/cases/{id}/discover/imports	planned	OPS-12
+GET /api/cases/{id}/environments	ui-only	undecided, no plan item yet
+PUT /api/cases/{id}/environments	ui-only	undecided, no plan item yet
+GET /api/cases/{id}/events	planned	OPS-14
+POST /api/cases/{id}/export	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/free	ui-only	undecided, no plan item yet
+GET /api/cases/{id}/health	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/health/run	ui-only	undecided, no plan item yet
+GET /api/cases/{id}/imports	planned	OPS-12
+POST /api/cases/{id}/imports	planned	OPS-12
+POST /api/cases/{id}/imports/check	planned	OPS-12
+DELETE /api/cases/{id}/imports/jobs/{job}	planned	OPS-12
+GET /api/cases/{id}/imports/jobs/{job}	planned	OPS-12
+POST /api/cases/{id}/investigation	planned	OPS-13
+GET /api/cases/{id}/key	ui-only	holds a secret
+POST /api/cases/{id}/key/change	ui-only	holds a secret
+POST /api/cases/{id}/key/lock	ui-only	holds a secret
+POST /api/cases/{id}/key/remove	ui-only	holds a secret
+POST /api/cases/{id}/key/set	ui-only	holds a secret
+POST /api/cases/{id}/key/unlock	ui-only	holds a secret
+GET /api/cases/{id}/lanes	planned	OPS-13
+POST /api/cases/{id}/lanes/mongo	planned	OPS-13
+POST /api/cases/{id}/lanes/sql	planned	OPS-13
+GET /api/cases/{id}/ledger	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/ledger	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/ledger/copy-shared	ui-only	undecided, no plan item yet
+DELETE /api/cases/{id}/ledger/{hid}	ui-only	undecided, no plan item yet
+PUT /api/cases/{id}/ledger/{hid}	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/ledger/{hid}/reuse	ui-only	undecided, no plan item yet
+GET /api/cases/{id}/mongo-sources	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/reopen	planned	OPS-11
+POST /api/cases/{id}/report	ui-only	undecided, no plan item yet
+GET /api/cases/{id}/resource	planned	OPS-14
+POST /api/cases/{id}/restore-as-new	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/restore-in-place	ui-only	undecided, no plan item yet
+PUT /api/cases/{id}/retries	planned	OPS-12
+DELETE /api/cases/{id}/retries/{retryId}	planned	OPS-12
+POST /api/cases/{id}/retries/{retryId}/retry	planned	OPS-12
+DELETE /api/cases/{id}/sampler	ui-only	undecided, no plan item yet
+GET /api/cases/{id}/sampler	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/sampler	ui-only	undecided, no plan item yet
+GET /api/cases/{id}/series	planned	OPS-14
+GET /api/cases/{id}/sources	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/sources	ui-only	undecided, no plan item yet
+DELETE /api/cases/{id}/sources/{sourceId}	ui-only	undecided, no plan item yet
+PUT /api/cases/{id}/sources/{sourceId}	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/timeline	planned	OPS-13
+POST /api/cases/{id}/tracing	planned	OPS-13
+DELETE /api/cases/{id}/verify	ui-only	undecided, no plan item yet
+GET /api/cases/{id}/verify	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/verify	ui-only	undecided, no plan item yet
+GET /api/cases/{id}/views	ui-only	undecided, no plan item yet
+POST /api/cases/{id}/views	ui-only	undecided, no plan item yet
+DELETE /api/cases/{id}/views/{vid}	ui-only	undecided, no plan item yet
+GET /api/cases/{id}/workspace	ui-only	undecided, no plan item yet
+PUT /api/cases/{id}/workspace	ui-only	undecided, no plan item yet
+POST /api/client-log	ui-only	client log
+POST /api/code/run	cli	code.run
+POST /api/code/runs/{id}/cancel	planned	OPS-15
+GET /api/code/settings	planned	OPS-15
+PUT /api/code/settings	planned	OPS-15
+GET /api/code/types	cli	code.types
+GET /api/connections/recent	ui-only	connection credential
+DELETE /api/connections/recent/{id}	ui-only	connection credential
+POST /api/connections/remember	ui-only	connection credential
+POST /api/connections/test	ui-only	connection credential
+GET /api/daily	ui-only	undecided, no plan item yet
+GET /api/discover/capabilities	planned	OPS-06
+POST /api/discover/scans	planned	OPS-06
+DELETE /api/discover/scans/{scan}	planned	OPS-06
+GET /api/discover/scans/{scan}	planned	OPS-06
+POST /api/discover/scans/{scan}/findings/{finding}/locate	planned	OPS-06
+GET /api/endpoint-daily	ui-only	undecided, no plan item yet
+POST /api/export	ui-only	undecided, no plan item yet
+POST /api/export/confirm	ui-only	undecided, no plan item yet
+POST /api/export/preview	ui-only	undecided, no plan item yet
+GET /api/grant-scripts	ui-only	undecided, no plan item yet
+GET /api/hosts	planned	OPS-15
+PUT /api/hosts	planned	OPS-15
+GET /api/hourgrid	ui-only	undecided, no plan item yet
+GET /api/importers	planned	OPS-12
+GET /api/info	cli	version
+POST /api/keeper/migrate	ui-only	holds a secret
+POST /api/keeper/remove-old	ui-only	holds a secret
+GET /api/keeper/status	ui-only	holds a secret
+GET /api/ledger	ui-only	undecided, no plan item yet
+POST /api/ledger	ui-only	undecided, no plan item yet
+DELETE /api/ledger/{id}	ui-only	undecided, no plan item yet
+PUT /api/ledger/{id}	ui-only	undecided, no plan item yet
+POST /api/ledger/{id}/reuse	ui-only	undecided, no plan item yet
+POST /api/local/open-folder	ui-only	local folder open
+GET /api/logs/info	planned	OPS-03
+POST /api/master-key/lock	ui-only	holds a secret
+POST /api/master-key/reset-damaged	ui-only	holds a secret
+POST /api/master-key/rewrap	ui-only	holds a secret
+POST /api/master-key/setup	ui-only	holds a secret
+GET /api/master-key/status	ui-only	holds a secret
+POST /api/master-key/unlock	ui-only	holds a secret
+GET /api/mcp/evidence/{alias}	ui-only	undecided, no plan item yet
+GET /api/mcp/profiles	planned	OPS-15
+POST /api/mcp/profiles/{id}/{action}	planned	OPS-15
+POST /api/mcp/resume	planned	OPS-15
+POST /api/mcp/stop	planned	OPS-15
+POST /api/patterns	ui-only	undecided, no plan item yet
+POST /api/payload	ui-only	payload
+POST /api/probe/reachable	ui-only	connection credential
+POST /api/record	ui-only	payload
+POST /api/requests	cli	audit.requests
+POST /api/slowest	cli	audit.slowest
+GET /api/sources	cli	sources.list
+POST /api/sources	ui-only	undecided, no plan item yet
+DELETE /api/sources/{id}	ui-only	undecided, no plan item yet
+GET /api/sources/{id}/coverage	ui-only	undecided, no plan item yet
+GET /api/sources/{id}/fields	ui-only	undecided, no plan item yet
+GET /api/sources/{id}/schema	ui-only	undecided, no plan item yet
+GET /api/sources/{id}/stats	ui-only	undecided, no plan item yet
+GET /api/sql-connections	ui-only	connection credential
+POST /api/sql-connections	ui-only	connection credential
+POST /api/sql-connections/access	ui-only	connection credential
+POST /api/sql-connections/test	ui-only	connection credential
+DELETE /api/sql-connections/{id}	ui-only	connection credential
+POST /api/ui/presence	ui-only	ui presence
+POST /api/update-check	planned	OPS-04
+POST /api/update/download	planned	OPS-07
+POST /api/update/install	planned	OPS-07
+POST /api/update/result/dismiss	planned	OPS-07
+PUT /api/update/settings	planned	OPS-15
+GET /api/update/status	planned	OPS-04
+GET /api/version	cli	version
+GET /launch	ui-only	window or tray only
+GET /launch.css	ui-only	window or tray only
+HEAD /launch.css	ui-only	window or tray only
+GET /api/session-proof	ui-only	window or tray only

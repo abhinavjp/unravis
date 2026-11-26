@@ -31,10 +31,11 @@ type installState struct {
 	info       InstallInfo
 	m          *update.Manifest // the verified manifest this download belongs to
 	cancel     context.CancelFunc
-	running    bool      // a download is in progress
-	busy       bool      // an Install is in progress
-	launchedAt time.Time // when the last setup launch succeeded; a result note older than this belongs to an earlier run
-	gen        int       // bumped when a download starts or is thrown away; an old download's result is then ignored
+	running    bool          // a download is in progress
+	busy       bool          // an Install is in progress
+	launchedAt time.Time     // when the last setup launch succeeded; a result note older than this belongs to an earlier run
+	gen        int           // bumped when a download starts or is thrown away; an old download's result is then ignored
+	note       *UpdateNotice // set when a launch timed out (expireStaleLaunch); cleared on dismiss, a new download or a new launch
 }
 
 // EnableInstall lets this Updater download and hand off updates. dir is the download folder; launch starts the installer.
@@ -145,6 +146,7 @@ func (u *Updater) StartDownload() error {
 	gen := u.inst.gen
 	u.inst.cancel, u.inst.running, u.inst.m = cancel, true, m
 	u.inst.info = InstallInfo{State: "downloading", Version: m.Version, Total: a.Size}
+	u.inst.note = nil
 	u.inst.mu.Unlock()
 	u.mu.Unlock()
 	u.touchPower()
@@ -205,7 +207,7 @@ func (u *Updater) install(byPerson bool) error {
 		u.inst.mu.Unlock()
 		return errNotReady
 	}
-	if u.silent != nil && u.inst.info.State == "launched" && time.Since(u.inst.launchedAt) < startingGrace {
+	if u.silent != nil && u.inst.info.State == "launched" && u.now().Sub(u.inst.launchedAt) < startingGrace {
 		u.inst.mu.Unlock()
 		return errStarting // a second setup now could start the app twice
 	}
@@ -248,7 +250,8 @@ func (u *Updater) install(byPerson bool) error {
 	}
 	u.setInstall(gen, InstallInfo{State: "launched", Version: m.Version, Done: got.Size, Total: got.Size})
 	u.inst.mu.Lock()
-	u.inst.launchedAt = time.Now()
+	u.inst.launchedAt = u.now()
+	u.inst.note = nil
 	u.inst.mu.Unlock()
 	return nil
 }

@@ -20,8 +20,8 @@ import (
 // What the tray says about updates: the tooltip, the menu lines, the attention dot and the pop-ups. The rules are plain functions of the
 // last update status, so each state can be tested without a window. Design: docs/desktop/TRAY-AND-UPDATE-NOTICES.md.
 
-// trayRefreshEvery is how often the cached update status is re-read (Status reads a small file, so it is kept off the tray thread).
-const trayRefreshEvery = 5 * time.Second
+// trayRefreshEvery is how often the cached update status is re-read (Status reads a small file, so it is kept off the tray thread; 15 s keeps idle wakeups low).
+const trayRefreshEvery = 15 * time.Second
 
 // trayAct is what pressing the update line does.
 type trayAct int
@@ -188,6 +188,7 @@ func (c *updateCache) check(run func(ctx context.Context) server.UpdateStatus) {
 
 // run refreshes the cache every `every` until ctx ends, handing each fresh status to onStatus.
 func (c *updateCache) run(ctx context.Context, every time.Duration, onStatus func(server.UpdateStatus)) {
+	// idle-ok: one small file read every 15 s so the tray tooltip, dot and notices follow an unattended update; the tray app is the only caller.
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -249,7 +250,7 @@ const toldKeep = 12
 
 func openToldStore(path string) *toldStore {
 	s := &toldStore{path: path}
-	if b, err := os.ReadFile(path); err == nil && len(b) < 8<<10 {
+	if b, err := os.ReadFile(path); err == nil && len(b) < 8<<10 { //nolint:gosec // the path is built from the user cache folder, not from input
 		var f struct {
 			Keys []string `json:"keys"`
 		}

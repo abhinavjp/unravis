@@ -331,7 +331,7 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 	// 4. run
 	o.logf("running %s on the merge of %s into %s (%s)", file, shortSHA(wt.HeadSHA), pr.BaseRef, shortSHA(wt.Commit))
 	run, err := Run(ctx, RunOptions{
-		Workflow: wf, Config: cfg, Workdir: wt.Path, StateDir: runDir, GitHub: prGitHubContext(o.Repo, pr, wt, wf.Name, start),
+		Workflow: wf, Config: cfg, Workdir: wt.Path, StateDir: runDir, LockDir: filepath.Join(o.Store.Dir, "locks"), GitHub: prGitHubContext(o.Repo, pr, wt, wf.Name, start),
 		Vars: o.Vars, Env: env, Slots: o.Slots, Log: o.Log, Redact: o.Redact, Now: o.Now, Progress: o.Progress,
 		JobTree: func(c context.Context, name string) (string, func(), error) {
 			jt, err := co.JobTree(c, wt, name, trust.FromBase, o.Protect)
