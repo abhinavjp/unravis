@@ -113,9 +113,10 @@ func (c *caseState) startTimelineBuild() {
 	}()
 }
 
-// stopTimelineBuild cancels the case's background build, if it has one open in this
-// process, and waits for it to let go (at most timelineBuildStopWait, or until ctx
-// ends). The lifecycle moves that need the case idle call it first.
+// stopTimelineBuild cancels the case's background builds (the timeline indexes and
+// the series-key indexes), if it has any open in this process, and waits for them
+// to let go (at most timelineBuildStopWait, or until ctx ends). The lifecycle moves
+// that need the case idle call it first.
 func (s *Store) stopTimelineBuild(ctx context.Context, id casestore.CaseID) {
 	s.mu.Lock()
 	st := s.open[id]
@@ -124,18 +125,26 @@ func (s *Store) stopTimelineBuild(ctx context.Context, id casestore.CaseID) {
 		return
 	}
 	st.mu.Lock()
-	b := st.bg
-	st.mu.Unlock()
-	if b == nil {
-		return
+	var builds []*tlBuild
+	for _, b := range []*tlBuild{st.bg, st.attrBg} {
+		if b != nil {
+			builds = append(builds, b)
+		}
 	}
-	b.cancel()
+	st.mu.Unlock()
 	t := time.NewTimer(timelineBuildStopWait)
 	defer t.Stop()
-	select {
-	case <-b.done:
-	case <-ctx.Done():
-	case <-t.C:
+	for _, b := range builds {
+		b.cancel()
+	}
+	for _, b := range builds {
+		select {
+		case <-b.done:
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			return
+		}
 	}
 }
 

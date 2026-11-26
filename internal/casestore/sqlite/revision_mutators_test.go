@@ -183,7 +183,7 @@ var revisionReaders = map[string]bool{
 	"Imports": true, "Events": true, "BucketCounts": true, "Each": true, "CookiePolicy": true,
 	"DiscoverKey": true, "DiscoverMark": true, "DiscoverReads": true, "HealthRuns": true, "LedgerBlob": true,
 	"SavedViews": true, "ChecklistItems": true, "Retries": true, "Revision": true, "Envs": true,
-	"Sources": true, "WorkspaceBlob": true,
+	"Sources": true, "WorkspaceBlob": true, "Preparing": true,
 	"ListRuns": true, "GetRun": true, "RunCalls": true, "CallResult": true, "ChainRows": true, "VerifyCodeChain": true, "CodeRunStats": true,
 }
 
