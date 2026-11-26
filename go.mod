@@ -12,6 +12,7 @@ require (
 	github.com/segmentio/encoding v0.5.4
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
+	github.com/tetratelabs/wazero v1.12.0
 	go.mongodb.org/mongo-driver v1.17.10
 	go.mongodb.org/mongo-driver/v2 v2.10.1
 	go.yaml.in/yaml/v3 v3.0.5
