@@ -33,9 +33,9 @@ type rawLocalConfig struct {
 }
 
 type rawJobOver struct {
-	Skip     string                       `yaml:"skip"`
-	Accepted bool                         `yaml:"accepted"`
-	StepEnv  map[string]map[string]string `yaml:"step-env"`
+	Skip      string                       `yaml:"skip"`
+	Accepted  bool                         `yaml:"accepted"`
+	StepEnv   map[string]map[string]string `yaml:"step-env"`
 	Exclusive string                       `yaml:"exclusive"`
 }
 
