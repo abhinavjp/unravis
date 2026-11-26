@@ -83,6 +83,7 @@ func FixedPaths() []string {
 		`C:\Program Files\Microsoft SQL Server`,
 		`C:\Program Files\Redis\redis.windows.conf`,
 		`C:\Program Files\Redis\Logs`,
+		`C:\Program Files\Memurai\memurai.conf`,
 		`C:\ProgramData\Salt Project\Salt\var\log\salt\minion`,
 		`C:\ProgramData\Salt Project\Salt\conf\minion`,
 	}
