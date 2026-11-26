@@ -12,17 +12,6 @@ api-audit-explorer/internal/blackbox.TestReadVerifiedSettingsRefusalStages
 api-audit-explorer/internal/blackbox.TestReadVerifiedSettingsRefusesAJunctionLeaf
 api-audit-explorer/internal/blackbox.TestReadVerifiedSettingsRefusesWhatThePathChecksRefuse
 api-audit-explorer/internal/blackbox.TestRefusalWordsDoNotCarryThePath
-api-audit-explorer/internal/casestore/sqlite.TestLockWaitHonoursContext
-api-audit-explorer/internal/cliattach.TestInstallDir
-api-audit-explorer/internal/clicore/cmdtree.TestDoctorWithTheAppRunning
-api-audit-explorer/internal/clicore/cmdtree.TestInstallDirRule
-api-audit-explorer/internal/clicore/cmdtree.TestLegacyOptionsAnywhere
-api-audit-explorer/internal/codemode/bindings.TestGoldenDts
-api-audit-explorer/internal/codemode/tsgen.TestGoldenFixture
-api-audit-explorer/internal/mcp.TestOutputSchemasGolden
-api-audit-explorer/internal/mcp.TestResultShapesAdditive
-api-audit-explorer/internal/mcpsrv.TestOpenSetsFileModeAndFolder
-api-audit-explorer/internal/mcpsrv.TestStoreFilesAndFolderAreOwnerOnly
 api-audit-explorer/internal/setup.TestAPlainWriteInTheAdminOnlyFolderIsJudgedByItsRealOwner
 api-audit-explorer/internal/setup.TestReadFileProvenHoldsTheFileWhileReading
 api-audit-explorer/internal/setup.TestReadFileProvenReadsAnAdminOnlyFile
@@ -45,5 +34,4 @@ api-audit-explorer/internal/setup.TestRecoverJournalOnRealNTFSRefusesWhatIsNotPr
 api-audit-explorer/internal/setup.TestSetSDDLStillWorksOnAFolder
 api-audit-explorer/internal/setup.TestTheRealJournalWriterMakesAFileTheRealReaderAccepts
 api-audit-explorer/internal/update.TestSilentNoUAC
-api-audit-explorer/cmd/audit-explorer.TestServerStartStopLeavesNoGoroutines
 api-audit-explorer/internal/pipesec.TestOtherLogonDenied
