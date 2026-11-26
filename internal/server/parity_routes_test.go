@@ -88,7 +88,7 @@ func checkParity(routeKeys []string, fileText string) []string {
 }
 
 func TestRoutesHaveParityEntry(t *testing.T) {
-	data, err := os.ReadFile(parityFile)
+	data, err := os.ReadFile(parityFile) //nolint:gosec // a fixed testdata file
 	if err != nil {
 		t.Fatalf("read parity table: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestRoutesHaveParityEntry(t *testing.T) {
 
 // TestCheckParityMutants proves the checker notices each kind of defect, so the table test cannot pass by accident.
 func TestCheckParityMutants(t *testing.T) {
-	data, err := os.ReadFile(parityFile)
+	data, err := os.ReadFile(parityFile) //nolint:gosec // a fixed testdata file
 	if err != nil {
 		t.Fatalf("read parity table: %v", err)
 	}
