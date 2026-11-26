@@ -304,8 +304,8 @@ func dirSize(ctx context.Context, dir string) (int64, time.Time) {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
 		}
-		if err != nil {
-			return nil
+		if err != nil || d == nil {
+			return nil //nolint:nilerr // an entry that cannot be read is left out of the size, the walk goes on
 		}
 		if info, ierr := d.Info(); ierr == nil {
 			if info.Mode().IsRegular() {
