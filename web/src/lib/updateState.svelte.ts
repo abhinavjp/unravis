@@ -2,7 +2,7 @@ import { api } from './api';
 import { updatePreviewNow } from './updateCheck';
 import type { UpdateCheckReply } from './types';
 import { visiblePoll } from './visibility';
-import { GONE_AFTER_FAILURES, GONE_CHECK_MS, lostServer } from './updateLink';
+import { GONE_AFTER_FAILURES, GONE_CHECK_MS, HICCUP_NOTE, lostServer } from './updateLink';
 
 // The update status shown across the app: the "Version X is available" bar and the Help panel's Updates section.
 // The program checks on its own timer; this only reads the last answer from the local server (no network call), when the page
@@ -23,11 +23,11 @@ function readDismissed(): string {
 export function setUpdateReply(reply: UpdateCheckReply | null): void { updates.reply = reply; }
 
 /** Whether this page has lost the app: it was restarted (an update) and now answers on another address, or not at all. */
-export const appLink = $state<{ gone: boolean }>({ gone: false });
+export const appLink = $state<{ gone: boolean; recheckFailed: boolean }>({ gone: false, recheckFailed: false });
 let failedReads = 0;
 
 /** Notes that the app answered: whatever was thought lost is back. */
-function appAnswered(): void { failedReads = 0; appLink.gone = false; }
+function appAnswered(): void { failedReads = 0; appLink.gone = false; appLink.recheckFailed = false; }
 
 /** Notes a read that failed. A page that is waiting for the restart (the update was launched) gives up after a few misses. */
 function readFailed(cause: unknown): void {
@@ -39,6 +39,8 @@ function readFailed(cause: unknown): void {
 function markGone(): void {
   appLink.gone = true;
   installing.error = '';
+  stopDownloadPoll?.();
+  stopDownloadPoll = undefined;
   stopLaunchPoll?.();
   stopLaunchPoll = undefined;
 }
@@ -60,6 +62,7 @@ export async function refreshUpdateStatus(): Promise<void> {
 export async function checkAppAgain(): Promise<void> {
   failedReads = 0;
   await refreshUpdateStatus();
+  appLink.recheckFailed = appLink.gone; // still no answer: the note says so
 }
 
 /** "Not now": hides the bar for this version. A newer version shows it again. */
@@ -118,6 +121,7 @@ export async function startUpdateDownload(): Promise<void> {
   installing.error = '';
   try {
     const reply = await api.updateDownload(updatePreviewNow());
+    appAnswered();
     if (reply && typeof reply.status === 'string') updates.reply = reply;
     if (reply?.install?.state === 'downloading') pollWhileDownloading();
   } catch (cause) { await pressFailed(cause); } finally { installing.busy = false; }
@@ -130,12 +134,23 @@ export async function startUpdateInstall(): Promise<void> {
   installing.error = '';
   try {
     const reply = await api.updateInstall(updatePreviewNow());
+    appAnswered();
     if (reply && typeof reply.status === 'string') updates.reply = reply;
+    if (reply?.install?.state === 'launched') pollWhileLaunched(); // look for the restart now, not only after a page reload
   } catch (cause) { await pressFailed(cause); } finally { installing.busy = false; }
 }
 
 async function pressFailed(cause: unknown): Promise<void> {
-  if (lostServer(cause)) { markGone(); return; }
+  if (lostServer(cause)) {
+    // One more look before saying so: a single lost request on a live app is only a hiccup.
+    try {
+      const reply = await api.updateStatus(updatePreviewNow());
+      appAnswered();
+      if (reply && typeof reply.status === 'string') updates.reply = reply;
+      installing.error = HICCUP_NOTE;
+    } catch (again) { if (lostServer(again)) markGone(); else installing.error = failureText(again); }
+    return;
+  }
   installing.error = failureText(cause);
   await refreshUpdateStatus();
 }

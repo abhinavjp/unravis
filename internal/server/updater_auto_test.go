@@ -364,3 +364,28 @@ func TestApplyNowUsesTheReopenLauncherAndAutoDoesNot(t *testing.T) {
 		t.Fatalf("apply now: silent %d, reopen %d", applied.Load(), reopened.Load())
 	}
 }
+
+func TestSecondApplyNowRightAfterALaunchIsRefused(t *testing.T) {
+	rg, _ := autoRig(t)
+	u := rg.u
+	var reopened atomic.Int32
+	u.EnableSilentReopen(func(path, sha, ver string) error { reopened.Add(1); return nil })
+	u.inst.mu.Lock()
+	u.inst.info.State = "ready"
+	u.inst.mu.Unlock()
+	if err := u.Install(); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Install(); err != errStarting {
+		t.Fatalf("second press: %v", err)
+	}
+	if reopened.Load() != 1 {
+		t.Fatalf("setup started %d times", reopened.Load())
+	}
+	u.inst.mu.Lock()
+	u.inst.launchedAt = time.Now().Add(-time.Minute)
+	u.inst.mu.Unlock()
+	if err := u.Install(); err != nil || reopened.Load() != 2 {
+		t.Fatalf("a press a minute later must start again: %v, %d", err, reopened.Load())
+	}
+}

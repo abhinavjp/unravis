@@ -66,6 +66,7 @@ var (
 	errRecheckHeld    = errors.New("The publisher has put this update on hold. Nothing was started.")
 	errRecheckOffline = errors.New("Could not reach the update feed to confirm this update is still safe. Nothing was started; it will try again.")
 	errRecheckRefused = errors.New("The update feed's answer did not pass its checks, so this update was not started.")
+	errStarting       = errors.New("The update is already starting. Give it a few seconds; Unravis closes and starts again by itself.")
 	errFileChange     = errors.New("The downloaded file changed after it was checked. It was not started. Download it again.")
 )
 
@@ -204,6 +205,10 @@ func (u *Updater) install(byPerson bool) error {
 		u.inst.mu.Unlock()
 		return errNotReady
 	}
+	if u.silent != nil && u.inst.info.State == "launched" && time.Since(u.inst.launchedAt) < startingGrace {
+		u.inst.mu.Unlock()
+		return errStarting // a second setup now could start the app twice
+	}
 	u.inst.busy = true
 	gen := u.inst.gen
 	u.inst.mu.Unlock()
@@ -255,6 +260,9 @@ func (u *Updater) setInstall(gen int, info InstallInfo) {
 		u.inst.info = info
 	}
 }
+
+// startingGrace is how long after a silent setup launch another press is refused (no window to close, so no "closed it without updating" case): the first setup is still closing the app.
+const startingGrace = 20 * time.Second
 
 // recheckTimeout bounds the last look at the feed before a setup is started.
 const recheckTimeout = 45 * time.Second

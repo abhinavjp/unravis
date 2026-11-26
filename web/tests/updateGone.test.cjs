@@ -93,3 +93,56 @@ test('the app answers on the same page after all (the setup was closed): Apply n
     assert.equal(h.mod.installing.error, '');
   } finally { h.done(); }
 });
+
+test('Apply now succeeds, then the app vanishes: the page notices within a few seconds without a reload', async (t) => {
+  let alive = true;
+  const h = setup(t, {
+    updateInstall: async () => launched,
+    updateStatus: async () => { if (!alive) throw netError(); return launched; },
+  });
+  try {
+    await h.mod.startUpdateInstall();
+    alive = false;
+    await h.tick(3000);
+    assert.equal(h.mod.appLink.gone, false, 'one lost read is a hiccup');
+    await h.tick(3000);
+    assert.equal(h.mod.appLink.gone, true);
+  } finally { h.done(); }
+});
+
+test('one lost request on a live app is a hiccup: a plain retry note, not "gone"', async (t) => {
+  const h = setup(t, { updateInstall: async () => { throw netError(); }, updateStatus: async () => ({ ...launched, install: { state: 'ready', version: '1.3.0' } }) });
+  try {
+    await h.mod.startUpdateInstall();
+    assert.equal(h.mod.appLink.gone, false);
+    assert.equal(h.mod.installing.error, 'Could not reach Unravis just now. Try again.');
+  } finally { h.done(); }
+});
+
+test('Check again with no answer says so; an answer clears it', async (t) => {
+  let alive = false;
+  const h = setup(t, { updateInstall: async () => { throw netError(); }, updateStatus: async () => { if (!alive) throw netError(); return launched; } });
+  try {
+    await h.mod.startUpdateInstall();
+    assert.equal(h.mod.appLink.gone, true);
+    assert.equal(h.mod.appLink.recheckFailed, false);
+    await h.mod.checkAppAgain();
+    assert.equal(h.mod.appLink.recheckFailed, true);
+    alive = true;
+    await h.mod.checkAppAgain();
+    assert.equal(h.mod.appLink.recheckFailed, false);
+    assert.equal(h.mod.appLink.gone, false);
+  } finally { h.done(); }
+});
+
+test('a successful press clears an earlier lost read, so one later miss is not enough', async (t) => {
+  let fail = true;
+  const h = setup(t, { updateInstall: async () => launched, updateStatus: async () => { if (fail) throw netError(); return launched; } });
+  try {
+    h.mod.updates.reply = launched;
+    await h.mod.refreshUpdateStatus(); // one miss
+    await h.mod.startUpdateInstall(); // answers
+    await h.mod.refreshUpdateStatus(); // another miss
+    assert.equal(h.mod.appLink.gone, false);
+  } finally { h.done(); }
+});
