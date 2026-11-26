@@ -113,6 +113,7 @@ jobs:
           node tools/ci/test-trufflehog-allowlist.mjs
           node tools/ci/test-windows-risk.mjs
           node tools/ci/test-no-real-dialogs.mjs
+          node tools/ci/test-ci-gating.mjs
           node tools/ci/no-real-dialogs.mjs
           node tools/security/check-action-pins.mjs
 
