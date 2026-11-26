@@ -17,7 +17,14 @@ import (
 var parityFile = filepath.Join("testdata", "parity-routes.txt")
 
 // planIDPattern matches a plan item id of the plan: OPS-11, OPS-F1, OPS-S1.
-var planIDPattern = regexp.MustCompile(`^OPS-[A-Z]?\d+$`)
+var planIDPattern = regexp.MustCompile(`^OPS-(0[1-9]|1[0-5]|F[12]|S1)$`)
+
+// maxUndecided is a ratchet: routes marked "undecided" may only go down. A new route cannot hide behind it, because adding
+// one raises the count above this number. When you decide a route, lower this number in the same change.
+const maxUndecided = 59
+
+// weakReason matches a ui-only reason that is not a decision.
+var weakReason = regexp.MustCompile(`(?i)\b(undecided|tbd|todo|unknown|later|maybe)\b`)
 
 // routeKeys lists "METHOD pattern" for every method of every route in the routes table, sorted. The Blackbox routes are in the
 // same table: internal/server/blackbox.go appends them to routes in init, so no route is skipped.
@@ -41,6 +48,7 @@ func checkParity(routeKeys []string, fileText string) []string {
 		have[k] = true
 	}
 	seen := map[string]bool{}
+	undecided := 0
 	var problems []string
 	for i, line := range strings.Split(fileText, "\n") {
 		line = strings.TrimSuffix(line, "\r")
@@ -70,13 +78,21 @@ func checkParity(routeKeys []string, fileText string) []string {
 			if !planIDPattern.MatchString(third) {
 				problems = append(problems, fmt.Sprintf("%s: %q is marked planned but %q is not a plan item id such as OPS-11", where, key, third))
 			}
+		case "undecided":
+			undecided++
 		case "ui-only":
+			if weakReason.MatchString(third) {
+				problems = append(problems, fmt.Sprintf("%s: %q is marked ui-only with a reason that is not a decision: %q", where, key, third))
+			}
 			if third == "" {
 				problems = append(problems, fmt.Sprintf("%s: %q is marked ui-only with no reason", where, key))
 			}
 		default:
-			problems = append(problems, fmt.Sprintf("%s: %q has bad status %q (want cli, planned or ui-only)", where, key, status))
+			problems = append(problems, fmt.Sprintf("%s: %q has bad status %q (want cli, planned, ui-only or undecided)", where, key, status))
 		}
+	}
+	if undecided > maxUndecided {
+		problems = append(problems, fmt.Sprintf("%d routes are undecided, the ratchet allows %d: decide the new route (cli, planned or ui-only)", undecided, maxUndecided))
 	}
 	for _, k := range routeKeys {
 		if !seen[k] {
@@ -140,6 +156,9 @@ func TestCheckParityMutants(t *testing.T) {
 	expect("bad op", checkParity(keys, text+"\nGET /x\tcli\tno.such.op"), "not in clicap.Lookup")
 	expect("bad plan id", checkParity(keys, text+"\nGET /x\tplanned\tsoon"), "not a plan item id")
 	expect("no reason", checkParity(keys, text+"\nGET /x\tui-only\t"), "no reason")
+	expect("weak reason", checkParity(keys, text+"\nGET /x\tui-only\tTBD later"), "not a decision")
+	expect("unknown plan id", checkParity(keys, text+"\nGET /x\tplanned\tOPS-99"), "not a plan item id")
+	expect("ratchet", checkParity(keys, text+"\nGET /x\tundecided\tnew"), "ratchet allows")
 	expect("duplicate", checkParity(keys, text+"\n"+lines[0]), "duplicate entry")
 
 	// Output is sorted, so messages are stable.
