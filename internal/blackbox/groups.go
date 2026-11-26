@@ -109,6 +109,12 @@ func BuildGroups(d GroupDeps) []Group {
 	}
 	var groups []Group
 	for _, name := range names {
+		// "collectors" can switch a source off. A source that must run (the recorder's own health picture) never does:
+		// Validate refuses to switch it off, and a Config that skipped Validate is still held to that here.
+		info, known := CollectorOfGroup(name)
+		if known && !info.Always && !d.Config.CollectorOn(info.ID) {
+			continue
+		}
 		gd := d
 		if tracker != nil {
 			groupName := name
@@ -136,6 +142,9 @@ func BuildGroups(d GroupDeps) []Group {
 			}
 		default:
 			built = g
+		}
+		if known && d.Config.CollectorEvery(info.ID) > time.Duration(d.Config.IntervalSeconds)*time.Second {
+			built = &everyGroup{inner: built, every: d.Config.CollectorEvery(info.ID)}
 		}
 		if tracker != nil {
 			built = &trackedGroup{name: name, tracker: tracker, inner: built}

@@ -215,6 +215,9 @@ type Config struct {
 	// SQL says which SQL checks the SQL service runs. Absent means the standard set.
 	SQL     *SQLSettings `json:"sql,omitempty"`
 	Targets []Target     `json:"targets,omitempty"`
+	// Collectors switches single sources (by catalogue id) on or off and sets how often they run. Absent means every
+	// source runs every sample. It can name only known ids: settings never add a collector.
+	Collectors map[string]CollectorSetting `json:"collectors,omitempty"`
 	// AutoUpdate is left out of a new settings file: the defaults apply (install, every 30 minutes).
 	AutoUpdate *AutoUpdate `json:"autoUpdate,omitempty"`
 }
@@ -395,6 +398,9 @@ func (c Config) Validate() error {
 		if err := c.SQL.validate(); err != nil {
 			return err
 		}
+	}
+	if err := c.validateCollectors(); err != nil {
+		return err
 	}
 	if err := c.Probe.validateTrust(); err != nil {
 		return err

@@ -73,6 +73,8 @@ Commands that change the service (run as administrator):
               --confirm-name <name>  the Blackbox name, required.
 
 Other commands:
+  config show Print the settings in force and every collector with its id, what
+              it reads, and whether it is on. Read-only: changes nothing.
   snapshot    Copy the recordings into <folder>\snapshots\<name>-<date>-<time>.
   run         Record in this window instead of as a service (Ctrl+C to stop).
   vm-probe    Read-only: list which VMware counters this host has and what they
@@ -325,6 +327,14 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	if cmd == "diag-probe" {
 		return runDiagProbe(rest, stdout, stderr, d)
 	}
+	if cmd == "config" {
+		// "config show" is one read-only command; its flags follow it.
+		if len(rest) == 0 || rest[0] != "show" {
+			fmt.Fprintln(stderr, `usage: unravis-blackbox config show [--json] [--config <file>]`)
+			return exitUsage
+		}
+		cmd, rest = "config-show", rest[1:]
+	}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", "", "blackbox.json")
@@ -532,6 +542,13 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 			extra["note"] = res.SQLNote
 		}
 		return ans.ok(text, extra)
+	case "config-show":
+		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
+		if err != nil {
+			return ans.fail(err)
+		}
+		states := cfg.CollectorStates()
+		return ans.ok(configShowText(cfg, states), map[string]any{"config": cfg, "collectors": states})
 	case "snapshot":
 		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
 		if err != nil {
@@ -778,4 +795,21 @@ func runSQLForeground(p blackbox.Paths, d deps, ans answer, stderr io.Writer) in
 		return ans.failSQL(err)
 	}
 	return exitOK
+}
+
+// configShowText is the plain-text answer of "config show": the main limits, then one line per collector.
+func configShowText(cfg blackbox.Config, states []blackbox.CollectorState) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s: every %d s, keeps %d days, at most %.1f GB, folder %s\n", cfg.Name, cfg.IntervalSeconds, cfg.KeepDays, cfg.MaxGB, cfg.Folder)
+	for _, s := range states {
+		state := "on"
+		switch {
+		case s.Always:
+			state = "on (always)"
+		case !s.On:
+			state = "off"
+		}
+		fmt.Fprintf(&b, "  %-18s %-8s %-12s every %3d s  %s\n", s.ID, s.Kind, state, s.EverySec, s.Title)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
