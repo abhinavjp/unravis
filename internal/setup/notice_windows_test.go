@@ -4,6 +4,7 @@ package setup
 
 import (
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -87,7 +88,8 @@ func TestAskOKCancelRealBoxIsClosedAfterTheWait(t *testing.T) {
 	name, _ := windows.UTF16PtrFromString(title)
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		h, _, _ := find.Call(0, uintptr(unsafePtr(name)))
+		h, _, _ := find.Call(0, uintptr(unsafe.Pointer(name)))
+		runtime.KeepAlive(name)
 		if h == 0 {
 			return
 		}
@@ -97,5 +99,3 @@ func TestAskOKCancelRealBoxIsClosedAfterTheWait(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
-
-func unsafePtr(p *uint16) uintptr { return uintptr(unsafe.Pointer(p)) }

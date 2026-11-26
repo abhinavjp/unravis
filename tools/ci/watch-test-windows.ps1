@@ -9,7 +9,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Log,
   [Parameter(Mandatory = $true)][string]$StopFile,
-  [int]$PollMs = 150,
+  [int]$PollMs = 50,
   [int]$RootPid = 0
 )
 $ErrorActionPreference = 'Stop'
@@ -68,8 +68,16 @@ function Test-UnderRoot([int]$ProcId) {
   return $cur -eq $RootPid
 }
 $seen = @{}
+if ($RootPid -gt 0 -and -not (Get-Process -Id $RootPid -ErrorAction SilentlyContinue)) { exit 0 }
+Set-Content -LiteralPath ($StopFile + '.ready') -Value 'ready' # the gate waits for this before it starts the tests
 while (-not (Test-Path -LiteralPath $StopFile)) {
-  foreach ($w in [TestWinWatch]::Visible()) {
+  # The gate that started this is gone (Ctrl-C, a dead shell): stop, so an aborted run never leaves a watcher behind.
+  if ($RootPid -gt 0 -and -not (Get-Process -Id $RootPid -ErrorAction SilentlyContinue)) { break }
+  $now = [TestWinWatch]::Visible()
+  # Windows reuses a window handle after the window is destroyed: forget the ones that are gone.
+  $live = @{}; foreach ($w in $now) { $live[$w[0]] = $true }
+  foreach ($k in @($seen.Keys)) { if (-not $live.ContainsKey($k)) { $seen.Remove($k) } }
+  foreach ($w in $now) {
     $hwnd = $w[0]; $procId = [int]$w[1]
     if ($seen.ContainsKey($hwnd)) { continue }
     $exe = $null
@@ -83,3 +91,4 @@ while (-not (Test-Path -LiteralPath $StopFile)) {
   }
   Start-Sleep -Milliseconds $PollMs
 }
+Set-Content -LiteralPath ($StopFile + '.done') -Value 'done' # normal end: the gate reads a missing file as a watcher that died

@@ -5,6 +5,7 @@ package setup
 import (
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -41,7 +42,12 @@ func AskOKCancel(title, text string, wait time.Duration) bool {
 	answer := make(chan int32, 1)
 	var mu sync.Mutex
 	var closeBox func()
+	var gaveUp atomic.Bool
 	go func() {
+		if gaveUp.Load() { // the wait ran out before this goroutine even started: never show the box
+			answer <- idCancel
+			return
+		}
 		r := askBox(title, text, windows.MB_OKCANCEL|windows.MB_ICONINFORMATION|windows.MB_SETFOREGROUND, func(c func()) {
 			mu.Lock()
 			closeBox = c
@@ -53,17 +59,29 @@ func AskOKCancel(title, text string, wait time.Duration) bool {
 	case r := <-answer:
 		return r == idOK
 	case <-time.After(wait):
-		mu.Lock()
-		c := closeBox
-		mu.Unlock()
-		if c != nil {
-			c()
-			select { // give the box a moment to go away, so the caller never races a box that is still open
+		gaveUp.Store(true)
+		select { // an answer that arrived at the same moment as the timeout still counts
+		case r := <-answer:
+			return r == idOK
+		default:
+		}
+		// Close the box until it is gone. It may not exist yet (a slow start on a loaded PC), so ask again every 50 ms for up to 2 s.
+		deadline := time.After(2 * time.Second)
+		for {
+			mu.Lock()
+			c := closeBox
+			mu.Unlock()
+			if c != nil {
+				c()
+			}
+			select {
 			case <-answer:
-			case <-time.After(2 * time.Second):
+				return false
+			case <-deadline:
+				return false
+			case <-time.After(50 * time.Millisecond):
 			}
 		}
-		return false
 	}
 }
 

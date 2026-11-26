@@ -17,8 +17,12 @@ export function scanText(file, src) {
     const line = raw.replace(/\r$/, '');
     if (/^\s*\/\//.test(line)) return; // a comment line
     if (/\/\/\s*dialogok:\s*\S/.test(line)) return;
-    if (/^\s*func\s+(\([^)]*\)\s*)?\w+\s*\(/.test(line)) return; // a definition (a test NAME such as TestShowNotice... is not a call)
-    const code = line.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/`[^`]*`/g, '``').replace(/\/\/.*$/, '');
+    let body = line;
+    const def = /^\s*func\s+(\([^)]*\)\s*)?\w+\s*\([^{]*\{/.exec(line); // a definition: judge only what follows its `{` (a one-line function can hold a call)
+    if (def) body = line.slice(def[0].length);
+    else if (/^\s*func\s+(\([^)]*\)\s*)?\w+\s*\(/.test(line)) return; // a definition whose body starts on the next line
+    if (/NewProc\(\s*"MessageBox/.test(body.replace(/\/\/.*$/, ''))) { hits.push({ file, line: i + 1, call: 'NewProc("MessageBox…")', text: line.trim().slice(0, 140) }); return; }
+    const code = body.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/`[^`]*`/g, '``').replace(/\/\/.*$/, '');
     const m = CALL.exec(code);
     if (m) hits.push({ file, line: i + 1, call: m[1], text: line.trim().slice(0, 140) });
   });

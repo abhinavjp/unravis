@@ -14,4 +14,8 @@ assert.equal(hit('func TestShowNoticeDoes(t *testing.T) {').length, 0, 'a test N
 assert.equal(hit('func (f *fake) ShowNotice(title, text string) {').length, 0, 'a fake method definition passes');
 assert.equal(hit('\tshowMessage = showMessageBox').length, 0, 'assigning the function (no call) passes');
 assert.equal(hit('\tt.Log("ShowNotice(x) is not called")').length, 0, 'text in a string passes');
+assert.equal(hit('func TestX(t *testing.T) { ShowNotice("a", "b") }').length, 1, 'a call inside a one-line function is flagged');
+assert.equal(hit('func helper() { windows.MessageBox(0, c, t, 0) }').length, 1, 'a one-line helper with a raw box is flagged');
+assert.equal(hit('	box := user32.NewProc("MessageBoxW")').length, 1, 'loading MessageBoxW from user32 is flagged');
+assert.equal(hit('func TestX(t *testing.T) {').length, 0, 'an ordinary test header passes');
 console.log('test-no-real-dialogs: ok');

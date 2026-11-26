@@ -21,7 +21,7 @@ while [ $# -gt 0 ]; do
 done
 
 cd "$(git rev-parse --show-toplevel)" || exit 2
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"; trap '[ -n "${watch_pid:-}" ] && kill "$watch_pid" 2>/dev/null; rm -rf "$tmp"' EXIT
 fails=(); warns=()
 step() { printf '\n== %s\n' "$1"; }
 fail() { fails+=("$1"); printf 'FAIL: %s\n' "$1"; }
@@ -33,13 +33,16 @@ watch_pid=""; watch_log="$tmp/test-windows.log"; watch_stop="$tmp/test-windows.s
 watch_start() {
   case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) ;; *) return 0 ;; esac
   command -v powershell.exe >/dev/null 2>&1 || return 0
-  : >"$watch_log"; rm -f "$watch_stop"
+  : >"$watch_log"; rm -f "$watch_stop" "$watch_stop.ready" "$watch_stop.done"
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w tools/ci/watch-test-windows.ps1)" -Log "$(cygpath -w "$watch_log")" -StopFile "$(cygpath -w "$watch_stop")" -RootPid "$(cat /proc/$$/winpid 2>/dev/null || echo 0)" >/dev/null 2>&1 &
   watch_pid=$!
+  local i; for i in $(seq 1 100); do [ -e "$watch_stop.ready" ] && return 0; kill -0 "$watch_pid" 2>/dev/null || break; sleep 0.2; done
+  [ -e "$watch_stop.ready" ] || { warn "the window watcher did not start: this run cannot catch a test that opens a window"; watch_pid=""; }
 }
 watch_stop_and_judge() {
   [ -n "$watch_pid" ] || return 0
   : >"$watch_stop"; wait "$watch_pid" 2>/dev/null; watch_pid=""
+  [ -e "$watch_stop.done" ] || warn "the window watcher stopped early: this run cannot vouch that no test opened a window"
   if [ -s "$watch_log" ]; then
     fail "a test opened a real window on the desktop (the watcher closed it): a test must use a fake box (tools/ci/no-real-dialogs.mjs)"
     sed 's/^/    pid|program|class|title: /' "$watch_log" | head -10
