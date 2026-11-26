@@ -356,6 +356,9 @@ func (h *handler) caseKeyUnlock(w http.ResponseWriter, r *http.Request, raw stri
 			log.Printf("Case recovery after a case unlock did not run for %s: %v", id, err)
 		}
 	}
+	// The start-up sweep could not see this case's close date while its key was locked. If the 30 days
+	// ran out meanwhile, the same sweep rule applies now, as it would have at start (RV-DAT-8).
+	h.eraseIfExpired(r.Context(), id)
 	info, err := ck.CaseKey(id)
 	if err != nil && !info.Has {
 		// The unlock removed the key (a half-finished Remove was completed).
