@@ -570,7 +570,7 @@ func TestDiagLogFailedRenameKeepsTheOldFile(t *testing.T) {
 				c.t = c.t.Add(time.Millisecond)
 				d.Line("round", "pad", strings.Repeat("x", 150))
 			}
-			got, err := os.ReadFile(oldPath)
+			got, err := os.ReadFile(oldPath) //nolint:gosec // G304: a test temp file
 			if err != nil || string(got) != oldText {
 				t.Fatalf("the old file changed: %q, %v", got, err)
 			}
@@ -605,7 +605,7 @@ func TestDiagLogReplacesTheOldFileWhereRenameCannotOverwrite(t *testing.T) {
 		c.t = c.t.Add(time.Millisecond)
 		d.Line("round", "pad", strings.Repeat("x", 150))
 	}
-	got, err := os.ReadFile(oldPath)
+	got, err := os.ReadFile(oldPath) //nolint:gosec // G304: a test temp file
 	if err != nil || strings.Contains(string(got), "older") || len(got) < diagMaxBytes-1000 {
 		t.Fatalf("the old file was not replaced by the full one (%d bytes, %v)", len(got), err)
 	}
