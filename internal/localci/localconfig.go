@@ -22,6 +22,9 @@ type JobOverride struct {
 	Skip     string                       // reason; non-empty means the job is skipped locally
 	Accepted bool                         // a skipped job counts as passed for the gate
 	StepEnv  map[string]map[string]string // step name -> local-only environment for that step (wins over the workflow's)
+	// Exclusive names a resource of this PC that only one job instance may use at a time, across the jobs of every run
+	// this program has going (for example a per-user named object that two parallel copies would fight over).
+	Exclusive string
 }
 
 type rawLocalConfig struct {
@@ -30,9 +33,10 @@ type rawLocalConfig struct {
 }
 
 type rawJobOver struct {
-	Skip     string                       `yaml:"skip"`
-	Accepted bool                         `yaml:"accepted"`
-	StepEnv  map[string]map[string]string `yaml:"step-env"`
+	Skip      string                       `yaml:"skip"`
+	Accepted  bool                         `yaml:"accepted"`
+	StepEnv   map[string]map[string]string `yaml:"step-env"`
+	Exclusive string                       `yaml:"exclusive"`
 }
 
 // ParseLocalConfig parses the overrides file strictly: unknown keys are an error, and runs-on

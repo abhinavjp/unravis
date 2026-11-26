@@ -46,6 +46,7 @@ jobs:
     desktop-sidecar:
       skip: "macOS entries cannot run on a Windows PC"
       accepted: true
+      exclusive: a-resource
     other:
       skip: why
 `
@@ -62,7 +63,7 @@ jobs:
 		t.Errorf("custom-label: %q %v", got, ok)
 	}
 	o := c.Override("ci.yml", "desktop-sidecar")
-	if o.Skip != "macOS entries cannot run on a Windows PC" || !o.Accepted {
+	if o.Skip != "macOS entries cannot run on a Windows PC" || !o.Accepted || o.Exclusive != "a-resource" {
 		t.Errorf("override = %+v", o)
 	}
 	if o := c.Override("ci.yml", "other"); o.Skip != "why" || o.Accepted {

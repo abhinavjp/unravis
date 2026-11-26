@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // MirrorRefspecs are what the bare mirror fetches: every branch, every tag and the head of every pull request.
@@ -220,6 +221,10 @@ func (c *Checkout) resetMirror(originURL string) error {
 	return nil
 }
 
+// mirrorLocks has one lock per mirror folder. Two runs of one agent start together (two slots) and both fetch into the
+// same bare mirror; git then refuses the second one with "cannot lock ref ... is at X but expected Y".
+var mirrorLocks sync.Map // mirror path -> *sync.Mutex
+
 // Mirror creates the bare mirror when it is missing and fetches every branch, tag and pull request head
 // from originURL into it. originURL must not carry credentials (they would be stored in the mirror's config).
 func (c *Checkout) Mirror(ctx context.Context, originURL string) error {
@@ -230,6 +235,9 @@ func (c *Checkout) Mirror(ctx context.Context, originURL string) error {
 		return errors.New("the origin URL is not one line")
 	}
 	repo := c.Store.RepoPath()
+	lock, _ := mirrorLocks.LoadOrStore(repo, new(sync.Mutex))
+	lock.(*sync.Mutex).Lock()
+	defer lock.(*sync.Mutex).Unlock()
 	if _, err := os.Stat(filepath.Join(repo, "HEAD")); err != nil {
 		if _, _, err := c.git(ctx, c.Store.Dir, nil, "init", "--bare", "--quiet", repo); err != nil {
 			return err
@@ -244,6 +252,10 @@ func (c *Checkout) Mirror(ctx context.Context, originURL string) error {
 		return err
 	}
 	_, _, err := c.gitFetch(ctx, repo, "fetch", "--prune", "--no-tags", "--quiet", "origin")
+	if err != nil && strings.Contains(err.Error(), "cannot lock ref") {
+		// Another process (a command line "rerun", a second agent) moved the ref meanwhile: the next fetch sees it.
+		_, _, err = c.gitFetch(ctx, repo, "fetch", "--prune", "--no-tags", "--quiet", "origin")
+	}
 	return err
 }
 

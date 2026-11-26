@@ -9,3 +9,9 @@ jobs:
         # build (only for this step: the install step above must build a binary that runs here).
         "Go - lint (only code changed since develop)":
           GOOS: linux
+  ci.yml:
+    desktop-sidecar:
+      # The sidecar tests start the desktop app, which owns a per-user first-instance name (a mutex). Two copies on one PC
+      # fight over it (the two matrix legs, or two runs the agent has going, or the app the owner has open): the loser
+      # exits 13. Hold the name for the whole job, so they take turns.
+      exclusive: desktop-first-instance

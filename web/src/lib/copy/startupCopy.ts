@@ -1,4 +1,5 @@
 import type { LintEntry } from './copylint';
+import { isUnreachableError } from './unreachableCopy';
 
 /**
  * What the page says when it cannot start, and the rule that picks the sentence. Pure: no DOM, no fetch.
@@ -50,7 +51,8 @@ export function classifyStartupFailure(input: { hadToken: boolean; cause: unknow
   const code = cause && typeof cause === 'object' ? (cause as { code?: unknown }).code : undefined;
   if (!hadToken && (code === 'no_session' || status === 401 || status === 403)) return { kind: 'noSession', message: STARTUP_TEXT.noSession, canRetry: false };
   if (hadToken && (status === 401 || status === 403 || code === 'no_session')) return { kind: 'sessionRefused', message: STARTUP_TEXT.sessionRefused, canRetry: false };
-  if (isNetworkError(cause)) return { kind: 'unreachable', message: STARTUP_TEXT.unreachable, canRetry: true };
+  // The shared request layer already turned a lost connection into one error with this code; the start screen keeps its own wording for it.
+  if (isUnreachableError(cause) || isNetworkError(cause)) return { kind: 'unreachable', message: STARTUP_TEXT.unreachable, canRetry: true };
   const own = cause instanceof Error ? cause.message.trim() : '';
   return { kind: 'other', message: own || STARTUP_TEXT.fallback, canRetry: true };
 }
