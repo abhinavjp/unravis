@@ -133,6 +133,15 @@ Out of this feature's first slices. When the CLI plan's gated verbs land (OPS wr
 | Abuse of write verbs | None in this feature. Update and restart only through the CLI plan's gated verbs, no MCP or code-mode binding. |
 | Salt scope creep | Fixed `fn` table (`test.ping`, `grains.item`, `cmd.run` for the read verbs only), exact ids, `sudo -n`, never feeds a sudo password. |
 
+### 5.1 Findings from the Opus review of S0-S2 (2026-11-26) and what was done
+
+- **Windows links and junctions:** `Resolve-Path` does not follow them, so each read walks from the file up to the matching allowed folder and refuses any link or junction on the way (tested against real PowerShell with a `mklink /J`).
+- **Silent server:** the SSH handshake has a deadline and stops when the request is cancelled (tested with a server that accepts and never speaks).
+- **Strict paths and roots:** a colon only after the drive letter (no alternate data streams), no doubled separators or UNC and device prefixes, and an allowed folder must be a real folder (not a whole drive or `/`).
+- **Password prompts:** keyboard-interactive is answered only for a plain password prompt, never "One-time password" or similar.
+- **Linux listing:** `find` ends each entry with a NUL so odd file names cannot forge entries.
+- **Accepted, documented:** on Linux there is a short gap between `realpath` and the read in which a file could be swapped for a link. The account Unravis uses is read-only, and every read is still checked by the server's own permissions. A later hardening is `openat2` with `RESOLVE_BENEATH`, which needs a helper on the server and is not part of this release.
+
 ## 6. Beginner copy rules
 
 Every error says what happened and what to do (for example: "The server's key changed. Do not continue. Ask the server's admin for the key and compare it with the one shown."). Words: Server, Recordings, Logs, Pull, Trust this server. No "transport", "minion" or "allowlist" in the UI; "Salt" appears only as "Salt master" where the owner chose it. The advanced panel may use the words.

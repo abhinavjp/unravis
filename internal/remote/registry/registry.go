@@ -232,7 +232,7 @@ func validate(e Entry) string {
 		}
 		for _, p := range list {
 			total++
-			if r := grammar.PathCharset(p); r != "" {
+			if r := grammar.AllowedRoot(p); r != "" {
 				return r
 			}
 		}

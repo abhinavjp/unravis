@@ -64,3 +64,19 @@ func TestPort(t *testing.T) {
 		}
 	}
 }
+
+func TestStrictPathAndAllowedRoot(t *testing.T) {
+	for _, s := range []string{`D:\Redis\logs`, `C:/inetpub/logs`, "/var/log/redis", `D:\Blackbox`} {
+		if r := AllowedRoot(s); r != "" {
+			t.Errorf("AllowedRoot(%q) refused: %s", s, r)
+		}
+	}
+	for _, s := range []string{`C:`, `C:\`, `C:/`, "/", "//x", `\\server\share`, `D:\a.log:hidden`, `D:\a\\b`, "/var//log", `/var\log`, `D:\..\x`, "", "a:b", `D:/a:b`} {
+		if r := AllowedRoot(s); r == "" {
+			t.Errorf("AllowedRoot(%q) accepted", s)
+		}
+	}
+	if StrictPath(`C:\x\y.log`) != "" || StrictPath(`C:\x\y.log:stream`) == "" || StrictPath(`\\.\C:\x`) == "" {
+		t.Error("StrictPath rules wrong")
+	}
+}

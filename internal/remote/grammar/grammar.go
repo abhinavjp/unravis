@@ -105,6 +105,46 @@ func PathCharset(s string) string {
 	return ""
 }
 
+var (
+	reWinRoot = regexp.MustCompile(`^[A-Za-z]:[\\/][^\\/:]`)
+	reNixRoot = regexp.MustCompile(`^/[^/:]`)
+)
+
+// StrictPath is PathCharset plus the rules the remote layer adds: a colon only right after a drive letter (so no alternate data stream),
+// and no doubled separators or UNC or device prefixes.
+func StrictPath(s string) string {
+	if r := PathCharset(s); r != "" {
+		return r
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] == ':' && !(i == 1 && reWinDrive.MatchString(s)) {
+			return "A colon is only allowed after the drive letter."
+		}
+	}
+	if strings.Contains(s, `\\`) || strings.Contains(s, "//") || strings.Contains(s, `\/`) || strings.Contains(s, `/\`) {
+		return "Use single separators; network paths and double separators are not allowed."
+	}
+	return ""
+}
+
+// AllowedRoot checks a folder that may be put on the allowed list: an absolute path at least one folder deep, never a whole drive or the
+// whole file system.
+func AllowedRoot(s string) string {
+	if r := StrictPath(s); r != "" {
+		return r
+	}
+	if reWinDrive.MatchString(s) {
+		if !reWinRoot.MatchString(s) {
+			return `Allow a folder such as D:\Redis\logs, not a whole drive.`
+		}
+		return ""
+	}
+	if !reNixRoot.MatchString(s) || strings.Contains(s, `\`) {
+		return "Allow a full folder path such as /var/log/redis, not the top of the file system."
+	}
+	return ""
+}
+
 // PathAllowed checks that path is one of allowed or lies under one of them. A wildcard is accepted only in the last segment.
 func PathAllowed(path string, allowed []string) string {
 	if len(allowed) == 0 {

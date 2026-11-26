@@ -348,7 +348,7 @@ func TestLinuxCommandsAreExactAndConfinedToAllowedFolders(t *testing.T) {
 		case strings.HasPrefix(cmd, "realpath -e -- "):
 			return []byte(strings.TrimSuffix(strings.TrimPrefix(cmd, "realpath -e -- '"), "'") + "\n"), "", 0
 		case strings.HasPrefix(cmd, "find "):
-			return []byte("120\t1700000000.5\tbb-20261126-09.ndjson\n5\t1700000001\tbad/name\n7\t1700000002\ttwo words.log\n"), "", 0
+			return []byte("120\t1700000000.5\tbb-20261126-09.ndjson\x005\t1700000001\tbad/name\x007\t1700000002\ttwo\nwords.log\x00"), "", 0
 		case strings.HasPrefix(cmd, "sha256sum -- "):
 			return []byte(strings.Repeat("ab", 32) + "  /var/log/redis.log\n"), "", 0
 		case strings.HasPrefix(cmd, "tail -c +"):
@@ -363,10 +363,10 @@ func TestLinuxCommandsAreExactAndConfinedToAllowedFolders(t *testing.T) {
 	defer cl.Close()
 
 	files, err := cl.List(ctx(t), "/var/log")
-	if err != nil || len(files) != 2 || files[0].Name != "bb-20261126-09.ndjson" || files[0].Size != 120 || files[1].Name != "two words.log" {
+	if err != nil || len(files) != 2 || files[0].Name != "bb-20261126-09.ndjson" || files[0].Size != 120 || files[1].Name != "two\nwords.log" {
 		t.Fatalf("%+v %v", files, err)
 	}
-	if got := fs.commands(); got[len(got)-1] != "find '/var/log' -maxdepth 1 -type f -printf '%s\\t%T@\\t%f\\n'" {
+	if got := fs.commands(); got[len(got)-1] != "find '/var/log' -maxdepth 1 -type f -printf '%s\\t%T@\\t%f\\0'" {
 		t.Fatalf("list command: %q", got[len(got)-1])
 	}
 	d, err := cl.Digest(ctx(t), "/var/log/redis.log")
@@ -577,4 +577,125 @@ func TestDialTunnelRefusedByTheServer(t *testing.T) {
 	if _, err := cl.DialTunnel(ctx(t)); !errors.Is(err, ErrTunnelRefused) {
 		t.Fatalf("%v", err)
 	}
+}
+
+func TestKeyboardInteractivePromptShapes(t *testing.T) {
+	for prompt, ok := range map[string]bool{
+		"Password: ":                      true,
+		"svc@host's password: ":           true,
+		"Password for svc: ":              true,
+		"One-time password: ":             false,
+		"Enter your password and token: ": false,
+	} {
+		fs := startServer(t, &fakeServer{password: "pw", kiPrompt: prompt, handler: func(string) ([]byte, string, int) { return []byte("x\n1\n"), "", 0 }})
+		cl, err := Connect(ctx(t), fs.cfg())
+		if ok != (err == nil) {
+			t.Fatalf("prompt %q: signed in=%v", prompt, err == nil)
+		}
+		if err == nil {
+			cl.Close()
+		} else if fs.secretSeen.Load() != 0 {
+			t.Fatalf("prompt %q got the stored password", prompt)
+		}
+	}
+}
+
+// A server that accepts the TCP connection and never speaks cannot hold Connect or FetchHostKey open.
+func TestASilentServerTimesOutAndCancels(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	var held []net.Conn
+	var mu sync.Mutex
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, c)
+			mu.Unlock()
+		}
+	}()
+	defer func() {
+		mu.Lock()
+		for _, c := range held {
+			c.Close()
+		}
+		mu.Unlock()
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	n, _ := strconv.Atoi(port)
+	cfg := Config{Host: "127.0.0.1", Port: n, User: "svc", OS: "linux", Auth: "password", Secret: "pw",
+		HostKey: "SHA256:" + strings.Repeat("A", 43), Allowed: []string{"/var/log"}, DialTimeout: 300 * time.Millisecond}
+
+	start := time.Now()
+	if _, err := Connect(ctx(t), cfg); err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("Connect to a silent server: %v after %v", err, time.Since(start))
+	}
+	start = time.Now()
+	if _, err := FetchHostKey(ctx(t), cfg); err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("FetchHostKey from a silent server: %v after %v", err, time.Since(start))
+	}
+	cfg.DialTimeout = time.Minute
+	c, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(200 * time.Millisecond); cancel() }()
+	start = time.Now()
+	if _, err := Connect(c, cfg); err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("cancelled Connect: %v after %v", err, time.Since(start))
+	}
+}
+
+// A junction inside an allowed folder that points out of it must not be followed (Windows, real PowerShell).
+func TestWindowsJunctionOutOfTheAllowedFolderIsRefused(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("needs Windows")
+	}
+	ps, err := exec.LookPath("powershell.exe")
+	if err != nil {
+		t.Skip("no powershell.exe")
+	}
+	base := t.TempDir()
+	allowed, outside := filepath.Join(base, "logs"), filepath.Join(base, "secret")
+	os.MkdirAll(allowed, 0o700)
+	os.MkdirAll(outside, 0o700)
+	os.WriteFile(filepath.Join(outside, "key.txt"), []byte("private"), 0o600)
+	os.WriteFile(filepath.Join(allowed, "ok.log"), []byte("fine"), 0o600)
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(allowed, "jn"), outside).CombinedOutput(); err != nil {
+		t.Skipf("cannot make a junction here: %v %s", err, out)
+	}
+	fs := startServer(t, &fakeServer{password: "pw"})
+	fs.handler = func(cmd string) ([]byte, string, int) {
+		args := strings.Fields(cmd)
+		c := exec.Command(ps, args[1:]...)
+		var out, er bytes.Buffer
+		c.Stdout, c.Stderr = &out, &er
+		code := 0
+		if c.Run() != nil {
+			code = 1
+		}
+		return out.Bytes(), er.String(), code
+	}
+	cfg := fs.cfg()
+	cfg.OS, cfg.Allowed = "windows", []string{allowed}
+	cl, err := Connect(ctx(t), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	if rc, err := cl.Open(ctx(t), filepath.Join(allowed, "jn", "key.txt"), 0); err == nil {
+		rc.Close()
+		t.Fatal("read a file through a junction that leaves the allowed folder")
+	}
+	if _, err := cl.List(ctx(t), filepath.Join(allowed, "jn")); err == nil {
+		t.Fatal("listed a folder through a junction")
+	}
+	rc, err := cl.Open(ctx(t), filepath.Join(allowed, "ok.log"), 0)
+	if err != nil {
+		t.Fatalf("a normal file in the allowed folder: %v", err)
+	}
+	rc.Close()
 }

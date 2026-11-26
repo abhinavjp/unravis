@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -153,7 +154,10 @@ func presented(ctx context.Context, c Config, algo string) (string, error) {
 			return stopHandshake{}
 		},
 	}
-	_, _, _, herr := ssh.NewClientConn(conn, c.addr(), cfg)
+	sc, _, _, herr := handshake(ctx, conn, c, cfg)
+	if sc != nil {
+		sc.Close()
+	}
 	if fp != "" {
 		return fp, nil
 	}
@@ -161,6 +165,23 @@ func presented(ctx context.Context, c Config, algo string) (string, error) {
 		return "", ctx.Err()
 	}
 	return "", ErrUnreachable
+}
+
+// handshake runs the SSH handshake with a deadline and with cancellation: a server that accepts the connection and then says nothing cannot hold it open.
+func handshake(ctx context.Context, conn net.Conn, c Config, cfg *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	conn.SetDeadline(time.Now().Add(handshakeTimeout(c)))
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	sc, chans, reqs, err := ssh.NewClientConn(conn, c.addr(), cfg)
+	if !stop() { // cancelled while the handshake ran
+		if sc != nil {
+			sc.Close()
+		}
+		return nil, nil, nil, ctx.Err()
+	}
+	if err == nil {
+		conn.SetDeadline(time.Time{})
+	}
+	return sc, chans, reqs, err
 }
 
 func handshakeTimeout(c Config) time.Duration {
@@ -191,7 +212,7 @@ func (c Config) authMethods() ([]ssh.AuthMethod, error) {
 			if len(questions) == 0 {
 				return nil, nil
 			}
-			if len(questions) == 1 && strings.Contains(strings.ToLower(questions[0]), "password") {
+			if len(questions) == 1 && rePasswordPrompt.MatchString(questions[0]) {
 				return []string{c.Secret}, nil
 			}
 			return nil, errors.New("The server asked for something other than a password.")
@@ -240,7 +261,7 @@ func Connect(ctx context.Context, c Config) (*Client, error) {
 				return nil
 			},
 		}
-		sc, chans, reqs, herr := ssh.NewClientConn(raw, c.addr(), cfg)
+		sc, chans, reqs, herr := handshake(ctx, raw, c, cfg)
 		if herr == nil {
 			return &Client{cfg: c, conn: ssh.NewClient(sc, chans, reqs)}, nil
 		}
@@ -341,10 +362,13 @@ func psCommand(script string) string {
 	return "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + base64.StdEncoding.EncodeToString(b)
 }
 
+// rePasswordPrompt matches the usual password prompts ("Password:", "user@host's password:", "Password for user:") and nothing like "One-time password:".
+var rePasswordPrompt = regexp.MustCompile(`(?i)^\s*(\S+'s\s+)?password(\s+for\s+\S+)?\s*:?\s*$`)
+
 const psPrelude = "$ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
 
 type cmdSet struct {
-	resolve func(p string) string
+	resolve func(p, root string) string
 	list    func(dir string) string
 	open    func(p string, off int64) string
 	digest  func(p string) string
@@ -354,8 +378,11 @@ type cmdSet struct {
 func commands(os string) cmdSet {
 	if os == "windows" {
 		return cmdSet{
-			resolve: func(p string) string {
-				return psCommand(psPrelude + "(Resolve-Path -LiteralPath " + p + ").ProviderPath")
+			// Resolve-Path does not follow links, so every item from the file up to the allowed folder is checked: none may be a link or junction.
+			resolve: func(p, root string) string {
+				return psCommand(psPrelude + "$root=" + root + ";$r=(Resolve-Path -LiteralPath " + p + ").ProviderPath;$c=Get-Item -LiteralPath $r -Force;" +
+					"while($c -and ($c.FullName.TrimEnd('\\') -ne $root.TrimEnd('\\'))){if($c.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'link'};if($c.PSIsContainer){$c=$c.Parent}else{$c=$c.Directory}};" +
+					"if(-not $c){throw 'outside'};$r")
 			},
 			list: func(d string) string {
 				return psCommand(psPrelude + "Get-ChildItem -LiteralPath " + d + " -File | ForEach-Object { \"{0}`t{1}`t{2}\" -f $_.Length,([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds(),$_.Name }")
@@ -371,9 +398,9 @@ func commands(os string) cmdSet {
 		}
 	}
 	return cmdSet{
-		resolve: func(p string) string { return "realpath -e -- " + p },
+		resolve: func(p, _ string) string { return "realpath -e -- " + p },
 		list: func(d string) string {
-			return "find " + d + " -maxdepth 1 -type f -printf '%s\\t%T@\\t%f\\n'"
+			return "find " + d + " -maxdepth 1 -type f -printf '%s\\t%T@\\t%f\\0'"
 		},
 		open:   func(p string, off int64) string { return "tail -c +" + strconv.FormatInt(off+1, 10) + " -- " + p },
 		digest: func(p string) string { return "sha256sum -- " + p },
@@ -436,10 +463,31 @@ var _ transport.Transport = (*Client)(nil)
 
 // plain checks that p is a literal path inside the allowed folders.
 func (cl *Client) plain(p string) error {
-	if strings.ContainsAny(p, "*?") || grammar.PathCharset(p) != "" || grammar.PathAllowed(p, cl.cfg.Allowed) != "" {
+	if strings.ContainsAny(p, "*?") || grammar.StrictPath(p) != "" || grammar.PathAllowed(p, cl.cfg.Allowed) != "" {
 		return transport.ErrNotAllowed
 	}
 	return nil
+}
+
+// rootOf is the allowed folder that holds p (the first that matches, as PathAllowed matches), written with the server's separators.
+func (cl *Client) rootOf(p string) string {
+	norm := strings.ReplaceAll(p, `\`, "/")
+	for _, a := range cl.cfg.Allowed {
+		an := strings.TrimRight(strings.ReplaceAll(a, `\`, "/"), "/")
+		if an == "" {
+			continue
+		}
+		hit := norm == an || strings.HasPrefix(norm, an+"/")
+		if cl.cfg.OS == "windows" {
+			hit = strings.EqualFold(norm, an) || (len(norm) > len(an) && strings.EqualFold(norm[:len(an)+1], an+"/"))
+			if hit {
+				return strings.ReplaceAll(an, "/", `\`)
+			}
+		} else if hit {
+			return an
+		}
+	}
+	return ""
 }
 
 // resolve asks the server where p really points (a link out of the allowed folders is caught here) and checks the answer again.
@@ -451,7 +499,11 @@ func (cl *Client) resolve(ctx context.Context, p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	res, err := cl.run(ctx, commands(cl.cfg.OS).resolve(lit), 4096)
+	root, err := literal(cl.rootOf(p))
+	if err != nil {
+		return "", transport.ErrNotAllowed
+	}
+	res, err := cl.run(ctx, commands(cl.cfg.OS).resolve(lit, root), 4096)
 	if err != nil {
 		return "", err
 	}
@@ -501,7 +553,11 @@ func (cl *Client) List(ctx context.Context, dir string) ([]transport.FileInfo, e
 		return nil, err
 	}
 	var out []transport.FileInfo
-	for _, line := range strings.Split(strings.ReplaceAll(string(res.out), "\r", ""), "\n") {
+	sep, text := "\n", strings.ReplaceAll(string(res.out), "\r", "") // Windows names cannot hold a newline
+	if cl.cfg.OS != "windows" {
+		sep, text = "\x00", string(res.out) // Linux names can, so find ends each entry with a NUL
+	}
+	for _, line := range strings.Split(text, sep) {
 		if line == "" {
 			continue
 		}
