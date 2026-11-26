@@ -2,10 +2,11 @@
 // line) into timeline events. Importer name: "blackbox-source". A bundle (unravis-blackbox bundle), a copied folder and
 // a live recording are the same files, so they give the same events.
 //
-// What is read in this first slice (docs/blackbox/WHOLE-STACK.md 4.7): the host figures every sample carries (CPU,
-// memory, disk queue and latency, free space of the volume the recordings are on), the start of each recorder run (sample 1 of a run), and the gaps
-// (more than three intervals without a sample, the recorder's own rule). The other groups (SQL, Redis, IIS, TCP, events,
-// dumps ...) are not read yet and the report says so.
+// What is read so far (docs/blackbox/WHOLE-STACK.md 4.7): the host figures every sample carries (CPU, memory, disk queue
+// and latency, free space of the volume the recordings are on), the SQL host counters, the HTTP.sys request queues, the IIS
+// worker figures and the TCP figures (groups.go), the start of each recorder run (sample 1 of a run), and the gaps (more
+// than three intervals without a sample, the recorder's own rule). The other groups (Redis, events, dumps, SQL logs ...)
+// are not read yet and the report says so.
 //
 // Time: the recorder writes every sample time in UTC ("t", RuleUTCField). Nothing is converted and nothing is guessed.
 //
@@ -55,8 +56,8 @@ const (
 
 // Fixed known-gap sentences. Each passes evidence.LintCausal.
 const (
-	GapGroupsNotRead = "Only the host figures, the start of each recorder run (sample 1 of a run) and the gaps of a Blackbox recording are read so far; " +
-		"its SQL, Redis, IIS, network, event and dump groups are not in the timeline yet."
+	GapGroupsNotRead = "Of a Blackbox recording the host figures, the SQL host counters, the HTTP request queues, the IIS worker figures, the TCP figures, " +
+		"the start of each recorder run (sample 1 of a run) and the gaps are read so far; its Redis, event log, dump, SQL log, process and other groups are not in the timeline yet."
 	GapNoHostName    = "A Blackbox recording holds no machine name; its events are filed under the host that was picked."
 	GapIntervalGuess = "The recording interval is taken from the spacing of the neighbouring samples in this file; the file does not state it."
 	GapFileEdges     = "Gaps are judged inside one file: a hole at the start or the end of a file, or a missing hourly file, is not shown as a gap."
@@ -66,6 +67,12 @@ const (
 // VolumeInstance names the one volume the recorder measures free space on (the volume its recordings are on). It is not a
 // drive letter and not "_Total", so a lane join cannot take it for another volume or for the whole host.
 const VolumeInstance = "recordings-volume"
+
+// Event index numbers of the events that are not counters, so their ids can never meet a counter's on the same line.
+const (
+	idxRunStart = 1 << 20
+	idxGap      = 1<<20 + 1
+)
 
 // maxGapEvents bounds the gap events of one file, so a recording of mostly holes cannot flood the timeline.
 const maxGapEvents = 1000
@@ -82,7 +89,7 @@ func (*imp) Name() string { return Name }
 // AllowedAttrs: the counter is named by object, counter and instance like a Windows counter, and a gap says how many
 // intervals it spans.
 func (*imp) AllowedAttrs() map[string]bool {
-	return map[string]bool{"object": true, "counter": true, "instance": true, "intervals": true}
+	return map[string]bool{"object": true, "counter": true, "instance": true, "sqlinstance": true, "intervals": true}
 }
 
 func (*imp) DefaultLimits() importer.Limits {
@@ -122,6 +129,18 @@ type line struct {
 	DiskQueue   *float64 `json:"diskQueue"`
 	DiskMs      *float64 `json:"diskMs"`
 	DiskFreePct *float64 `json:"diskFreePct"`
+
+	// The groups read so far. Every other group is skipped by the decoder.
+	SQLHost *struct {
+		Instances []sqlInstance `json:"instances"`
+	} `json:"sqlHost"`
+	HTTP *struct {
+		Queues []httpQueue `json:"queues"`
+	} `json:"http"`
+	IIS *struct {
+		Workers []iisWorker `json:"workers"`
+	} `json:"iis"`
+	TCP *tcpGroup `json:"tcp"`
 }
 
 // figure is one number of a sample and how the timeline names it. The names are the Windows counter names, so a recording
@@ -138,11 +157,11 @@ type figure struct {
 // scaled to keep one meaning per counter name.
 var figures = []figure{
 	{"Processor", "% Processor Time", "_Total", "percent-host", 100.5, 0, func(l *line) *float64 { return l.CPU }},
-	{"Memory", "Available Bytes", "", "bytes", 0, 0, func(l *line) *float64 { return l.MemAvail }},
-	{"Memory", "Committed Bytes", "", "bytes", 0, 0, func(l *line) *float64 { return l.MemCommit }},
-	{"PhysicalDisk", "Current Disk Queue Length", "_Total", "count", 0, 0, func(l *line) *float64 { return l.DiskQueue }},
+	{"Memory", "Available Bytes", "", "", 0, 0, func(l *line) *float64 { return l.MemAvail }},
+	{"Memory", "Committed Bytes", "", "", 0, 0, func(l *line) *float64 { return l.MemCommit }},
+	{"PhysicalDisk", "Current Disk Queue Length", "_Total", "", 0, 0, func(l *line) *float64 { return l.DiskQueue }},
 	{"PhysicalDisk", "Avg. Disk sec/Transfer", "_Total", "", 0, 0.001, func(l *line) *float64 { return l.DiskMs }},
-	{"LogicalDisk", "% Free Space", VolumeInstance, "percent", 100.5, 0, func(l *line) *float64 { return l.DiskFreePct }},
+	{"LogicalDisk", "% Free Space", VolumeInstance, "", 100.5, 0, func(l *line) *float64 { return l.DiskFreePct }},
 }
 
 // stamp is what the gap rule needs of an accepted sample.
@@ -230,7 +249,7 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 			evs = nil
 		}
 		if l.Seq == 1 { // sample 1 of a run: the recorder started here (a later hourly file of the same run does not)
-			e := wincsv.NewEvent(opts, Name, no, 100)
+			e := wincsv.NewEvent(opts, Name, no, idxRunStart)
 			e.Kind, e.Host, e.Start, e.End = KindRunStart, host, t, t
 			e.Severity, e.TZRule, e.Attrs = "info", clock.RuleUTCField, map[string]string{}
 			evs = append(evs, e)
@@ -284,7 +303,7 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 			capped = true
 			break
 		}
-		e := wincsv.NewEvent(opts, Name, stamps[i].line, 200)
+		e := wincsv.NewEvent(opts, Name, stamps[i].line, idxGap)
 		e.Kind, e.Host, e.Start, e.End = KindGap, host, stamps[i-1].t, stamps[i].t
 		ms := float64(d / time.Millisecond)
 		e.DurationMs = &ms
@@ -319,6 +338,20 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 // buildEvents makes the counter events of one sample. reason is set when a figure is not a valid number.
 func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host string) ([]evidence.Event, importer.Reason) {
 	var evs []evidence.Event
+	add := func(r reading, idx int) {
+		vv := r.v
+		e := wincsv.NewEvent(opts, Name, no, idx)
+		e.Kind, e.Host, e.Start, e.End = KindCounter, host, t, t
+		e.Value, e.Unit, e.TZRule = &vv, r.unit, clock.RuleUTCField
+		e.Attrs = map[string]string{"object": r.object, "counter": r.counter}
+		if r.instance != "" {
+			e.Attrs["instance"] = r.instance
+		}
+		if r.sqlInstance != "" {
+			e.Attrs["sqlinstance"] = r.sqlInstance
+		}
+		evs = append(evs, e)
+	}
 	for i := range figures {
 		f := &figures[i]
 		p := f.get(l)
@@ -326,24 +359,25 @@ func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host str
 			continue // not read this time: no event, never 0
 		}
 		v := *p
-		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || (f.max > 0 && v > f.max) {
+		if !validNumber(v) || (f.max > 0 && v > f.max) {
 			return nil, importer.ReasonBadNumber // the whole sample's figures are left out: a half-read sample misleads
 		}
 		if f.scale > 0 {
 			v *= f.scale
 		}
-		vv := v
-		e := wincsv.NewEvent(opts, Name, no, i+1)
-		e.Kind, e.Host, e.Start, e.End = KindCounter, host, t, t
-		e.Value, e.Unit, e.TZRule = &vv, f.unit, clock.RuleUTCField
-		e.Attrs = map[string]string{"object": f.object, "counter": f.counter}
-		if f.instance != "" {
-			e.Attrs["instance"] = f.instance
-		}
-		evs = append(evs, e)
+		add(reading{object: f.object, counter: f.counter, instance: f.instance, unit: f.unit, v: v}, i+1)
+	}
+	rs, ok := groupReadings(l)
+	if !ok {
+		return nil, importer.ReasonBadNumber
+	}
+	for i, r := range rs {
+		add(r, len(figures)+1+i)
 	}
 	return evs, ""
 }
+
+func validNumber(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 }
 
 // parseTime reads the sample time. The recorder writes UTC; a value with an offset is converted by its offset, one
 // with no zone is refused (the host zone is never guessed).
