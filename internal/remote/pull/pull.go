@@ -28,6 +28,8 @@ import (
 const (
 	checkpointEvery = 4 << 20 // raw bytes between saved resume points
 	diskMargin      = 256 << 20
+	// RecordName is the provenance file of a job. It is not manifest.json, so a pulled recorder folder keeps the recorder's own manifest.
+	RecordName      = "pull-record.json"
 	statusDone      = "done"
 	statusFailed    = "failed"
 	statusInterrupt = "interrupted"
@@ -37,7 +39,7 @@ const (
 type Options struct {
 	StagingDir string // the job folder is StagingDir/JobID
 	JobID      string // letters, digits, . _ - ; the same id resumes an earlier run
-	Server     string // label written to the provenance manifest
+	Server     string // label written to the provenance record
 	Limits     Limits
 	// Free reports free bytes on the staging drive. Nil means the OS check; if the check cannot be made the job runs anyway.
 	Free func(dir string) (int64, error)
@@ -71,7 +73,7 @@ type FileResult struct {
 	Note         string `json:"note,omitempty"`
 }
 
-// Result is the whole job. It is also written as manifest.json next to the files.
+// Result is the whole job. It is also written as pull-record.json next to the files, so a pulled recorder folder keeps its own manifest.json.
 type Result struct {
 	JobID       string       `json:"jobId"`
 	Server      string       `json:"server"`
@@ -159,8 +161,8 @@ func Run(ctx context.Context, t transport.Transport, req Request, plan Plan, opt
 	}
 	res.Bytes = j.bytes()
 	res.Finished = time.Now().UTC()
-	if err := writeJSON(filepath.Join(dir, "manifest.json"), res); err != nil {
-		return res, fmt.Errorf("Could not write the provenance manifest: %w", err)
+	if err := writeJSON(filepath.Join(dir, RecordName), res); err != nil {
+		return res, fmt.Errorf("Could not write the provenance record: %w", err)
 	}
 	return res, nil
 }
@@ -538,7 +540,7 @@ func safeName(name string, used map[string]bool) string {
 		n = n[:100]
 	}
 	low := strings.ToLower(n)
-	if strings.HasSuffix(low, ".part") || strings.HasSuffix(low, ".state") || low == "manifest.json" {
+	if strings.HasSuffix(low, ".part") || strings.HasSuffix(low, ".state") || low == RecordName {
 		n += "_"
 	}
 	base, ext := n, ""

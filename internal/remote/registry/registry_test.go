@@ -213,6 +213,32 @@ func TestUpdateChangesOnlyAllowedFieldsAndRevalidates(t *testing.T) {
 	}
 }
 
+func TestBlackboxOnlyServerKeepsNoSecretOrAccount(t *testing.T) {
+	s, path := open(t)
+	in := AddInput{Name: "lite", Host: "lite.corp.example", Port: 22, OS: "windows", Transports: []string{TransportBlackbox}, BlackboxID: "bb-1"}
+	e, err := s.Add(in)
+	if err != nil || e.HasSecret || e.User != "" || e.Auth != "" {
+		t.Fatalf("%+v %v", e, err)
+	}
+	if _, err := New(path, xorProtector{}); err != nil {
+		t.Fatalf("a saved Blackbox-only server must load back: %v", err)
+	}
+	// A secret or an account on a server that does not sign in is refused, not silently kept.
+	bad := in
+	bad.Host, bad.Secret = "lite2.corp.example", pw
+	if _, err := s.Add(bad); !errors.Is(err, ErrInvalid) {
+		t.Errorf("secret on a Blackbox-only server: %v", err)
+	}
+	// It cannot be given a sign-in secret, and cannot be switched to SSH without one.
+	if err := s.SetSecret(e.ID, AuthPassword, pw, ""); !errors.Is(err, ErrInvalid) {
+		t.Errorf("SetSecret: %v", err)
+	}
+	ssh := []string{TransportSSH, TransportBlackbox}
+	if _, err := s.Update(e.ID, Patch{Transports: &ssh}); err == nil {
+		t.Error("switched to SSH with no secret held")
+	}
+}
+
 func TestSetSecretRemoveAndLimits(t *testing.T) {
 	s, _ := open(t)
 	e, _ := s.Add(good())

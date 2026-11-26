@@ -61,7 +61,7 @@ func (l Limits) withDefaults() Limits {
 type Request struct {
 	Kind    string    // blackbox, iis, redis, sqlserver, applog: decides how a line is scrubbed
 	Dir     string    // one allowed folder on the server
-	Pattern string    // file name pattern such as bb-*.ndjson; empty means every file
+	Pattern string    // file name pattern such as bb-*.ndjson; join several with |; empty means every file
 	Since   time.Time // only files written at or after this; zero means no limit
 }
 
@@ -96,12 +96,14 @@ func (e ErrPlanTooLarge) Error() string { return e.Problem }
 // BuildPlan lists the folder and decides what fits the limits. It reads nothing but the listing.
 func BuildPlan(ctx context.Context, t transport.Transport, req Request, lim Limits) (Plan, error) {
 	lim = lim.withDefaults()
-	pat := strings.ToLower(strings.TrimSpace(req.Pattern))
-	if pat == "" {
-		pat = "*"
-	}
-	if _, err := path.Match(pat, "x"); err != nil {
-		return Plan{}, errors.New("That file name pattern is not valid.")
+	pats := strings.Split(strings.ToLower(strings.TrimSpace(req.Pattern)), "|")
+	for i, p := range pats {
+		if pats[i] = strings.TrimSpace(p); pats[i] == "" {
+			pats[i] = "*"
+		}
+		if _, err := path.Match(pats[i], "x"); err != nil {
+			return Plan{}, errors.New("That file name pattern is not valid.")
+		}
 	}
 	infos, err := t.List(ctx, req.Dir)
 	if err != nil {
@@ -111,7 +113,7 @@ func BuildPlan(ctx context.Context, t transport.Transport, req Request, lim Limi
 	p := Plan{Kind: req.Kind, Dir: req.Dir}
 	for _, fi := range infos {
 		switch {
-		case !match(pat, fi.Name):
+		case !match(pats, fi.Name):
 			continue
 		case !req.Since.IsZero() && fi.MTime.Before(req.Since):
 			p.Skipped = append(p.Skipped, Skipped{fi.Name, "older than the time range"})
@@ -131,9 +133,14 @@ func BuildPlan(ctx context.Context, t transport.Transport, req Request, lim Limi
 	return p, nil
 }
 
-func match(lowerPat, name string) bool {
-	ok, _ := path.Match(lowerPat, strings.ToLower(name))
-	return ok
+// match reports whether name fits any of the patterns (already lower case).
+func match(lowerPats []string, name string) bool {
+	for _, p := range lowerPats {
+		if ok, _ := path.Match(p, strings.ToLower(name)); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func human(n int64) string {

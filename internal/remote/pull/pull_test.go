@@ -147,7 +147,7 @@ func TestPullScrubsHashesAndLeavesNoRawSecretOnDisk(t *testing.T) {
 		}
 		return nil
 	})
-	if _, err := os.Stat(filepath.Join(dir, "job1", "manifest.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "job1", RecordName)); err != nil {
 		t.Error("no manifest")
 	}
 }
@@ -253,6 +253,20 @@ func TestPlanLimits(t *testing.T) {
 	}
 }
 
+func TestPlanPatternAlternation(t *testing.T) {
+	f := newFake(map[string]string{"manifest.json": "{}", "bb-1.ndjson": "a", "BB-2.NDJSON": "b", "other.log": "c"})
+	p, err := BuildPlan(context.Background(), f, Request{Dir: "/d", Pattern: " manifest.json | bb-*.ndjson "}, Limits{})
+	if err != nil || len(p.Files) != 3 {
+		t.Fatalf("%v %+v", err, p)
+	}
+	if _, err := BuildPlan(context.Background(), f, Request{Dir: "/d", Pattern: "ok|[x"}, Limits{}); err == nil {
+		t.Error("a bad second pattern was accepted")
+	}
+	if p, _ = BuildPlan(context.Background(), f, Request{Dir: "/d", Pattern: "a*|"}, Limits{}); len(p.Files) != 4 {
+		t.Errorf("an empty alternative should match everything: %+v", p)
+	}
+}
+
 func TestLongLinesBinaryAndDisk(t *testing.T) {
 	f := newFake(map[string]string{"long.log": "short\n" + strings.Repeat("y", 5000) + "\nafter\n", "bin.log": "ab\x00cd\n"})
 	dir := t.TempDir()
@@ -291,7 +305,7 @@ func TestSafeName(t *testing.T) {
 		"a b?.log":       "a_b_.log",
 		"CON.log":        "_CON.log",
 		"x.part":         "x.part_",
-		"manifest.json":  "manifest.json_",
+		RecordName:       RecordName + "_",
 		"...":            "file",
 	}
 	for in, want := range cases {

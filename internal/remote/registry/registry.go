@@ -190,14 +190,19 @@ func validate(e Entry) string {
 	if r := grammar.Port(e.Port); r != "" {
 		return r
 	}
-	if r := grammar.User(e.User); r != "" {
-		return r
-	}
 	if !osKinds[e.OS] {
 		return "Say whether the server runs Windows or Linux."
 	}
-	if !authKinds[e.Auth] {
-		return "Sign-in must be a key or a password."
+	if needsSecret(e) {
+		if r := grammar.User(e.User); r != "" {
+			return r
+		}
+		if !authKinds[e.Auth] {
+			return "Sign-in must be a key or a password."
+		}
+	} else if e.User != "" || e.Auth != "" {
+		// A Blackbox-only server signs in with nothing but its read key; no account is kept for it.
+		return "A Blackbox-only server has no sign-in account."
 	}
 	if e.HostKey != "" {
 		if r := grammar.Fingerprint(e.HostKey); r != "" {
@@ -247,6 +252,17 @@ func validate(e Entry) string {
 		return "The Blackbox link is not valid."
 	}
 	return ""
+}
+
+// needsSecret says the entry signs in over SSH or Salt, so it must hold a sealed password or key. A server reached only through its
+// Blackbox recorder or a folder (the "Lite" case) keeps no secret here; its read key lives in the Blackbox store.
+func needsSecret(e Entry) bool {
+	for _, t := range e.Transports {
+		if t == TransportSSH || t == TransportSalt {
+			return true
+		}
+	}
+	return false
 }
 
 // validSecret checks the shape of the sealed secret for the auth kind.
@@ -327,14 +343,15 @@ func (s *Store) Add(in AddInput) (Entry, error) {
 		BlackboxAddr: in.BlackboxAddr, BlackboxID: in.BlackboxID,
 	}
 	normalise(&e)
-	if validate(e) != "" || !validSecret(e.Auth, in.Secret, in.Passphrase) {
+	secret := needsSecret(e)
+	if validate(e) != "" || (secret && !validSecret(e.Auth, in.Secret, in.Passphrase)) || (!secret && (in.Secret != "" || in.Passphrase != "")) {
 		return Entry{}, ErrInvalid
 	}
 	id, err := newID()
 	if err != nil {
 		return Entry{}, err
 	}
-	e.ID, e.HasSecret, e.AddedAt = id, true, s.now().UTC()
+	e.ID, e.HasSecret, e.AddedAt = id, secret, s.now().UTC()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := sealedfile.Lock(s.path)
@@ -408,7 +425,13 @@ func (s *Store) SetSecret(id, auth, secret, passphrase string) error {
 	if !validSecret(auth, secret, passphrase) {
 		return ErrInvalid
 	}
-	return s.update(id, func(r *stored) { r.Auth, r.Secret, r.Passphrase, r.HasSecret = auth, secret, passphrase, true })
+	return s.updateChecked(id, func(r *stored) bool {
+		if !needsSecret(r.Entry) {
+			return false // a Blackbox-only server keeps no sign-in secret
+		}
+		r.Auth, r.Secret, r.Passphrase, r.HasSecret = auth, secret, passphrase, true
+		return true
+	})
 }
 
 // Patch is the settings a person may edit on a saved server. A nil field is left as it is.
@@ -446,7 +469,7 @@ func (s *Store) Update(id string, p Patch) (Entry, error) {
 			e.BlackboxID = *p.BlackboxID
 		}
 		normalise(&e)
-		if validate(e) != "" {
+		if validate(e) != "" || (needsSecret(e) && !r.HasSecret) {
 			return false
 		}
 		r.Entry, out = e, e
@@ -596,7 +619,8 @@ func (s *Store) readLocked() (vault, error) {
 	seen := map[string]bool{}
 	for _, r := range v.Records {
 		if r.ID == "" || len(r.ID) > 64 || seen[r.ID] || validate(r.Entry) != "" ||
-			!r.HasSecret || !validSecret(r.Auth, r.Secret, r.Passphrase) {
+			(needsSecret(r.Entry) && (!r.HasSecret || !validSecret(r.Auth, r.Secret, r.Passphrase))) ||
+			(!needsSecret(r.Entry) && (r.HasSecret || r.Secret != "" || r.Passphrase != "")) {
 			return vault{}, ErrCorrupt
 		}
 		seen[r.ID] = true
