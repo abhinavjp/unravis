@@ -38,6 +38,10 @@ A machine that only runs Blackbox (no login) can still show as a read-only row. 
 
 Nothing here is checked on a real server yet, so no backlog item is ticked.
 
-## Blackbox as the main collector (owner wish 2026-11-26, being scoped)
+## Blackbox as the main collector (owner wish 2026-11-26)
 
-Pulled files are the fallback. The aim is a Blackbox that already collects most of what an investigation needs, so a pull is Blackbox plus a few extra files. Today Blackbox covers CPU, memory, disk, processes, crash dumps and Windows events. SQL sampling is planned (BL-101, BL-102). Redis is not planned yet. See BL-605 in `docs/BACKLOG.md`: extra collection steps editable per server, snapshots on demand, and a scope doc before any collector code.
+Owned by the Blackbox thread; plan: `blackbox-everything/PLAN.md` (project library). Servers aligns with it:
+
+- The pull unit is a **bundle**: one zip in the server's `snapshots` folder (recordings in the window, scrubbed config, `facts.json`, scrubbed SQL and Redis log tails, sha256 manifest). Servers pulls it through the Salt master in base64 chunks with a sha256 check, plus any extra log files you tick. Chunk size and the 100 MB practicality are not verified (plan section 4.5: test with 5 MB first).
+- Pulled data becomes timeline sources under the plan's names: `sql-errorlog`, `redis-log`, `redis-slowlog`, `win-events`, `iis-*`, and the Blackbox reader for bundles. The Servers screen shows each source name on the landing page.
+- Direct connect stays parked there too.

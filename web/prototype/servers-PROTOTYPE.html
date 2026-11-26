@@ -468,10 +468,10 @@ const MINIONS = [
 ];
 const KIND = {
   bb:{label:'Blackbox recordings', tip:'The Blackbox recorder keeps a sample of the machine every 15 seconds.'},
-  iis:{label:'IIS logs', tip:'Web requests the machine served.'},
-  evt:{label:'Windows event logs', tip:'Read in place and saved as a file on your PC. Nothing is saved on the server.'},
-  sql:{label:'SQL Server logs', tip:'The ERRORLOG files.'},
-  redis:{label:'Redis logs', tip:'The Redis server log.'}
+  iis:{label:'IIS logs', src:'iis', tip:'Web requests the machine served.'},
+  evt:{label:'Windows event logs', src:'win-events', tip:'Read in place and saved as a file on your PC. Nothing is saved on the server.'},
+  sql:{label:'SQL Server logs', src:'sql-errorlog', tip:'The ERRORLOG files.'},
+  redis:{label:'Redis logs', src:'redis-log', tip:'The Redis server log.'}
 };
 const KORDER = ['bb','iis','evt','sql','redis'];
 const DAYS = {1:'Last 24 hours',3:'Last 3 days',7:'Last 7 days'};
@@ -696,7 +696,7 @@ function vLand(){
   const spark = '<span class="spark" aria-hidden="true">' + [5,6,5,7,9,8,6,5,7,10,14,18,15,9,7,6,5,6,7,6].map(h=>`<i style="height:${h*5}%"></i>`).join('') + '</span>';
   const bbRows = bbSets.map(m => { const j = J.find(x => x.m===m && x.k==='bb');
     return `<div class="land-row"><div><b>${m.id} (pulled 26 Nov 14:20)</b><small>${j.i.files} recordings, ${MB(j.i.bytes)}, ${DAYS[j.i.days]||''}. Hashes match.</small></div>${spark}</div>`; }).join('');
-  const logRows = logJ.map(j => `<div class="land-row"><div><b>${j.m.id}: ${KIND[j.k].label}</b><small>${j.i.files} files, ${MB(j.i.bytes)}. Secrets hidden (0 to 312 lines per file, listed in the report).</small></div><span class="sub">Ready to add</span></div>`).join('');
+  const logRows = logJ.map(j => `<div class="land-row"><div><b>${j.m.id}: ${KIND[j.k].label}</b><small>${j.i.files} files, ${MB(j.i.bytes)}. Secrets hidden (0 to 312 lines per file, listed in the report).</small></div><span class="sub">Timeline source: <span class="mono">${KIND[j.k].src}</span></span></div>`).join('');
   return `${stepperHtml()}${head('Done. It is on your PC and ready for the timeline', 'Each pull is a source the investigation timeline can read. Add them to a case and pick them as sources there. Blackbox recordings also stay in the Blackbox view, and logs under Files.')}
     ${st.added?`<div class="toast" role="status">Added ${st.added.n} item${st.added.n===1?'':'s'} to <b>${esc(st.added.c)}</b>. <button class="btn link sm" data-act="x">Open the case</button></div>`:''}
     <div class="panel"><header><h2>Blackbox view</h2><span class="sub">Each machine is its own saved recording set</span><span class="sp"></span><button class="btn sm primary" data-add="bb" ${bbSets.length?'':'disabled'}>Use in the timeline</button></header>${bbRows||'<div class="in sub">No Blackbox recordings were pulled.</div>'}</div>
