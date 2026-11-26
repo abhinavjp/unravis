@@ -31,7 +31,7 @@ const (
 	investigationIISSource   = "iis-w3c"
 
 	// investigationStalledText is the warning when an audit source says there is more but sends an empty page, so the read stopped early.
-	investigationStalledText = "An audit source stopped part way through, so its calls could not be read in full and none were used. Try the run again."
+	investigationStalledText = "One audit source stopped answering before it finished, so none of its calls were used. Try again; if it keeps happening, check that source or shorten the windows."
 )
 
 // investigationAuditBudget and investigationCaseBudget split the request's
@@ -338,8 +338,11 @@ func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]
 		}
 		if len(page.Rows) == 0 {
 			// A source that says there is more but sends nothing: the read cannot go on, and what was read is not the whole picture.
+			// An earlier real-limit cut keeps its own cause ("too many calls"); only a read that was whole until now is called stalled.
+			if !read.Truncated {
+				stalled = true
+			}
 			read.Truncated = true
-			stalled = true
 			break
 		}
 		if len(rows) >= investigationMaxRows {

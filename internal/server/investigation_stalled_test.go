@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"api-audit-explorer/internal/audit"
@@ -30,8 +31,32 @@ func TestInvestigationEmptyPageWithACursorMarksTheReadCut(t *testing.T) {
 	if len(out.Read.Warnings) != 1 || out.Read.Warnings[0] != investigationStalledText {
 		t.Errorf("warnings = %q, want the stopped-part-way sentence", out.Read.Warnings)
 	}
-	if out.Result.Steps[0].Readiness != investigate.CannotTestYet && out.Result.Steps[0].Readiness != investigate.Failed {
-		t.Errorf("step 0 = %q after a cut read", out.Result.Steps[0].Readiness)
+	if out.Result.Steps[0].Readiness != investigate.CannotTestYet {
+		t.Errorf("step 0 = %q after a cut read, want %q", out.Result.Steps[0].Readiness, investigate.CannotTestYet)
+	}
+}
+
+// A page the source itself marked cut is a real limit. If an empty page with a cursor follows it, the warning still names the
+// limit ("too many calls"), not the stall: the earlier cause is the one the person can act on (shorten the windows).
+func TestInvestigationRealLimitCauseSurvivesALaterEmptyPage(t *testing.T) {
+	first := okPage(invRows())
+	first.NextCursor = "more"
+	first.Truncated = true
+	stalled := okPage(nil)
+	stalled.NextCursor = "still-more"
+	e := tagEnv(t, casestore.NewMemory(), &fakeRepository{requestPages: []audit.Page{first, stalled}})
+	id := e.newCase("inv")
+	res := e.json(http.MethodPost, "/api/cases/"+id+"/investigation", invPost(""))
+	if res.Code != http.StatusOK {
+		t.Fatalf("code = %d %s", res.Code, res.Body)
+	}
+	var out investigationAnswer
+	decodeBody(t, res, &out)
+	if !out.Read.Truncated || out.Read.Requests != 0 {
+		t.Fatalf("read = %+v, want a cut read with no calls used", out.Read)
+	}
+	if len(out.Read.Warnings) != 1 || out.Read.Warnings[0] == investigationStalledText || !strings.Contains(out.Read.Warnings[0], "too many audit calls") {
+		t.Errorf("warnings = %q, want the too-many-calls sentence, not the stalled one", out.Read.Warnings)
 	}
 }
 
