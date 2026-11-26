@@ -336,6 +336,14 @@ func (s *Store) recomputeCoverage() {
 }
 
 func (s *Store) event(t time.Time, kind, detail string) {
+	// The pause is kept as its own field, set and cleared with the event that
+	// raises it, so the 200 event window cannot lose it (RV-BB-9).
+	switch kind {
+	case EventPausedDiskLow:
+		s.m.PausedDiskLow, s.m.PausedSince = true, t.UTC()
+	case EventResumed:
+		s.m.PausedDiskLow, s.m.PausedSince = false, time.Time{}
+	}
 	s.m.Events = append(s.m.Events, Event{T: t.UTC(), Kind: kind, Detail: detail})
 	if len(s.m.Events) > maxEvents {
 		s.m.Events = s.m.Events[len(s.m.Events)-maxEvents:]
@@ -761,6 +769,13 @@ func (s *Store) CurrentFile() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.curN
+}
+
+// PausedDiskLow says whether the manifest holds a pause for low disk space.
+func (s *Store) PausedDiskLow() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.m.PausedDiskLow
 }
 
 // Dir is the recordings folder.
