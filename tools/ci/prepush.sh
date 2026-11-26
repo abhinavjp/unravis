@@ -111,9 +111,9 @@ if [ "$go_on" = "true" ]; then
     go mod tidy && git diff --exit-code go.mod go.sum >/dev/null || fail "go mod tidy changes go.mod/go.sum: commit the result"
   fi
 
-  step "11. Lint of the new code (advisory in CI, but it shows red on the pull request)"
+  step "11. Lint of the new code, as the Linux CI job sees it (advisory in CI, but it shows red on the pull request)"
   gl="$(command -v golangci-lint || ls "$HOME/go/bin/golangci-lint"* 2>/dev/null | head -1 || true)"
-  if [ -n "$gl" ]; then "$gl" run --new-from-rev="$base" || fail "golangci-lint (same rules as the PR's lint job)"
+  if [ -n "$gl" ]; then GOOS=linux "$gl" run --new-from-rev="$base" || fail "golangci-lint (same rules as the PR's lint job)"
   else warn "golangci-lint not installed: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0"; fi
 else
   echo; echo "(Go not affected: Go steps skipped)"

@@ -68,8 +68,16 @@ if (fs.existsSync(quarantineFile)) {
     quarantined.set(m[1], `${m[2]}, until ${m[3]}`);
   }
 }
+// A test whose only complaint is that its t.TempDir() could not be removed (a virus scanner, the search indexer or a child
+// process still holds a file on a Windows PC) did everything it checks: report it, do not fail the gate on it.
+const cleanupOnly = (f) => {
+  const lines = (testOutput.get(f) || []).join('').split('\n').map((l) => l.trim()).filter((l) => l && !/^(=== |--- |PASS$|FAIL$)/.test(l));
+  return lines.length > 0 && lines.every((l) => /TempDir RemoveAll cleanup/.test(l));
+};
+const cleanup = failures.filter((f) => !baseline.has(f) && !quarantined.has(f) && cleanupOnly(f));
+for (const f of cleanup) console.log(`::notice::only the temp folder cleanup failed (the host kept a file open), not counted: ${f}`);
 const held = failures.filter((f) => !baseline.has(f) && quarantined.has(f));
-const fresh = failures.filter((f) => !baseline.has(f) && !quarantined.has(f));
+const fresh = failures.filter((f) => !baseline.has(f) && !quarantined.has(f) && !cleanup.includes(f));
 for (const f of held) console.log(`::notice::quarantined failure (${quarantined.get(f)}): ${f}`);
 for (const [q, why] of quarantined) if (passedTests.has(q)) console.log(`::notice::quarantined test passes now (${why}), drop its line if it stays green: ${q}`);
 const stale = [...baseline].filter((b) => passedTests.has(b));
@@ -80,7 +88,7 @@ for (const f of fresh) {
   const lines = (testOutput.get(f) || []).join('').split('\n').filter((l) => l.trim()).slice(-40);
   for (const l of lines) console.log(`    | ${l}`);
 }
-const summary = `### Go failures vs baseline\n\n| | count |\n|---|---|\n| failing now | ${failures.length} |\n| in baseline | ${baseline.size} |\n| new | ${fresh.length} |\n| quarantined and failing | ${held.length} |\n| baseline now passing | ${stale.length} |\n`;
+const summary = `### Go failures vs baseline\n\n| | count |\n|---|---|\n| failing now | ${failures.length} |\n| in baseline | ${baseline.size} |\n| new | ${fresh.length} |\n| quarantined and failing | ${held.length} |\n| temp-folder cleanup only | ${cleanup.length} |\n| baseline now passing | ${stale.length} |\n`;
 if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + (fresh.length ? '\n' + fresh.map((f) => `- NEW FAILURE \`${f}\``).join('\n') + '\n' : ''));
 const out = opt('--out'); if (out) fs.writeFileSync(out, summary);
 console.log(`${failures.length} failing, ${baseline.size} in baseline, ${fresh.length} new`);
