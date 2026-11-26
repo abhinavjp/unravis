@@ -1,6 +1,6 @@
 # Homestretch: build queue, machine rules and enterprise features (round 4)
 
-Status: research and prototype notes. Nothing here is built in the real app until nachi approves the prototype.
+Status: research and prototype notes. The prototype was approved by nachi on 2026-11-26; the real build follows `ROUND4-BUILD-PLAN.md`.
 Prototype: `homestretch-redesign-prototype.html`. Useful links: `?tab=queue`, `?tab=machines`, `?tab=holds`, `?topo=brain&fleet=five`.
 
 ## 1. What the research found

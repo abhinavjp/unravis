@@ -278,12 +278,20 @@ func TestMaskLongNamesAreLinear(t *testing.T) {
 				}
 				return b
 			}
-			small, big := best(256<<10), best(1<<20)
+			// A shared runner can stall for a few hundred milliseconds in the middle of a run (the full CI hit 300 ms and 620 ms against 16 ms), so
+			// a ratio that is off is measured again before it counts: a real quadratic is off every time, a stall is not.
+			var small, big time.Duration
+			for attempt := 0; attempt < 3; attempt++ {
+				small, big = best(256<<10), best(1<<20)
+				if big <= 10*small+100*time.Millisecond { // 4x is linear, 16x is quadratic
+					break
+				}
+			}
 			if big > time.Second {
 				t.Errorf("1 MiB took %v", big)
 			}
-			if big > 10*small+100*time.Millisecond { // 4x is linear, 16x is quadratic
-				t.Errorf("1 MiB took %v, 256 KiB took %v: not linear", big, small)
+			if big > 10*small+100*time.Millisecond {
+				t.Errorf("1 MiB took %v, 256 KiB took %v: not linear (three measurements)", big, small)
 			}
 		})
 	}
