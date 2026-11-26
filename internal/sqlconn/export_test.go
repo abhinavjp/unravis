@@ -93,7 +93,7 @@ func TestImportRefusesRecordsSaveCouldNeverMakeAndWritesNothing(t *testing.T) {
 			if n, err := keeper.Import([]Record{good}); err != nil || n != 1 {
 				t.Fatal(n, err)
 			}
-			before, err := os.ReadFile(path)
+			before, err := os.ReadFile(path) //nolint:gosec // G304: path comes from t.TempDir() in service()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -103,7 +103,7 @@ func TestImportRefusesRecordsSaveCouldNeverMakeAndWritesNothing(t *testing.T) {
 			if n, err := keeper.Import([]Record{second, bad}); !errors.Is(err, ErrInvalid) || n != 0 {
 				t.Fatalf("import = %d, %v; want ErrInvalid", n, err)
 			}
-			after, err := os.ReadFile(path)
+			after, err := os.ReadFile(path) //nolint:gosec // G304: path comes from t.TempDir() in service()
 			if err != nil || !bytes.Equal(before, after) {
 				t.Fatalf("the store changed after a refused import: %v", err)
 			}
