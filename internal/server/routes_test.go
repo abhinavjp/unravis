@@ -22,7 +22,6 @@ type routeCase struct {
 var routeCases = []routeCase{
 	{"/", "/", "GET, HEAD"},
 	{launchPath, launchPath, "GET"},
-	{launchStylePath, launchStylePath, "GET, HEAD"},
 	{sessionproof.Path, sessionproof.Path, "GET"},
 	{"/api/client-log", "/api/client-log", "POST"},
 	{"/api/logs/info", "/api/logs/info", "GET"},
@@ -30,7 +29,6 @@ var routeCases = []routeCase{
 	{"/api/connections/recent/{id}", "/api/connections/recent/c1", "DELETE"},
 	{"/api/sql-connections", "/api/sql-connections", "GET, POST"},
 	{"/api/sql-connections/test", "/api/sql-connections/test", "POST"},
-	{"/api/sql-connections/access", "/api/sql-connections/access", "POST"},
 	{"/api/keeper/status", "/api/keeper/status", "GET"},
 	{"/api/keeper/migrate", "/api/keeper/migrate", "POST"},
 	{"/api/keeper/remove-old", "/api/keeper/remove-old", "POST"},
@@ -63,19 +61,12 @@ var routeCases = []routeCase{
 	{"/api/info", "/api/info", "GET"},
 	{"/api/version", "/api/version", "GET"},
 	{"/api/update-check", "/api/update-check", "POST"},
-	{"/api/update/status", "/api/update/status", "GET"},
-	{"/api/ui/presence", "/api/ui/presence", "POST"},
-	{"/api/update/result/dismiss", "/api/update/result/dismiss", "POST"},
-	{"/api/update/settings", "/api/update/settings", "PUT"},
-	{"/api/update/download", "/api/update/download", "POST"},
-	{"/api/update/install", "/api/update/install", "POST"},
 	{"/api/sources", "/api/sources", "GET, POST"},
 	{"/api/sources/{id}/schema", "/api/sources/s/schema", "GET"},
 	{"/api/sources/{id}/fields", "/api/sources/s/fields", "GET"},
 	{"/api/sources/{id}/coverage", "/api/sources/s/coverage", "GET"},
 	{"/api/sources/{id}/stats", "/api/sources/s/stats", "GET"},
 	{"/api/sources/{id}", "/api/sources/s", "DELETE"},
-	{"/api/mcp/evidence/{alias}", "/api/mcp/evidence/ev1_aaaaaaaaaaaaaaaaaaaaaaaaaa", "GET"},
 	{"/api/analyze", "/api/analyze", "POST"},
 	{"/api/requests", "/api/requests", "POST"},
 	{"/api/activity", "/api/activity", "POST"},
@@ -117,8 +108,6 @@ var routeCases = []routeCase{
 	{"/api/cases/{id}/investigation", "/api/cases/c1/investigation", "POST"},
 	{"/api/cases/{id}/tracing", "/api/cases/c1/tracing", "POST"},
 	{"/api/call-trace", "/api/call-trace", "POST"},
-	{"/api/local/open-folder", "/api/local/open-folder", "POST"},
-	{"/api/blackbox/this-pc/folders", "/api/blackbox/this-pc/folders", "GET"},
 	{"/api/discover/capabilities", "/api/discover/capabilities", "GET"},
 	{"/api/discover/scans", "/api/discover/scans", "POST"},
 	{"/api/discover/scans/{scan}", "/api/discover/scans/s1", "DELETE, GET"},
@@ -153,23 +142,24 @@ var routeCases = []routeCase{
 	{"/api/blackbox/this-pc/remove", "/api/blackbox/this-pc/remove", "POST"},
 	{"/api/blackbox/this-pc/snapshot", "/api/blackbox/this-pc/snapshot", "POST"},
 	{"/api/blackbox/this-pc/update", "/api/blackbox/this-pc/update", "POST"},
-	{"/api/blackbox/this-pc/sql/setup", "/api/blackbox/this-pc/sql/setup", "POST"},
-	{"/api/blackbox/this-pc/sql/login/clear", "/api/blackbox/this-pc/sql/login/clear", "POST"},
 	{"/api/blackbox/{id}/check", "/api/blackbox/bb-1/check", "POST"},
-	{"/api/blackbox/{id}/diagnostics", "/api/blackbox/bb-1/diagnostics", "GET"},
 	{"/api/blackbox/{id}/key", "/api/blackbox/bb-1/key", "PUT"},
 	{"/api/blackbox/{id}/reveal-key", "/api/blackbox/bb-1/reveal-key", "POST"},
 	{"/api/blackbox/{id}/host-reading", "/api/blackbox/bb-1/host-reading", "POST"},
 	{"/api/blackbox/{id}/series", "/api/blackbox/bb-1/series", "POST"},
 	{"/api/blackbox/{id}", "/api/blackbox/bb-1", "DELETE"},
-	{"/api/mcp/profiles", "/api/mcp/profiles", "GET"},
-	{"/api/mcp/profiles/{id}/{action}", "/api/mcp/profiles/claude/approve", "POST"},
-	{"/api/mcp/stop", "/api/mcp/stop", "POST"},
-	{"/api/mcp/resume", "/api/mcp/resume", "POST"},
-	{"/api/code/types", "/api/code/types", "GET"},
-	{"/api/code/settings", "/api/code/settings", "GET, PUT"},
-	{"/api/code/run", "/api/code/run", "POST"},
-	{"/api/code/runs/{id}/cancel", "/api/code/runs/r1/cancel", "POST"},
+	{"/api/servers", "/api/servers", "GET, POST"},
+	{"/api/servers/{id}", "/api/servers/srv-0123456789abcdef01234567", "DELETE, PATCH"},
+	{"/api/servers/{id}/secret", "/api/servers/srv-0123456789abcdef01234567/secret", "PUT"},
+	{"/api/servers/{id}/host-keys", "/api/servers/srv-0123456789abcdef01234567/host-keys", "POST"},
+	{"/api/servers/{id}/pin", "/api/servers/srv-0123456789abcdef01234567/pin", "POST"},
+	{"/api/servers/{id}/replace-key", "/api/servers/srv-0123456789abcdef01234567/replace-key", "POST"},
+	{"/api/servers/{id}/test", "/api/servers/srv-0123456789abcdef01234567/test", "POST"},
+	{"/api/servers/{id}/browse", "/api/servers/srv-0123456789abcdef01234567/browse", "POST"},
+	{"/api/servers/{id}/plan", "/api/servers/srv-0123456789abcdef01234567/plan", "POST"},
+	{"/api/servers/{id}/pulls", "/api/servers/srv-0123456789abcdef01234567/pulls", "GET, POST"},
+	{"/api/servers/{id}/pulls/{job}", "/api/servers/srv-0123456789abcdef01234567/pulls/job-0123456789abcdef", "DELETE, GET"},
+	{"/api/servers/{id}/pulls/{job}/files/{name}", "/api/servers/srv-0123456789abcdef01234567/pulls/job-0123456789abcdef/files/a.log", "GET"},
 }
 
 var routeTestMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}
@@ -210,7 +200,7 @@ func TestRouteTableCoversEveryRoute(t *testing.T) {
 func TestRoutesAnswerExpectedStatusPerMethod(t *testing.T) {
 	h := New(&fakeRepository{}, testAssets(), testToken, false)
 	for _, c := range routeCases {
-		public := c.path == "/" || c.path == sessionproof.Path || c.path == launchPath || c.path == launchStylePath
+		public := c.path == "/" || c.path == sessionproof.Path || c.path == launchPath
 		for _, method := range routeTestMethods {
 			res := request(h, method, c.path, "", !public)
 			if hasMethod(c.allow, method) {
@@ -235,7 +225,7 @@ func TestRoutesAnswerExpectedStatusPerMethod(t *testing.T) {
 func TestRoutesRequireTokenBeforeMethodCheck(t *testing.T) {
 	h := New(&fakeRepository{}, testAssets(), testToken, false)
 	for _, c := range routeCases {
-		if c.path == "/" || c.path == sessionproof.Path || c.path == launchPath || c.path == launchStylePath {
+		if c.path == "/" || c.path == sessionproof.Path || c.path == launchPath {
 			continue
 		}
 		for _, method := range routeTestMethods {
