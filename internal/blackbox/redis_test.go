@@ -38,6 +38,11 @@ const fakeClients = "id=3 addr=10.9.9.9:1 name=secretname idle=2 flags=N cmd=get
 
 func newRedisFake(t *testing.T) *redisFake {
 	t.Helper()
+	// The fake is this test program, which is not an installed service: on Windows the real check would refuse it.
+	// Tests of the refusal set their own stub.
+	oldCheck := bbredis.ListenerCheck
+	bbredis.ListenerCheck = func(int) error { return nil }
+	t.Cleanup(func() { bbredis.ListenerCheck = oldCheck })
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

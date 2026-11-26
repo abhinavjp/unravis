@@ -49,6 +49,7 @@ var exportKinds = map[string]map[string]bool{
 	"iis-freb":        set("failed-request", "slow-module"),
 	"win-counters":    set("counter"),
 	"sql-pdh":         set("counter"),
+	"blackbox-source": set("counter", "recorder-start", "recording-gap", "metric", "redis-start", "slow-command", "latency-spike"),
 	"win-events": set("win-event", "apppool-recycle", "apppool-idle-shutdown", "task-start", "task-complete",
 		"task-fail", "task-skipped", "task-stop",
 		// W2-g
@@ -319,7 +320,9 @@ var (
 		"SQLServer:Locks", "SQLServer:Latches", "SQLServer:Access Methods", "SQLServer:Wait Statistics", "SQLServer:Databases",
 		"SQLServer:Plan Cache", "SQLServer:Transactions", "SQLServer:SQL Errors", "SQLServer:Buffer Node", "SQLServer:Memory Node",
 		"SQLServer:Exec Statistics", "SQLServer:Cursor Manager by Type", "SQLServer:Workload Group Stats",
-		"SQLServer:Resource Pool Stats", "SQLServer:Availability Replica", "SQLServer:Database Replica")
+		"SQLServer:Resource Pool Stats", "SQLServer:Availability Replica", "SQLServer:Database Replica",
+		// Figures the Blackbox derives itself, so they are never filed under a Windows counter that means something else.
+		"Blackbox TCP", "Blackbox IIS")
 	counterNames = fold("% Processor Time", "% User Time", "% Privileged Time", "% Idle Time", "% Interrupt Time", "% DPC Time",
 		"% C1 Time", "% C2 Time", "% C3 Time", "Processor Frequency", "% of Maximum Frequency", "Interrupts/sec", "DPCs Queued/sec",
 		"Processor Queue Length", "Context Switches/sec", "System Calls/sec", "Threads", "Processes",
@@ -369,7 +372,10 @@ var (
 		"Bytes Sent to Replica/sec", "Bytes Received from Replica/sec", "Log Send Queue Size", "Redo Queue Size",
 		"Transaction Delay", "Mirrored Write Transactions/sec", "Log Bytes Received/sec", "Recovery Queue", "Redone Bytes/sec",
 		// W2-f: W3SVC_W3WP and APP_POOL_WAS counters A1 reads.
-		"Process ID", "Active Requests", "Active Threads Count", "Requests Rejected", "Requests / Sec")
+		"Process ID", "Active Requests", "Active Threads Count", "Requests Rejected", "Requests / Sec",
+		// The Blackbox's own figures (objects "Blackbox TCP" and "Blackbox IIS") and the HTTP.sys queue length it reads.
+		"CurrentQueueSize", "RejectedRequests", "ArrivalRate", "Retransmits/sec", "Resets/sec", "Outbound Queue", "Connection Failures/sec", "Discarded Packets/sec",
+		"Outbound Errors/sec", "Worker Ping Latency (ms)")
 )
 
 var counterObjectCanon = canonicalValues(counterObjects)

@@ -77,6 +77,7 @@ var samples = map[string]sample{
 	"iis-w3c":           {file: "iis/testdata/w3c_good.log"},
 	"iis-httperr":       {file: "iis/testdata/httperr_good.log"},
 	"iis-freb":          {file: "iis/testdata/freb_good.xml"},
+	"blackbox-source":   {inline: `{"v":1,"run":"r-one","seq":1,"t":"2001-09-09T01:46:40Z","cpu":12.5}` + "\n"},
 	"win-counters":      {file: "wincounters/testdata/counters_basic.csv"},
 	"win-events":        {file: "winevents/testdata/events_utc.csv"},
 	"schedule-hangfire": {file: "schedule/testdata/hangfire_good.csv"},
