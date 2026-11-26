@@ -26,8 +26,8 @@ type RunOptions struct {
 	// JobTree, when set and the workflow has more than one job, gives each job instance a checkout of its
 	// own (as on GitHub, where every job has a fresh machine), so one job's npm ci or build cannot pull
 	// files from under another job's tests. name is a short tag unique within the run. cleanup always runs.
-	JobTree func(ctx context.Context, name string) (path string, cleanup func(), err error)
-	StateDir string       // per-run folder: logs, run.json, artifacts
+	JobTree  func(ctx context.Context, name string) (path string, cleanup func(), err error)
+	StateDir string // per-run folder: logs, run.json, artifacts
 	GitHub   map[string]any
 	Inputs   map[string]string
 	Vars     map[string]string
