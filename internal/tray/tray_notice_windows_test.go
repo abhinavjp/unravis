@@ -190,7 +190,9 @@ func TestDotIconIsFreedWhenTheTrayStops(t *testing.T) {
 	r.o.State = func() State { return State{Tooltip: "x", Attention: true} }
 	r.start()
 	r.cancel()
-	<-r.done
+	if err := <-r.done; err != nil {
+		t.Logf("tray stopped with: %v", err)
+	}
 	r.done <- nil // the cleanup in start waits for a value
 	if r.destroyed.Load() != 1 {
 		t.Errorf("dot icon freed %d times, want 1", r.destroyed.Load())

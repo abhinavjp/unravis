@@ -207,7 +207,7 @@ func (st *trayState) run(ctx context.Context) error {
 	}
 	st.tryAdd(hwnd)
 	if st.o.State != nil {
-		procSetTimer.Call(uintptr(hwnd), pollTimerID, pollMillis, 0)
+		_, _, _ = procSetTimer.Call(uintptr(hwnd), pollTimerID, pollMillis, 0)
 	}
 	readyHook(hwnd)
 

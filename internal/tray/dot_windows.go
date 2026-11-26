@@ -58,13 +58,13 @@ type bitmapObj struct {
 // copy and frees it with destroyIcon; base is not touched.
 func makeDotIcon(base windows.Handle) windows.Handle {
 	var ii iconInfo
-	if r, _, _ := procGetIconInfo.Call(uintptr(base), uintptr(unsafe.Pointer(&ii))); r == 0 {
+	if r, _, _ := procGetIconInfo.Call(uintptr(base), uintptr(unsafe.Pointer(&ii))); r == 0 { //nolint:gosec // Win32 call argument
 		return 0
 	}
 	defer func() {
 		for _, b := range []uintptr{ii.hbmMask, ii.hbmColor} {
 			if b != 0 {
-				procDeleteObject.Call(b)
+				_, _, _ = procDeleteObject.Call(b)
 			}
 		}
 	}()
@@ -72,7 +72,7 @@ func makeDotIcon(base windows.Handle) windows.Handle {
 		return 0
 	}
 	var bm bitmapObj
-	if r, _, _ := procGetObject.Call(ii.hbmColor, unsafe.Sizeof(bm), uintptr(unsafe.Pointer(&bm))); r == 0 {
+	if r, _, _ := procGetObject.Call(ii.hbmColor, unsafe.Sizeof(bm), uintptr(unsafe.Pointer(&bm))); r == 0 { //nolint:gosec // Win32 call argument
 		return 0
 	}
 	w, h := int(bm.bmWidth), int(bm.bmHeight)
@@ -86,20 +86,20 @@ func makeDotIcon(base windows.Handle) windows.Handle {
 	if dc == 0 {
 		return 0
 	}
-	got, _, _ := procGetDIBits.Call(dc, ii.hbmColor, 0, uintptr(h), uintptr(unsafe.Pointer(&pix[0])), uintptr(unsafe.Pointer(&hdr)), 0)
-	procReleaseDC.Call(0, dc)
+	got, _, _ := procGetDIBits.Call(dc, ii.hbmColor, 0, uintptr(h), uintptr(unsafe.Pointer(&pix[0])), uintptr(unsafe.Pointer(&hdr)), 0) //nolint:gosec // Win32 call argument
+	_, _, _ = procReleaseDC.Call(0, dc)
 	if got == 0 {
 		return 0
 	}
 	opaqueIfNoAlpha(pix)
 	paintDot(pix, w, h)
-	colour, _, _ := procCreateBitmap.Call(uintptr(w), uintptr(h), 1, 32, uintptr(unsafe.Pointer(&pix[0])))
-	maskBits := make([]byte, ((w+15)/16)*2*h) // all zero: every pixel is drawn
-	mask, _, _ := procCreateBitmap.Call(uintptr(w), uintptr(h), 1, 1, uintptr(unsafe.Pointer(&maskBits[0])))
+	colour, _, _ := procCreateBitmap.Call(uintptr(w), uintptr(h), 1, 32, uintptr(unsafe.Pointer(&pix[0])))   //nolint:gosec // Win32 call argument
+	maskBits := make([]byte, ((w+15)/16)*2*h)                                                                // all zero: every pixel is drawn
+	mask, _, _ := procCreateBitmap.Call(uintptr(w), uintptr(h), 1, 1, uintptr(unsafe.Pointer(&maskBits[0]))) //nolint:gosec // Win32 call argument
 	defer func() {
 		for _, b := range []uintptr{colour, mask} {
 			if b != 0 {
-				procDeleteObject.Call(b)
+				_, _, _ = procDeleteObject.Call(b)
 			}
 		}
 	}()
@@ -107,7 +107,7 @@ func makeDotIcon(base windows.Handle) windows.Handle {
 		return 0
 	}
 	out := iconInfo{fIcon: 1, hbmMask: mask, hbmColor: colour}
-	h2, _, _ := procCreateIconIndirect.Call(uintptr(unsafe.Pointer(&out)))
+	h2, _, _ := procCreateIconIndirect.Call(uintptr(unsafe.Pointer(&out))) //nolint:gosec // Win32 call argument
 	return windows.Handle(h2)
 }
 
@@ -125,6 +125,6 @@ func opaqueIfNoAlpha(pix []byte) {
 
 func destroyIcon(h windows.Handle) {
 	if h != 0 {
-		procDestroyIcon.Call(uintptr(h))
+		_, _, _ = procDestroyIcon.Call(uintptr(h))
 	}
 }
