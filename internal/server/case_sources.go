@@ -96,8 +96,8 @@ type caseViewDTO struct {
 	// Retries is the "needs another try" list stored in the case (A14, C19).
 	Retries []retryDTO `json:"retries"`
 	// Preparing is true while an old case builds its helper indexes in the
-	// background, so its first charts are slow. The page then says "Preparing this
-	// case. This happens once." and reads the case again until it turns false.
+	// background, so its first charts are slow. The page then says "Preparing this case so its charts
+	// open quickly", and reads the case again until it turns false.
 	Preparing bool `json:"preparing"`
 }
 

@@ -776,8 +776,7 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*caseState, erro
 		// open. Build them now, in the background, so the first series query does
 		// not stall on a large case; a query that arrives meanwhile waits for the
 		// same build.
-		st.preparing.Store(true) // before the goroutine runs, so the first page read already says so
-		go (&Case{caseState: st}).ensureAttrIndexes()
+		st.startAttrBuild()
 	}
 	if timelineIndexesMissing(ctx, db) {
 		// A case from before the timeline indexes (ev_src_ts, ev_err_ts): build them

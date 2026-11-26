@@ -116,9 +116,9 @@ func TestOlderCaseSaysPreparingUntilItsSeriesIndexesAreBuilt(t *testing.T) {
 	}
 }
 
-// A build that cannot run (an import holds the case) still ends the "preparing"
-// state; it must never stay on for good.
-func TestPreparingEndsWhenTheBuildCannotRun(t *testing.T) {
+// A query that finds an import running goes on without the indexes; it must not
+// end the "preparing" note, because the background build has not run yet.
+func TestQueryBehindAnImportDoesNotEndPreparing(t *testing.T) {
 	s, _ := newTestStore(t)
 	info := mustCreate(t, s, "busy")
 	c := mustOpen(t, s, info.ID)
@@ -128,11 +128,126 @@ func TestPreparingEndsWhenTheBuildCannotRun(t *testing.T) {
 	dropAttrIndexes(t, c)
 	c.attrIdx.Store(0)
 	c.preparing.Store(true)
-	c.importMu.Lock() // an import is running: the build gives up at once
-	c.ensureAttrIndexes()
+	c.importMu.Lock() // an import is running
+	busy := c.ensureAttrIndexes()
 	c.importMu.Unlock()
+	if !busy {
+		t.Fatal("a build behind a running import did not say it was busy")
+	}
+	if !c.Preparing() {
+		t.Fatal("a query that found the import lock held ended the preparing note")
+	}
+}
+
+// The background build behind a running import waits and tries again: the note
+// stays up while the import runs and ends once the indexes are built.
+func TestBackgroundBuildWaitsForAnImportThenEndsPreparing(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "wait")
+	c := mustOpen(t, s, info.ID)
+	if _, err := c.Import(context.Background(), tMeta("a.csv"), tBody("a"), tRun(tEvents(c, "a", 10))); err != nil {
+		t.Fatal(err)
+	}
+	dropAttrIndexes(t, c)
+	c.attrIdx.Store(0)
+	c.importMu.Lock() // an import is running
+	c.startAttrBuild()
+	time.Sleep(3 * attrBuildRetry) // several turns of the retry
+	if !c.Preparing() {
+		t.Fatal("the note ended while an import kept the build waiting")
+	}
+	if n := attrIndexCount(t, c); n != 0 {
+		t.Fatalf("indexes built behind a running import: %d", n)
+	}
+	c.importMu.Unlock()
+	waitNotPreparing(t, c)
+	if n := attrIndexCount(t, c); n != 2 {
+		t.Fatalf("series-key indexes after the import ended = %d, want 2", n)
+	}
+}
+
+// The failing-before test for the review finding: the case page opens and closes
+// the case on every request. Closing every handle of the case while its series-key
+// build runs must not shut the case down and cut the build off: the build holds a
+// reference of its own, so it finishes, the note ends, and the next open finds the
+// indexes (it would have restarted the build every time before).
+func TestCloseDuringTheBuildDoesNotCutItOff(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "cut")
+	c := mustOpen(t, s, info.ID)
+	if _, err := c.Import(context.Background(), tMeta("a.csv"), tBody("a"), tRun(tEvents(c, "a", 40))); err != nil {
+		t.Fatal(err)
+	}
+	dropAttrIndexes(t, c)
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	attrBuildHook = func() {
+		close(entered)
+		<-release
+	}
+	t.Cleanup(func() { attrBuildHook = nil })
+	released := false
+	releaseOnce := func() {
+		if !released {
+			released = true
+			close(release)
+		}
+	}
+	t.Cleanup(releaseOnce)
+
+	c = mustOpen(t, s, info.ID)
+	st := c.caseState
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the background build never started")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- c.Close() }() // the only handle a request held
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("closing the request handle blocked: it shut the case down under its running build")
+	}
+	st.mu.Lock()
+	alive := st.db != nil
+	st.mu.Unlock()
+	if !alive {
+		t.Fatal("closing the last request handle shut the case down under its running build")
+	}
+	releaseOnce()
+	deadline := time.Now().Add(15 * time.Second)
+	for st.preparing.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if st.preparing.Load() {
+		t.Fatal("still preparing after the build was released")
+	}
+	// The build was the last handle: it has shut the case down by now. A new open
+	// finds the indexes built, so it is not preparing and starts no build.
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		_, open := s.open[info.ID]
+		s.mu.Unlock()
+		if !open {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c = mustOpen(t, s, info.ID)
+	defer c.Close()
 	if c.Preparing() {
-		t.Fatal("still preparing after the build gave up")
+		t.Fatal("the next open still says preparing: the build was cut off")
+	}
+	if n := attrIndexCount(t, c); n != 2 {
+		t.Fatalf("series-key indexes after the close during the build = %d, want 2", n)
 	}
 }
 

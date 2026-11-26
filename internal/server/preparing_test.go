@@ -21,8 +21,8 @@ func (p preparingCase) Info() casestore.CaseInfo {
 }
 func (p preparingCase) Preparing() bool { return p.preparing }
 
-// W-34: the case view carries "preparing" so the page can say "Preparing this
-// case. This happens once." while an old case builds its indexes.
+// W-34: the case view carries "preparing" so the page can say "Preparing this case
+// so its charts open quickly" while an old case builds its indexes.
 func TestCaseViewSaysPreparing(t *testing.T) {
 	h := &handler{}
 	for _, want := range []bool{true, false} {

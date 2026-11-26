@@ -86,7 +86,7 @@ type caseState struct {
 	// load then builds the indexes in the background (see Store.load).
 	idxPending bool
 	// preparing is true from open until the background series-key index build
-	// ends (set in Store.load, cleared by ensureAttrIndexes however it ends). The
+	// ends (set and cleared by startAttrBuild, however the build ends). The
 	// case page reads it through Preparing, to say "Preparing this case".
 	preparing atomic.Bool
 	// bg is the background timeline index build of this open case, if one is running
@@ -1679,23 +1679,23 @@ func (c *Case) attrIndexHint(q casestore.EventQuery) string {
 // It never fails a query: when the build cannot finish (busy database, no space,
 // the case is closing) the query runs without the indexes, as slowly as before,
 // and a failed build is not tried again until the case is reopened.
-func (c *Case) ensureAttrIndexes() {
-	// However this ends (built, failed, cancelled, or an import held the lock) the
-	// case is no longer "preparing"; a later query that builds them sets nothing.
-	defer c.preparing.Store(false)
+//
+// It returns true only when an import held the lock and nothing was built; the
+// background build (startAttrBuild) then tries again, a query just goes on.
+func (c *Case) ensureAttrIndexes() (busy bool) {
 	if c.attrIdx.Load() != 0 {
-		return
+		return false
 	}
 	c.attrIdxMu.Lock()
 	defer c.attrIdxMu.Unlock()
 	if c.attrIdx.Load() != 0 {
-		return
+		return false
 	}
 	// A running import keeps the lock for as long as it takes and the caller's
 	// context cannot interrupt the wait: run this query without the indexes
 	// (attrIdx stays 0, so a later query builds them).
 	if !c.importMu.TryLock() {
-		return
+		return true
 	}
 	defer c.importMu.Unlock()
 	if attrBuildHook != nil {
@@ -1703,7 +1703,7 @@ func (c *Case) ensureAttrIndexes() {
 	}
 	db, err := c.handle()
 	if err != nil {
-		return
+		return false
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1716,15 +1716,15 @@ func (c *Case) ensureAttrIndexes() {
 	}()
 	var have int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('ev_kind_counter','ev_kind_metric')`).Scan(&have); err != nil {
-		return
+		return false
 	}
 	if have == len(attrIndexNames) {
 		c.attrIdx.Store(1)
-		return
+		return false
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return
+		return false
 	}
 	if _, err := tx.ExecContext(ctx, attrIndexSQL); err != nil {
 		_ = tx.Rollback()
@@ -1732,17 +1732,18 @@ func (c *Case) ensureAttrIndexes() {
 			c.attrIdx.Store(2)
 			c.s.logf("case %s series-key index build failed: %v", c.id, err)
 		}
-		return
+		return false
 	}
 	if err := tx.Commit(); err != nil {
 		if ctx.Err() == nil {
 			c.attrIdx.Store(2)
 			c.s.logf("case %s series-key index build failed: %v", c.id, err)
 		}
-		return
+		return false
 	}
 	c.attrIdx.Store(1)
 	_, _ = db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+	return false
 }
 
 // scanEvent reads one row of selectEvents.

@@ -1,6 +1,9 @@
 package sqlite
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Preparing says whether this case is still building indexes in the background:
 // the series-key indexes of a case from before schema 3 (started when the case is
@@ -33,3 +36,37 @@ func attrIndexesMissing(ctx context.Context, db queryRower) bool {
 // attrBuildHook, when set (tests only), runs in the series-key index build once it
 // holds the import lock, before it builds anything.
 var attrBuildHook func()
+
+// attrBuildRetry is how long the background series-key build waits before it tries
+// again after an import held the case.
+const attrBuildRetry = 500 * time.Millisecond
+
+// startAttrBuild builds the series-key indexes in the background and marks the case
+// preparing until that ends. The build holds a reference of its own, like
+// startTimelineBuild: the case page opens and closes the case on every request, and
+// without it the last close would shut the case down (and cancel the build) before
+// a large case is indexed, again at every poll. Erase, Store.Close and the
+// lifecycle moves still cancel it (shutdown closes quit). An import that holds the
+// case makes the build wait and try again, so the note stays up until the indexes
+// exist or the build is cancelled; a query that finds the import running does not
+// touch the note. The caller holds the store lock (Store.load, via Open).
+func (c *caseState) startAttrBuild() {
+	c.mu.Lock()
+	c.refs++
+	c.mu.Unlock()
+	c.preparing.Store(true) // before the goroutine runs, so the first page read already says so
+	go func() {
+		bg := &Case{caseState: c}
+		for bg.ensureAttrIndexes() {
+			select {
+			case <-c.quit:
+				c.preparing.Store(false)
+				_ = bg.Close()
+				return
+			case <-time.After(attrBuildRetry):
+			}
+		}
+		c.preparing.Store(false)
+		_ = bg.Close()
+	}()
+}

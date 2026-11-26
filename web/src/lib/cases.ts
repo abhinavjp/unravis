@@ -714,6 +714,14 @@ export async function cancelImportJob(caseId: string, jobId: string, signal?: Ab
 export const JOB_POLL_MS = 1000;
 /** How often a case that says it is preparing is read again, to see when it stops. */
 export const PREPARING_POLL_MS = 2000;
+/** What the page does after a read of a preparing case fails: say the case is gone, go to its key page, stop asking, or ask again at the next turn. */
+export type PreparingNext = 'again' | 'stop' | 'gone' | 'locked';
+export function preparingAfterError(error: unknown, failures: number): PreparingNext {
+  if (isCaseGone(error)) return 'gone';
+  if (isCaseLocked(error)) return 'locked';
+  if (error instanceof CaseApiError && error.reason === 'untrusted-case') return 'stop';
+  return failures >= JOB_MAX_UNREACHABLE ? 'stop' : 'again';
+}
 /** A few lost answers in a row are tolerated (the server may be busy); more than this and the wait gives up. */
 export const JOB_MAX_UNREACHABLE = 5;
 
