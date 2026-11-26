@@ -184,7 +184,10 @@ func failText(err error) string {
 
 // Install starts the installer for the downloaded file. The person pressed the button; nothing else calls this. It may be pressed
 // again after "launched" (the person closed the installer window without updating).
-func (u *Updater) Install() error {
+func (u *Updater) Install() error { return u.install(true) }
+
+// install is Install; byPerson is false for the automatic apply, which must not open a browser page afterwards.
+func (u *Updater) install(byPerson bool) error {
 	if !u.CanInstall() {
 		return errNoInstall
 	}
@@ -230,6 +233,9 @@ func (u *Updater) Install() error {
 	launch := u.launch
 	if u.silent != nil {
 		launch = u.silent // no window: the setup program quits this app, updates and starts it again
+		if byPerson && u.silentOpen != nil {
+			launch = u.silentOpen // and opens the new page, so the page the person pressed the button on is not left behind
+		}
 	}
 	if err := launch(got.Path, got.SHA256, m.Version); err != nil {
 		u.setInstall(gen, InstallInfo{State: "failed", Version: m.Version, Error: failText(err)})

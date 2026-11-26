@@ -328,6 +328,7 @@ func run(args []string, getenv func(string) string) error {
 							exeDir = filepath.Dir(exe)
 						}
 						updater.EnableSilentApply(update.LaunchSilent, func() bool { return update.SilentNoUAC(exeDir) }, nil)
+						updater.EnableSilentReopen(update.LaunchSilentReopen)
 						updater.SetResultDir(filepath.Join(cache, "Unravis", "update-result"))
 					}
 				}

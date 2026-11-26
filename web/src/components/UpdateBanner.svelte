@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { dismissUpdate, dismissUpdateResult, installing, startUpdateDownload, startUpdateInstall, updateBarVisible, updates } from '../lib/updateState.svelte';
+  import { appLink, checkAppAgain, dismissUpdate, dismissUpdateResult, installing, startUpdateDownload, startUpdateInstall, updateBarVisible, updates } from '../lib/updateState.svelte';
+  import { SERVER_GONE_NOTE } from '../lib/updateLink';
   import { downloadPercent, installAnnouncement, installNote, isOwnReleaseUrl, updateCheckNote } from '../lib/updateCheck';
 
   // The bar under the header when a newer, signed version exists. Nothing downloads or installs until the person presses a button.
@@ -9,8 +10,9 @@
   const step = $derived(reply?.install);
   const stage = $derived(step?.state ?? 'idle');
   const percent = $derived(step ? downloadPercent(step.done, step.total) : 0);
-  const text = $derived(reply ? (stage === 'idle' ? updateCheckNote(reply) : installNote(reply)) : '');
-  const announcement = $derived(reply ? installAnnouncement(reply) : '');
+  const gone = $derived(appLink.gone);
+  const text = $derived(gone ? SERVER_GONE_NOTE : reply ? (stage === 'idle' ? updateCheckNote(reply) : installNote(reply)) : '');
+  const announcement = $derived(gone ? 'Unravis restarted. This page lost it.' : reply ? installAnnouncement(reply) : '');
   let bar: HTMLDivElement | undefined = $state();
 
   // A pressed button disappears with its state; keep the keyboard position on the bar instead of dropping it to the page.
@@ -29,13 +31,15 @@
 {/if}
 
 {#if show && reply}
-  <div class="notice update-bar" role="region" aria-label="Unravis update" bind:this={bar} tabindex="-1" data-testid="update-bar" data-state={stage}>
+  <div class="notice update-bar" role="region" aria-label="Unravis update" bind:this={bar} tabindex="-1" data-testid="update-bar" data-state={gone ? 'gone' : stage}>
     <span class="sr-only" role="status" data-testid="update-bar-announce">{announcement}</span>
     <span class="update-bar-text" data-testid="update-bar-text">{text}</span>
     {#if stage === 'downloading'}
       <progress class="update-bar-progress" max="100" value={percent} aria-label="Download progress" data-testid="update-bar-progress"></progress>
     {/if}
-    {#if stage === 'idle' && reply.canInstall}
+    {#if gone}
+      <button type="button" class="primary-button update-bar-action" data-testid="update-bar-recheck" disabled={installing.busy} onclick={() => press(checkAppAgain)}>Check again</button>
+    {:else if stage === 'idle' && reply.canInstall}
       <button type="button" class="primary-button update-bar-action" data-testid="update-bar-download" disabled={installing.busy} onclick={() => press(startUpdateDownload)}>Update now</button>
     {:else if stage === 'ready'}
       <button type="button" class="primary-button update-bar-action" data-testid="update-bar-install" disabled={installing.busy} onclick={() => press(startUpdateInstall)}>Apply now</button>
@@ -44,9 +48,9 @@
     {:else if stage === 'failed'}
       <button type="button" class="primary-button update-bar-action" data-testid="update-bar-retry" disabled={installing.busy} onclick={() => press(startUpdateDownload)}>Try again</button>
     {/if}
-    {#if stage === 'idle' && reply.url && isOwnReleaseUrl(reply.url)}<a class="update-bar-link" data-testid="update-bar-link" href={reply.url} target="_blank" rel="noopener noreferrer">Open the release page <span class="sr-only">(opens in a new tab)</span></a>{/if}
-    {#if installing.error}<span class="update-bar-error" role="alert" data-testid="update-bar-error">{installing.error}</span>{/if}
-    {#if stage === 'idle' || stage === 'failed' || stage === 'launched' || stage === 'ready'}
+    {#if !gone && stage === 'idle' && reply.url && isOwnReleaseUrl(reply.url)}<a class="update-bar-link" data-testid="update-bar-link" href={reply.url} target="_blank" rel="noopener noreferrer">Open the release page <span class="sr-only">(opens in a new tab)</span></a>{/if}
+    {#if installing.error && !gone}<span class="update-bar-error" role="alert" data-testid="update-bar-error">{installing.error}</span>{/if}
+    {#if gone || stage === 'idle' || stage === 'failed' || stage === 'launched' || stage === 'ready'}
       <button type="button" class="quiet-button" data-testid="update-bar-dismiss" aria-label={`${stage === 'ready' ? 'Later' : 'Not now'}. Hide the update bar for version ${reply.latest}`} onclick={() => dismissUpdate(reply.latest)}>{stage === 'ready' ? 'Later' : 'Not now'}</button>
     {/if}
   </div>

@@ -340,3 +340,27 @@ func TestFileStillThereIsRemembered(t *testing.T) {
 		t.Fatal("a missing file was reported as there after the memory expired")
 	}
 }
+
+// Apply now uses the launcher that reopens the page; the automatic apply never does.
+func TestApplyNowUsesTheReopenLauncherAndAutoDoesNot(t *testing.T) {
+	rg, applied := autoRig(t)
+	u := rg.u
+	var reopened atomic.Int32
+	u.EnableSilentReopen(func(path, sha, ver string) error { reopened.Add(1); return nil })
+	u.presence.mu.Lock()
+	u.presence.last = time.Now().Add(-10 * time.Minute)
+	u.presence.mu.Unlock()
+	u.autoStep()
+	if applied.Load() != 1 || reopened.Load() != 0 {
+		t.Fatalf("auto: silent %d, reopen %d", applied.Load(), reopened.Load())
+	}
+	u.inst.mu.Lock()
+	u.inst.info.State = "ready"
+	u.inst.mu.Unlock()
+	if err := u.Install(); err != nil {
+		t.Fatal(err)
+	}
+	if applied.Load() != 1 || reopened.Load() != 1 {
+		t.Fatalf("apply now: silent %d, reopen %d", applied.Load(), reopened.Load())
+	}
+}

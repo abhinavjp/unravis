@@ -73,6 +73,19 @@ func LaunchSilent(path, sha256hex, version string) error {
 	return launchSetup(path, sha256hex, version, []string{"--silent", "--close-app"})
 }
 
+// LaunchSilentReopen is LaunchSilent for an update the person started with Apply now: the setup program also opens the new
+// version's page in the browser, because the page that was open belongs to the old run and cannot reach the new one. An older
+// setup program does not know --reopen and refuses it, so this is only used where the file carries the flag's help line.
+func LaunchSilentReopen(path, sha256hex, version string) error {
+	if !FileHasAll(path, reopenMarker) {
+		return LaunchSilent(path, sha256hex, version)
+	}
+	return launchSetup(path, sha256hex, version, []string{"--silent", "--close-app", "--reopen"})
+}
+
+// reopenMarker is text only a setup program that knows --reopen contains (the flag's help line).
+const reopenMarker = "the person pressed Apply now"
+
 func launchSetup(path, sha256hex, version string, extra []string) error {
 	if !filepath.IsAbs(path) || !sha256RE.MatchString(sha256hex) {
 		return errors.New("the setup file or its hash is not valid")
