@@ -1,6 +1,7 @@
 package blackbox
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -45,6 +46,28 @@ type DiagLog struct {
 	// retryAt: after a failed write or reopen the log is tried again from this
 	// time, not given up for the rest of the run.
 	retryAt time.Time
+	// fsys is the file operations a rotation uses; tests replace it.
+	fsys diagFS
+	// stuck: a rotation could neither rename nor empty the file, so writing is
+	// stopped (the file cannot grow) until a later rotation works (RV-BB-12).
+	stuck bool
+	// onStuck is called once each time the log gets stuck, outside the lock.
+	onStuck func()
+}
+
+// diagFS is what a rotation asks of the file system.
+type diagFS interface {
+	Remove(name string) error
+	Rename(oldpath, newpath string) error
+	Truncate(name string, size int64) error
+}
+
+type osDiagFS struct{}
+
+func (osDiagFS) Remove(name string) error             { return os.Remove(name) }
+func (osDiagFS) Rename(oldpath, newpath string) error { return os.Rename(oldpath, newpath) }
+func (osDiagFS) Truncate(name string, size int64) error {
+	return os.Truncate(name, size)
 }
 
 // OpenDiagLog opens (or starts) the log in dir. It never fails: on an error the
@@ -53,7 +76,7 @@ func OpenDiagLog(dir string, now func() time.Time) *DiagLog {
 	if now == nil {
 		now = time.Now
 	}
-	d := &DiagLog{dir: dir, now: now}
+	d := &DiagLog{dir: dir, now: now, fsys: osDiagFS{}}
 	if err := d.open(); err != nil {
 		d.off = true
 	}
@@ -121,25 +144,57 @@ func diagValue(v any) string {
 }
 
 func (d *DiagLog) write(s string) {
+	if d.writeLocked(s) && d.onStuck != nil {
+		d.onStuck() // outside the lock: the callback may take other locks
+	}
+}
+
+// SetOnStuck sets what happens when the log cannot be kept under its cap and
+// stops writing. It is called once per time that happens.
+func (d *DiagLog) SetOnStuck(f func()) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	d.onStuck = f
+	d.mu.Unlock()
+}
+
+// writeLocked writes one line under the lock and says whether the log has just
+// become stuck (the caller raises the event once, after the lock is released).
+func (d *DiagLog) writeLocked(s string) (becameStuck bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.off {
-		return
+		return false
+	}
+	if d.stuck {
+		// Writing is stopped so the file cannot grow; look again once a minute.
+		if now := d.now(); now.Before(d.retryAt) {
+			return false
+		}
+		d.rotateLocked()
+		if d.stuck {
+			return false // still stuck: the event was raised when it began
+		}
 	}
 	if d.f == nil {
 		// A failed write or reopen: try again once a minute.
 		if now := d.now(); now.Before(d.retryAt) {
-			return
+			return false
 		}
 		if d.open() != nil {
 			d.retryAt = d.now().Add(time.Minute)
-			return
+			return false
 		}
 	}
 	if d.size+int64(len(s)) > diagMaxBytes {
 		d.rotateLocked()
+		if d.stuck {
+			return true
+		}
 		if d.f == nil {
-			return
+			return false
 		}
 	}
 	n, err := d.f.WriteString(s)
@@ -149,20 +204,34 @@ func (d *DiagLog) write(s string) {
 		d.f = nil
 		d.retryAt = d.now().Add(time.Minute)
 	}
+	return false
 }
 
 // rotateLocked keeps the newest log as ".1" and starts a fresh file. A reader
 // holding a file open can make the rename fail on Windows; the cap still holds
-// then, because the current file is emptied instead.
+// then, because the current file is emptied instead. If that fails too the log
+// is stuck: nothing more is written to the file, so it cannot grow, and a later
+// write tries the rotation again once a minute (RV-BB-12).
 func (d *DiagLog) rotateLocked() {
-	d.f.Close()
-	d.f = nil
+	if d.f != nil {
+		d.f.Close()
+		d.f = nil
+	}
 	cur := filepath.Join(d.dir, DiagFileName)
 	old := filepath.Join(d.dir, diagOldName)
-	_ = os.Remove(old) // Windows will not rename over an existing file
-	if err := os.Rename(cur, old); err != nil {
-		_ = os.Truncate(cur, 0)
+	// Windows will not rename over an existing file. A failed remove is not
+	// the end: the rename may still work (other systems), and if not, the
+	// current file is emptied below.
+	_ = d.fsys.Remove(old)
+	// A current file that is already gone has nothing to cap: open starts it.
+	if err := d.fsys.Rename(cur, old); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := d.fsys.Truncate(cur, 0); err != nil {
+			d.stuck = true
+			d.retryAt = d.now().Add(time.Minute)
+			return
+		}
 	}
+	d.stuck = false
 	if err := d.open(); err != nil {
 		d.retryAt = d.now().Add(time.Minute)
 	}

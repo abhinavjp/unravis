@@ -87,6 +87,10 @@ const (
 	EventHostStillSlow   = "host-still-slow"
 	EventHostRecovered   = "host-recovered"
 	EventSettingsRestart = "settings-applied"
+	// EventDiagStopped (RV-BB-12) is raised when the diagnostics file could be
+	// neither moved nor emptied, so it stopped being written to keep it small.
+	// The detail is the fixed code "diag-log-stuck".
+	EventDiagStopped = "diag-log-stopped"
 	// EventRestart is written at every start that follows an earlier run. The
 	// detail is a fixed code: "after-stop" (the earlier run stopped cleanly) or
 	// "after-crash" (it did not). It is recorded even when the hole is too short

@@ -366,3 +366,116 @@ type diagStuckHost struct{ stall chan struct{} }
 
 func (b *diagStuckHost) Collect(time.Time) (Sample, error) { <-b.stall; return Sample{}, nil }
 func (b *diagStuckHost) Close() error                      { return nil }
+
+// failingDiagFS is the real file system with switches that make a step fail.
+type failingDiagFS struct {
+	osDiagFS
+	failRename, failTruncate bool
+}
+
+func (f *failingDiagFS) Rename(a, b string) error {
+	if f.failRename {
+		return errors.New("rename refused")
+	}
+	return f.osDiagFS.Rename(a, b)
+}
+
+func (f *failingDiagFS) Truncate(name string, n int64) error {
+	if f.failTruncate {
+		return errors.New("truncate refused")
+	}
+	return f.osDiagFS.Truncate(name, n)
+}
+
+func diagFileSize(t *testing.T, dir string) int64 {
+	t.Helper()
+	st, err := os.Stat(filepath.Join(dir, DiagFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.Size()
+}
+
+// fillDiagNearCap writes lines until the file is just under its cap.
+func fillDiagNearCap(t *testing.T, d *DiagLog, c *clock, dir string) {
+	t.Helper()
+	for diagFileSize(t, dir) < diagMaxBytes-400 {
+		c.t = c.t.Add(time.Millisecond)
+		d.Line("round", "pad", strings.Repeat("x", 150))
+	}
+}
+
+// RV-BB-12: when the rename fails the file is emptied in place and the cap holds.
+func TestDiagLogRenameFailsSoTheFileIsEmptied(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	d := OpenDiagLog(dir, c.now)
+	defer d.Close()
+	d.fsys = &failingDiagFS{failRename: true}
+	stuck := 0
+	d.SetOnStuck(func() { stuck++ })
+	fillDiagNearCap(t, d, c, dir)
+	for i := 0; i < 20; i++ { // crosses the cap
+		c.t = c.t.Add(time.Millisecond)
+		d.Line("round", "pad", strings.Repeat("x", 150), "seq", i)
+	}
+	if n := diagFileSize(t, dir); n > diagMaxBytes {
+		t.Fatalf("file is %d bytes, cap is %d: it was not emptied", n, diagMaxBytes)
+	}
+	if !strings.Contains(string(d.Tail(DiagTailBytes)), "seq=19") {
+		t.Fatal("the newest line must be written after the file was emptied")
+	}
+	if stuck != 0 {
+		t.Fatalf("an emptied file is not stuck, event raised %d times", stuck)
+	}
+}
+
+// RV-BB-12: when neither the rename nor the emptying works, writing stops (the
+// file cannot grow), one event is raised, and writing starts again once a
+// rotation works.
+func TestDiagLogStopsWritingWhenRotationAndEmptyingFail(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	d := OpenDiagLog(dir, c.now)
+	defer d.Close()
+	fs := &failingDiagFS{failRename: true, failTruncate: true}
+	d.fsys = fs
+	stuck := 0
+	d.SetOnStuck(func() { stuck++ })
+	fillDiagNearCap(t, d, c, dir)
+	for i := 0; i < 20; i++ {
+		c.t = c.t.Add(time.Millisecond)
+		d.Line("round", "pad", strings.Repeat("x", 150), "seq", i)
+	}
+	frozen := diagFileSize(t, dir)
+	if frozen > diagMaxBytes {
+		t.Fatalf("file is %d bytes, cap is %d", frozen, diagMaxBytes)
+	}
+	if stuck != 1 {
+		t.Fatalf("event raised %d times, want once", stuck)
+	}
+	// Retries that fail leave the file as it is and raise nothing more.
+	for i := 0; i < 50; i++ {
+		c.t = c.t.Add(10 * time.Second)
+		d.Line("round", "pad", strings.Repeat("y", 150))
+	}
+	if n := diagFileSize(t, dir); n != frozen {
+		t.Fatalf("file grew from %d to %d while stuck", frozen, n)
+	}
+	if stuck != 1 {
+		t.Fatalf("event raised %d times while stuck, want once", stuck)
+	}
+	// The way clears: the next try rotates and writing resumes.
+	fs.failRename, fs.failTruncate = false, false
+	c.t = c.t.Add(2 * time.Minute)
+	d.Line("round", "seq", "back")
+	if !strings.Contains(string(d.Tail(DiagTailBytes)), "seq=back") {
+		t.Fatal("writing must resume after a rotation works")
+	}
+	if n := diagFileSize(t, dir); n >= frozen {
+		t.Fatalf("file is %d bytes after the rotation, was %d", n, frozen)
+	}
+	if stuck != 1 {
+		t.Fatalf("event raised %d times in all, want once", stuck)
+	}
+}
