@@ -294,7 +294,14 @@ func TestStopBuildCancelsTheSeriesKeyBuildAndWaits(t *testing.T) {
 		s.stopTimelineBuild(context.Background(), info.ID)
 		close(done)
 	}()
-	time.Sleep(50 * time.Millisecond)
+	st.mu.Lock()
+	stop := st.attrBg.stop
+	st.mu.Unlock()
+	select { // the stop has reached the build
+	case <-stop:
+	case <-time.After(10 * time.Second):
+		t.Fatal("stopTimelineBuild did not cancel the series-key build")
+	}
 	releaseOnce() // the build gets going, finds itself cancelled, and lets go
 	select {
 	case <-done:
