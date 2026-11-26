@@ -165,6 +165,44 @@ func TestShutdownBeforeTheCommitKeepsTheFinishedFileListedAndTheCaseOpen(t *test
 	}
 }
 
+// Shutdown arrives after the commit was won: takeCommit already said yes, so the
+// commit goes through and the case ends Archived, unmarked, with nothing listed
+// as a left-over file. The stop must not undo or half-do the commit.
+func TestShutdownAfterTheCommitWasWonLeavesTheCaseArchivedAndNothingUnresolved(t *testing.T) {
+	a := newArchPC(t, cfsPassA)
+	id := a.seed("won", 3)
+	dir := a.folder()
+	p := pauseAt(t, "commit-decided")
+	if res := a.archiveReq(id, dir, "open"); res.Code != http.StatusAccepted {
+		t.Fatalf("archive = %d %s", res.Code, res.Body)
+	}
+	p.waitReached(t)
+	job := a.handler().caseFiles().jobs.get(jobArchive, casestore.CaseID(id))
+	a.handler().caseFiles().jobs.beginShutdown()
+	p.release()
+	callCancelImports(t, a)
+
+	jobEnded(t, job)
+	if d := job.dto(); d.State != fileJobDone {
+		t.Fatalf("job = %+v", d)
+	}
+	if a.state(id) != casestore.StateArchived || a.entry(id).Mark != "" {
+		t.Fatalf("state %s mark %q", a.state(id), a.entry(id).Mark)
+	}
+	if got := caseFilesIn(t, dir); len(got) != 1 {
+		t.Fatalf("the archive file is missing: %v", got)
+	}
+	if len(partsIn(t, dir)) != 0 {
+		t.Fatalf("a part was left: %v", partsIn(t, dir))
+	}
+	if o := a.orphans(); len(o.Files) != 0 {
+		t.Fatalf("something was listed as unresolved: %+v", o)
+	}
+	if a.handler().caseFiles().busy.Load() {
+		t.Fatal("the busy lock was not released")
+	}
+}
+
 // A verify job is stopped between its read-back and its test restore: it ends as
 // stopped, the temporary store is gone, the check does not count as passed, and
 // the case file is as it was.

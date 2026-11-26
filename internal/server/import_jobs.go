@@ -327,8 +327,9 @@ const fileJobShutdownWait = 5 * time.Second
 func CancelImports(served http.Handler) {
 	if h, ok := served.(*handler); ok && h != nil {
 		h.disc.shutdown(3 * time.Second)
-		// Archive and verify jobs stop before the sampler is stopped for good: a
-		// stopped archive puts a recording it paused back (RV-SRV-2).
+		// Archive and verify jobs stop here (RV-SRV-2). A stopped archive would put
+		// a recording it paused back, but disc.shutdown above already set closed, so
+		// restartSampler refuses with "shutting-down": the order is harmless.
 		h.caseFiles().jobs.shutdown(fileJobShutdownWait)
 		h.stopSamplerAll()
 		h.jobs.shutdown(3 * time.Second)
