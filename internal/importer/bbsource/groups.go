@@ -82,7 +82,7 @@ type notes struct {
 	sqlLog, dumpsSeen     bool      // a sample had SQL log entries, a dump list
 	firstT                time.Time // the time of the first sample of the file
 	redis                 *redisState
-	dumpSeen              map[[3]int64]struct{} // dump files already shown, by a hash of the name, time and size
+	dumpSeen              map[dumpKey]struct{} // dump files already shown, by a hash of the name, time and size
 }
 
 // sqlSpec says how one SQL host figure is named. All of them are read from the same Windows counters the SQL Server

@@ -200,7 +200,7 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 			ds, nt.cut = ds[:maxLogEntries], true
 		}
 		if nt.dumpSeen == nil {
-			nt.dumpSeen = map[[3]int64]struct{}{}
+			nt.dumpSeen = map[dumpKey]struct{}{}
 		}
 		for i, x := range ds {
 			at, good := okTime(x.MTime)
@@ -211,7 +211,7 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 			if at.Before(nt.firstT.Add(-beforeFileMargin)) {
 				continue // it existed before this file began: the file before it holds the sight
 			}
-			key := [3]int64{int64(fnv(x.Name)), at.Unix(), x.Size}
+			key := dumpKey{fnv(x.Name), at.Unix(), x.Size}
 			if _, dup := nt.dumpSeen[key]; dup {
 				continue
 			}
@@ -227,6 +227,12 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 		}
 	}
 	return evs
+}
+
+// dumpKey tells one dump file from another without keeping its name.
+type dumpKey struct {
+	h    uint64
+	t, n int64
 }
 
 // fnv is a 64-bit FNV-1a of s, kept in memory only to tell two dump files apart; the name itself is never kept.
