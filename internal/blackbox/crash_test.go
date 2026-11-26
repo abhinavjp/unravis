@@ -21,7 +21,6 @@ const (
 // capture on exactly as RunHost does, then panics without recovering.
 func crashChild(folder string) {
 	defer startCrashCapture(folder, func(string, ...any) {}).CloseUnlessPanic()
-	time.Sleep(20 * time.Millisecond)
 	panic("collector failed: password=" + crashPlanted)
 }
 
@@ -58,7 +57,7 @@ func runHostOnce(t *testing.T, g *hostRig) {
 func TestCrashedRecorderIsReportedOnceAtTheNextStart(t *testing.T) {
 	g := newHostRig(t)
 	folder := g.cfg.Folder
-	if err := os.MkdirAll(folder, 0o755); err != nil {
+	if err := os.MkdirAll(folder, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +115,7 @@ func TestSeveralCrashFilesAreOneEventAndEachIsReportedOnce(t *testing.T) {
 	c := &clock{t: t0}
 	s := openT(t, dir, "r1", c)
 	cd := CrashDir(dir)
-	if err := os.MkdirAll(cd, 0o755); err != nil {
+	if err := os.MkdirAll(cd, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	for _, n := range []string{"crash-20261101T100000Z-1-go.txt", "crash-20261102T100000Z-2-go.txt", "crash-20261103T100000Z-3-go.txt"} {
