@@ -1,6 +1,10 @@
 package bbsource
 
-import "sort"
+import (
+	"encoding/json"
+	"sort"
+	"strings"
+)
 
 // The groups of a sample that are read so far: the SQL host counters, the HTTP.sys request queues, the IIS worker
 // processes and the TCP figures. Each number becomes one counter event.
@@ -52,19 +56,26 @@ type httpQueue struct {
 
 type iisWorker struct {
 	Pool           string   `json:"pool"`
+	PID            uint32   `json:"pid"`
 	ActiveRequests *float64 `json:"activeRequests"`
 	ActiveThreads  *float64 `json:"activeThreads"`
 	PingLatencyMs  *float64 `json:"pingLatencyMs"`
 }
 
 type tcpGroup struct {
-	RetransmitsPerSec  *float64 `json:"retransmitsPerSec"`
-	ResetsPerSec       *float64 `json:"resetsPerSec"`
-	OutboundQueue      *float64 `json:"outboundQueue"`
-	ConnFailuresPerSec *float64 `json:"connFailuresPerSec"`
-	DiscardedPerSec    *float64 `json:"discardedPerSec"`
-	OutErrorsPerSec    *float64 `json:"outErrorsPerSec"`
+	RetransmitsPerSec    *float64 `json:"retransmitsPerSec"`
+	ResetsPerSec         *float64 `json:"resetsPerSec"`
+	OutboundQueue        *float64 `json:"outboundQueue"`
+	OutboundQueuePartial bool     `json:"outboundQueuePartial"`
+	ConnFailuresPerSec   *float64 `json:"connFailuresPerSec"`
+	DiscardedPerSec      *float64 `json:"discardedPerSec"`
+	DiscardedPartial     bool     `json:"discardedPartial"`
+	OutErrorsPerSec      *float64 `json:"outErrorsPerSec"`
+	OutErrorsPartial     bool     `json:"outErrorsPartial"`
 }
+
+// notes collects what one file's groups could not show, so the report can say so once.
+type notes struct{ cut, damaged, partial bool }
 
 // sqlSpec says how one SQL host figure is named. All of them are read from the same Windows counters the SQL Server
 // performance-counter importer reads.
@@ -89,8 +100,16 @@ var sqlSpecs = []sqlSpec{
 	{"SQLServer:Access Methods", "Forwarded Records/sec", "", "", func(s *sqlInstance) *float64 { return s.ForwardedRecordsPerSec }},
 }
 
+// isDefaultInstance says whether a SQL Server instance name is the default instance.
+func isDefaultInstance(n string) bool { return n == "" || strings.EqualFold(n, "MSSQLSERVER") }
+
 // groupReadings lists the numbers of the groups of a sample. ok is false when one of them is not a valid number.
-func groupReadings(l *line) (out []reading, ok bool) {
+//
+// Series identity without names: a name of an app pool, a queue or a named SQL instance is a client name and stays out of
+// the timeline. An IIS worker is told apart by its process id ("pid-N", as a counter export does), a SQL instance and an
+// HTTP queue by their place in the sorted names of that sample (the default SQL instance always first, and the number is
+// always set, so a second instance never renames the first).
+func groupReadings(l *line, nt *notes) (out []reading, ok bool) {
 	ok = true
 	put := func(p *float64, object, counter, instance, sqlInst, unit string) {
 		if p == nil {
@@ -102,74 +121,103 @@ func groupReadings(l *line) (out []reading, ok bool) {
 		}
 		out = append(out, reading{object: object, counter: counter, instance: instance, sqlInstance: sqlInst, unit: unit, v: *p})
 	}
-	if l.SQLHost != nil {
-		ins := l.SQLHost.Instances
-		if len(ins) > maxInstances {
-			ins = ins[:maxInstances]
+	if len(l.SQLHost) > 0 {
+		var g struct {
+			Instances []sqlInstance `json:"instances"`
 		}
-		// An instance is told apart by its place in the sorted instance names, never by the name itself: the name of a
-		// named instance is a server name and stays out of the timeline.
+		if json.Unmarshal(l.SQLHost, &g) != nil {
+			nt.damaged = true
+		}
+		ins := g.Instances
 		order := make([]int, len(ins))
 		for i := range order {
 			order[i] = i
 		}
-		sort.SliceStable(order, func(a, b int) bool { return ins[order[a]].Instance < ins[order[b]].Instance })
+		sort.SliceStable(order, func(a, b int) bool {
+			x, y := ins[order[a]].Instance, ins[order[b]].Instance
+			if dx, dy := isDefaultInstance(x), isDefaultInstance(y); dx != dy {
+				return dx
+			}
+			return x < y
+		})
+		if len(order) > maxInstances {
+			order, nt.cut = order[:maxInstances], true
+		}
 		for rank, i := range order {
-			label := ""
-			if len(ins) > 1 {
-				label = itoa(int64(rank + 1))
-			}
 			for _, sp := range sqlSpecs {
-				put(sp.get(&ins[i]), sp.object, sp.counter, sp.instance, label, sp.unit)
+				put(sp.get(&ins[i]), sp.object, sp.counter, sp.instance, itoa(int64(rank+1)), sp.unit)
 			}
 		}
 	}
-	if l.HTTP != nil {
-		qs := l.HTTP.Queues
-		if len(qs) > maxPools {
-			qs = qs[:maxPools]
+	if len(l.HTTP) > 0 {
+		var g struct {
+			Queues []httpQueue `json:"queues"`
 		}
-		for _, q := range qs {
-			pool := clipName(q.Pool)
-			put(q.CurrentQueueSize, "HTTP Service Request Queues", "CurrentQueueSize", pool, "", "")
-			put(q.MaxQueueItemAge, "HTTP Service Request Queues", "MaxQueueItemAge", pool, "", "")
-			put(q.RejectedRequests, "HTTP Service Request Queues", "Rejected Requests", pool, "", "")
-			put(q.ArrivalRate, "HTTP Service Request Queues", "Arrivals Rate", pool, "", "")
+		if json.Unmarshal(l.HTTP, &g) != nil {
+			nt.damaged = true
+		}
+		qs := g.Queues
+		sort.SliceStable(qs, func(a, b int) bool { return qs[a].Pool < qs[b].Pool })
+		if len(qs) > maxPools {
+			qs, nt.cut = qs[:maxPools], true
+		}
+		for i, q := range qs {
+			inst := "queue-" + itoa(int64(i+1))
+			put(q.CurrentQueueSize, "HTTP Service Request Queues", "CurrentQueueSize", inst, "", "")
+			put(q.MaxQueueItemAge, "HTTP Service Request Queues", "MaxQueueItemAge", inst, "", "")
+			put(q.RejectedRequests, "HTTP Service Request Queues", "RejectedRequests", inst, "", "")
+			put(q.ArrivalRate, "HTTP Service Request Queues", "ArrivalRate", inst, "", "")
 		}
 	}
-	if l.IIS != nil {
-		ws := l.IIS.Workers
+	if len(l.IIS) > 0 {
+		var g struct {
+			Workers []iisWorker `json:"workers"`
+		}
+		if json.Unmarshal(l.IIS, &g) != nil {
+			nt.damaged = true
+		}
+		ws := g.Workers
+		sort.SliceStable(ws, func(a, b int) bool { return ws[a].PID < ws[b].PID })
 		if len(ws) > maxPools {
-			ws = ws[:maxPools]
+			ws, nt.cut = ws[:maxPools], true
 		}
 		for _, w := range ws {
-			pool := clipName(w.Pool)
-			put(w.ActiveRequests, "W3SVC_W3WP", "Active Requests", pool, "", "")
-			put(w.ActiveThreads, "W3SVC_W3WP", "Active Threads Count", pool, "", "")
-			put(w.PingLatencyMs, "Blackbox IIS", "Worker Ping Latency (ms)", pool, "", "ms")
+			if w.PID == 0 {
+				nt.damaged = true // a worker with no process id cannot be told from another
+				continue
+			}
+			inst := "pid-" + itoa(int64(w.PID))
+			put(w.ActiveRequests, "W3SVC_W3WP", "Active Requests", inst, "", "")
+			put(w.ActiveThreads, "W3SVC_W3WP", "Active Threads Count", inst, "", "")
+			put(w.PingLatencyMs, "Blackbox IIS", "Worker Ping Latency (ms)", inst, "", "ms")
 		}
 	}
-	if t := l.TCP; t != nil {
+	if len(l.TCP) > 0 {
+		var t tcpGroup
+		if json.Unmarshal(l.TCP, &t) != nil {
+			nt.damaged = true
+		}
 		put(t.RetransmitsPerSec, "Blackbox TCP", "Retransmits/sec", "", "", "per-sec")
 		put(t.ResetsPerSec, "Blackbox TCP", "Resets/sec", "", "", "per-sec")
-		put(t.OutboundQueue, "Blackbox TCP", "Outbound Queue", "", "", "count")
 		put(t.ConnFailuresPerSec, "Blackbox TCP", "Connection Failures/sec", "", "", "per-sec")
-		put(t.DiscardedPerSec, "Blackbox TCP", "Discarded Packets/sec", "", "", "per-sec")
-		put(t.OutErrorsPerSec, "Blackbox TCP", "Outbound Errors/sec", "", "", "per-sec")
-	}
-	return out, ok
-}
-
-// clipName keeps a pool name short and printable; an empty name stays empty.
-func clipName(s string) string {
-	if len(s) > 64 {
-		s = s[:64]
-	}
-	b := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		if c := s[i]; c >= 0x20 && c < 0x7f {
-			b = append(b, c)
+		for _, f := range []struct {
+			v       *float64
+			partial bool
+			counter string
+			unit    string
+		}{
+			{t.OutboundQueue, t.OutboundQueuePartial, "Outbound Queue", "count"},
+			{t.DiscardedPerSec, t.DiscardedPartial, "Discarded Packets/sec", "per-sec"},
+			{t.OutErrorsPerSec, t.OutErrorsPartial, "Outbound Errors/sec", "per-sec"},
+		} {
+			if f.partial {
+				if f.v != nil {
+					nt.partial = true
+				}
+				continue
+			}
+			put(f.v, "Blackbox TCP", f.counter, "", "", f.unit)
 		}
 	}
-	return string(b)
+	return out, ok
 }

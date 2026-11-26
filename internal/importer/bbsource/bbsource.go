@@ -58,6 +58,9 @@ const (
 const (
 	GapGroupsNotRead = "Of a Blackbox recording the host figures, the SQL host counters, the HTTP request queues, the IIS worker figures, the TCP figures, " +
 		"the start of each recorder run (sample 1 of a run) and the gaps are read so far; its Redis, event log, dump, SQL log, process and other groups are not in the timeline yet."
+	GapGroupCut      = "A sample with more than 16 SQL instances or 64 HTTP queues or IIS workers shows the first of them only."
+	GapGroupDamaged  = "A group of a sample that could not be read is left out; the host figures of that sample are kept."
+	GapPartialSum    = "A TCP figure that the recorder marked as covering only some network adapters is left out, not shown as a machine-wide total."
 	GapNoHostName    = "A Blackbox recording holds no machine name; its events are filed under the host that was picked."
 	GapIntervalGuess = "The recording interval is taken from the spacing of the neighbouring samples in this file; the file does not state it."
 	GapFileEdges     = "Gaps are judged inside one file: a hole at the start or the end of a file, or a missing hourly file, is not shown as a gap."
@@ -130,17 +133,12 @@ type line struct {
 	DiskMs      *float64 `json:"diskMs"`
 	DiskFreePct *float64 `json:"diskFreePct"`
 
-	// The groups read so far. Every other group is skipped by the decoder.
-	SQLHost *struct {
-		Instances []sqlInstance `json:"instances"`
-	} `json:"sqlHost"`
-	HTTP *struct {
-		Queues []httpQueue `json:"queues"`
-	} `json:"http"`
-	IIS *struct {
-		Workers []iisWorker `json:"workers"`
-	} `json:"iis"`
-	TCP *tcpGroup `json:"tcp"`
+	// The groups read so far, kept raw and decoded one by one (groups.go), so one damaged group costs only itself and
+	// never the host figures or the stamp of the sample. Every other group is skipped by the decoder.
+	SQLHost json.RawMessage `json:"sqlHost"`
+	HTTP    json.RawMessage `json:"http"`
+	IIS     json.RawMessage `json:"iis"`
+	TCP     json.RawMessage `json:"tcp"`
 }
 
 // figure is one number of a sample and how the timeline names it. The names are the Windows counter names, so a recording
@@ -196,6 +194,7 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 	acc.Gap(GapNoHostName)
 
 	var stamps []stamp
+	var nt notes
 	dropped := false
 	for {
 		if err := ctx.Err(); err != nil {
@@ -243,7 +242,7 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 		// The recorder wrote this sample, so it counts for the gap rule and for the run start even when a figure in it is
 		// not a valid number; only that sample's figures are then left out.
 		stamps = append(stamps, stamp{t: t, line: no, run: l.Run})
-		evs, reason := buildEvents(&l, t, no, opts, host)
+		evs, reason := buildEvents(&l, t, no, opts, host, &nt)
 		if reason != "" {
 			acc.Reject(no, reason)
 			evs = nil
@@ -329,6 +328,15 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 	if capped {
 		acc.Gap(GapTooMany)
 	}
+	if nt.cut {
+		acc.Gap(GapGroupCut)
+	}
+	if nt.damaged {
+		acc.Gap(GapGroupDamaged)
+	}
+	if nt.partial {
+		acc.Gap(GapPartialSum)
+	}
 	if dropped {
 		acc.Gap(importer.GapOutsideWindow)
 	}
@@ -336,7 +344,7 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 }
 
 // buildEvents makes the counter events of one sample. reason is set when a figure is not a valid number.
-func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host string) ([]evidence.Event, importer.Reason) {
+func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host string, notes *notes) ([]evidence.Event, importer.Reason) {
 	var evs []evidence.Event
 	add := func(r reading, idx int) {
 		vv := r.v
@@ -367,7 +375,7 @@ func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host str
 		}
 		add(reading{object: f.object, counter: f.counter, instance: f.instance, unit: f.unit, v: v}, i+1)
 	}
-	rs, ok := groupReadings(l)
+	rs, ok := groupReadings(l, notes)
 	if !ok {
 		return nil, importer.ReasonBadNumber
 	}

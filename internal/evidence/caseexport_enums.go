@@ -374,7 +374,7 @@ var (
 		// W2-f: W3SVC_W3WP and APP_POOL_WAS counters A1 reads.
 		"Process ID", "Active Requests", "Active Threads Count", "Requests Rejected", "Requests / Sec",
 		// The Blackbox's own figures (objects "Blackbox TCP" and "Blackbox IIS") and the HTTP.sys queue length it reads.
-		"CurrentQueueSize", "Retransmits/sec", "Resets/sec", "Outbound Queue", "Connection Failures/sec", "Discarded Packets/sec",
+		"CurrentQueueSize", "RejectedRequests", "ArrivalRate", "Retransmits/sec", "Resets/sec", "Outbound Queue", "Connection Failures/sec", "Discarded Packets/sec",
 		"Outbound Errors/sec", "Worker Ping Latency (ms)")
 )
 
