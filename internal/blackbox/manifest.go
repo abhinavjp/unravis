@@ -80,7 +80,7 @@ const (
 	EventCollectRecovered    = "collect-recovered"
 	EventWriteStillFailing   = "write-still-failing"
 	EventWriteRecovered      = "write-recovered"
-	EventSettingsRestart = "settings-applied"
+	EventSettingsRestart     = "settings-applied"
 	// EventRestart is written at every start that follows an earlier run. The
 	// detail is a fixed code: "after-stop" (the earlier run stopped cleanly) or
 	// "after-crash" (it did not). It is recorded even when the hole is too short
