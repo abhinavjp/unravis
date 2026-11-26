@@ -15,6 +15,9 @@ const (
 	// pull requests filled a 400 GB system drive.
 	DefaultCacheLimit int64 = 8 << 30
 
+	// DefaultMinFree is the free space the drive of the store needs for the agent to start a run (see Agent.MinFree).
+	DefaultMinFree int64 = 10 << 30
+
 	// cacheMinAge keeps every entry a run may be using now. The Go build cache refreshes the time of an entry it
 	// reads only when that time is more than an hour old, so nothing newer than two hours is ever removed.
 	cacheMinAge = 2 * time.Hour

@@ -152,8 +152,15 @@ type Agent struct {
 	// CacheLimit is the size the build cache is trimmed to (see Store.TrimCaches), once an hour and at start.
 	// Zero: DefaultCacheLimit. Negative: never trim.
 	CacheLimit int64
-	Now        func() time.Time
-	Log        io.Writer
+	// MinFree is the free space the drive of the store must have for the agent to start a run. Below it the agent
+	// trims the build cache harder and claims nothing until there is room: a test that runs on a full disk fails for
+	// that reason ("free disk space", "server never listened") and would read as a new failure of the change.
+	// Zero: DefaultMinFree. Negative: never checked.
+	MinFree int64
+	// FreeBytes tells the free space of the drive of a folder; nil uses the system's. A test sets it.
+	FreeBytes func(dir string) (int64, error)
+	Now       func() time.Time
+	Log       io.Writer
 
 	mu        sync.Mutex
 	jobs      map[string]*agentJob
@@ -164,8 +171,10 @@ type Agent struct {
 	dirty     bool
 	awake     bool
 	lastPrune time.Time
+	lastLowTrim time.Time
 	trimming  atomic.Bool
-	wake      chan struct{}
+	lowDisk   atomic.Bool
+	wake     chan struct{}
 	wg        sync.WaitGroup
 	logMu     sync.Mutex
 }
@@ -395,6 +404,9 @@ func (a *Agent) claim(ctx context.Context) {
 		if a.Paused != nil && a.Paused() {
 			return
 		}
+		if a.diskIsLow(ctx) {
+			return
+		}
 		r, err := a.Queue.Claim(a.Name, a.Labels)
 		if err != nil {
 			a.logf("claim: %v", err)
@@ -548,12 +560,47 @@ func (a *Agent) prune(ctx context.Context, now time.Time) {
 	if n, err := a.Queue.Prune(now.Add(-a.doneKeep())); err == nil && n > 0 {
 		a.logf("removed %d old finished requests", n)
 	}
-	a.trimCaches(ctx, now)
+	a.trimCaches(ctx, now, 1)
 }
 
-// trimCaches cuts the build caches down to the limit in the background: walking tens of thousands of files must
-// not hold up the claiming of requests.
-func (a *Agent) trimCaches(ctx context.Context, now time.Time) {
+// diskIsLow says whether the drive of the store is too full to start a run. Entering that state trims the build
+// cache to a quarter of its limit (the files used in the last two hours stay); leaving it is logged. A drive whose
+// free space cannot be read does not stop the agent.
+func (a *Agent) diskIsLow(ctx context.Context) bool {
+	min := a.MinFree
+	if min < 0 || a.Dir == "" {
+		return false
+	}
+	if min == 0 {
+		min = DefaultMinFree
+	}
+	free := a.FreeBytes
+	if free == nil {
+		free = freeDiskBytes
+	}
+	n, err := free(a.Dir)
+	if err != nil {
+		return false
+	}
+	if n >= min {
+		if a.lowDisk.CompareAndSwap(true, false) {
+			a.logf("disk recovered: %d MB free on the drive of the store, claiming again", n>>20)
+		}
+		return false
+	}
+	if a.lowDisk.CompareAndSwap(false, true) {
+		a.logf("low disk: %d MB free on the drive of the store (needs %d MB); claiming nothing until there is room", n>>20, min>>20)
+	}
+	if now := a.now(); now.Sub(a.lastLowTrim) >= 10*time.Minute {
+		a.lastLowTrim = now
+		a.trimCaches(ctx, now, 4)
+	}
+	return true
+}
+
+// trimCaches cuts the build caches down to the limit (divided by div) in the background: walking tens of thousands
+// of files must not hold up the claiming of requests.
+func (a *Agent) trimCaches(ctx context.Context, now time.Time, div int64) {
 	limit := a.CacheLimit
 	if limit < 0 || a.Dir == "" || !a.trimming.CompareAndSwap(false, true) {
 		return
@@ -561,6 +608,7 @@ func (a *Agent) trimCaches(ctx context.Context, now time.Time) {
 	if limit == 0 {
 		limit = DefaultCacheLimit
 	}
+	limit /= div
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
@@ -597,6 +645,8 @@ func (a *Agent) state() string {
 		return "draining"
 	case a.Paused != nil && a.Paused():
 		return "paused"
+	case a.lowDisk.Load():
+		return "low-disk"
 	}
 	return "ready"
 }
