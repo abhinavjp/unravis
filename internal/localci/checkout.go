@@ -359,6 +359,33 @@ func (c *Checkout) addWorktree(ctx context.Context, runID string, wt *Worktree) 
 	return err
 }
 
+// JobTree makes one more checkout of the commit base holds, beside it, for one job (name is a short tag such as
+// "j3"). Where the run is of a pull request from a stranger, the protected paths are read from the base tip
+// again, exactly as in the first checkout. The caller removes it with Remove.
+func (c *Checkout) JobTree(ctx context.Context, base *Worktree, name string, fromBase bool, protect []string) (*Worktree, error) {
+	if base == nil || base.Path == "" || base.Commit == "" {
+		return nil, errors.New("no checkout to copy")
+	}
+	if !jobTreeName.MatchString(name) {
+		return nil, fmt.Errorf("%q is not a job tree name", name)
+	}
+	wt := &Worktree{Commit: base.Commit, BaseSHA: base.BaseSHA, HeadSHA: base.HeadSHA, Path: base.Path + "-" + name}
+	_, _, err := c.git(ctx, c.Store.RepoPath(), nil, "worktree", "add", "--detach", "--quiet", wt.Path, wt.Commit)
+	if err != nil {
+		_ = c.Remove(context.WithoutCancel(ctx), wt.Path)
+		return nil, err
+	}
+	if fromBase {
+		if err := c.overlayBase(ctx, wt, append(append([]string{}, DefaultProtected...), protect...)); err != nil {
+			_ = c.Remove(context.WithoutCancel(ctx), wt.Path)
+			return nil, err
+		}
+	}
+	return wt, nil
+}
+
+var jobTreeName = regexp.MustCompile(`^j[0-9]{1,4}$`)
+
 // removeNoFollow deletes the file or folder at rel (slash separated, inside root) without following a symlink
 // or junction: when a component on the way is anything but a plain folder, that entry itself is deleted (never
 // what it points to) and the walk stops, because below it there is nothing of the pull request's own left.

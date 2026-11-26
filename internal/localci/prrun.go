@@ -333,6 +333,13 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 	run, err := Run(ctx, RunOptions{
 		Workflow: wf, Config: cfg, Workdir: wt.Path, StateDir: runDir, GitHub: prGitHubContext(o.Repo, pr, wt, wf.Name, start),
 		Vars: o.Vars, Env: env, Slots: o.Slots, Log: o.Log, Redact: o.Redact, Now: o.Now, Progress: o.Progress,
+		JobTree: func(c context.Context, name string) (string, func(), error) {
+			jt, err := co.JobTree(c, wt, name, trust.FromBase, o.Protect)
+			if err != nil {
+				return "", nil, err
+			}
+			return jt.Path, func() { _ = co.Remove(context.WithoutCancel(c), jt.Path) }, nil
+		},
 	})
 	if err != nil {
 		return finish(nil, wt.Commit, "", err)

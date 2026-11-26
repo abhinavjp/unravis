@@ -66,7 +66,7 @@ var (
 	errRecheckHeld    = errors.New("The publisher has put this update on hold. Nothing was started.")
 	errRecheckOffline = errors.New("Could not reach the update feed to confirm this update is still safe. Nothing was started; it will try again.")
 	errRecheckRefused = errors.New("The update feed's answer did not pass its checks, so this update was not started.")
-	errStarting       = errors.New("The update is already starting. Give it a few seconds; Unravis closes and starts again by itself.")
+	errStarting       = errors.New("The update is already starting. Give it a few seconds; Unravis closes and starts again by itself.") //nolint:staticcheck // ST1005: shown to the person as a sentence
 	errFileChange     = errors.New("The downloaded file changed after it was checked. It was not started. Download it again.")
 )
 

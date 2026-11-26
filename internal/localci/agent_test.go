@@ -597,3 +597,43 @@ func TestExecRunnerReportsAChildThatCrashed(t *testing.T) {
 		t.Fatal("a missing program must be an error")
 	}
 }
+
+func TestAgentLowDiskClaimsNothingUntilThereIsRoom(t *testing.T) {
+	var free atomic.Int64
+	free.Store(1 << 30)
+	rig := newAgentRig(t, "a1", 2, func(ctx context.Context, r Request) (Outcome, error) { return Outcome{Conclusion: "success"}, nil })
+	rig.agent.MinFree = 10 << 30
+	rig.agent.FreeBytes = func(string) (int64, error) { return free.Load(), nil }
+	req := mustEnqueue(t, rig.q, prReq(1, strings.Repeat("a", 40)))
+	rig.start()
+	waitFor(t, "low-disk heartbeat", func() bool {
+		hb, _ := ReadAgents(rig.dir)
+		return len(hb) == 1 && hb[0].State == "low-disk"
+	})
+	time.Sleep(60 * time.Millisecond)
+	if g := rig.get(req.ID); g.State != StateQueued {
+		t.Fatalf("an agent on a full drive claimed: %+v", g)
+	}
+	free.Store(50 << 30)
+	waitFor(t, "done after room", func() bool { return rig.get(req.ID).State == StateDone })
+	if log := rig.log.String(); !strings.Contains(log, "low disk") || !strings.Contains(log, "disk recovered") {
+		t.Fatalf("log: %s", log)
+	}
+}
+
+func TestAgentUnreadableFreeSpaceDoesNotBlock(t *testing.T) {
+	rig := newAgentRig(t, "a1", 1, func(ctx context.Context, r Request) (Outcome, error) { return Outcome{Conclusion: "success"}, nil })
+	rig.agent.FreeBytes = func(string) (int64, error) { return 0, errors.New("no such drive") }
+	req := mustEnqueue(t, rig.q, prReq(1, strings.Repeat("a", 40)))
+	rig.start()
+	waitFor(t, "done", func() bool { return rig.get(req.ID).State == StateDone })
+}
+
+func TestAgentNegativeMinFreeTurnsTheGuardOff(t *testing.T) {
+	rig := newAgentRig(t, "a1", 1, func(ctx context.Context, r Request) (Outcome, error) { return Outcome{Conclusion: "success"}, nil })
+	rig.agent.MinFree = -1
+	rig.agent.FreeBytes = func(string) (int64, error) { return 0, nil }
+	req := mustEnqueue(t, rig.q, prReq(1, strings.Repeat("a", 40)))
+	rig.start()
+	waitFor(t, "done", func() bool { return rig.get(req.ID).State == StateDone })
+}

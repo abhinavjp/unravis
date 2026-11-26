@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,8 +22,12 @@ import (
 type RunOptions struct {
 	Workflow *Workflow
 	Config   *LocalConfig // may be nil => defaults
-	Workdir  string       // the checkout (already exists); every job runs here
-	StateDir string       // per-run folder: logs, run.json, artifacts
+	Workdir  string       // the checkout (already exists); every job runs here unless JobTree gives it a tree of its own
+	// JobTree, when set and the workflow has more than one job, gives each job instance a checkout of its
+	// own (as on GitHub, where every job has a fresh machine), so one job's npm ci or build cannot pull
+	// files from under another job's tests. name is a short tag unique within the run. cleanup always runs.
+	JobTree  func(ctx context.Context, name string) (path string, cleanup func(), err error)
+	StateDir string // per-run folder: logs, run.json, artifacts
 	GitHub   map[string]any
 	Inputs   map[string]string
 	Vars     map[string]string
@@ -133,6 +138,7 @@ type runState struct {
 	tblMu  sync.Mutex
 	table  map[string]*jobAgg
 	inputs map[string]any
+	trees  atomic.Int32 // job trees made so far, for their names
 }
 
 func (r *runState) now() time.Time {
@@ -628,6 +634,7 @@ type instance struct {
 	steps    map[string]any
 	status   string // success|failure|cancelled
 	tmpDir   string
+	workdir  string // the checkout this job runs in (the run's own, or a tree made for the job)
 	summed   bool
 
 	deadline     time.Time // the job-wide timeout-minutes deadline
@@ -663,7 +670,7 @@ func (in *instance) exprCtx(status string, env map[string]string) *ExprContext {
 		"os": in.runnerOS, "arch": "X64", "name": "local", "temp": filepath.Join(in.tmpDir, "temp"),
 		"tool_cache": filepath.Join(in.tmpDir, "toolcache"),
 	}
-	return &ExprContext{Vars: v, JobStatus: status, Workdir: in.r.o.Workdir}
+	return &ExprContext{Vars: v, JobStatus: status, Workdir: in.workdir}
 }
 
 func (in *instance) fail(reason string) {
@@ -674,6 +681,23 @@ func (in *instance) run(ctx context.Context) {
 	r, job := in.r, in.job
 	in.tmpDir = filepath.Join(r.o.StateDir, "tmp", in.key)
 	in.steps = map[string]any{}
+	in.workdir = r.o.Workdir
+	if r.o.JobTree != nil && len(r.wf.Jobs) > 1 {
+		path, cleanup, err := r.o.JobTree(ctx, fmt.Sprintf("j%d", r.trees.Add(1)))
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			in.fail("could not make a checkout for this job: " + err.Error())
+			return
+		}
+		in.workdir = path
+		if g, ok := in.vars["github"].(map[string]any); ok {
+			g = copyAnyMap(g)
+			g["workspace"] = path
+			in.vars["github"] = g
+		}
+	}
 	jobTimeout, jobDesc := 360*time.Minute, "360 minutes"
 	if m := job.TimeoutMinutes; m > 0 {
 		jobTimeout, jobDesc = time.Duration(m)*time.Minute, fmt.Sprintf("%d minutes", m)
@@ -890,7 +914,7 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 		if werr != nil {
 			runErr = fmt.Errorf("with: %w", werr)
 		} else {
-			se := &shimEnv{With: with, Workdir: r.o.Workdir, StateDir: r.o.StateDir, TmpDir: in.tmpDir, RunnerOS: in.runnerOS,
+			se := &shimEnv{With: with, Workdir: in.workdir, StateDir: r.o.StateDir, TmpDir: in.tmpDir, RunnerOS: in.runnerOS,
 				Env: env.items, GitHub: in.r.githubCtx(in.job.ID), Logf: func(f string, a ...any) { emit(fmt.Sprintf(f, a...)) }}
 			outputs, runErr = shims[shimName(st.Uses)](stepCtx, se)
 		}
@@ -952,7 +976,7 @@ func (in *instance) processEnv(stepEnv map[string]string, files map[string]strin
 		return ""
 	}
 	kv := [][2]string{
-		{"CI", "true"}, {"GITHUB_ACTIONS", "true"}, {"GITHUB_WORKSPACE", r.o.Workdir},
+		{"CI", "true"}, {"GITHUB_ACTIONS", "true"}, {"GITHUB_WORKSPACE", in.workdir}, {"LOCAL_CI_RUNNER", "true"},
 		{"GITHUB_REF", str("ref")}, {"GITHUB_REF_NAME", str("ref_name")}, {"GITHUB_SHA", str("sha")},
 		{"GITHUB_EVENT_NAME", str("event_name")}, {"GITHUB_BASE_REF", str("base_ref")}, {"GITHUB_HEAD_REF", str("head_ref")},
 		{"GITHUB_RUN_ID", str("run_id")}, {"GITHUB_RUN_NUMBER", str("run_number")}, {"GITHUB_RUN_ATTEMPT", str("run_attempt")},
@@ -1064,11 +1088,11 @@ func (in *instance) runScript(ctx context.Context, st *Step, ec *ExprContext, n 
 	if err != nil {
 		return fmt.Errorf("working-directory: %w", err)
 	}
-	dir := r.o.Workdir
+	dir := in.workdir
 	if wd != "" {
 		dir = wd
 		if !filepath.IsAbs(dir) {
-			dir = filepath.Join(r.o.Workdir, filepath.FromSlash(wd))
+			dir = filepath.Join(in.workdir, filepath.FromSlash(wd))
 		}
 	}
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {

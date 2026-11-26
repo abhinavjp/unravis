@@ -92,6 +92,9 @@ type Limits struct {
 	LogBytes   int `json:"logBytes"`
 	MaxCalls   int `json:"maxCalls"`
 	InFlight   int `json:"inFlight"`
+	// EngineMs is the most time the worker lets the engine run for the whole script (not counting waits for host calls). Zero means the
+	// worker's own default. It is the worker's own backstop for built-ins that poll no tick; the broker keeps its wall timer too.
+	EngineMs int `json:"engineMs,omitempty"`
 }
 
 // Clock is the script clock the worker implements (privacy.ScriptClock).

@@ -1,0 +1,6 @@
+quickjs-ng v0.18.0
+commit d7215b0ad3fc2c562e8317fd9bca058fd4863804
+tarball qjs-v0.18.0.tar.gz sha256 28bcd89aa3683fd2a946537e5ce3f11cc46b5cbf3383c7561aaef3df5ff9f1dd
+wasi-sdk 34.0 wasi-sdk-34.0-x86_64-windows.tar.gz sha256 cccb5c323a9b34f0349a9b09e8804a0a7632c68c3310f4b5f437ed57d7e71d8f
+wazero v1.12.0 (go.mod)
+cmd/unravis-sandbox/qjs.wasm sha256 55c00c952cd30c8a3afe21540a2135f7ea5746fb4dcaad7981677e23c6f01cf8 (1021359 bytes)
