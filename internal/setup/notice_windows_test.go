@@ -8,8 +8,8 @@ import (
 	"sync"
 	"syscall"
 	"testing"
-	"unsafe"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -79,7 +79,7 @@ func TestAskOKCancelRealBoxIsClosedAfterTheWait(t *testing.T) {
 	if os.Getenv("UNRAVIS_REAL_DIALOG_TESTS") != "1" {
 		t.Skip("shows a real window; set UNRAVIS_REAL_DIALOG_TESTS=1 to run it by hand")
 	}
-	title := "Unravis test " + strconv.Itoa(os.Getpid()) // unique, so a box of another run is never mistaken for ours
+	title := "Unravis test " + strconv.Itoa(os.Getpid())                                            // unique, so a box of another run is never mistaken for ours
 	if AskOKCancel(title, "This box is shown by a test and closes itself.", 500*time.Millisecond) { // dialogok: opt-in by env var, closes itself
 		t.Fatal("no click, yet OK")
 	}
