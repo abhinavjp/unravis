@@ -148,7 +148,8 @@ async function pressFailed(cause: unknown): Promise<void> {
       const reply = await api.updateStatus(updatePreviewNow());
       appAnswered();
       if (reply && typeof reply.status === 'string') updates.reply = reply;
-      installing.error = HICCUP_NOTE;
+      // The press may have worked and only its reply was lost: if the read says the setup was launched, that is not an error. Keep watching.
+      if (reply?.install?.state === 'launched') { installing.error = ''; pollWhileLaunched(); } else installing.error = HICCUP_NOTE;
     } catch (again) { if (lostServer(again)) markGone(); else installing.error = failureText(again); }
     return;
   }

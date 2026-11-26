@@ -389,3 +389,23 @@ func TestSecondApplyNowRightAfterALaunchIsRefused(t *testing.T) {
 		t.Fatalf("a press a minute later must start again: %v, %d", err, reopened.Load())
 	}
 }
+
+// The 20 second guard is for the silent setup only (no window to close). With the window installer the person may close it and press
+// again at once, so a second press right after "launched" must start it again.
+func TestWindowInstallerAgainRightAfterALaunchIsNotBlockedByTheStartingGuard(t *testing.T) {
+	rg := newInstallRig(t)
+	rg.readyDownload()
+	u := rg.u // no EnableSilentApply: this is the installer window path
+	if u.silent != nil {
+		t.Fatal("the rig must have no silent launcher")
+	}
+	if err := u.Install(); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Install(); err != nil {
+		t.Fatalf("second press with the window installer: %v", err)
+	}
+	if rg.launch.Load() != 2 {
+		t.Fatalf("installer started %d times, want 2", rg.launch.Load())
+	}
+}

@@ -119,6 +119,24 @@ test('one lost request on a live app is a hiccup: a plain retry note, not "gone"
   } finally { h.done(); }
 });
 
+test('Apply now lost its reply but the update did start: no "could not reach" error, and the page keeps watching for the restart', async (t) => {
+  let alive = true;
+  const h = setup(t, {
+    updateInstall: async () => { throw netError(); },
+    updateStatus: async () => { if (!alive) throw netError(); return launched; },
+  });
+  try {
+    await h.mod.startUpdateInstall();
+    assert.equal(h.mod.installing.error, '', 'the status read says launched: that is not a failure to tell the person about');
+    assert.equal(h.mod.appLink.gone, false);
+    alive = false;
+    await h.tick(3000);
+    assert.equal(h.mod.appLink.gone, false, 'one lost read is a hiccup');
+    await h.tick(3000);
+    assert.equal(h.mod.appLink.gone, true, 'the launched poll was started, so the restart is noticed');
+  } finally { h.done(); }
+});
+
 test('Check again with no answer says so; an answer clears it', async (t) => {
   let alive = false;
   const h = setup(t, { updateInstall: async () => { throw netError(); }, updateStatus: async () => { if (!alive) throw netError(); return launched; } });

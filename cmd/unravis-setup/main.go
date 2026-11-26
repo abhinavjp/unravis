@@ -121,6 +121,7 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	fl.StringVar(&o.expectSHA, "expect-sha256", "", "refuse to run unless this setup program's own file has this SHA-256 (the update check passes it)")
 	fl.StringVar(&o.expectVersion, "expect-version", "", "refuse to run unless this setup installs exactly this version (the update check passes it)")
 	fl.StringVar(&o.verify, "verify", "", "check a release in this folder offline (update-manifest.json, its .sig and the files) and print the result; installs nothing")
+	// Never remove or reword this help line without updating reopenMarker in internal/update/reopen.go: the app's marker check tests for this flag.
 	fl.BoolVar(&o.reopen, "reopen", false, "with --close-app: start the app again with its browser page (the person pressed Apply now), not only in the tray")
 	fl.BoolVar(&o.closeApp, "close-app", false, "with --silent --upgrade and the --expect flags: ask a running Unravis to quit, upgrade, then start it again (what an automatic update does)")
 	fl.BoolVar(&o.recover, "recover", false, "put back what a setup run that was cut off (power loss, a killed setup) changed, from its journal, and start Unravis again; installs nothing")

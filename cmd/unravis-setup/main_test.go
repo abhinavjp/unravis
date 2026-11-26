@@ -595,7 +595,7 @@ func TestHelpTextHasTheLineTheReopenLooksFor(t *testing.T) {
 	var out bytes.Buffer
 	_, _ = parseFlags([]string{"--help"}, osEnv(), &out)
 	if !strings.Contains(out.String(), "the person pressed Apply now") {
-		t.Fatalf("the --reopen help line changed; update reopenMarker in internal/update/launch_windows.go with it:\n%s", out.String())
+		t.Fatalf("the --reopen help line changed; update reopenMarker in internal/update/reopen.go with it:\n%s", out.String())
 	}
 }
 
