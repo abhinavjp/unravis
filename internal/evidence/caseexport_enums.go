@@ -49,6 +49,7 @@ var exportKinds = map[string]map[string]bool{
 	"iis-freb":        set("failed-request", "slow-module"),
 	"win-counters":    set("counter"),
 	"sql-pdh":         set("counter"),
+	"blackbox-source": set("counter", "recorder-start", "recording-gap"),
 	"win-events": set("win-event", "apppool-recycle", "apppool-idle-shutdown", "task-start", "task-complete",
 		"task-fail", "task-skipped", "task-stop",
 		// W2-g
