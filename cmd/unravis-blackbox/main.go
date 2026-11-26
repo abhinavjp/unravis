@@ -677,7 +677,7 @@ func runForeground(p blackbox.Paths, d deps, ans answer, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = d.hostRun(ctx, blackbox.HostOptions{
-		Config: cfg, KeyPath: p.KeyPath, Version: version,
+		Config: cfg, KeyPath: p.KeyPath, Version: version, CrashCapture: true,
 		Log:   func(f string, a ...any) { fmt.Fprintf(stderr, f+"\n", a...) },
 		Ready: func(addr string) { fmt.Fprintf(stderr, "status page on %s\n", addr) },
 	})

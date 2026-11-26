@@ -358,6 +358,19 @@ func (s *Store) Event(kind, detail string) {
 	_ = s.writeManifestLocked(false)
 }
 
+// EventDurable is Event that waits for the manifest to reach the disk and says
+// when it did not. Event ignores a failed write (the next write carries the event
+// along); a caller that must know the event is stored before it does something
+// it cannot take back (RV-BB-10: marking a crash file as reported) uses this one.
+// After an error the event is still in memory and is stored by the next write,
+// so a retry can show it twice, never not at all.
+func (s *Store) EventDurable(kind, detail string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.event(s.now(), kind, detail)
+	return s.writeManifestLocked(true)
+}
+
 // SetInterval sets the interval in seconds that gap detection judges samples
 // against, and persists it as the manifest's effective interval so an offline
 // reader judges lateness against the same widened cadence. The recorder calls

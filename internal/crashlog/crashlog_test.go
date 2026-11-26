@@ -319,3 +319,117 @@ func TestStartNeedsAFolder(t *testing.T) {
 		t.Fatalf("got %v, %v", c, err)
 	}
 }
+
+func TestUnreportedListsFinishedFilesOldestFirstAndMarkReportedHidesThem(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(name string, age time.Duration) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Now().Add(-age)
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	newer := mk("crash-20261102T100000Z-2-go.txt", time.Hour)
+	older := mk("crash-20261101T100000Z-1-go.txt", 2*time.Hour)
+	mk("crash-20261103T100000Z-3-go.reported.txt", time.Minute) // already reported
+	mk("crash-20261104T100000Z-4-go.pending", time.Minute)      // raw, not finished
+	mk("notes.txt", time.Minute)                                // not a crash file
+
+	got, err := Unreported(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Path != older || got[1].Path != newer {
+		t.Fatalf("unreported = %+v", got)
+	}
+	marked, err := MarkReported(older)
+	if err != nil || !strings.HasSuffix(marked, "-go.reported.txt") {
+		t.Fatalf("mark: %q %v", marked, err)
+	}
+	if _, err := os.Stat(marked); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = Unreported(dir); len(got) != 1 || got[0].Path != newer {
+		t.Fatalf("after marking: %+v", got)
+	}
+	if _, err := MarkReported(filepath.Join(dir, "x.pending")); err == nil {
+		t.Fatal("a raw dump must not be markable")
+	}
+}
+
+func TestUnreportedOfAMissingFolderIsEmpty(t *testing.T) {
+	got, err := Unreported(filepath.Join(t.TempDir(), "nope"))
+	if err != nil || len(got) != 0 {
+		t.Fatalf("%v %v", got, err)
+	}
+}
+
+// A panic text can carry a secret in shapes that are not "key=value": a login in
+// a URL, a bearer token, an ADO connection string with Pwd=. The finished file
+// must hold none of them.
+func TestFinishedFileMasksUrlLoginsBearerTokensAndAdoPwd(t *testing.T) {
+	dir := t.TempDir()
+	raw := strings.Join([]string{
+		"panic: open failed: sqlserver://sa:Tr0ub4dorAndThree@db01.corp:1433?database=x",
+		"panic: Get \"https://svc:s3cr3tUrlPass@host.example/api\": dial tcp: refused",
+		"header Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.bearerPayloadValue.sigValue12345",
+		"conn Server=db01;Database=x;User Id=sa;Pwd=AdoPwdValue77;Encrypt=true",
+		"conn2 Data Source=db01;Initial Catalog=x;Password=AdoPassValue88;",
+		"goroutine 1 [running]:",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dir, "crash-a-1-go.pending"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Sweep(Options{Dir: dir, Grace: -1}); err != nil {
+		t.Fatal(err)
+	}
+	text := read(t, filepath.Join(dir, "crash-a-1-go.txt"))
+	for _, secret := range []string{"Tr0ub4dorAndThree", "s3cr3tUrlPass", "bearerPayloadValue", "sigValue12345", "AdoPwdValue77", "AdoPassValue88"} {
+		if strings.Contains(text, secret) {
+			t.Errorf("finished crash file still holds %q:\n%s", secret, text)
+		}
+	}
+	if !strings.Contains(text, "goroutine 1 [running]") {
+		t.Errorf("the trace itself was lost:\n%s", text)
+	}
+}
+
+func TestRemoveAllRemovesOnlyCrashFilesAndAnEmptiedFolder(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "crash")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	touch(t, dir, "crash-a-1-go.pending", 10, now)
+	touch(t, dir, "crash-a-1-go.txt", 10, now)
+	touch(t, dir, "crash-b-2-go.reported.txt", 10, now)
+	touch(t, dir, "crash-c-3.dmp", 10, now)
+	n, err := RemoveAll(dir)
+	if err != nil || n != 4 {
+		t.Fatalf("removed %d, err %v", n, err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("empty crash folder should be gone: %v", err)
+	}
+
+	// A file that is not ours keeps the folder.
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, dir, "crash-a-1-go.txt", 10, now)
+	touch(t, dir, "notes.txt", 10, now)
+	if n, err = RemoveAll(dir); err != nil || n != 1 {
+		t.Fatalf("removed %d, err %v", n, err)
+	}
+	if got := names(t, dir); len(got) != 1 || got[0] != "notes.txt" {
+		t.Fatalf("got %v", got)
+	}
+	// A folder that is not there has nothing to remove.
+	if n, err = RemoveAll(filepath.Join(t.TempDir(), "none")); err != nil || n != 0 {
+		t.Fatalf("missing folder: %d %v", n, err)
+	}
+}
