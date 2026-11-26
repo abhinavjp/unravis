@@ -67,18 +67,26 @@ func startWorker(t *testing.T) *worker {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stdout, err := cmd.StdoutPipe()
+	// The worker's stdout is a pipe this test owns, not cmd.StdoutPipe: Wait closes the read end of a StdoutPipe as soon as the process
+	// has exited, which can race with the reader goroutine below and turn the worker's last frames (the done frame the worker writes just
+	// before it exits) into "read |0: file already closed", or drop them unread. With our own pipe the reader always reaches the real EOF.
+	stdout, stdoutW, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
+	cmd.Stdout = stdoutW
 	w := &worker{t: t, cmd: cmd, stdin: stdin, frames: make(chan incoming, 4096), stderr: &bytes.Buffer{}, exited: make(chan struct{})}
 	cmd.Stderr = w.stderr
 	if err := cmd.Start(); err != nil {
+		_ = stdout.Close()
+		_ = stdoutW.Close()
 		t.Fatal(err)
 	}
+	_ = stdoutW.Close() // the child holds its own copy; the parent's copy must go so the reader sees EOF when the child exits
 	t.Cleanup(w.kill)
 	go func() {
 		defer close(w.frames)
+		defer stdout.Close() //nolint:errcheck // read end of our own pipe, nothing to flush
 		for {
 			data, err := wire.ReadFrame(stdout, wire.MaxFrame)
 			if err != nil {

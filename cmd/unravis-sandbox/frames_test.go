@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"testing"
 	"time"
 
@@ -14,8 +15,12 @@ func wantViolation(t *testing.T, w *worker) {
 	t.Helper()
 	for {
 		data, err := w.next(30 * time.Second)
+		if err == io.EOF {
+			break // the worker closed its pipe: nothing more to read
+		}
 		if err != nil {
-			break // EOF (the worker closed its pipe), or a read error after it died
+			// A read error is not "no done frame": it could hide one, so it fails the test instead of ending the loop.
+			t.Fatalf("reading the worker's frames: %v (stderr %q)", err, w.stderr.String())
 		}
 		if typ, _ := wire.PeekType(data); typ == wire.TypeDone {
 			t.Fatalf("the worker sent a done frame for a protocol violation: %s", data)
