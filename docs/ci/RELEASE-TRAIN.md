@@ -56,6 +56,7 @@ Only one promotion at a time: it is a merge to `master`, so the same release-loc
 - The merge gate on `develop` is the job `fast-build` of the Fast gate. Merge on green as before; squash merge as before.
 - **The release lock applies to merges into `master`**, that is, to promotions only. Merging into `develop` does not read the lock and never waits for a release (a release cuts from `master`).
 - Nothing else merges into `master`. Hotfix: a pull request into `master` (full CI) and then merge `master` into `develop` by pull request, **with a merge commit, not a squash** (a squash would leave master out of develop's history and the next promotion would conflict on the hotfix again). That is why `develop` allows both merge types. Promotion merges `master` in automatically when `master` moved.
+- **Before every push run `bash tools/ci/prepush.sh`** and follow `docs/ci/THREAD-GATE.md` (merge develop first, push once, Windows-safe tests, flaky policy, reviewer checklist). Why: `docs/ci/CI-FAILURE-ANALYSIS-2026-11.md`.
 - Do not push to `develop` or `master` directly. Do not merge a promotion while the newest push run on `develop` is red.
 - A failing `develop` push run is everyone's priority: fix forward or revert before more merges pile on.
 - `docs/BACKLOG.md` items are ticked when the change reaches `master` and is verified on the real data path, not at the merge into `develop`.

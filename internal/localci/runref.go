@@ -198,6 +198,13 @@ func RunRef(ctx context.Context, o RefOptions) (res *PRResult, err error) {
 	run, err := Run(ctx, RunOptions{
 		Workflow: wf, Config: cfg, Workdir: wt.Path, StateDir: runDir, GitHub: refGitHubContext(o, wf.Name, wt, start),
 		Vars: o.Vars, Env: env, Slots: o.Slots, Log: o.Log, Redact: o.Redact, Now: o.Now, Progress: o.Progress,
+		JobTree: func(c context.Context, name string) (string, func(), error) {
+			jt, err := co.JobTree(c, wt, name, false, nil)
+			if err != nil {
+				return "", nil, err
+			}
+			return jt.Path, func() { _ = co.Remove(context.WithoutCancel(c), jt.Path) }, nil
+		},
 	})
 	if err != nil {
 		return finish(nil, "", err)

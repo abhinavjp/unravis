@@ -1,0 +1,11 @@
+# Quarantine of flaky and host-dependent Go tests (docs/ci/THREAD-GATE.md section 3).
+# Read by tools/ci/compare-go-failures.mjs. One line per test:
+#   <package>.<Test> <BL-id> until=<YYYY-MM-DD> <reason>
+# - <package>.<Test> is the name the compare prints as "NEW FAILURE" (subtests as <package>.<Test>/<sub>).
+# - <BL-id> is the docs/BACKLOG.md item that fixes it; that item names the owner.
+# - until= is the last day of the quarantine, at most one release (about 2 weeks) away. After it the test fails the gate
+#   again, so fix it (clock injection, wait on a condition, t.TempDir(); never a longer timeout) or renew with a reason.
+# Never for a real race or regression. A quarantined test that passes again: delete its line.
+api-audit-explorer/internal/casestore/sqlite.TestEventsTimeBudgetAndCancel BL-593 until=2026-12-10 time-budget test fails under load (got 0 events); named suspect in BL-593; seen on pr330 local run 26 Nov
+api-audit-explorer/internal/blackbox.TestClumsyWrongReadKeyIsRefusedEveryWay BL-593 until=2026-12-10 server never listened within 15s on a busy PC (host load); add to BL-593 suspects
+api-audit-explorer/internal/clicore/cmdtree.TestAppStartExit12AttachesToTheOtherOwner BL-592 until=2026-12-10 PC-state: fails on the owner PC (the file that says where Unravis runs is missing/held), passes on GitHub; seen on PR 294 and pr330 local runs
