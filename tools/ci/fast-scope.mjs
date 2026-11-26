@@ -39,10 +39,10 @@ export function classify(files, pkgDirs) {
       if (/^docs\/user\//i.test(f)) {
         // Read by the internal/investigate tests and embedded in the exe (root package).
         out.dirs.add('internal/investigate'); out.dirs.add('.'); out.web = true; out.reasons.push(`${f}: read by internal/investigate tests and the web tests, embedded in the exe`);
-      } else { out.all = true; out.reasons.push(`${f}: changes how every Linux failure is judged, so every package`); }
-      continue;
-    }
-    if (NOTES.test(f)) { out.reasons.push(`${f}: notes`); continue; }
+        // A Go file under docs/user (any case) is also a Go file of its own package: it goes on to the gofmt list and the package mapping below.
+        if (!f.endsWith('.go')) continue;
+      } else { out.all = true; out.reasons.push(`${f}: changes how every Linux failure is judged, so every package`); continue; }
+    } else if (NOTES.test(f)) { out.reasons.push(`${f}: notes`); continue; }
     anyCode = true;
     if (WIDE.test(f)) { out.all = true; out.reasons.push(`${f}: can affect every package`); continue; }
     if (f.endsWith('.go')) out.gofiles.push(f);

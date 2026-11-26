@@ -617,11 +617,16 @@ jobs:
           GOLANGCI_KEY: ${{ steps.golangci.outputs.key }}
         run: |
           want="${GOLANGCI_LINT_VERSION#v}"
-          if got="$("${GOLANGCI_LINT_BIN}/golangci-lint" version 2>&1)" && printf '%s\n' "$got" | grep -qF "$want"; then
+          # First line only, one line, so output that starts with :: cannot act as a workflow command; the version must be a whole word
+          # (2.1.6 must not match 2.1.60), with or without a leading v.
+          status=0
+          got="$("${GOLANGCI_LINT_BIN}/golangci-lint" version 2>&1)" || status=$?
+          got="$(printf '%s\n' "$got" | head -n 1 | tr -d '\r')"
+          if [ "$status" = 0 ] && printf '%s\n' "$got" | tr ' ' '\n' | grep -qxF -e "$want" -e "v$want"; then
             echo "Restored golangci-lint is the expected version $want."
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::The restored golangci-lint is not usable or not version $want (got: $got). Building it again. To stop this on every run, delete the bad entry: gh cache delete ${GOLANGCI_KEY}"
+            echo "::warning::The restored golangci-lint is not usable or not version $want (exit $status, first line: $got). Building it again. To stop this on every run, delete the bad entry: gh cache delete ${GOLANGCI_KEY}"
             echo "ok=false" >> "$GITHUB_OUTPUT"
           fi
 

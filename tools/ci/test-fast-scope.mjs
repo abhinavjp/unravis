@@ -24,6 +24,19 @@ assert.equal(c(['Docs/Desktop/baseline-go-tests.txt']).all, true);
 assert.equal(c(['DOCS/ci/Flaky-Tests.txt']).all, true);
 assert.equal(c(['Docs/user/guide.md']).notes, false);
 assert.deepEqual(keys(c(['Docs/user/guide.md'])).dirs, ['.', 'internal/investigate']);
+// A Go file in a docs/user folder (any spelling) is still a Go file of its own package: it stays on the gofmt list and maps to its package,
+// and it also adds what the docs/user folder adds (internal/investigate tests, the root package, the web tests).
+for (const f of ['docs/user/x.go', 'Docs/User/x.go']) {
+  const d = f.slice(0, f.lastIndexOf('/'));
+  const r = classify([f], new Set([...dirs, d]));
+  assert.deepEqual(r.gofiles, [f], `${f} stays on the gofmt list`);
+  assert.deepEqual([...r.dirs].sort(), ['.', d, 'internal/investigate'].sort(), `${f} keeps its own package and the docs/user dirs`);
+  assert.equal(r.all, false, `${f} does not widen to every package`);
+  assert.equal(r.web, true, `${f} still runs the web tests`);
+  assert.equal(r.notes, false, f);
+}
+// A non-Go file in docs/user keeps the old result and adds no Go file.
+assert.deepEqual(c(['Docs/User/guide.md']).gofiles, []);
 for (const f of ['Docs/ci/RELEASE-TRAIN.md', 'README.MD', 'license', 'Notice', 'Docs/pkg/a.go', '.FORGE/x.go']) assert.equal(c([f]).notes, false, `${f} is not a note (case-sensitive)`);
 // ci.yml (job `changes`) and fast-scope.mjs must agree: compare the two grep patterns with the exports, and on sample paths.
 {
