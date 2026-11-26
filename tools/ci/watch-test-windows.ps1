@@ -4,10 +4,13 @@
 # local CI runner can start it the same way around its Windows test step.
 #   powershell -NoProfile -File tools/ci/watch-test-windows.ps1 -Log <file> -StopFile <file>
 # It runs until -StopFile exists, then exits. -Log gets one line per window: pid|exe|class|title. An empty or missing log = clean.
+# -RootPid <pid> limits it to test processes started (directly or not) by that process, so another run on the same PC (the local CI
+# runner, another thread's gate) is never blamed or touched. Without it, every *.test.exe on the desktop counts (the runner's own use).
 param(
   [Parameter(Mandatory = $true)][string]$Log,
   [Parameter(Mandatory = $true)][string]$StopFile,
-  [int]$PollMs = 150
+  [int]$PollMs = 150,
+  [int]$RootPid = 0
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
@@ -35,9 +38,35 @@ public static class TestWinWatch {
     }, IntPtr.Zero);
     return r;
   }
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct PROCESSENTRY32 { public uint dwSize, cntUsage, th32ProcessID; public IntPtr th32DefaultHeapID; public uint th32ModuleID, cntThreads, th32ParentProcessID; public int pcPriClassBase; public uint dwFlags;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile; }
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool Process32First(IntPtr s, ref PROCESSENTRY32 e);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool Process32Next(IntPtr s, ref PROCESSENTRY32 e);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  // pid -> parent pid, in a few milliseconds (a box may live for only half a second).
+  public static Dictionary<int, int> Parents() {
+    var d = new Dictionary<int, int>();
+    IntPtr snap = CreateToolhelp32Snapshot(2, 0);
+    var e = new PROCESSENTRY32(); e.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+    if (Process32First(snap, ref e)) { do { d[(int)e.th32ProcessID] = (int)e.th32ParentProcessID; } while (Process32Next(snap, ref e)); }
+    CloseHandle(snap);
+    return d;
+  }
   public static void Close(long h) { PostMessage(new IntPtr(h), 0x0010, IntPtr.Zero, IntPtr.Zero); }
 }
 '@
+function Test-UnderRoot([int]$ProcId) {
+  if ($RootPid -le 0) { return $true }
+  $parent = [TestWinWatch]::Parents()
+  $cur = $ProcId
+  for ($i = 0; $i -lt 40 -and $parent.ContainsKey($cur); $i++) {
+    if ($cur -eq $RootPid) { return $true }
+    $cur = $parent[$cur]
+  }
+  return $cur -eq $RootPid
+}
 $seen = @{}
 while (-not (Test-Path -LiteralPath $StopFile)) {
   foreach ($w in [TestWinWatch]::Visible()) {
@@ -47,6 +76,7 @@ while (-not (Test-Path -LiteralPath $StopFile)) {
     try { $exe = (Get-Process -Id $procId -ErrorAction Stop).Path } catch { }
     if ($exe -and $exe -match '\.test\.exe$') {
       $seen[$hwnd] = $true
+      if (-not (Test-UnderRoot $procId)) { continue }
       Add-Content -LiteralPath $Log -Value ("{0}|{1}|{2}|{3}" -f $procId, (Split-Path $exe -Leaf), $w[2], $w[3])
       [TestWinWatch]::Close([long]$hwnd)
     }

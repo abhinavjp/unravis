@@ -34,7 +34,7 @@ watch_start() {
   case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) ;; *) return 0 ;; esac
   command -v powershell.exe >/dev/null 2>&1 || return 0
   : >"$watch_log"; rm -f "$watch_stop"
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w tools/ci/watch-test-windows.ps1)" -Log "$(cygpath -w "$watch_log")" -StopFile "$(cygpath -w "$watch_stop")" >/dev/null 2>&1 &
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w tools/ci/watch-test-windows.ps1)" -Log "$(cygpath -w "$watch_log")" -StopFile "$(cygpath -w "$watch_stop")" -RootPid "$(cat /proc/$$/winpid 2>/dev/null || echo 0)" >/dev/null 2>&1 &
   watch_pid=$!
 }
 watch_stop_and_judge() {
