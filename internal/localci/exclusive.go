@@ -132,3 +132,9 @@ func lockIsStale(content string, now time.Time) bool {
 func readLock(path string) ([]byte, error) {
 	return os.ReadFile(path) //nolint:gosec // path is under the store
 }
+
+// HoldExclusive takes the named resource for a caller outside a run (the pre-push gate of a developer who shares the PC with the
+// agent): it waits like a job does, with the same cross-process lock under lockDir. release must be called exactly once.
+func HoldExclusive(ctx context.Context, name, lockDir string, onWait func()) (release func(), err error) {
+	return acquireExclusive(ctx, name, lockDir, onWait)
+}

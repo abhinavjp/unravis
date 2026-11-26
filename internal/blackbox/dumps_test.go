@@ -101,17 +101,81 @@ func TestDumpsCaps(t *testing.T) {
 		root := t.TempDir()
 		t0 := time.Unix(1000, 0)
 		for i := 0; i < 550; i++ {
-			writeDump(t, filepath.Join(root, fmt.Sprintf("a%03d.txt", i)), []byte("x"), t0)
+			writeDump(t, filepath.Join(root, fmt.Sprintf("a%03d.dmp", i)), []byte("x"), t0.Add(time.Duration(i)*time.Second))
 		}
-		writeDump(t, filepath.Join(root, "zzz.dmp"), []byte("x"), t0)
 		got, st := catalogueDumps([]string{root})
-		if len(got) != 0 {
-			t.Fatalf("walk must stop after %d visited entries; zzz.dmp was reached: %d dumps", dumpMaxVisited, len(got))
+		if len(got) != dumpMaxListed {
+			t.Fatalf("listed %d, want %d", len(got), dumpMaxListed)
 		}
-		if !st.Truncated || st.Visited > dumpMaxVisited+dumpReadBatch {
+		if !st.Truncated || st.Visited > dumpMaxVisited+1 {
 			t.Fatalf("scan status not honest about the cap: %+v", st)
 		}
 	})
+}
+
+// RV-BB-11: in a folder bigger than the visit budget the newest dumps are kept,
+// not the first ones in name order.
+func TestDumpsNewestFirstInABigFolder(t *testing.T) {
+	root := t.TempDir()
+	t0 := time.Unix(1000, 0)
+	// 600 dumps, the newest last in name order.
+	for i := 0; i < 600; i++ {
+		writeDump(t, filepath.Join(root, fmt.Sprintf("d%03d.dmp", i)), []byte("x"), t0.Add(time.Duration(i)*time.Second))
+	}
+	got, st := catalogueDumps([]string{root})
+	if len(got) != dumpMaxListed {
+		t.Fatalf("listed %d, want %d", len(got), dumpMaxListed)
+	}
+	for i, want := range []string{"d599.dmp", "d598.dmp", "d597.dmp"} {
+		if got[i].Name != want {
+			t.Fatalf("listing[%d] = %s, want %s (newest first)", i, got[i].Name, want)
+		}
+	}
+	if got[len(got)-1].Name != "d400.dmp" {
+		t.Fatalf("last listed = %s, want d400.dmp", got[len(got)-1].Name)
+	}
+	if !st.Truncated {
+		t.Fatalf("600 dumps are more than the visit budget; the status must say so: %+v", st)
+	}
+}
+
+// RV-BB-11: files that can never be listed do not use the visit budget, so a
+// folder full of logs does not hide the one dump in it.
+func TestDumpsOtherFilesDoNotHideDumps(t *testing.T) {
+	root := t.TempDir()
+	t0 := time.Unix(1000, 0)
+	for i := 0; i < 550; i++ {
+		writeDump(t, filepath.Join(root, fmt.Sprintf("a%03d.txt", i)), []byte("x"), t0)
+	}
+	writeDump(t, filepath.Join(root, "zzz.dmp"), []byte("x"), t0)
+	got, st := catalogueDumps([]string{root})
+	if len(got) != 1 || got[0].Name != "zzz.dmp" {
+		t.Fatalf("got %+v, want the one dump", got)
+	}
+	if st.Truncated {
+		t.Fatalf("551 entries are under the enumeration budget: %+v", st)
+	}
+}
+
+// RV-BB-11: sub-folders are ordered newest first too, so the newest report
+// folders are looked at before the visit budget runs out.
+func TestDumpsNewestSubfoldersFirst(t *testing.T) {
+	root := t.TempDir()
+	t0 := time.Unix(1000, 0)
+	for i := 0; i < 520; i++ {
+		dir := filepath.Join(root, fmt.Sprintf("r%03d", i))
+		writeDump(t, filepath.Join(dir, fmt.Sprintf("r%03d.dmp", i)), []byte("x"), t0.Add(time.Duration(i)*time.Second))
+		if err := os.Chtimes(dir, t0.Add(time.Duration(i)*time.Second), t0.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ := catalogueDumps([]string{root})
+	if len(got) == 0 {
+		t.Fatal("nothing listed")
+	}
+	if got[0].Name != "r519.dmp" {
+		t.Fatalf("newest report folder was left out: %d listed, first %s", len(got), got[0].Name)
+	}
 }
 
 func TestDumpsCadence(t *testing.T) {
@@ -227,7 +291,7 @@ func TestDumpsTargetParse(t *testing.T) {
 func TestDumpsScanBoundsEnumeration(t *testing.T) {
 	root := t.TempDir()
 	t0 := time.Unix(1000, 0)
-	for i := 0; i < 5000; i++ {
+	for i := 0; i < dumpMaxEnumerated+1000; i++ {
 		writeDump(t, filepath.Join(root, fmt.Sprintf("e%04d.dmp", i)), []byte("x"), t0.Add(time.Duration(i)*time.Second))
 	}
 	fetched := 0
@@ -245,13 +309,14 @@ func TestDumpsScanBoundsEnumeration(t *testing.T) {
 	t.Cleanup(func() { dumpReadDir = old })
 	got, st := catalogueDumps([]string{root})
 	if !st.Truncated {
-		t.Fatalf("5000 entries must truncate the scan: %+v", st)
+		t.Fatalf("more entries than the enumeration budget must truncate the scan: %+v", st)
 	}
-	// The visit budget stops between batches: at most one batch past the cap.
-	if fetched > dumpMaxVisited+dumpReadBatch {
-		t.Fatalf("scan fetched %d entries, want at most %d (budget + one batch)", fetched, dumpMaxVisited+dumpReadBatch)
+	// The enumeration budget stops between batches: at most the batch that
+	// crosses the cap and the one read to see that more is left.
+	if fetched > dumpMaxEnumerated+2*dumpReadBatch {
+		t.Fatalf("scan fetched %d entries, want at most %d (budget + two batches)", fetched, dumpMaxEnumerated+2*dumpReadBatch)
 	}
-	if batches > (dumpMaxVisited+dumpReadBatch)/dumpReadBatch+1 {
+	if batches > dumpMaxEnumerated/dumpReadBatch+3 {
 		t.Fatalf("scan made %d directory reads, want bounded batches", batches)
 	}
 	if len(got) == 0 || len(got) > dumpMaxListed {
@@ -266,7 +331,7 @@ func TestDumpsStopsBeforeFurtherRoots(t *testing.T) {
 	root := t.TempDir()
 	t0 := time.Unix(1000, 0)
 	for i := 0; i < 600; i++ {
-		writeDump(t, filepath.Join(root, fmt.Sprintf("a%03d.txt", i)), []byte("x"), t0)
+		writeDump(t, filepath.Join(root, fmt.Sprintf("a%03d.dmp", i)), []byte("x"), t0.Add(time.Duration(i)*time.Second))
 	}
 	notADir := filepath.Join(t.TempDir(), "file-root")
 	writeDump(t, notADir, []byte("x"), t0)
@@ -274,8 +339,8 @@ func TestDumpsStopsBeforeFurtherRoots(t *testing.T) {
 	if !st.Truncated || st.Unreadable != 0 {
 		t.Fatalf("exhausted scan touched a later root: %+v", st)
 	}
-	if len(got) != 0 {
-		t.Fatalf("dumps from a truncated visit: %d", len(got))
+	if len(got) != dumpMaxListed {
+		t.Fatalf("listed %d dumps from a truncated visit, want the newest %d", len(got), dumpMaxListed)
 	}
 }
 

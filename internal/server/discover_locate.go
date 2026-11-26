@@ -3,13 +3,16 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"api-audit-explorer/internal/applog"
 	"api-audit-explorer/internal/discover"
 	"api-audit-explorer/internal/discover/localread"
 )
@@ -53,10 +56,13 @@ const maxLocateWorkers = 4
 var locateSlots = make(chan struct{}, maxLocateWorkers)
 
 // errLocateBusy means every worker slot is taken. errLocateAbandoned means the
-// wait ended (deadline or caller) before the worker answered.
+// wait ended (deadline or caller) before the worker answered. errLocatePanicked
+// means the worker panicked: that is a fault in Unravis, not a slow folder, and
+// the panic was logged where it happened (RV-SRV-5).
 var (
 	errLocateBusy      = errors.New("locate busy")
 	errLocateAbandoned = errors.New("locate abandoned")
+	errLocatePanicked  = errors.New("locate worker panicked")
 )
 
 // Reasons of a path that was understood but did not verify. The answer is 200
@@ -198,12 +204,21 @@ func (h *handler) locateFinding(w http.ResponseWriter, r *http.Request, arg stri
 
 	env := cfg.Env
 	env.Importers = h.registry
-	out, err := runWithin(r.Context(), locateSlots, locateBudget, func(ctx context.Context) locateOutcome {
+	onPanic := func(value any, stack []byte) {
+		h.log().Error("locate worker panicked",
+			"error_class", "internal",
+			"error", applog.Sanitize(fmt.Sprintf("%v", value)),
+			"stack", applog.Sanitize(string(stack)))
+	}
+	out, err := runWithin(r.Context(), locateSlots, locateBudget, onPanic, func(ctx context.Context) locateOutcome {
 		return locateWork(ctx, env, cfg.Opener, clean, snap.Importer)
 	})
 	switch {
 	case errors.Is(err, errLocateBusy):
 		writeError(w, http.StatusTooManyRequests, "Other folder checks are still running. Wait a minute, then check again.")
+		return
+	case errors.Is(err, errLocatePanicked):
+		writeError(w, http.StatusInternalServerError, "The folder check stopped because of a fault in Unravis, not because of the folder. Try again. If it keeps happening, the details are in the log.")
 		return
 	case err != nil && r.Context().Err() != nil:
 		return // the caller left
@@ -486,8 +501,10 @@ func applyLocated(f *discover.Finding, out locateOutcome) {
 // steps; a worker stuck inside one step cannot, and keeps its slot until it
 // returns. With no free slot it does not start and returns errLocateBusy. When
 // the wait ends before the worker answers, the late answer is dropped and the
-// error is errLocateAbandoned.
-func runWithin[T any](ctx context.Context, slots chan struct{}, d time.Duration, fn func(context.Context) T) (out T, err error) {
+// error is errLocateAbandoned. A worker that panics hands the value and stack to
+// onPanic (once, even when the wait has already ended) and the error is
+// errLocatePanicked.
+func runWithin[T any](ctx context.Context, slots chan struct{}, d time.Duration, onPanic func(value any, stack []byte), fn func(context.Context) T) (out T, err error) {
 	select {
 	case slots <- struct{}{}:
 	default:
@@ -496,19 +513,31 @@ func runWithin[T any](ctx context.Context, slots chan struct{}, d time.Duration,
 	wctx, cancel := context.WithTimeout(ctx, d)
 	defer cancel()
 	done := make(chan T, 1)
+	panicked := make(chan struct{}, 1)
 	go func() {
-		defer func() { <-slots }()       // freed when the worker ends, not when the request does
-		defer func() { _ = recover() }() // a panic leaves done empty and the wait times out
+		defer func() { <-slots }() // freed when the worker ends, not when the request does
+		defer func() {
+			if rec := recover(); rec != nil {
+				if onPanic != nil {
+					onPanic(rec, debug.Stack())
+				}
+				panicked <- struct{}{}
+			}
+		}()
 		done <- fn(wctx)
 	}()
 	select {
 	case out = <-done:
 		return out, nil
+	case <-panicked:
+		return out, errLocatePanicked
 	case <-wctx.Done():
 	}
 	select {
 	case out = <-done: // finished as the deadline passed
 		return out, nil
+	case <-panicked:
+		return out, errLocatePanicked
 	default:
 	}
 	return out, errLocateAbandoned

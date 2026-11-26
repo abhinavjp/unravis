@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// The package's tests must never write to the real %ProgramData%; each test that wants the copy points it at a temporary folder.
-func TestMain(m *testing.M) {
-	PublicConfigDir = func() string { return "" }
-	os.Exit(m.Run())
-}
-
 type secEnv struct {
 	err  error
 	dirs []string

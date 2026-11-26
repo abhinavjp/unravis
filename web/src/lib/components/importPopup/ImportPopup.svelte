@@ -169,6 +169,7 @@
           files={popup.files}
           checking={popup.checking}
           cards={popup.cards}
+          years={popup.years}
           expanded={popup.expanded}
           selected={popup.selected}
           kinds={popup.kinds}

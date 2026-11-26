@@ -22,7 +22,7 @@ func needBash(t *testing.T) {
 type harness struct {
 	t     *testing.T
 	opts  RunOptions
-	log   *bytes.Buffer
+	log   *syncBuf // a polling test reads it while the run still writes
 	state string
 	work  string
 }
@@ -43,7 +43,7 @@ func newHarness(t *testing.T, yml string) *harness {
 	if err := os.MkdirAll(filepath.Join(work, ".git"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, log: &bytes.Buffer{}, state: filepath.Join(t.TempDir(), "state"), work: work}
+	h := &harness{t: t, log: &syncBuf{}, state: filepath.Join(t.TempDir(), "state"), work: work}
 	h.opts = RunOptions{
 		Workflow: wf, Workdir: work, StateDir: h.state, Env: os.Environ(), Log: h.log,
 		GitHub: map[string]any{"event_name": "push", "ref": "refs/heads/main", "ref_name": "main", "sha": "abc123",

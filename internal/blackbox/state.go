@@ -229,18 +229,9 @@ func errState(err error) StateInfo {
 	return si
 }
 
-// pausedForDisk is true when the newest of the pause and resume events is a pause.
-func pausedForDisk(m Manifest) bool {
-	for i := len(m.Events) - 1; i >= 0; i-- {
-		switch m.Events[i].Kind {
-		case EventPausedDiskLow:
-			return true
-		case EventResumed:
-			return false
-		}
-	}
-	return false
-}
+// pausedForDisk reads the stored pause (RV-BB-9). A manifest an older recorder
+// wrote has it filled from its events when it is read (Manifest.resolvePaused).
+func pausedForDisk(m Manifest) bool { return m.PausedDiskLow }
 
 // HostSkipWindow is how many of the newest samples the host-slow warning looks at.
 const HostSkipWindow = 20

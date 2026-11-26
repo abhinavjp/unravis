@@ -365,7 +365,7 @@ func run(args []string, getenv func(string) string) error {
 	if updater != nil {
 		updaterDone := make(chan struct{})
 		go func() { defer close(updaterDone); updater.Run(signalContext) }()
-		go updater.RunAuto(signalContext)
+		updater.StartAuto(signalContext) // Close below waits for it
 		defer func() { cancel(); updater.Close(); <-updaterDone }()
 	}
 	if !f.demo {

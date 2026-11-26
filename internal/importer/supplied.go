@@ -25,6 +25,14 @@ const (
 	SuppliedText                           // short text that Check accepts
 )
 
+// YearProber is the optional interface of an importer whose log lines carry no year
+// (the redis log writes day and month only). NeedsYear says, from the first bytes of a
+// file alone, that the owner has to supply the year (the "year" setting). It needs no
+// host, so the page can ask for the year at the same time as it asks for the computer.
+type YearProber interface {
+	NeedsYear(head []byte) bool
+}
+
 // Bounds on what the service stores for supplied settings.
 const (
 	// MaxSuppliedKeys is the most settings one import may carry.

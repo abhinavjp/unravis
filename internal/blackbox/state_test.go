@@ -46,6 +46,7 @@ func TestEveryStateIsReachableWithItsWords(t *testing.T) {
 		{"disk low by status", StateInput{Placed: true, Reading: stReading(stManifest(fresh, nil), now, func(r *Reading) { r.Status = &StatusDoc{FreePercent: pct(7)} })}, SDiskLow, WordPartlyReady, ToneWarn},
 		{"disk low by pause", StateInput{Placed: true, Reading: stReading(stManifest(fresh, func(m *Manifest) {
 			m.Events = []Event{{T: fresh, Kind: EventPausedDiskLow}}
+			m.PausedDiskLow = true
 		}), now, nil)}, SDiskLow, WordPartlyReady, ToneBad},
 		{"clock differs", StateInput{Placed: true, Reading: stReading(stManifest(fresh, nil), now, func(r *Reading) { r.ServerTime = now.Add(5 * time.Second); r.Status = &StatusDoc{} })}, SClockDiffers, WordPartlyReady, ToneWarn},
 		{"not found", StateInput{Placed: true, Err: readErr(ReadNotFound, "No Blackbox is in that folder.", nil)}, SNotFound, WordCannotTestYet, ToneBad},

@@ -59,6 +59,12 @@ type Sample struct {
 	VM          *VMGroup          `json:"vm,omitempty"`
 	Dumps       *DumpsGroup       `json:"dumps,omitempty"`
 	SQLLog      *SQLLogGroup      `json:"sqlLog,omitempty"`
+	// ExtraCounters holds the counters the owner added by path (settings "counters.extra").
+	ExtraCounters *ExtraCountersGroup `json:"extraCounters,omitempty"`
+	// Paths is where the logs and settings files are (path, size, time; never content), once an hour.
+	Paths *PathsGroup `json:"paths,omitempty"`
+	// Facts is the server facts block (versions, services, certificate end dates), once an hour.
+	Facts *FactsGroup `json:"facts,omitempty"`
 
 	Missing []string `json:"missing,omitempty"`
 }

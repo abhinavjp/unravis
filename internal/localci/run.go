@@ -838,6 +838,18 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 		finish()
 		return
 	}
+	// A step that names an exclusive resource in local-ci.yml waits for it first and holds it for the step only.
+	if res := r.o.Config.Override(r.file, in.job.ID).StepExclusive[st.Name]; res != "" {
+		release, lerr := acquireExclusive(ctx, res, r.o.LockDir, func() {
+			r.logf("[%s] step %d/%d %s: waiting for the exclusive resource %q", in.key, n, total, name, res)
+		})
+		if lerr != nil {
+			stepFail("cancelled while waiting for the exclusive resource " + res)
+			finish()
+			return
+		}
+		defer release()
+	}
 	// step environment and the other interpolated fields
 	stepEnv, err := interpEnv(st.Env, ec)
 	if extra := r.o.Config.Override(r.file, in.job.ID).StepEnv[st.Name]; len(extra) > 0 && err == nil {
@@ -918,6 +930,10 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 
 	var outputs map[string]string
 	var runErr error
+	var watch *stepWatch
+	if line := r.o.Config.Override(r.file, in.job.ID).StepWatch[st.Name]; line != "" {
+		watch = in.startStepWatch(runCtx, line, n, env, func(m string) { emit("[ci] " + m) })
+	}
 	if st.Uses != "" {
 		with, werr := interpEnv(st.With, ec)
 		if werr != nil {
@@ -931,6 +947,14 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 		runErr = in.runScript(stepCtx, st, ec, n, env, lw)
 	}
 	lw.Flush()
+	if seen := watch.stop(); len(seen) > 0 {
+		for _, l := range seen {
+			emit("[ci] watcher: " + l)
+		}
+		if runErr == nil {
+			runErr = fmt.Errorf("the step watcher saw %d problem(s), first: %s", len(seen), seen[0])
+		}
+	}
 	_ = lf.Close()
 	// special files
 	if perr := in.applyFiles(files, st, &outputs, emit); perr != nil && runErr == nil {
