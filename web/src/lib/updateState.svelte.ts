@@ -2,6 +2,7 @@ import { api } from './api';
 import { updatePreviewNow } from './updateCheck';
 import type { UpdateCheckReply } from './types';
 import { visiblePoll } from './visibility';
+import { normalizeVersion, parseableVersion, readSeen, shouldAutoOpen, writeSeen } from './updateNotes';
 
 // The update status shown across the app: the "Version X is available" bar and the Help panel's Updates section.
 // The program checks on its own timer; this only reads the last answer from the local server (no network call), when the page
@@ -90,6 +91,27 @@ export async function startUpdateInstall(): Promise<void> {
   } catch (cause) { installing.error = failureText(cause); await refreshUpdateStatus(); } finally { installing.busy = false; }
 }
 
+/** True from the press of "Update now" until the installer has been started or the download failed: it spans download, check and install. */
+export const updateFlow = $state<{ chaining: boolean }>({ chaining: false });
+const sleep = (ms: number) => new Promise<void>(done => setTimeout(done, ms));
+const DOWNLOAD_PATIENCE_MS = 15 * 60 * 1000;
+
+/** The one-step "Update now": downloads the update, waits until it is checked and ready, then starts the installer.
+ *  An update that is already downloaded goes straight to the install. A failure stops it and shows in the reply (`install.state` 'failed'). */
+export async function updateNow(): Promise<void> {
+  if (updateFlow.chaining) return;
+  updateFlow.chaining = true;
+  try {
+    if (updates.reply?.install?.state !== 'ready') {
+      await startUpdateDownload();
+      if (installing.error) return;
+      const give = Date.now() + DOWNLOAD_PATIENCE_MS;
+      while (updates.reply?.install?.state === 'downloading' && Date.now() < give) await sleep(400);
+    }
+    if (updates.reply?.install?.state === 'ready') await startUpdateInstall();
+  } finally { updateFlow.chaining = false; }
+}
+
 /** The person has read what an update nobody watched did. */
 export async function dismissUpdateResult(): Promise<void> {
   try {
@@ -127,4 +149,23 @@ export function startUpdateWatch(): () => void {
   const stopStatus = visiblePoll(async () => { await refreshUpdateStatus(); }, REFRESH_MS, { immediate: true });
   const stopPresence = startPresence();
   return () => { stopStatus(); stopPresence(); };
+}
+
+// What's new: whether the window is open, and the version whose notes the person last read (kept in this browser).
+export const whatsNew = $state<{ open: boolean; after: boolean; seen: string }>({ open: false, after: false, seen: readSeen() });
+
+/** Opens the "What's new" window. `after` is true when it opens by itself because the app was just updated. */
+export function openWhatsNew(after = false): void { whatsNew.after = after; whatsNew.open = true; }
+
+/** Closes the window and remembers that the notes up to the installed version were read. */
+export function closeWhatsNew(current: string): void {
+  whatsNew.open = false;
+  if (parseableVersion(current)) { whatsNew.seen = normalizeVersion(current); writeSeen(current); }
+}
+
+/** Run once the installed version is known: a first run just remembers the version; a newer version than the one last read opens the window. */
+export function checkWhatsNewOnStart(current: string): void {
+  if (!parseableVersion(current) || whatsNew.open) return;
+  if (!whatsNew.seen) { whatsNew.seen = normalizeVersion(current); writeSeen(current); return; }
+  if (shouldAutoOpen(whatsNew.seen, current)) openWhatsNew(true);
 }
