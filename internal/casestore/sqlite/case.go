@@ -92,6 +92,10 @@ type caseState struct {
 	// bg is the background timeline index build of this open case, if one is running
 	// (guarded by mu). It holds a reference of its own (see startTimelineBuild).
 	bg *tlBuild
+	// attrBg is the background series-key index build, if one is running (guarded by
+	// mu). Like bg it holds a reference of its own and is cancelled by
+	// stopTimelineBuild (see startAttrBuild).
+	attrBg *tlBuild
 
 	// gate is this handle pool's hold on the process-wide quick_check cache (see
 	// verify_cache.go); set by verify, released by shutdown.
@@ -1707,9 +1711,18 @@ func (c *Case) ensureAttrIndexes() (busy bool) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	c.mu.Lock()
+	ab := c.attrBg
+	c.mu.Unlock()
+	var stop chan struct{} // nil blocks forever: no background build record, nothing to wait on
+	if ab != nil {
+		stop = ab.stop
+	}
 	go func() {
 		select {
 		case <-c.quit:
+			cancel()
+		case <-stop:
 			cancel()
 		case <-ctx.Done():
 		}

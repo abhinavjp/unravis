@@ -45,28 +45,39 @@ const attrBuildRetry = 500 * time.Millisecond
 // preparing until that ends. The build holds a reference of its own, like
 // startTimelineBuild: the case page opens and closes the case on every request, and
 // without it the last close would shut the case down (and cancel the build) before
-// a large case is indexed, again at every poll. Erase, Store.Close and the
-// lifecycle moves still cancel it (shutdown closes quit). An import that holds the
-// case makes the build wait and try again, so the note stays up until the indexes
-// exist or the build is cancelled; a query that finds the import running does not
-// touch the note. The caller holds the store lock (Store.load, via Open).
+// a large case is indexed, again at every poll. Erase and Store.Close cancel it
+// (shutdown closes quit); Begin/Finish Free and BeginArchive cancel it through
+// stopTimelineBuild, which they call first because they need the case idle. An
+// import that holds the case makes the build wait and try again, so the note stays
+// up until the indexes exist or the build is cancelled; a query that finds the
+// import running does not touch the note. The caller holds the store lock
+// (Store.load, via Open).
 func (c *caseState) startAttrBuild() {
+	b := &tlBuild{stop: make(chan struct{}), done: make(chan struct{})}
 	c.mu.Lock()
 	c.refs++
+	c.attrBg = b
 	c.mu.Unlock()
 	c.preparing.Store(true) // before the goroutine runs, so the first page read already says so
 	go func() {
 		bg := &Case{caseState: c}
+	retry:
 		for bg.ensureAttrIndexes() {
 			select {
 			case <-c.quit:
-				c.preparing.Store(false)
-				_ = bg.Close()
-				return
+				break retry
+			case <-b.stop:
+				break retry
 			case <-time.After(attrBuildRetry):
 			}
 		}
 		c.preparing.Store(false)
 		_ = bg.Close()
+		c.mu.Lock()
+		if c.attrBg == b {
+			c.attrBg = nil
+		}
+		c.mu.Unlock()
+		close(b.done)
 	}()
 }

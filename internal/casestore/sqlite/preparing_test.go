@@ -242,12 +242,73 @@ func TestCloseDuringTheBuildDoesNotCutItOff(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	c = mustOpen(t, s, info.ID)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if c.Preparing() {
 		t.Fatal("the next open still says preparing: the build was cut off")
 	}
 	if n := attrIndexCount(t, c); n != 2 {
 		t.Fatalf("series-key indexes after the close during the build = %d, want 2", n)
+	}
+}
+
+// Begin/Finish Free and BeginArchive need the case idle and call stopTimelineBuild
+// first. Now that the series-key build holds a reference of its own, that call must
+// cancel it too, or those moves would answer "in use" for as long as it runs.
+func TestStopBuildCancelsTheSeriesKeyBuildAndWaits(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "stop")
+	c := mustOpen(t, s, info.ID)
+	if _, err := c.Import(context.Background(), tMeta("a.csv"), tBody("a"), tRun(tEvents(c, "a", 40))); err != nil {
+		t.Fatal(err)
+	}
+	dropAttrIndexes(t, c)
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	attrBuildHook = func() {
+		close(entered)
+		<-release
+	}
+	t.Cleanup(func() { attrBuildHook = nil })
+	released := false
+	releaseOnce := func() {
+		if !released {
+			released = true
+			close(release)
+		}
+	}
+	t.Cleanup(releaseOnce)
+
+	c = mustOpen(t, s, info.ID)
+	st := c.caseState
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the background build never started")
+	}
+	_ = c.Close() // the build's own reference is the only one left
+	done := make(chan struct{})
+	go func() {
+		s.stopTimelineBuild(context.Background(), info.ID)
+		close(done)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	releaseOnce() // the build gets going, finds itself cancelled, and lets go
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("stopTimelineBuild did not return")
+	}
+	st.mu.Lock()
+	b, refs := st.attrBg, st.refs
+	st.mu.Unlock()
+	if b != nil || refs != 0 {
+		t.Fatalf("after the stop: series-key build %v, refs %d", b, refs)
+	}
+	if st.preparing.Load() {
+		t.Fatal("still preparing after the build was cancelled")
 	}
 }
 
