@@ -378,6 +378,8 @@ func applyGroup(s *Sample, name string, v any) {
 		assignIf(&s.Paths, v)
 	case "facts":
 		assignIf(&s.Facts, v)
+	case "redis":
+		assignIf(&s.Redis, v)
 	}
 }
 

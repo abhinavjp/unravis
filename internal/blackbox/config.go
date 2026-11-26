@@ -222,6 +222,8 @@ type Config struct {
 	Counters *CounterSettings `json:"counters,omitempty"`
 	// Paths lists extra files or folders whose path, size and time are reported (never their content) (B7).
 	Paths *PathSettings `json:"paths,omitempty"`
+	// Redis says what the Redis collector reads on this PC (B4). Absent means the standard set on port 6379.
+	Redis *RedisSettings `json:"redis,omitempty"`
 	// AutoUpdate is left out of a new settings file: the defaults apply (install, every 30 minutes).
 	AutoUpdate *AutoUpdate `json:"autoUpdate,omitempty"`
 }
@@ -413,6 +415,11 @@ func (c Config) Validate() error {
 	}
 	if c.Paths != nil {
 		if err := c.Paths.validate(); err != nil {
+			return err
+		}
+	}
+	if c.Redis != nil {
+		if err := c.Redis.validate(); err != nil {
 			return err
 		}
 	}

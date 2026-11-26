@@ -72,6 +72,12 @@ Commands that change the service (run as administrator):
   remove-sql  Stop and remove the SQL service, then print the revoke script.
               --confirm-name <name>  the Blackbox name, required.
 
+Redis password (only when Redis on this PC asks for one):
+  set-redis-password    Read the password from standard input, test it against
+              Redis on this PC, and save it sealed for this PC. Never printed.
+              Administrator only.
+  clear-redis-password  Remove the saved password.
+
 Other commands:
   config show Print the settings in force and every collector with its id, what
               it reads, and whether it is on. Read-only: changes nothing.
@@ -104,6 +110,8 @@ type deps struct {
 	// reads; nil means the console. Both are test seams.
 	sealer func() (sealedfile.Protector, error)
 	stdin  io.Reader
+	// redisCheck tests a Redis password against this PC's Redis (set-redis-password). Nil means the real check.
+	redisCheck func(port int, password string) error
 	// confirmDir proves the SQL data folder for a saved login (see sqlLoginDir); nil means SQLManager.ConfirmLoginDir. Test seam.
 	confirmDir func(cfg blackbox.Config, configPath string) (string, error)
 	// vmProbe is the vm-probe reading. nil means the real PDH probe (BL-113).
@@ -395,7 +403,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 				return filepath.Join(progDir, name)
 			}
 		}
-		if cmd == "apply" || cmd == "remove" || cmd == "setup-sql" || cmd == "clear-sql-login" || cmd == "set-sql-login" {
+		if cmd == "apply" || cmd == "remove" || cmd == "setup-sql" || cmd == "clear-sql-login" || cmd == "set-sql-login" ||
+			cmd == "set-redis-password" || cmd == "clear-redis-password" {
 			// SEC-15: these run elevated from the app, whose folder an ordinary
 			// user can write to on a per-user install. Never take settings or a
 			// key file from there: use the installed copy (which may be missing,
@@ -549,6 +558,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		}
 		states := cfg.CollectorStates()
 		return ans.ok(configShowText(cfg, states), map[string]any{"config": cfg, "collectors": states})
+	case "set-redis-password", "clear-redis-password":
+		return runRedisPassword(cmd, paths.ConfigPath, d, ans)
 	case "snapshot":
 		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
 		if err != nil {

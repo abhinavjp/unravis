@@ -65,6 +65,8 @@ type Sample struct {
 	Paths *PathsGroup `json:"paths,omitempty"`
 	// Facts is the server facts block (versions, services, certificate end dates), once an hour.
 	Facts *FactsGroup `json:"facts,omitempty"`
+	// Redis is the Redis on this PC: server figures, slow command names, latency spikes, client counts (B4).
+	Redis *RedisGroup `json:"redis,omitempty"`
 
 	Missing []string `json:"missing,omitempty"`
 }
