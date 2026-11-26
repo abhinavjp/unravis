@@ -189,14 +189,22 @@ S5 scrub + hash + resume tests (with S4)    S8 schedules    S9 remote update/res
 
 Coordination with the other two threads: the Salt thread (PR 348) keeps its tool read-only and contributes the vectors for S0 and the Salt transport for S2b; the CLI plan thread (PR 346) owns the `unravis ops` root, the exit codes and the audit chain, and S6 adds a `server` group under it. Backlog items: BL-603 (Servers: remote pull layer and screen), listed in `docs/BACKLOG.md`.
 
-## 10. Prototype v4 additions (2026-11-26)
+## 10. Prototype v4 and v5 additions (2026-11-26)
 
-`web/prototype/servers-PROTOTYPE.html` (v4, awaiting approval) adds, all simulated:
+`web/prototype/servers-PROTOTYPE.html` (v5, awaiting approval) adds, all simulated:
 
 - **Access check.** Copy-ready read-only commands (and a note for an IT admin) on the Trust, Pick and Reach steps: host key fingerprint from the PC and on the server, `salt-key -L`, `manage.status`, `test.ping`, and a listing of the Blackbox and log folders per chosen machine.
-- **Case-aware range.** For a case, "How much" defaults to the investigation window plus a reference range (day before or week before, or none), editable per item. Not for a case: 24 hours, 3 days or 7 days.
+- **Case-aware range (v5: read from the case, never picked here).** The investigation window and the reference range are chosen once, in the Investigation timeline. The Servers screen shows them read-only (UTC) with a "Change in Investigation timeline" button, and defaults each item's "How much" to the window plus the reference, or the window alone when no reference is set. The time between the two is not copied. Any item's range can still be changed in the table. If the case has no window yet, or only the timeline's last-hour default, the screen says so and falls back to per-item ranges (24 hours, 3 days, 7 days). Not for a case: the same three ranges. See section 11 for where the values come from in code.
 - **Manifest first.** The file list (names, sizes, time ranges) is read before any data moves.
 - **Compression.** Auto (text squeezed once on the server at low priority, zips sent as they are), Always, or Never, with size and time estimates and a plain warning above about 15 minutes.
 - **Background back-fill.** After the case window lands, the rest of the last 7 days is fetched quietly, newest first, pausable.
 
 The numbers (compression ratio, Salt speed) are assumptions until measured. Research and sources: `LOG-TRANSFER-RESEARCH.md`.
+
+## 11. Where the case range comes from (checked in the code, 2026-11-26)
+
+- Stored in the case's encrypted workspace note: `GET /api/cases/{id}/workspace` (`internal/server/case_workspace.go`), key `windows` = `{incidentStart, incidentEnd, referenceStart, referenceEnd}`, strings `YYYY-MM-DDTHH:mm`, UTC. The web side writes it through `rememberWindows` and `queueWorkspaceSave` in `web/src/lib/appState.svelte.ts` and reads it back as `savedWindows`.
+- The timeline shows `defaultWindows` (the hour before now, and the hour before that) when nothing is saved. The Servers screen must not treat those as a chosen range: it reads the saved `windows` only, and shows the "no window yet" state when they are missing or invalid (`parseStoredWindows` is strict: real times, end after start).
+- Limits the pull must respect: the investigation endpoint caps each window at 7 days and never reads the gap between them; the tracing picker allows up to 186 days. Servers uses the 7-day figure.
+- The note forbids credential and address keys, so the Servers feature never writes a host name into it. Only the machine names and times shown on screen are kept, and only in the pull record, not in the workspace note.
+- Real-data path for the build: the Servers service reads `windows` through the same workspace service the timeline uses (no second store), converts to UTC instants, and builds the manifest request from them. Not yet built; not yet verified on a live case.
