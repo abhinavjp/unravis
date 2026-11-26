@@ -164,7 +164,15 @@ func NewRecorder(o RecorderOptions) *Recorder {
 		start := time.Now()
 		o.Mono = func() time.Duration { return time.Since(start) }
 	}
-	return &Recorder{o: o, now: o.Now, started: o.Now().UTC(), writeOK: true, collectOK: true}
+	r := &Recorder{o: o, now: o.Now, started: o.Now().UTC(), writeOK: true, collectOK: true}
+	if o.Store != nil {
+		// A restart while the drive is still full stays paused until the first
+		// housekeeping pass (which runs before the first sample) reads the free
+		// space. Without this the stored pause would never be cleared by a
+		// recorder that thinks it is running.
+		r.paused = o.Store.PausedDiskLow()
+	}
+	return r
 }
 
 // SQLBudgetShare is the divisor of the owner's single maxGB budget reserved for
