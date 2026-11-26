@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,7 +40,10 @@ type reopener struct {
 
 // Reopen handles one open request. Requests closer than reopenMinGap to the
 // last accepted one are dropped.
-func (r *reopener) Reopen() {
+func (r *reopener) Reopen() { r.ReopenTo("") }
+
+// ReopenTo is Reopen that lands on a screen ("updates", "whatsnew", "blackbox"); the server only accepts the names it lists.
+func (r *reopener) ReopenTo(to string) {
 	r.mu.Lock()
 	t := r.now()
 	if t.Sub(r.last) < reopenMinGap {
@@ -58,7 +62,11 @@ func (r *reopener) Reopen() {
 		r.notify("Unravis", "Unravis is still starting; try again in a moment.")
 		return
 	}
-	if err := r.open(r.link(code)); err != nil {
+	link := r.link(code)
+	if to != "" {
+		link += "&to=" + url.QueryEscape(to)
+	}
+	if err := r.open(link); err != nil {
 		r.notify("Unravis could not open your browser",
 			"Unravis is running at "+r.base+".\n\nYour browser could not be opened. Right-click the Unravis icon in the notification area and choose \"Open Unravis\" to try again.")
 	}

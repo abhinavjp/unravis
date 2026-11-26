@@ -1,12 +1,12 @@
 <script lang="ts">
   import { comparisonLabel, STARTUP_TEXT, STARTUP_TITLE } from './lib/copy/startupCopy';
   import { scopeProblem } from './lib/autorun';
-  import { VALIDATION_MESSAGE } from './lib/api';
+  import { VALIDATION_MESSAGE, takeLaunchTarget } from './lib/api';
   import { WAIT_TEXT } from './lib/copy/waitCopy';
-  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeImportPopup, closeSidePanel, onWindowKey, openCaseHome, openCaseImport, openTracing, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
+  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeImportPopup, closeSidePanel, onWindowKey, openSidePanel, openCaseHome, openCaseImport, openTracing, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import UpdateBanner from './components/UpdateBanner.svelte';
-  import { checkWhatsNewOnStart, startUpdateWatch, updates, whatsNew } from './lib/updateState.svelte';
+  import { checkWhatsNewOnStart, openWhatsNew, startUpdateWatch, updates, whatsNew } from './lib/updateState.svelte';
   import { loadNotes, normalizeVersion, parseableVersion } from './lib/updateNotes';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
@@ -53,6 +53,13 @@
   const info = $derived(app.info);
   // Read the update status once the app is up, then every ten minutes. It is a local call; the program's own timer does the checking.
   $effect(() => { if (info) return startUpdateWatch(); });
+  // A start link from the tray (or a notice's click) can ask for one screen: the Updates or Blackbox panel, or What's new.
+  $effect(() => {
+    if (!info) return;
+    const to = takeLaunchTarget();
+    if (to === 'whatsnew') openWhatsNew(false);
+    else if (to) openSidePanel(to);
+  });
   // After an update the tour opens once, but only when the bundled notes know the installed version. A missing notes file keeps it quiet.
   const installedVersion = $derived(updates.reply?.current ?? '');
   $effect(() => {

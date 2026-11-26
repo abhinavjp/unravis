@@ -191,3 +191,27 @@ func TestLaunchLimitIsNotSpentByWebPageSubrequests(t *testing.T) {
 		t.Fatalf("the real link after the flood = %d, want 302", w.Code)
 	}
 }
+
+// The tray and its notices open a named screen: only the listed names are passed into the fragment.
+func TestLaunchCodePassesOnlyKnownScreens(t *testing.T) {
+	cases := []struct{ query, loc string }{
+		{"&to=updates", "/#t=" + testToken + "&open=updates"},
+		{"&to=whatsnew", "/#t=" + testToken + "&open=whatsnew"},
+		{"&to=blackbox", "/#t=" + testToken + "&open=blackbox"},
+		{"&to=", "/#t=" + testToken},
+		{"&to=settings", "/#t=" + testToken},
+		{"&to=updates%26x%3D1", "/#t=" + testToken},
+		{"&to=%3Cscript%3E", "/#t=" + testToken},
+	}
+	for i, tc := range cases {
+		code := strings.Repeat(string(rune('a'+i)), 32)
+		h := New(&fakeRepository{}, testAssets(), testToken, false, WithLaunchCode(code, time.Now().Add(time.Minute)))
+		res := launchRequest(h, "?c="+code+tc.query)
+		if res.Code != http.StatusFound {
+			t.Fatalf("%q = %d, want 302", tc.query, res.Code)
+		}
+		if loc := res.Header().Get("Location"); loc != tc.loc {
+			t.Errorf("%q: Location = %q, want %q", tc.query, loc, tc.loc)
+		}
+	}
+}

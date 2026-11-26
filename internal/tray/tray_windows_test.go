@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -65,6 +66,34 @@ type rig struct {
 	popup   func(hwnd windows.Handle, items []Item) (uint32, bool)
 	items   []Item
 	ending  atomic.Bool // what endingSession reports
+
+	mu        sync.Mutex
+	addTips   []string         // the tooltip of each add call
+	addIcons  []windows.Handle // the icon of each add call
+	modifies  []modifyCall
+	notices   []Notice // what the pop-up call was asked to show
+	modifyErr error    // returned by every modify call while set
+	dotMade   atomic.Int32
+	destroyed atomic.Int32
+}
+
+type modifyCall struct {
+	icon windows.Handle
+	tip  string
+}
+
+const dotSentinel = windows.Handle(0xD07)
+
+func (r *rig) modifyCalls() []modifyCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]modifyCall(nil), r.modifies...)
+}
+
+func (r *rig) shownNotices() []Notice {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]Notice(nil), r.notices...)
 }
 
 func newRig(t *testing.T) *rig {
@@ -85,13 +114,37 @@ func newRig(t *testing.T) *rig {
 func (r *rig) start() {
 	t := r.t
 	oAdd, oDel, oPop, oEnd, oArm, oDisarm, oReady := addIconHook, deleteIconHook, popupHook, endingSession, armRetryHook, disarmRetryHook, readyHook
+	oMod, oShow, oDot, oDestroy := modifyIconHook, showNoticeHook, dotIconHook, destroyIconHook
 	t.Cleanup(func() {
 		addIconHook, deleteIconHook, popupHook, endingSession, armRetryHook, disarmRetryHook, readyHook = oAdd, oDel, oPop, oEnd, oArm, oDisarm, oReady
+		modifyIconHook, showNoticeHook, dotIconHook, destroyIconHook = oMod, oShow, oDot, oDestroy
 	})
+	modifyIconHook = func(_ windows.Handle, _ uint32, icon windows.Handle, tip string) error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.modifies = append(r.modifies, modifyCall{icon, tip})
+		return r.modifyErr
+	}
+	showNoticeHook = func(_ windows.Handle, _ uint32, title, text string) error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.notices = append(r.notices, Notice{Title: title, Text: text})
+		return nil
+	}
+	dotIconHook = func(windows.Handle) windows.Handle { r.dotMade.Add(1); return dotSentinel }
+	destroyIconHook = func(h windows.Handle) {
+		if h == dotSentinel {
+			r.destroyed.Add(1)
+		}
+	}
 	var addCall atomic.Int32
-	addIconHook = func(windows.Handle, uint32, uint32, windows.Handle, string) error {
+	addIconHook = func(_ windows.Handle, _ uint32, _ uint32, icon windows.Handle, tip string) error {
 		i := int(addCall.Add(1)) - 1
 		r.adds.Add(1)
+		r.mu.Lock()
+		r.addTips = append(r.addTips, tip)
+		r.addIcons = append(r.addIcons, icon)
+		r.mu.Unlock()
 		if i < len(r.addErrs) {
 			return r.addErrs[i]
 		}

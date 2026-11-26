@@ -358,3 +358,20 @@ func TestQuitSignalCancelsTheAppContext(t *testing.T) {
 		t.Fatal("main.go calls newLaunchCode directly")
 	}
 }
+
+func TestReopenToLandsOnAScreen(t *testing.T) {
+	f := newFakeReopen()
+	f.r.ReopenTo("whatsnew")
+	if len(f.opened) != 1 || f.opened[0] != "http://127.0.0.1:5555/launch?c="+f.rearmCodes[0]+"&to=whatsnew" {
+		t.Fatalf("opened = %v", f.opened)
+	}
+	f.noWarn(t)
+}
+
+func TestReopenToEscapesTheScreenName(t *testing.T) {
+	f := newFakeReopen()
+	f.r.ReopenTo("a&b=c")
+	if len(f.opened) != 1 || !strings.HasSuffix(f.opened[0], "&to=a%26b%3Dc") {
+		t.Fatalf("opened = %v", f.opened)
+	}
+}
