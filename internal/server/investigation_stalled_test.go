@@ -106,7 +106,7 @@ func TestExportStopsOnAnEmptyPageWithACursor(t *testing.T) {
 	stalled.NextCursor = "more"
 	repo := &fakeRepository{requestPages: []audit.Page{stalled}}
 	h := New(repo, nil, testToken, false)
-	input, _ := json.Marshal(audit.PageInput{Query: testQuery(), Limit: audit.MaxPageSize})
+	input, _ := json.Marshal(audit.PageInput{Query: testQuery(), Limit: audit.MaxPageSize}) //nolint:gosec // G117: the key field is empty in this test request
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() { done <- request(h, http.MethodPost, "/api/export", string(input), true) }()
 	select {
