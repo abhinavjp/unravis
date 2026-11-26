@@ -5,6 +5,7 @@
   Reads %USERPROFILE%\.unravis-remote\.env (see docs/ops/REMOTE-SALT.md), connects with the built-in OpenSSH client,
   and runs ONLY allow-listed read-only Salt calls. Every call is written to a capped audit log (no secrets).
   Anything that changes the server is refused unless REMOTE_MODE=write and a human approved that exact command.
+  Blackbox: BlackboxShow / BlackboxHistory / BlackboxStatus read the recorder's settings; LogPull copies one bundle zip.
   -DryRun prints what would be run and connects to nothing.
 .EXAMPLE
   .\Invoke-RemoteSalt.ps1 -Action Check
@@ -13,7 +14,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Check', 'ShowHostKey', 'TrustHost', 'Keys', 'SaltRun', 'Salt', 'Run', 'LogTail', 'LogGrep', 'LogList', 'EventLog', 'Service', 'MasterTail', 'WriteRequest', 'WriteApprove', 'Audit')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Check', 'ShowHostKey', 'TrustHost', 'Keys', 'SaltRun', 'Salt', 'Run', 'LogTail', 'LogGrep', 'LogList', 'EventLog', 'Service', 'MasterTail', 'WriteRequest', 'WriteApprove', 'BlackboxShow', 'BlackboxHistory', 'BlackboxStatus', 'LogPull', 'Audit')][string]$Action,
     [string]$Target,
     [string]$Fn,
     [string[]]$FnArgs = @(),
@@ -28,6 +29,7 @@ param(
     [string]$ApprovalNote,
     [int]$TimeoutSec = 60,
     [int]$MaxPrint = 60000,
+    [ValidateRange(16, 1024)][int]$ChunkKB = 192,
     [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
@@ -143,6 +145,14 @@ function Invoke-ReadRecipe([string]$Recipe) {
     if ($r) { $last = if ($rec.ContainsKey('LastLines')) { $rec.LastLines } else { 0 }; Show-SaltJson $r.Out $last }
 }
 
+function Invoke-BlackboxRead([string]$Verb) {
+    Assert-Target
+    $rec = New-BlackboxCommand -Fn $Verb
+    $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg (Get-SaltWait)
+    $r = Invoke-Planned "$($rec.Text) on $Target" $remote
+    if ($r) { Show-SaltJson $r.Out }
+}
+
 switch ($Action) {
     'Audit' {
         $f = Join-Path (Get-RemoteHome) 'audit.log'
@@ -230,6 +240,9 @@ switch ($Action) {
         $r = Invoke-Planned "cmd.run on $Target ($osName): $Cmd" $remote
         if ($r) { Show-SaltJson $r.Out }
     }
+    'BlackboxShow' { Invoke-BlackboxRead 'blackbox.show' }
+    'BlackboxHistory' { Invoke-BlackboxRead 'blackbox.history' }
+    'BlackboxStatus' { Invoke-BlackboxRead 'blackbox.status' }
     'LogTail' { Invoke-ReadRecipe 'LogTail' }
     'LogGrep' { Invoke-ReadRecipe 'LogGrep' }
     'LogList' { Invoke-ReadRecipe 'LogList' }
@@ -250,16 +263,20 @@ switch ($Action) {
     }
     'WriteRequest' {
         Assert-Target
-        $e = Test-WriteCall $Fn $Name $script:Cfg; if ($e) { Deny $e }
-        if ($DryRun) { Write-Host "(dry run: would record a change request for $Fn '$Name' on $Target; nothing saved, nothing sent)"; return }
+        $isBb = $Fn -like 'blackbox.*'
+        # Started with -File, PowerShell hands 'on,every=60' over as one string, so split on commas.
+        $wargs = if ($isBb) { @($FnArgs | ForEach-Object { $_ -split ',' } | Where-Object { $_ -ne '' }) } else { @() }
+        $e = if ($isBb) { Test-BlackboxWrite $Fn $Name $wargs $script:Cfg } else { Test-WriteCall $Fn $Name $script:Cfg }
+        if ($e) { Deny $e }
+        $shown = if ($isBb) { (New-BlackboxCommand -Fn $Fn -Name $Name -WriteArgs $wargs).Text } else { "$Fn $Name" }
+        if ($DryRun) { Write-Host "(dry run: would record a change request for $shown on $Target; nothing saved, nothing sent)"; return }
         $created = (Get-Date).ToUniversalTime().ToString('o')
-        $sha = [System.Security.Cryptography.SHA256]::Create()
-        $h = -join ($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$Target|$Fn|$Name|$created")) | Select-Object -First 6 | ForEach-Object { $_.ToString('x2') })
+        $h = Get-WriteHash $Target $Fn $Name ($wargs -join ' ') $created
         $dir = Join-Path (Get-RemoteHome) 'pending'
         if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        @{ target = $Target; fn = $Fn; name = $Name; created = $created } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir "$h.json") -Encoding UTF8
-        Write-Audit -Action 'WriteRequest' -Decision 'pending' -Target $Target -Command "$Fn $Name" -Note "hash $h" -Secrets $script:Secrets
-        Write-Host "CHANGE REQUESTED, NOT RUN: $Fn '$Name' on minion '$Target'."
+        @{ target = $Target; fn = $Fn; name = $Name; args = $wargs; created = $created } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir "$h.json") -Encoding UTF8
+        Write-Audit -Action 'WriteRequest' -Decision 'pending' -Target $Target -Command $shown -Note "hash $h" -Secrets $script:Secrets
+        Write-Host "CHANGE REQUESTED, NOT RUN: $shown on minion '$Target'."
         Write-Host "Show this to nachi in the thread. Run it only after he says go (this gate relies on the operator; it is not a technical lock): -Action WriteApprove -Hash $h -ApprovalNote '<his message id>'. Valid for 60 minutes."
     }
     'WriteApprove' {
@@ -273,24 +290,82 @@ switch ($Action) {
         if (-not $createdRaw) { Remove-Item -LiteralPath $f -Force; Deny 'the saved request is damaged; make a new one' }
         $age = (Get-Date).ToUniversalTime() - [datetime]::Parse($createdRaw, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
         if ($age.TotalMinutes -gt 60 -or $age.TotalSeconds -lt -60) { Remove-Item -LiteralPath $f -Force; Deny 'the request is older than 60 minutes (or dated in the future); make a new one' }
-        $sha2 = [System.Security.Cryptography.SHA256]::Create()
-        $h2 = -join ($sha2.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$($p.target)|$($p.fn)|$($p.name)|$createdRaw")) | Select-Object -First 6 | ForEach-Object { $_.ToString('x2') })
+        $pargs = @($p.args | Where-Object { $null -ne $_ })
+        $h2 = Get-WriteHash $p.target $p.fn $p.name ($pargs -join ' ') $createdRaw
         if ($h2 -ne $Hash) { Remove-Item -LiteralPath $f -Force; Deny 'the saved request does not match its hash (it was edited); make a new one' }
         $Target = $p.target; $Fn = $p.fn; $Name = $p.name
         Assert-Target
-        $e = Test-WriteCall $Fn $Name $script:Cfg; if ($e) { Deny $e }
-        $remote = New-SaltRemoteCommand 'salt' @($Target, $Fn, $Name) $script:Cfg 60
-        Write-Host ("[WriteApprove] CHANGING THE SERVER: {0} '{1}' on {2}. Approval: {3}" -f $Fn, $Name, $Target, $ApprovalNote)
+        $isBb = $Fn -like 'blackbox.*'
+        if ($isBb) {
+            $e = Test-BlackboxWrite $Fn $Name $pargs $script:Cfg; if ($e) { Deny $e }
+            $rec = New-BlackboxCommand -Fn $Fn -Name $Name -WriteArgs $pargs
+            # The recorder restarts and watches itself for 60 s, so allow the master and the SSH call 3 minutes.
+            $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg 170
+            $shown = $rec.Text; $approveSec = 200
+        } else {
+            $e = Test-WriteCall $Fn $Name $script:Cfg; if ($e) { Deny $e }
+            $remote = New-SaltRemoteCommand 'salt' @($Target, $Fn, $Name) $script:Cfg 60
+            $shown = "$Fn '$Name'"; $approveSec = [Math]::Max($TimeoutSec, 90)
+        }
+        Write-Host ("[WriteApprove] CHANGING THE SERVER: {0} on {1}. Approval: {2}" -f $shown, $Target, $ApprovalNote)
         if ($DryRun) { Write-Host ("  ssh " + ((New-SshArgs $script:Cfg $remote) -join ' ')); Write-Host '  (dry run: nothing was sent)'; return }
         Assert-KnownHost
         # Consume the request first (rename is atomic), so two approvals cannot both run, and log the attempt before it starts.
         try { Rename-Item -LiteralPath $f -NewName "$Hash.running" -ErrorAction Stop } catch { Deny 'that request was already used' }
         Write-Audit -Action 'WriteApprove' -Decision 'starting' -Target $Target -Command $remote -Note "approved: $ApprovalNote" -Secrets $script:Secrets
-        $r = Invoke-RemoteSsh -Config $script:Cfg -RemoteCommand $remote -TimeoutSec ([Math]::Max($TimeoutSec, 90))
+        $r = Invoke-RemoteSsh -Config $script:Cfg -RemoteCommand $remote -TimeoutSec $approveSec
         Remove-Item -LiteralPath "$f".Replace('.json', '.running') -Force -ErrorAction SilentlyContinue
         Write-Audit -Action 'WriteApprove' -Decision 'ran' -Target $Target -Command $remote -Note $(if ($r.TimedOut) { 'timed out; state unknown' } else { "approved: $ApprovalNote" }) -ExitCode $r.Exit -Bytes $r.Out.Length -Secrets $script:Secrets
-        if ($r.TimedOut) { throw 'Timed out. The service change may or may not have happened; check with -Action Service before asking again.' }
+        if ($r.TimedOut) { throw $(if ($isBb) { 'Timed out. The change may or may not have happened; run -Action BlackboxShow and -Action BlackboxHistory before asking again.' } else { 'Timed out. The service change may or may not have happened; check with -Action Service before asking again.' }) }
         if ($r.Exit -ne 0) { throw ("Remote command failed (exit {0}): {1} {2}" -f $r.Exit, $r.Err.Trim(), (Protect-Text $r.Out $script:Secrets).Trim()) }
         Show-SaltJson $r.Out
+    }
+    'LogPull' {
+        Assert-Target
+        $e = Test-PullPath $Path $script:Cfg; if ($e) { Deny $e }
+        $chunk = $ChunkKB * 1024
+        $leaf = ($Path -split '\\')[-1]
+        $dir = Join-Path (Get-RemoteHome) 'bundles'
+        $dest = Join-Path $dir ("{0}-{1}-{2}" -f $Target, (Get-Date -Format 'yyyyMMdd-HHmmss'), $leaf)
+        if ($DryRun) {
+            $c0 = New-PullChunkCommand $Path 0 $chunk $true
+            $remote = New-SaltRemoteCommand 'salt' @($Target, 'cmd.run', $c0, 'shell=powershell') $script:Cfg (Get-SaltWait)
+            Write-Host "[LogPull] READ-ONLY. Would copy $Path from $Target in $ChunkKB KB pieces to $dest and check its SHA-256."
+            Write-Host ("  ssh " + ((New-SshArgs $script:Cfg $remote) -join ' ')); Write-Host '  (dry run: nothing was sent)'; return
+        }
+        Assert-KnownHost
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $out = [System.IO.File]::Open($dest, 'CreateNew', 'Write', 'None')
+        $ok = $false
+        try {
+            $offset = [long]0; $size = [long]-1; $want = ''; $pieces = 0
+            while ($size -lt 0 -or $offset -lt $size) {
+                $cmd = New-PullChunkCommand $Path $offset $chunk ($pieces -eq 0)
+                $remote = New-SaltRemoteCommand 'salt' @($Target, 'cmd.run', $cmd, 'shell=powershell') $script:Cfg (Get-SaltWait)
+                $r = Invoke-Planned "pull piece $($pieces + 1) of $leaf from $Target (offset $offset)" $remote "offset $offset"
+                $obj = $r.Out | ConvertFrom-Json
+                $val = [string]($obj.PSObject.Properties | Select-Object -First 1).Value
+                $parts = $val.Trim() -split '\|', 4
+                if ($parts.Count -ne 4 -or $parts[2] -ne [string]$offset) { throw "The minion's answer for piece $($pieces + 1) was not in the expected shape: $((Protect-Text $val $script:Secrets).Substring(0, [Math]::Min(200, $val.Length)))" }
+                if ($pieces -eq 0) { $size = [long]$parts[0]; $want = $parts[1].ToLowerInvariant() } elseif ([long]$parts[0] -ne $size) { throw 'The file changed size while it was being pulled. Make a new bundle and pull that.' }
+                $bytes = [Convert]::FromBase64String($parts[3])
+                if ($bytes.Length -eq 0 -and $offset -lt $size) { throw 'The minion returned an empty piece before the end of the file.' }
+                $out.Write($bytes, 0, $bytes.Length)
+                $offset += $bytes.Length; $pieces++
+                if ($pieces % 10 -eq 0) { Write-Host ("  {0} of {1} bytes" -f $offset, $size) }
+                if ($pieces -gt 5000) { throw 'Stopped after 5000 pieces. Use a bigger -ChunkKB or a smaller bundle.' }
+            }
+            $out.Flush(); $out.Dispose(); $out = $null
+            $got = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($got -ne $want) { throw "The copy does not match the file on the minion (expected $want, got $got). It is NOT good; do not use it: $dest" }
+            $ok = $true
+            Write-Audit -Action 'LogPull' -Decision 'ran' -Target $Target -Command "pull $Path" -Note "ok $size bytes in $pieces pieces sha256 $got" -Bytes $size -Secrets $script:Secrets
+            Write-Host "Pulled $size bytes in $pieces pieces. SHA-256 matches the minion's own hash: $got"
+            Write-Host "Saved: $dest"
+            Write-Host 'The hash proves the copy equals what the minion held. To prove it equals what the recorder wrote, compare it with ZipSHA256 in the .manifest.json beside the zip (pull that too).'
+        } finally {
+            if ($null -ne $out) { $out.Dispose() }
+            if (-not $ok) { Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue }
+        }
     }
 }

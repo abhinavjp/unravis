@@ -95,6 +95,48 @@ try {
     Check 'write protected salt-minion' ($null -ne (Test-WriteCall 'service.restart' 'salt-minion' $wcfg))
     Check 'write bad service name' ($null -ne (Test-WriteCall 'service.restart' 'a;b' $wcfg))
 
+    # ---- Blackbox verbs (B6)
+    $bbcfg = $wcfg.PSObject.Copy(); $bbcfg.LogPaths = @('C:\ProgramData\Unravis Blackbox')
+    Check 'bb write refused in readonly' ($null -ne (Test-BlackboxWrite 'blackbox.collector' 'redis.info' @('on') $cfg))
+    Check 'bb collector on' ($null -eq (Test-BlackboxWrite 'blackbox.collector' 'redis.info' @('on') $wcfg))
+    Check 'bb collector off every' ($null -eq (Test-BlackboxWrite 'blackbox.collector' 'host.tcp' @('off', 'every=60') $wcfg))
+    foreach ($bad in @(@('redis.info; calc', @('on')), @('Redis', @('on')), @('', @('on')), @('a', @('on')), @('redis.info', @()), @('redis.info', @('maybe')), @('redis.info', @('on', 'every=x')), @('redis.info', @('on', 'every=60', 'extra')), @('redis.info', @('on', 'every=1234567')))) {
+        Check ("bb collector refused: " + ($bad[0]) + ' ' + ($bad[1] -join ' ')) ($null -ne (Test-BlackboxWrite 'blackbox.collector' $bad[0] $bad[1] $wcfg))
+    }
+    Check 'bb counter add ok' ($null -eq (Test-BlackboxWrite 'blackbox.counter.add' '\Processor(_Total)\% Processor Time' @() $wcfg))
+    Check 'bb counter add no instance ok' ($null -eq (Test-BlackboxWrite 'blackbox.counter.add' '\Memory\Available MBytes' @() $wcfg))
+    Check 'bb counter remove ok' ($null -eq (Test-BlackboxWrite 'blackbox.counter.remove' '\Memory\Available MBytes' @() $wcfg))
+    foreach ($bad in @("\Memory\x'; calc; '", '\Memory\x" & calc', '\Memory\a & b', '\Memory\a^b', '\Memory\$env', 'Memory\x', '\Memory\a`b', '\Memory\%a%b', '\Net(*)\x', '\Memory\a: b', '\Memory\a #b', '')) {
+        Check "bb counter refused: $bad" ($null -ne (Test-BlackboxWrite 'blackbox.counter.add' $bad @() $wcfg))
+    }
+    Check 'bb counter takes no args' ($null -ne (Test-BlackboxWrite 'blackbox.counter.add' '\Memory\Available MBytes' @('x') $wcfg))
+    Check 'bb rollback ok' ($null -eq (Test-BlackboxWrite 'blackbox.rollback' 'last' @() $wcfg))
+    Check 'bb rollback only last' ($null -ne (Test-BlackboxWrite 'blackbox.rollback' 'x' @() $wcfg))
+    Check 'bb unknown verb refused' ($null -ne (Test-BlackboxWrite 'blackbox.apply' 'x' @() $wcfg))
+    Check 'bb is not a service write' ($null -ne (Test-WriteCall 'blackbox.collector' 'redis.info' $wcfg))
+    $c = New-BlackboxCommand -Fn 'blackbox.collector' -Name 'redis.info' -WriteArgs @('on', 'every=60')
+    Check 'bb collector command' ($c.Cmd -eq "`$x=Join-Path `$env:ProgramFiles 'Unravis Blackbox\unravis-blackbox.exe'; & `$x config set 'redis.info' on --every 60 --json" -and $c.Kwargs -contains 'shell=powershell')
+    $c = New-BlackboxCommand -Fn 'blackbox.counter.add' -Name '\Memory\Available MBytes'
+    Check 'bb counter command' ($c.Cmd.EndsWith("config set counters.extra add '\Memory\Available MBytes' --json"))
+    Check 'bb commands are YAML safe' ((@('blackbox.show', 'blackbox.history', 'blackbox.status', 'blackbox.rollback') | ForEach-Object { Test-YamlSafe (New-BlackboxCommand -Fn $_).Cmd }) -notcontains $false)
+    Check 'bb command does not start with an anchor' (-not (New-BlackboxCommand -Fn 'blackbox.show').Cmd.StartsWith('&'))
+    Check 'bb unknown verb throws' (Throws { New-BlackboxCommand -Fn 'blackbox.apply' })
+    Check 'write hash keeps the old shape without args' ((Get-WriteHash 'web01' 'service.restart' 'Unravis' '' '2026-11-26T10:00:00.0000000Z') -ne (Get-WriteHash 'web01' 'service.restart' 'Unravis' 'x' '2026-11-26T10:00:00.0000000Z'))
+    Check 'write hash covers the args' ((Get-WriteHash 'web01' 'blackbox.collector' 'redis.info' 'on' 'c') -ne (Get-WriteHash 'web01' 'blackbox.collector' 'redis.info' 'off' 'c'))
+    Check 'write hash is 12 hex' ((Get-WriteHash 'a' 'b' 'c' '' 'd') -match '^[0-9a-f]{12}$')
+
+    # ---- pulling a bundle (B6)
+    Check 'pull ok zip' ($null -eq (Test-PullPath 'C:\ProgramData\Unravis Blackbox\snapshots\case-1.zip' $bbcfg))
+    Check 'pull ok manifest' ($null -eq (Test-PullPath 'C:\ProgramData\Unravis Blackbox\snapshots\case-1-2.manifest.json' $bbcfg))
+    foreach ($bad in @('C:\ProgramData\Unravis Blackbox\bb-20261126-11.ndjson', 'C:\ProgramData\Unravis Blackbox\snapshots\snap-000001.json', 'C:\ProgramData\Unravis Blackbox\snapshots\a\b.zip', 'C:\ProgramData\Unravis Blackbox\snapshots\*.zip', 'C:\ProgramData\Unravis Blackbox\snapshots\..\x.zip', 'C:\Windows\snapshots\a.zip', '/var/log/snapshots/a.zip', 'C:\ProgramData\Unravis Blackbox\snapshots\.zip', 'C:\ProgramData\Unravis Blackbox\snapshots\a b.zip', "C:\ProgramData\Unravis Blackbox\snapshots\a'b.zip")) {
+        Check "pull refused: $bad" ($null -ne (Test-PullPath $bad $bbcfg))
+    }
+    Check 'pull refused with no log paths' ($null -ne (Test-PullPath 'C:\ProgramData\Unravis Blackbox\snapshots\a.zip' $nopath))
+    $pc = New-PullChunkCommand 'C:\ProgramData\Unravis Blackbox\snapshots\a.zip' 196608 196608 $true
+    Check 'pull chunk text' ($pc.Contains("Open('C:\ProgramData\Unravis Blackbox\snapshots\a.zip'") -and $pc.Contains('Seek(196608') -and $pc.Contains('Get-FileHash') -and -not $pc.Contains('__'))
+    Check 'pull chunk without hash' ((New-PullChunkCommand 'C:\ProgramData\Unravis Blackbox\snapshots\a.zip' 0 1024 $false) -notmatch 'Get-FileHash')
+    Check 'pull chunk is YAML safe' (Test-YamlSafe $pc)
+
     # ---- path checks
     Check 'path exact folder' (Test-PathAllowed 'C:\ProgramData\Unravis' $logs)
     Check 'path prefix trap' (-not (Test-PathAllowed 'C:\ProgramData\UnravisEvil' $logs))
@@ -210,6 +252,26 @@ try {
     $r = Run @('-Action', 'WriteApprove', '-Hash', $hash, '-ApprovalNote', 'test go')
     Check 'write approve refuses an edited request' ($r.Code -ne 0 -and $r.Out.Contains('does not match'))
     Check 'edited request is removed' (-not (Test-Path -LiteralPath $pf))
+    $r = Run @('-Action', 'BlackboxShow', '-Target', 'web01')
+    Check 'dry run blackbox show' ($r.Code -eq 0 -and $r.Out.Contains('config show --json') -and $r.Out.Contains('shell=powershell') -and $r.Out.Contains('nothing was sent'))
+    $r = Run @('-Action', 'BlackboxShow', '-Target', 'web99')
+    Check 'blackbox show refuses a target not listed' ($r.Code -ne 0 -and $r.Out.Contains('REFUSED'))
+    $r = RunLive @('-Action', 'WriteRequest', '-Target', 'web01', '-Fn', 'blackbox.collector', '-Name', 'redis.info', '-FnArgs', 'on,every=60')
+    Check 'blackbox write request is not run' ($r.Code -eq 0 -and $r.Out.Contains('NOT RUN') -and $r.Out.Contains("config set 'redis.info' on --every 60"))
+    $bhash = [regex]::Match($r.Out, '-Hash ([0-9a-f]{12})').Groups[1].Value
+    $r = Run @('-Action', 'WriteApprove', '-Hash', $bhash, '-ApprovalNote', 'test go')
+    Check 'blackbox write approve dry run' ($r.Code -eq 0 -and $r.Out.Contains('CHANGING THE SERVER') -and $r.Out.Contains('config set') -and $r.Out.Contains('170'))
+    $bpf = Join-Path (Join-Path $priv 'pending') "$bhash.json"
+    $borig = Get-Content -LiteralPath $bpf -Raw
+    [System.IO.File]::WriteAllText($bpf, $borig.Replace('"on"', '"off"'))
+    $r = Run @('-Action', 'WriteApprove', '-Hash', $bhash, '-ApprovalNote', 'test go')
+    Check 'blackbox approve refuses edited args' ($r.Code -ne 0 -and $r.Out.Contains('does not match'))
+    $r = Run @('-Action', 'WriteRequest', '-Target', 'web01', '-Fn', 'blackbox.collector', '-Name', 'redis.info; calc', '-FnArgs', 'on')
+    Check 'blackbox write refuses a bad id' ($r.Code -ne 0 -and $r.Out.Contains('REFUSED'))
+    $r = Run @('-Action', 'LogPull', '-Target', 'web01', '-Path', 'C:\ProgramData\Unravis\snapshots\case-1.zip')
+    Check 'dry run pull' ($r.Code -eq 0 -and $r.Out.Contains('Would copy') -and $r.Out.Contains('nothing was sent'))
+    $r = Run @('-Action', 'LogPull', '-Target', 'web01', '-Path', 'C:\ProgramData\Unravis\bb-20261126-11.ndjson')
+    Check 'pull refuses a recording' ($r.Code -ne 0 -and $r.Out.Contains('REFUSED'))
     $audit = Get-Content -LiteralPath (Join-Path $priv 'audit.log') -Raw
     Check 'audit records denials and runs' ($audit -match '"decision":"denied"' -and $audit -match '"decision":"dryrun"')
     Check 'audit never has the password' ($audit -notmatch 'FAKE-PASSWORD-123')

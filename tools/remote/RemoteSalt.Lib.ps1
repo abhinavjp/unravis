@@ -331,6 +331,98 @@ function Test-WriteCall {
     return $null
 }
 
+# ---------------------------------------------------------------- Blackbox verbs (B6)
+# Only these fixed verbs of `unravis-blackbox config ...` can be run on a minion. Reads work in readonly mode; the four
+# changes go through the same WriteRequest / WriteApprove gate as a service restart. The recorder itself checks every change,
+# restarts, waits 60 s for a healthy recorder and rolls back by itself; this tool only builds the exact command.
+$script:BlackboxReads = @('blackbox.show', 'blackbox.history', 'blackbox.status')
+$script:BlackboxWrites = @('blackbox.collector', 'blackbox.counter.add', 'blackbox.counter.remove', 'blackbox.rollback')
+# Stricter than the recorder's own check: no & ^ " $ or * in a counter path, so no shell on the way can read it as more than text.
+$script:BlackboxCounterRe = '^\\[A-Za-z0-9 .#_%/:-]+(\([A-Za-z0-9 .#_%/:-]+\))?\\[A-Za-z0-9 .#_%/:()-]+\z'
+# The command starts with a variable, not '&': Salt reads a command-line value as YAML, and a leading & is a YAML anchor.
+$script:BlackboxExe = '$x=Join-Path $env:ProgramFiles ''Unravis Blackbox\unravis-blackbox.exe''; & $x'
+
+function Test-BlackboxWrite {
+    # Returns $null when allowed, otherwise the reason it is refused. $WriteArgs: collector = on|off then optional every=<seconds>;
+    # counter add/remove = nothing (the path is $Name); rollback = nothing.
+    param([string]$Fn, [string]$Name, [string[]]$WriteArgs = @(), $Config)
+    if ($Config.Mode -ne 'write') { return 'REMOTE_MODE is readonly; set REMOTE_MODE=write in the settings file to request changes' }
+    if ($script:BlackboxWrites -notcontains $Fn) { return "'$Fn' is not a Blackbox change this tool can make ($($script:BlackboxWrites -join ', '))" }
+    switch ($Fn) {
+        'blackbox.collector' {
+            if ($Name -notmatch '^[a-z][a-z0-9._]{1,62}\z') { return 'collector id must be a plain id such as redis.info' }
+            if ($WriteArgs.Count -lt 1 -or $WriteArgs.Count -gt 2) { return 'give on or off, and optionally every=<seconds>' }
+            if ($WriteArgs[0] -notin 'on', 'off') { return 'the first argument must be on or off' }
+            if ($WriteArgs.Count -eq 2 -and $WriteArgs[1] -notmatch '^every=\d{1,5}\z') { return 'the second argument must be every=<whole seconds>, for example every=60' }
+        }
+        { $_ -in 'blackbox.counter.add', 'blackbox.counter.remove' } {
+            if ($Name -notmatch $script:BlackboxCounterRe) { return 'counter path must look like \Object(instance)\Counter, with letters, digits, space and . # _ % / : - only' }
+            if (([regex]::Matches($Name, '%')).Count -gt 1) { return 'counter path may hold only one percent sign' }
+            if (-not (Test-YamlSafe $Name)) { return 'counter path could be read as YAML; rephrase it' }
+            if ($WriteArgs.Count -ne 0) { return 'a counter change takes no extra arguments' }
+        }
+        'blackbox.rollback' {
+            if ($Name -ne 'last') { return "rollback takes the name 'last' (it undoes the last change)" }
+            if ($WriteArgs.Count -ne 0) { return 'rollback takes no extra arguments' }
+        }
+    }
+    return $null
+}
+
+function New-BlackboxCommand {
+    # Builds the PowerShell text Salt runs on the minion (cmd.run, shell=powershell). Every value was checked by
+    # Test-BlackboxWrite / the read list first; each is also single-quoted here. Returns @{ Cmd; Kwargs; Text }.
+    param([string]$Fn, [string]$Name, [string[]]$WriteArgs = @())
+    $exe = $script:BlackboxExe
+    switch ($Fn) {
+        'blackbox.show' { $tail = 'config show --json' }
+        'blackbox.history' { $tail = 'config history --json' }
+        'blackbox.status' { $tail = 'status --json' }
+        'blackbox.rollback' { $tail = 'config rollback --json' }
+        'blackbox.collector' {
+            $tail = "config set '$Name' $($WriteArgs[0])"
+            if ($WriteArgs.Count -eq 2) { $tail += ' --every ' + $WriteArgs[1].Substring(6) }
+            $tail += ' --json'
+        }
+        'blackbox.counter.add' { $tail = "config set counters.extra add '$Name' --json" }
+        'blackbox.counter.remove' { $tail = "config set counters.extra remove '$Name' --json" }
+        default { throw "unknown Blackbox verb '$Fn'" }
+    }
+    $cmd = "$exe $tail"
+    return @{ Cmd = $cmd; Kwargs = @('shell=powershell'); Text = "unravis-blackbox $tail" }
+}
+
+function Get-WriteHash {
+    # The 12-character code of a change request. A request with no extra arguments keeps the older text, so a service request
+    # made before this version still verifies.
+    param([string]$Target, [string]$Fn, [string]$Name, [string]$WriteArgsText, [string]$Created)
+    $text = if ($WriteArgsText) { "$Target|$Fn|$Name|$WriteArgsText|$Created" } else { "$Target|$Fn|$Name|$Created" }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    return -join ($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text)) | Select-Object -First 6 | ForEach-Object { $_.ToString('x2') })
+}
+
+# ---------------------------------------------------------------- pulling a bundle (B6)
+function Test-PullPath {
+    # A bundle (.zip) or its manifest inside a snapshots folder that REMOTE_LOG_PATHS allows. Nothing else can be pulled.
+    param([string]$Path, $Config)
+    if (-not (Test-PathAllowed $Path $Config.LogPaths)) { return "path '$Path' is outside REMOTE_LOG_PATHS (or REMOTE_LOG_PATHS is empty)" }
+    if ($Path -match '[*?]') { return 'wildcards are not allowed when pulling' }
+    if ($Path -notmatch '^[A-Za-z]:') { return 'pulling is for Windows minions (a full drive-letter path)' }
+    if ($Path -notmatch '(?i)\\snapshots\\[A-Za-z0-9][A-Za-z0-9._\-]{0,63}\.(zip|manifest\.json)\z') { return 'only a bundle (.zip) or its .manifest.json directly inside a snapshots folder can be pulled' }
+    if (-not (Test-YamlSafe $Path)) { return 'path could be read as YAML; rephrase it' }
+    return $null
+}
+
+function New-PullChunkCommand {
+    # PowerShell text for the minion that prints one line "size|sha256|offset|base64" for one chunk. The first chunk also
+    # carries the SHA-256 of the whole file (Get-FileHash reads the file once); later chunks print '-'.
+    param([string]$Path, [long]$Offset, [int]$ChunkBytes, [bool]$WithHash)
+    $hash = if ($WithHash) { "(Get-FileHash -LiteralPath '__P__' -Algorithm SHA256).Hash" } else { "'-'" }
+    $t = '$f=[IO.File]::Open(''__P__'',''Open'',''Read'',''ReadWrite'');try{$n=$f.Length;[void]$f.Seek(__O__,''Begin'');$b=New-Object byte[] __C__;$r=$f.Read($b,0,__C__);' +
+        '(''{0}|{1}|{2}|{3}'' -f $n,__H__,__O__,[Convert]::ToBase64String($b,0,$r))}finally{$f.Dispose()}'
+    return $t.Replace('__H__', $hash).Replace('__P__', $Path).Replace('__O__', [string]$Offset).Replace('__C__', [string]$ChunkBytes)
+}
+
 function Test-SaltRunCall {
     param([string]$Fn)
     if ($script:RunFns -notcontains $Fn) { return "'$Fn' is not on the read-only salt-run list ($($script:RunFns -join ', '))" }
