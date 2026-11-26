@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -138,4 +139,53 @@ func TestExclusiveAcrossTwoAcquiresWithLockDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	b()
+}
+
+// A step named in step-exclusive waits for the resource and the other steps of the job do not.
+func TestStepExclusiveWaitsOnlyThatStep(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: m
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: free
+        run: echo free-ran
+      - name: guarded
+        run: echo guarded-ran
+`)
+	h.opts.LockDir = t.TempDir()
+	cfg, err := ParseLocalConfig([]byte("jobs:\n  wf.yml:\n    j:\n      step-exclusive:\n        guarded: a-name\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.opts.Config = cfg
+	held, err := acquireExclusive(context.Background(), "a-name", h.opts.LockDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan *RunResult, 1)
+	go func() { done <- h.run() }()
+	deadline := time.Now().Add(20 * time.Second)
+	for !strings.Contains(h.logText(), "waiting for the exclusive resource") {
+		if time.Now().After(deadline) {
+			t.Fatalf("the guarded step never waited:\n%s", h.logText())
+		}
+		time.Sleep(50 * time.Millisecond) // winok: polls a log condition under a 20 s deadline
+	}
+	if !strings.Contains(h.logText(), "step 1/2 free ... ok") {
+		t.Fatalf("the free step should not wait:\n%s", h.logText())
+	}
+	select {
+	case <-done:
+		t.Fatal("the run finished while the resource was held")
+	default:
+	}
+	held()
+	res := <-done
+	if got := job(t, res, "j").Status; got != "success" {
+		t.Fatalf("job %s:\n%s", got, h.logText())
+	}
 }
