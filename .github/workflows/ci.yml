@@ -463,6 +463,9 @@ jobs:
     # logon-SID DACL, remote reject, peer and server checks). Later sidecar items (BL-301 and on) add their packages here.
     # Also builds with the `e2e` tag, which only tests use, so that variant cannot rot.
     # Matrix windows-2022 and windows-2025 for the pipe tests, as spec 08 D2 says. The go-tests shards of the `build` gate also run these tests (go test ./...).
+    # RV-CI-1: skipped for a notes-only pull request, like the jobs above. Not part of `build`'s needs and not a required check, so a skip blocks nothing.
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -555,6 +558,9 @@ jobs:
     # BL-441. Lint, vet, race tests against a known-failure baseline, and the web checks, on Linux.
     # The Windows `build` job stays the correctness gate. A few tests are Windows-only and fail here;
     # they are listed in docs/desktop/baseline-go-tests.txt and only a failure NOT in that file fails the job.
+    # RV-CI-1: skipped for a notes-only pull request (the `changes` job). Not part of `build`'s needs and not a required check, so a skip blocks nothing.
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -705,6 +711,10 @@ jobs:
   powershell-syntax:
     # The release and install scripts are PowerShell nobody can run on every push. This at least proves each one parses:
     # in PowerShell 7 (release scripts) and in Windows PowerShell 5.1 (tools/dev, which must run on a stock PC).
+    # RV-CI-1: skipped for a notes-only pull request. A changed .ps1 file is never notes (the `changes` job counts every path outside
+    # .forge/, docs/, root *.md, LICENSE and NOTICE as code), so a script change still runs this job. Not a required check.
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: windows-2022
     timeout-minutes: 10
     steps:
