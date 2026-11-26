@@ -66,12 +66,10 @@ func trimDir(ctx context.Context, dir string, limit int64, now time.Time) (int64
 		if d.IsDir() || filepath.Dir(p) == dir {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
+		if info, ierr := d.Info(); ierr == nil { // a file that went since it was listed is skipped
+			files = append(files, cacheFile{p, info.Size(), info.ModTime()})
+			total += info.Size()
 		}
-		files = append(files, cacheFile{p, info.Size(), info.ModTime()})
-		total += info.Size()
 		return nil
 	})
 	if err != nil {
