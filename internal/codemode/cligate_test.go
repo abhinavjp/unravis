@@ -231,3 +231,28 @@ func TestNilCLIGateDoesNotAllow(t *testing.T) {
 		t.Fatal("nil gate allows")
 	}
 }
+
+func TestCLIGateCloseIfOpenReportsWhatItClosed(t *testing.T) {
+	var nilGate *CLIGate
+	if nilGate.CloseIfOpen() {
+		t.Fatal("a nil gate was open")
+	}
+	now := time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC)
+	g := NewCLIGate(func() time.Time { return now })
+	if g.CloseIfOpen() {
+		t.Fatal("a new gate was open")
+	}
+	g.Open(10 * time.Minute)
+	if !g.CloseIfOpen() || g.Allows() || g.CloseIfOpen() {
+		t.Fatal("a timed window: first close reports open, second does not")
+	}
+	g.OpenUnlimited()
+	if !g.CloseIfOpen() || g.Allows() || g.Unlimited() {
+		t.Fatal("no time limit was not closed")
+	}
+	g.Open(time.Minute)
+	now = now.Add(2 * time.Minute)
+	if g.CloseIfOpen() {
+		t.Fatal("a window that had run out was reported as open")
+	}
+}
