@@ -828,3 +828,151 @@ func TestCaseFileCarriesTheRetryList(t *testing.T) {
 		t.Fatalf("restored retry list = %+v %v", list, err)
 	}
 }
+
+// A save that died leaves a 0-byte placeholder and a temporary file. The next
+// save to the same name must work (RV-DAT-5), whatever step the crash was at.
+func TestCaseFileSaveRecoversFromCrashAtEveryStep(t *testing.T) {
+	src := newCFEnv(t)
+	info := cfSeed(t, src, "Crash", 6)
+	// A complete case file, to use as "the temporary file that was finished but
+	// never moved into place".
+	whole := filepath.Join(t.TempDir(), "whole"+casestore.CaseFileExt)
+	if _, err := cfExport(t, src, info, whole, cfPass); err != nil {
+		t.Fatal(err)
+	}
+	wholeBytes, err := os.ReadFile(whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := []struct {
+		name string
+		tmp  []byte // nil: no temporary file yet
+		old  bool   // the placeholder is older than a minute
+	}{
+		{"died after the placeholder was made", nil, true},
+		{"died after the temporary file was made", []byte{}, false},
+		{"died while writing the temporary file", wholeBytes[:len(wholeBytes)/2], false},
+		{"died before the finished file was moved into place", wholeBytes, false},
+	}
+	for _, st := range steps {
+		t.Run(st.name, func(t *testing.T) {
+			dir := t.TempDir()
+			dst := filepath.Join(dir, "case"+casestore.CaseFileExt)
+			if err := os.WriteFile(dst, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if st.old {
+				past := time.Now().Add(-2 * time.Minute)
+				if err := os.Chtimes(dst, past, past); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if st.tmp != nil {
+				if err := os.WriteFile(filepath.Join(dir, "unravis-case-123456.tmp"), st.tmp, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := cfExport(t, src, info, dst, cfPass); err != nil {
+				t.Fatalf("save after a crash: %v", err)
+			}
+			dstEnv := newCFEnv(t)
+			got, err := cfRestore(dstEnv, dst, cfPass)
+			if err != nil {
+				t.Fatalf("the saved file does not open: %v", err)
+			}
+			if n := len(cfEvents2(t, dstEnv, got.ID)); n != 6 {
+				t.Fatalf("restored %d events, want 6", n)
+			}
+		})
+	}
+}
+
+// An empty target that is brand new and has no temporary file beside it may be
+// a save that is running right now: it is left alone.
+func TestCaseFileSaveKeepsFreshEmptyTargetWithoutLeftovers(t *testing.T) {
+	src := newCFEnv(t)
+	info := cfSeed(t, src, "Fresh", 3)
+	dst := filepath.Join(t.TempDir(), "case"+casestore.CaseFileExt)
+	if err := os.WriteFile(dst, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfExport(t, src, info, dst, cfPass); !errors.Is(err, casestore.ErrCaseFileExists) {
+		t.Fatalf("fresh empty target: %v, want ErrCaseFileExists", err)
+	}
+	if fi, err := os.Stat(dst); err != nil || fi.Size() != 0 {
+		t.Fatalf("empty target was changed: %v %v", fi, err)
+	}
+}
+
+// A file with content is never replaced, even with a temporary file beside it
+// and however old it is.
+func TestCaseFileSaveNeverReplacesFileWithContent(t *testing.T) {
+	src := newCFEnv(t)
+	info := cfSeed(t, src, "Keep", 3)
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "case"+casestore.CaseFileExt)
+	content := []byte("a real case file, one byte is enough to protect it")
+	if err := os.WriteFile(dst, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(dst, past, past); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "unravis-case-777.tmp"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfExport(t, src, info, dst, cfPass); !errors.Is(err, casestore.ErrCaseFileExists) {
+		t.Fatalf("non-empty target: %v, want ErrCaseFileExists", err)
+	}
+	if got, err := os.ReadFile(dst); err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("existing file changed: %q %v", got, err)
+	}
+}
+
+// A save removes the temporary files of saves that died more than a day ago,
+// and nothing else in the folder.
+func TestCaseFileSaveSweepsOnlyStaleTemporaryFiles(t *testing.T) {
+	src := newCFEnv(t)
+	info := cfSeed(t, src, "Sweep", 3)
+	dir := t.TempDir()
+	old := time.Now().Add(-30 * time.Hour)
+	write := func(name string, aged bool) {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("data"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if aged {
+			if err := os.Chtimes(p, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write("unravis-case-old.tmp", true)
+	write("unravis-case-new.tmp", false)
+	write("notes.tmp", true)
+	write("unravis-case-old.txt", true)
+	write("report.unravis-case", true)
+	if err := os.Mkdir(filepath.Join(dir, "unravis-case-dir.tmp"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfExport(t, src, info, filepath.Join(dir, "out"+casestore.CaseFileExt), cfPass); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{
+		"unravis-case-old.tmp": false, "unravis-case-new.tmp": true, "notes.tmp": true,
+		"unravis-case-old.txt": true, "report.unravis-case": true, "unravis-case-dir.tmp": true,
+		"out" + casestore.CaseFileExt: true,
+	} {
+		_, err := os.Stat(filepath.Join(dir, name))
+		if (err == nil) != want {
+			t.Errorf("%s: present=%v, want %v", name, err == nil, want)
+		}
+	}
+	for _, e := range cfDirEntries(t, dir) {
+		if strings.HasPrefix(e, "unravis-case-aside-") {
+			t.Errorf("private file %s left behind", e)
+		}
+	}
+}
