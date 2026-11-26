@@ -39,7 +39,7 @@ func TestDescribeSQLTable(t *testing.T) {
 		}
 	}
 	// A status word the runner did not write from the fixed list never reaches the text.
-	w := DescribeSQL(SvcRunning, nil, SQLStatus{Enabled: true, State: "C:\\secret\\path"})
+	w := DescribeSQL(SvcRunning, nil, SQLStatus{Enabled: true, State: "C:\\secret\\path"}) // winok: a string that is never opened as a path
 	if strings.Contains(w.Say, "secret") {
 		t.Errorf("a free-text state reached the sentence: %q", w.Say)
 	}
