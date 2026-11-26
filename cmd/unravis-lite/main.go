@@ -137,7 +137,7 @@ func random(n int) (string, error) {
 func listenLocal(port int) (net.Listener, error) {
 	l, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)))
 	if err != nil {
-		return nil, fmt.Errorf("could not listen on 127.0.0.1 port %d (is another program using it? use --port 0 to pick a free one): %w", port, err)
+		return nil, fmt.Errorf("could not listen on 127.0.0.1 port %d (%s): %w", port, listenHint(port), err)
 	}
 	return l, nil
 }
@@ -223,4 +223,12 @@ func openInBrowser(url string) error {
 		return err
 	}
 	return cmd.Process.Release()
+}
+
+// listenHint says what to do about a failed listen; port 0 asks the system for any free port, so "use --port 0" would be no help there.
+func listenHint(port int) string {
+	if port == 0 {
+		return "the system could not give out a free port"
+	}
+	return "is another program using it? use --port 0 to pick a free one"
 }

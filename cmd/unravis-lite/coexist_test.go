@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
@@ -154,21 +155,35 @@ func TestLiteWritesNothingAndTouchesNoSharedFolders(t *testing.T) {
 
 	// The recordings folder is outside the watched folders; Lite only reads it.
 	rec := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rec, "bb-20260101-00.ndjson"), []byte("{\"t\":\"2026-01-01T00:00:00Z\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recBefore := snapshotDir(t, rec)
 	loc := blackbox.Location{Kind: blackbox.LocFolder, Path: rec}
 	const token = "0123456789abcdef0123456789abcdef"
 	h := handler(loc, "Blackbox", token, "launch-code-launch-code", time.Now().Add(time.Minute), withInfo(fstest.MapFS{
 		"index.html": {Data: []byte("<html>lite</html>")},
 	}))
-	for _, path := range []string{"/", "/lite-info.json", "/api/blackbox", "/api/sources"} {
-		req := httptest.NewRequest("GET", "http://127.0.0.1"+path, nil)
+	for _, path := range []string{"/", "/lite-info.json", "/api/blackbox", "/api/sources", "/api/blackbox/bb-lite/series"} {
+		method := "GET"
+		if strings.HasSuffix(path, "/series") {
+			method = "POST"
+		}
+		req := httptest.NewRequest(method, "http://127.0.0.1"+path, strings.NewReader("{}"))
 		req.Header.Set("X-Audit-Token", token)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req) // any status is fine here; it must not panic or write
+		if (path == "/" || path == "/lite-info.json") && rr.Code != 200 {
+			t.Errorf("%s answered %d, want 200", path, rr.Code)
+		}
 		if path == "/api/sources" && rr.Code != 404 {
 			t.Errorf("denied route answered %d, want 404", rr.Code)
 		}
 	}
 
+	if after := snapshotDir(t, rec); after != recBefore {
+		t.Errorf("the recordings folder changed: before %s, after %s", recBefore, after)
+	}
 	for _, d := range watched {
 		var found []string
 		err := filepath.WalkDir(d, func(p string, _ fs.DirEntry, err error) error {
@@ -187,4 +202,25 @@ func TestLiteWritesNothingAndTouchesNoSharedFolders(t *testing.T) {
 			t.Errorf("Lite wrote into %s: %v", d, found)
 		}
 	}
+}
+
+// snapshotDir lists every entry under dir with its size and modification time, so any write shows up as a difference.
+func snapshotDir(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&b, "%s|%d|%d;", p, info.Size(), info.ModTime().UnixNano())
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
 }

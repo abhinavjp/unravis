@@ -22,7 +22,7 @@
   let refreshing = $state(false);
   let liteVersion = $state('');
 
-  const go = (next: Page) => { page = next; try { history.replaceState(null, '', next === 'charts' ? '#charts' : '#status'); } catch { /* a convenience only */ } };
+  const go = async (next: Page) => { if (next === 'charts' && item) await load(); page = next; try { history.replaceState(null, '', next === 'charts' ? '#charts' : '#status'); } catch { /* a convenience only */ } };
 
   async function load() {
     // The first read shows "Reading". A refresh keeps the page and the button where they are, so focus stays on Refresh.
@@ -62,7 +62,7 @@
 
   const facts = $derived(item?.facts);
   // The recorder cannot be read: most often the recordings folder is locked to administrators.
-  const unreadable = $derived(!!item && (item.state.state === 'not-found' || item.state.state === 'unreachable' || item.state.state === 'incomplete'));
+  const unreadable = $derived(!!item && (item.state.state === 'not-found' || item.state.state === 'unreachable'));
   const themeWord = $derived(theme.choice === 'auto' ? 'Theme: follow Windows' : theme.choice === 'light' ? 'Theme: light' : 'Theme: dark');
   const every = (s: number) => s >= 60 && s % 60 === 0 ? s / 60 + ' min' : s + ' s';
 </script>
@@ -126,9 +126,9 @@
               <h2 id="h-upd">Version and updates</h2>
               <dl>
                 <div><dt>Unravis Lite</dt><dd>{liteVersion || 'Not reported'}</dd></div>
-                {#if facts?.update}<div><dt>Recorder</dt><dd>{T.updateLine(facts.update)}</dd></div>{/if}
+                {#if facts?.update}<div><dt>Recorder update</dt><dd>{T.updateLine(facts.update)}</dd></div>{/if}
               </dl>
-              <p class="note">Updates come with the Blackbox service. Unravis Lite does not install anything.</p>
+              <p class="note">Unravis Lite installs and updates nothing. Replace this program by hand to update it; the recorder updates through the Blackbox service.</p>
             </section>
           </div>
           <div class="actions">
@@ -136,7 +136,7 @@
             <button type="button" onclick={load} aria-busy={refreshing}>Refresh</button>
             <span class="read-at" role="status">{refreshing ? 'Reading the Blackbox.' : readAt ? 'Read at ' + readAt + '.' : ''}</span>
           </div>
-          <p class="note">Unravis Lite only reads. It changes nothing and saves nothing.</p>
+          <p class="note">Unravis Lite only reads the recordings. It never changes them and keeps nothing on this computer.</p>
         </section>
       {:else}
         <BlackboxCharts {item} inline />
