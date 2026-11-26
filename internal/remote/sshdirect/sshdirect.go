@@ -441,6 +441,16 @@ func (cl *Client) run(ctx context.Context, cmd string, limit int) (result, error
 	}
 }
 
+// Exec runs one command string that the caller has built from grammar-checked values (the Salt jump-host route builds the `salt` command
+// this way) and returns its output. A command that exits non-zero, or prints more than limit bytes, is an error.
+func (cl *Client) Exec(ctx context.Context, cmd string, limit int) ([]byte, error) {
+	res, err := cl.run(ctx, cmd, limit)
+	if err != nil {
+		return nil, err
+	}
+	return res.out, nil
+}
+
 type limited struct {
 	b    []byte
 	max  int
