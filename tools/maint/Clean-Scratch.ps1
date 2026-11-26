@@ -170,12 +170,30 @@ function Get-SessionVerdict {
     return [pscustomobject]$v
 }
 
+# Get-OwnerVerdict: when $OwnerDirs is given (the Claude project folders of this repository and its worktrees), a session folder is
+# only eligible when its transcript <id>.jsonl is in one of them and nothing wrote to that transcript (or its subagent folder)
+# within $IdleMinutes. Returns the reason to KEEP the folder, or $null when it may be judged further. $null OwnerDirs = no filter.
+function Get-OwnerVerdict {
+    param([string]$Id, [string[]]$OwnerDirs, [int]$IdleMinutes, [datetime]$Clock)
+    if ($null -eq $OwnerDirs) { return $null }
+    $latest = $null
+    foreach ($d in $OwnerDirs) {
+        foreach ($p in @((Join-Path $d ($Id + '.jsonl')), (Join-Path $d $Id))) {
+            $it = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+            if ($it -and (-not $latest -or $it.LastWriteTimeUtc -gt $latest)) { $latest = $it.LastWriteTimeUtc }
+        }
+    }
+    if (-not $latest) { return 'not a session of this repository (no transcript in its project folders)' }
+    if ($latest -ge $Clock.ToUniversalTime().AddMinutes(-$IdleMinutes)) { return 'its transcript changed within the last ' + $IdleMinutes + ' minutes (session may be alive)' }
+    return $null
+}
+
 # The process list for the re-check after the rename: a fresh read, unless the tests supplied one.
 function Get-FreshRunning { param([string[]]$Fallback) if ($null -ne $script:ProcessLinesOverride) { return $Fallback }; return @(Get-RunningLines) }
 
 function Invoke-ScratchClean {
     [CmdletBinding()]
-    param([string]$RootPath, [bool]$DoApply, [int]$AgeDays, [datetime]$Clock, [string[]]$Running, [bool]$WithWorktrees)
+    param([string]$RootPath, [bool]$DoApply, [int]$AgeDays, [datetime]$Clock, [string[]]$Running, [bool]$WithWorktrees, [string[]]$OwnerDirs = $null, [int]$IdleMinutes = 120)
     $safe = Test-SafeRoot $RootPath
     if (-not $safe.Ok) { throw "Refusing root '$RootPath': $($safe.Why)" }
     $root = $safe.Full
@@ -192,6 +210,8 @@ function Invoke-ScratchClean {
         $sessions = @(Get-ChildItem -LiteralPath $proj.FullName -Directory -Force -ErrorAction SilentlyContinue -ErrorVariable projErrs)
         if ($projErrs -and $projErrs.Count -gt 0) { $listFailed = $true }
         foreach ($sess in $sessions) {
+            $notMine = Get-OwnerVerdict -Id (Get-BaseName $sess.Name) -OwnerDirs $OwnerDirs -IdleMinutes $IdleMinutes -Clock $Clock
+            if ($notMine) { $verdicts += [pscustomobject][ordered]@{ Path = $sess.FullName; Id = (Get-BaseName $sess.Name); Bytes = 0L; Delete = $false; Why = $notMine }; continue }
             $verdicts += Get-SessionVerdict -Dir $sess -Cutoff $cutoff -Running $Running -WithWorktrees $WithWorktrees
         }
     }
