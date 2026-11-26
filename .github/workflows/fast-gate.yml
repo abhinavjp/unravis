@@ -111,6 +111,8 @@ jobs:
           node tools/ci/test-backlog-ids.mjs
           node tools/ci/test-trufflehog-allowlist.mjs
           node tools/ci/test-windows-risk.mjs
+          node tools/ci/test-no-real-dialogs.mjs
+          node tools/ci/no-real-dialogs.mjs
           node tools/security/check-action-pins.mjs
 
       - name: Scope - what does this change affect?
