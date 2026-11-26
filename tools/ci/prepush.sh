@@ -21,11 +21,33 @@ while [ $# -gt 0 ]; do
 done
 
 cd "$(git rev-parse --show-toplevel)" || exit 2
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"; trap '[ -n "${watch_pid:-}" ] && kill "$watch_pid" 2>/dev/null; rm -rf "$tmp"' EXIT
 fails=(); warns=()
 step() { printf '\n== %s\n' "$1"; }
 fail() { fails+=("$1"); printf 'FAIL: %s\n' "$1"; }
 warn() { warns+=("$1"); printf 'WARN: %s\n' "$1"; }
+
+# A test must never open a real window (the "Unravis test" box, 2026-11-26). On Windows a watcher records every visible window that a
+# *.test.exe opens while the tests run and closes it; the gate fails when it saw one. Elsewhere there is no desktop, so it does nothing.
+watch_pid=""; watch_log="$tmp/test-windows.log"; watch_stop="$tmp/test-windows.stop"
+watch_start() {
+  case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) ;; *) return 0 ;; esac
+  command -v powershell.exe >/dev/null 2>&1 || return 0
+  : >"$watch_log"; rm -f "$watch_stop" "$watch_stop.ready" "$watch_stop.done"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w tools/ci/watch-test-windows.ps1)" -Log "$(cygpath -w "$watch_log")" -StopFile "$(cygpath -w "$watch_stop")" -RootPid "$(cat /proc/$$/winpid 2>/dev/null || echo 0)" >/dev/null 2>&1 &
+  watch_pid=$!
+  local i; for i in $(seq 1 100); do [ -e "$watch_stop.ready" ] && return 0; kill -0 "$watch_pid" 2>/dev/null || break; sleep 0.2; done
+  [ -e "$watch_stop.ready" ] || { warn "the window watcher did not start: this run cannot catch a test that opens a window"; watch_pid=""; }
+}
+watch_stop_and_judge() {
+  [ -n "$watch_pid" ] || return 0
+  : >"$watch_stop"; wait "$watch_pid" 2>/dev/null; watch_pid=""
+  [ -e "$watch_stop.done" ] || warn "the window watcher stopped early: this run cannot vouch that no test opened a window"
+  if [ -s "$watch_log" ]; then
+    fail "a test opened a real window on the desktop (the watcher closed it): a test must use a fake box (tools/ci/no-real-dialogs.mjs)"
+    sed 's/^/    pid|program|class|title: /' "$watch_log" | head -10
+  fi
+}
 
 step "1. Branch is current with develop"
 if [ "$fetch" = 1 ]; then git fetch --no-tags --quiet origin "+refs/heads/develop:refs/remotes/origin/develop" || warn "could not fetch develop; judging against the copy you have"; fi
@@ -65,6 +87,7 @@ go_on="$(getv go)"; web_on="$(getv web)"; packages="$(getv packages)"
 step "4. Tests of the CI tools"
 bad_t=0
 for t in tools/ci/test-*.mjs; do node "$t" >"$tmp/t.out" 2>&1 || { bad_t=1; fail "$t"; tail -5 "$tmp/t.out"; }; done
+node tools/ci/no-real-dialogs.mjs >"$tmp/t.out" 2>&1 || { bad_t=1; fail "a test shows a real window (tools/ci/no-real-dialogs.mjs)"; cat "$tmp/t.out" | head -20; }
 node tools/security/check-action-pins.mjs >"$tmp/t.out" 2>&1 || { bad_t=1; fail "check-action-pins (a workflow action is not pinned)"; tail -5 "$tmp/t.out"; }
 [ "$bad_t" = 0 ] && echo ok
 
@@ -91,14 +114,16 @@ if [ "$go_on" = "true" ]; then
 
   step "8. tauri_sidecar build"
   CGO_ENABLED=0 go build -tags tauri_sidecar ./... || fail "go build -tags tauri_sidecar"
-  if [ "$tests" = 1 ]; then CGO_ENABLED=0 go test -count=1 -tags tauri_sidecar . || fail "go test -tags tauri_sidecar ."; fi
+  if [ "$tests" = 1 ]; then watch_start; CGO_ENABLED=0 go test -count=1 -tags tauri_sidecar . || fail "go test -tags tauri_sidecar ."; fi
 
   if [ "$tests" = 1 ]; then
     step "9. Tests of the affected packages, compared with the baseline (the fast gate's step)"
     # compare-go-failures.mjs picks docs/desktop/baseline-go-tests.windows.txt on a Windows host by itself.
     # shellcheck disable=SC2086
+    [ -n "$watch_pid" ] || watch_start
     CGO_ENABLED=0 go test -count=1 -timeout 10m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json $packages >"$tmp/go-test.json"
     code=$?
+    watch_stop_and_judge
     if [ ! -s "$tmp/go-test.json" ] || [ "$code" -gt 1 ]; then fail "go test did not run cleanly (exit $code)"
     else node tools/ci/compare-go-failures.mjs --json "$tmp/go-test.json" --baseline docs/desktop/baseline-go-tests.txt || {
       fail "new Go test failures (compared with the baseline)"
