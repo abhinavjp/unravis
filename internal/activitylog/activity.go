@@ -118,7 +118,7 @@ func (l Log) Append(e Entry) error {
 	}
 	var f *os.File
 	err = retryFS(func() (e error) {
-		f, e = os.OpenFile(l.Path(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // G304: the log in the store folder
+		f, e = os.OpenFile(l.Path(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		return e
 	})
 	if err != nil {
@@ -144,7 +144,7 @@ type Filter struct {
 // skipped and counted in skipped.
 func (l Log) Read(f Filter) (entries []Entry, skipped int, err error) {
 	var file *os.File
-	err = retryFS(func() (e error) { file, e = os.Open(l.Path()); return e }) //nolint:gosec // G304: the log in the store folder
+	err = retryFS(func() (e error) { file, e = os.Open(l.Path()); return e })
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, 0, nil
 	}

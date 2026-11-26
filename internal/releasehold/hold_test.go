@@ -158,7 +158,7 @@ func TestBadStoreFailsClosed(t *testing.T) {
 		if _, err := s.Add(NewHold{Project: "alpha", Reason: "r", Owner: "o", End: t0.Add(time.Hour)}, t0); err == nil {
 			t.Errorf("%s: Add wrote over a store it could not read", name)
 		}
-		if b, _ := os.ReadFile(filepath.Join(dir, FileName)); string(b) != body {
+		if b, _ := os.ReadFile(filepath.Join(dir, FileName)); string(b) != body { //nolint:gosec // G304: a file in the test's own temp folder
 			t.Errorf("%s: the store was changed", name)
 		}
 	}
