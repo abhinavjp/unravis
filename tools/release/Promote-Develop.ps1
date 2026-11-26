@@ -23,13 +23,21 @@
 .PARAMETER NoMerge    Open the pull request and stop (the check runs; merge it yourself or run again).
 .PARAMETER WaitMinutes  The lock is held with merges on hold: wait this long (checks every 30 s) instead of refusing. Default 0.
 .PARAMETER CiWaitMinutes  How long to wait for `build`. Default 45.
+.PARAMETER SkipNotesCheck  Do not stop when What's new notes are still waiting in docs/whatsnew/fragments (see "What's new check" below).
 .PARAMETER Repo       owner/name. Default abhinavjp/unravis.
+
+.NOTES
+  What's new check (read only, before anything is created): people-visible changes bring a small note file in docs/whatsnew/fragments/.
+  tools/release/Prepare-WhatsNew.ps1 turns the waiting notes into the release's What's new entry and pictures and deletes them. If note
+  files are still waiting on the commit being promoted, the release would go out without its What's new, so this stops and says what to run.
+  No waiting notes (nothing visible, or already prepared) is fine. -SkipNotesCheck passes anyway. docs/whatsnew/README.md.
 #>
 [CmdletBinding()]
 param(
     [string]$UpTo = '',
     [switch]$DryRun,
     [switch]$NoMerge,
+    [switch]$SkipNotesCheck,
     [int]$WaitMinutes = 0,
     [int]$CiWaitMinutes = 45,
     [string]$Repo = 'abhinavjp/unravis'
@@ -106,6 +114,18 @@ try { $nodeNow = ((& node --version 2>$null) | Out-String).Trim() } catch { $nod
 if ($nodeNow -ne "v$DistNodeVersion") { Stop-Here "Node $DistNodeVersion is needed to rebuild the web files for the promotion (found: '$nodeNow'). Install it (nvm, fnm, or the installer) and run again." }
 foreach ($tool in 'git', 'npm') { if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { Stop-Here "$tool is needed to rebuild the web files for the promotion and was not found." } }
 Write-Host "Web files: will be rebuilt with Node $DistNodeVersion and committed to the promote branch when they differ (docs/pipeline/dist-on-promotion.md)."
+# What's new check: note files that nobody turned into the release's entry yet. Read only; a missing folder is just "none waiting".
+$waitingNotes = @()
+try { $waitingNotes = @(Split-Lines (Invoke-Gh api "repos/$Repo/contents/docs/whatsnew/fragments?ref=$sha" --jq '.[] | select(.type == "file" and (.name | endswith(".json"))) | .name')) } catch {
+    # Only "the folder does not exist" (404) means nothing is waiting. Any other failure (rate limit, network, token) must not look like "none waiting".
+    if ($_.Exception.Message -match 'HTTP 404|Not Found') { $waitingNotes = @() }
+    else { Stop-Here "Could not check docs/whatsnew/fragments for waiting What's new notes: $($_.Exception.Message) (-SkipNotesCheck to promote without the check.)" }
+}
+if ($waitingNotes.Count -and -not $SkipNotesCheck) {
+    Stop-Here "$($waitingNotes.Count) What's new note file(s) are still waiting in docs/whatsnew/fragments ($($waitingNotes -join ', ')). Run tools\release\Prepare-WhatsNew.ps1, merge the pull request it makes into develop, then promote again. (-SkipNotesCheck to promote without them.)"
+}
+if ($waitingNotes.Count) { Write-Host "What's new: $($waitingNotes.Count) note file(s) waiting; -SkipNotesCheck given, so they are not blocking." -ForegroundColor Yellow }
+else { Write-Host "What's new: no note files waiting." }
 if ($DryRun) { Write-Host 'Dry run: nothing created.'; exit 0 }
 
 # --- 4. branch, bring master in, pull request ------------------------------------------------------------------------

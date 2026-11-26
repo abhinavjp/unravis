@@ -86,6 +86,7 @@ type rig struct {
 	spawnerUsed codemode.Spawner
 	gate        *codemode.CLIGate // nil when the rig was built with noGate
 	clock       *fakeClock        // the gate's clock
+	openGate    bool              // the rig opens the command-line window by default, and again after enable() (switching code mode on from off shuts it)
 	ctx         context.Context
 }
 
@@ -133,6 +134,7 @@ func newRig(t *testing.T, o rigOpts) *rig {
 		r.clock = &fakeClock{t: time.Date(2026, 11, 25, 9, 0, 0, 0, time.UTC)}
 		r.gate = codemode.NewCLIGate(r.clock.now)
 		if !o.cliShut {
+			r.openGate = true
 			r.gate.Open(time.Hour)
 		}
 		cfg.Authorize = r.gate.Authorize
@@ -173,6 +175,10 @@ func (r *rig) enable() {
 	r.t.Helper()
 	if res := r.call(http.MethodPut, "/api/code/settings", `{"enabled":true}`); res.Code != http.StatusOK {
 		r.t.Fatalf("enable = %d %s", res.Code, res.Body)
+	}
+	if r.openGate {
+		// Switching code mode on from off shuts the command line; the tests of the routes and of the entrance want it open.
+		r.gate.Open(time.Hour)
 	}
 }
 

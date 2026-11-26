@@ -44,6 +44,7 @@ type fileJob struct {
 	cancelled  bool // a person pressed Cancel
 	committing bool // the commit point was taken: Cancel is too late
 	keyLocked  bool // the master key was locked under it
+	shutdown   bool // the program is ending: stopped like Cancel, but for neither of the other reasons
 }
 
 func newFileJob(kind string, id casestore.CaseID, cancel context.CancelFunc) *fileJob {
@@ -84,12 +85,26 @@ func (j *fileJob) lockOut() {
 	j.cancel()
 }
 
+// shutdownStop is the program ending (RV-SRV-2). It stops the job like Cancel
+// does, with its own reason: not a person's choice and not the master key, so the
+// next start does not tell anyone a key was locked. Once the commit point was
+// taken the job is not marked (the commit is short and the caller's wait covers
+// it); the context is cancelled either way.
+func (j *fileJob) shutdownStop() {
+	j.mu.Lock()
+	if j.state == fileJobRunning && !j.committing {
+		j.shutdown = true
+	}
+	j.mu.Unlock()
+	j.cancel()
+}
+
 // takeCommit is the decision between Cancel and the commit: whichever gets here
 // first wins. It reports true when the commit may go ahead.
 func (j *fileJob) takeCommit() bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	if j.cancelled || j.keyLocked {
+	if j.cancelled || j.keyLocked || j.shutdown {
 		return false
 	}
 	j.committing = true
@@ -156,8 +171,9 @@ func jobKey(kind string, id casestore.CaseID) string { return kind + "|" + strin
 // fileJobs is the registry on caseFileState: the last job of each kind for each
 // case. A new job of the same kind and case replaces the old one.
 type fileJobs struct {
-	mu sync.Mutex
-	m  map[string]*fileJob
+	mu     sync.Mutex
+	m      map[string]*fileJob
+	closed bool // shutdown began: a job that is registered from now on is stopped at once
 }
 
 func (r *fileJobs) put(j *fileJob) {
@@ -166,7 +182,13 @@ func (r *fileJobs) put(j *fileJob) {
 		r.m = map[string]*fileJob{}
 	}
 	r.m[jobKey(j.kind, j.caseID)] = j
+	closed := r.closed
 	r.mu.Unlock()
+	if closed {
+		// A request that got in while the program was ending: its job stops at
+		// its first check and puts the case back, like any other stopped job.
+		j.shutdownStop()
+	}
 }
 
 func (r *fileJobs) get(kind string, id casestore.CaseID) *fileJob {
@@ -199,6 +221,40 @@ func (r *fileJobs) stopAll() {
 	r.mu.Unlock()
 	for _, j := range all {
 		j.lockOut()
+	}
+}
+
+// beginShutdown marks the registry closed and stops every job in it with the
+// shutdown reason, without waiting. It returns the jobs it stopped.
+func (r *fileJobs) beginShutdown() []*fileJob {
+	r.mu.Lock()
+	r.closed = true
+	all := make([]*fileJob, 0, len(r.m))
+	for _, j := range r.m {
+		all = append(all, j)
+	}
+	r.mu.Unlock()
+	for _, j := range all {
+		j.shutdownStop()
+	}
+	return all
+}
+
+// shutdown is the program ending: every running archive and verify job is
+// stopped (each removes its partial file and puts the case back) and the call
+// waits at most d, in total, for them to end. It never blocks longer: a job that
+// has not ended by then is left to the start-up recovery, which removes the .part
+// file the Archiving mark names.
+func (r *fileJobs) shutdown(d time.Duration) {
+	all := r.beginShutdown()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for _, j := range all {
+		select {
+		case <-j.done:
+		case <-timer.C:
+			return
+		}
 	}
 }
 
