@@ -16,8 +16,8 @@ import (
 // entries — a screen it showed, an action the user took, an error it displayed
 // — and the server writes them into the same log file with src=ui, so one file
 // tells the whole story of a session. Entries never carry field contents, ids
-// or query text: the fields are fixed, the strings are capped, and the message
-// is sanitized and truncated here whatever the page sent.
+// or query text: the fields are fixed, the strings are capped, and every text
+// field is sanitized and truncated here whatever the page sent.
 
 const (
 	// clientLogPerMinute caps the entries one tab may send; a healthy page
@@ -74,11 +74,24 @@ func truncRunes(s string, n int) string {
 	return s
 }
 
-func capField(s string, max int) string {
-	if len(s) > max {
-		return s[:max]
+// scrubField cuts s to a bounded length, passes it through applog.Sanitize and then cuts it to max runes. The first cut is a multiple
+// of max, not max itself, so a secret that straddles the final cut is redacted whole before the cut, as for the message.
+func scrubField(s string, max int) string {
+	s = applog.Sanitize(truncRunes(s, max*4))
+	return truncRunes(s, max)
+}
+
+// decodeStrict decodes one JSON value into v. A field v does not name is refused, and so is any text after the value.
+func decodeStrict(raw []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
 	}
-	return s
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("unexpected data after the JSON value")
+	}
+	return nil
 }
 
 // clientLog answers POST /api/client-log (session token required, like every
@@ -101,14 +114,14 @@ func (h *handler) clientLog(w http.ResponseWriter, r *http.Request) {
 	}
 	// A batch is {"entries":[...]}; a single entry is the object itself.
 	var entries []clientLogEntry
+	// Both forms are strict. A batch with an unknown field (in the envelope or in an entry) fails the batch decode and then the single
+	// decode, which does not know "entries", so it is refused.
 	var batch clientLogBatch
-	if err := json.Unmarshal(raw, &batch); err == nil && batch.Entries != nil {
+	if err := decodeStrict(raw, &batch); err == nil && batch.Entries != nil {
 		entries = batch.Entries
 	} else {
 		var one clientLogEntry
-		dec := json.NewDecoder(bytes.NewReader(raw))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&one); err != nil {
+		if err := decodeStrict(raw, &one); err != nil {
 			writeError(w, http.StatusBadRequest, "Log entry is invalid.")
 			return
 		}
@@ -132,14 +145,14 @@ func (h *handler) clientLog(w http.ResponseWriter, r *http.Request) {
 		attrs := []any{
 			"src", "ui",
 			"kind", e.Kind,
-			"screen", capField(e.Screen, clientLogMaxField),
-			"action", capField(e.Action, clientLogMaxField),
-			"code", capField(e.Code, clientLogMaxField),
-			"stage", capField(e.Stage, clientLogMaxField),
+			"screen", scrubField(e.Screen, clientLogMaxField),
+			"action", scrubField(e.Action, clientLogMaxField),
+			"code", scrubField(e.Code, clientLogMaxField),
+			"stage", scrubField(e.Stage, clientLogMaxField),
 			"message", msg,
 		}
 		if e.ReqID != "" {
-			attrs = append(attrs, "ui_req_id", capField(e.ReqID, 16))
+			attrs = append(attrs, "ui_req_id", scrubField(e.ReqID, 16))
 		}
 		if e.Kind == "error" {
 			h.log().Warn("client log", attrs...)
