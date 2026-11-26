@@ -40,9 +40,13 @@ type CollectorInfo struct {
 	Needs string `json:"needs,omitempty"`
 	// Always means it cannot be switched off: it is part of the recorder's own health picture.
 	Always bool `json:"always,omitempty"`
+	// DefaultEverySec is how often it runs when settings say nothing (0 means every sample).
+	DefaultEverySec int `json:"defaultEverySec,omitempty"`
 }
 
 var catalogue = []CollectorInfo{
+	{ID: "host.facts", Kind: KindCommand, Title: "Server facts: versions, services, certificate dates", Group: "facts", Load: LoadLight, DefaultEverySec: 3600},
+	{ID: "paths.files", Kind: KindPath, Title: "Where the logs and settings files are", Group: "paths", Load: LoadLight, DefaultEverySec: 3600},
 	{ID: "counters.extra", Kind: KindCounter, Title: "Extra Windows counters you add", Group: "extraCounters", Load: LoadLight},
 	{ID: "host.diskcpu", Kind: KindCounter, Title: "Processor, disk and network", Group: "diskCpu", Load: LoadLight, Always: true},
 	{ID: "host.mempressure", Kind: KindCounter, Title: "Memory pressure", Group: "memPressure", Load: LoadLight, Always: true},
@@ -134,12 +138,20 @@ func (c Config) CollectorOn(id string) bool {
 	return true
 }
 
-// CollectorEvery is how often the collector runs: the sample interval unless "collectors" says otherwise.
+// CollectorEvery is how often the collector runs: what "collectors" says, else the collector's own default, else the
+// sample interval. It is never shorter than the sample interval.
 func (c Config) CollectorEvery(id string) time.Duration {
-	if s, ok := c.Collectors[id]; ok && s.EverySec > c.IntervalSeconds {
-		return time.Duration(s.EverySec) * time.Second
+	base := time.Duration(c.IntervalSeconds) * time.Second
+	every := time.Duration(0)
+	if s, ok := c.Collectors[id]; ok && s.EverySec != 0 {
+		every = time.Duration(s.EverySec) * time.Second
+	} else if info, ok := LookupCollector(id); ok {
+		every = time.Duration(info.DefaultEverySec) * time.Second
 	}
-	return time.Duration(c.IntervalSeconds) * time.Second
+	if every < base {
+		return base
+	}
+	return every
 }
 
 // CollectorState is one line of "config show": the catalogue entry plus what this configuration says.

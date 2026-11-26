@@ -374,6 +374,10 @@ func applyGroup(s *Sample, name string, v any) {
 		assignIf(&s.SQLLog, v)
 	case "extraCounters":
 		assignIf(&s.ExtraCounters, v)
+	case "paths":
+		assignIf(&s.Paths, v)
+	case "facts":
+		assignIf(&s.Facts, v)
 	}
 }
 

@@ -474,9 +474,16 @@ func TestConfigShowListsEveryCollector(t *testing.T) {
 		t.Fatalf("collectors %d, catalogue %d", len(got.Collectors), len(blackbox.Catalogue()))
 	}
 	for _, col := range got.Collectors {
-		wantOn, wantEvery := col.ID != "host.tcp", blackbox.DefaultIntervalSecond
+		// Every collector runs every sample unless the settings or the collector's own default say otherwise.
+		wantOn, wantEvery := col.ID != "host.tcp", int(cfg.CollectorEvery(col.ID)/time.Second)
 		if col.ID == "web.iis" {
 			wantEvery = 60
+		}
+		if col.ID == "paths.files" || col.ID == "host.facts" {
+			wantEvery = 3600
+		}
+		if col.ID == "web.http" && wantEvery != blackbox.DefaultIntervalSecond {
+			t.Errorf("web.http should run every sample, got %d s", wantEvery)
 		}
 		if col.On != wantOn || col.EverySec != wantEvery {
 			t.Errorf("%s: %+v, want on=%v every %d s", col.ID, col, wantOn, wantEvery)
