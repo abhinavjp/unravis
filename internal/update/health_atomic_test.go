@@ -29,7 +29,7 @@ func tmpLeftovers(t *testing.T, dir string) []string {
 func TestWriteJSONIgnoresAStaleFixedTempName(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "health.json")
-	if err := os.Mkdir(path+".tmp", 0o755); err != nil { // a leftover the old fixed name could never write over
+	if err := os.Mkdir(path+".tmp", 0o750); err != nil { // a leftover the old fixed name could never write over
 		t.Fatal(err)
 	}
 	if err := writeJSON(path, healthState{To: "1.1.0", Starts: 2}); err != nil {
@@ -44,7 +44,7 @@ func TestWriteJSONIgnoresAStaleFixedTempName(t *testing.T) {
 func TestWriteJSONLeavesNoTempFileWhenTheRenameFails(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "health.json")
-	if err := os.Mkdir(path, 0o755); err != nil { // a folder under the real name: the rename cannot succeed
+	if err := os.Mkdir(path, 0o750); err != nil { // a folder under the real name: the rename cannot succeed
 		t.Fatal(err)
 	}
 	if err := writeJSON(path, healthState{To: "1.1.0"}); err == nil {
