@@ -1,11 +1,14 @@
 package blackbox
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // B7: path-only collector. It records WHERE the logs and settings files of the stack are: path, whether it exists,
@@ -23,25 +26,45 @@ type PathSettings struct {
 	Extra []string `json:"extra,omitempty"`
 }
 
+// pathEntryProblem says why p cannot be reported ("" when it can): it must be a full local path with no folder jumps,
+// no wildcard, no stream name and no control character. Network shares are refused because the recorder runs as SYSTEM
+// and would sign in to another machine (SEC-07). A drive letter that is mapped to a share cannot be seen here.
+func pathEntryProblem(p string) string {
+	if p == "" || utf8.RuneCountInString(p) > 260 {
+		return "must be a full path of at most 260 characters"
+	}
+	if !filepath.IsAbs(p) {
+		return "must be a full path"
+	}
+	if strings.HasPrefix(strings.ReplaceAll(p, "/", `\`), `\\`) {
+		return "is a network share: list a path on this PC instead"
+	}
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return "must not use .."
+		}
+	}
+	if i := strings.Index(p, ":"); i >= 0 && strings.Contains(p[i+1:], ":") {
+		return "must not name a stream"
+	}
+	for _, r := range p {
+		if r < 0x20 || r == 0x7f || strings.ContainsRune(`*?"<>|`, r) {
+			return "has characters a path cannot have"
+		}
+	}
+	return ""
+}
+
 func (s PathSettings) validate() error {
 	if len(s.Extra) > maxExtraPaths {
 		return invalidf(`"paths.extra" holds at most %d paths`, maxExtraPaths)
 	}
 	seen := map[string]bool{}
 	for _, p := range s.Extra {
-		if p == "" || len(p) > 260 || !filepath.IsAbs(p) {
-			return invalidf(`"paths.extra" entry %q must be a full path`, p)
+		if why := pathEntryProblem(p); why != "" {
+			return invalidf(`"paths.extra" entry %q %s`, p, why)
 		}
-		// The recorder runs as SYSTEM: a network share would make this PC's account sign in to another machine (SEC-07).
-		if strings.HasPrefix(strings.ReplaceAll(p, "/", `\`), `\\`) {
-			return invalidf(`"paths.extra" entry %q is a network share: list a path on this PC instead`, p)
-		}
-		for _, r := range p {
-			if r < 0x20 || strings.ContainsRune(`*?"<>|`, r) {
-				return invalidf(`"paths.extra" entry %q has characters a path cannot have`, p)
-			}
-		}
-		key := strings.ToLower(p)
+		key := strings.ToLower(filepath.Clean(p))
 		if seen[key] {
 			return invalidf(`"paths.extra" lists %q twice`, p)
 		}
@@ -72,6 +95,9 @@ type PathFact struct {
 	Dir    bool   `json:"dir,omitempty"`
 	Size   int64  `json:"size,omitempty"`    // bytes; 0 for a folder
 	ModT   int64  `json:"modUnix,omitempty"` // last write, Unix seconds
+	// Err is set when the path could not be looked at for a reason other than "it is not there" (access denied and so
+	// on), so a path that exists but is unreadable is never reported as missing.
+	Err string `json:"err,omitempty"`
 }
 
 // PathsGroup is the sample block of the path collector.
@@ -85,16 +111,27 @@ type pathsGroup struct {
 }
 
 func newPathsGroup(d GroupDeps) (Group, error) {
-	list := append([]string(nil), d.Config.LogPaths...)
-	list = append(list, FixedPaths()...)
-	if d.Config.Paths != nil {
-		list = append(list, d.Config.Paths.Extra...)
+	// The fixed list is trusted code; the settings entries (logPaths only get the folder checks in Validate) are held to
+	// the same rules as paths.extra here.
+	var list []string
+	for _, p := range d.Config.LogPaths {
+		if pathEntryProblem(p) == "" {
+			list = append(list, p)
+		}
 	}
-	// One entry per path, in a stable order; case differences are one path on Windows.
+	if d.Config.Paths != nil {
+		for _, p := range d.Config.Paths.Extra {
+			if pathEntryProblem(p) == "" {
+				list = append(list, p)
+			}
+		}
+	}
+	list = append(list, FixedPaths()...)
+	// One entry per path, in a stable order; case differences and trailing slashes are one path on Windows.
 	seen := map[string]bool{}
 	var uniq []string
 	for _, p := range list {
-		k := strings.ToLower(p)
+		k := strings.ToLower(filepath.Clean(p))
 		if !seen[k] {
 			seen[k] = true
 			uniq = append(uniq, p)
@@ -111,13 +148,21 @@ func (g *pathsGroup) Collect(time.Time, float64) (any, error) {
 	out := PathsGroup{Paths: make([]PathFact, 0, len(g.list))}
 	for _, p := range g.list {
 		f := PathFact{Path: p}
-		if fi, err := g.stat(p); err == nil {
+		fi, err := g.stat(p)
+		switch {
+		case err == nil:
 			f.Exists = true
 			f.Dir = fi.IsDir()
 			if !f.Dir {
 				f.Size = fi.Size()
 			}
 			f.ModT = fi.ModTime().Unix()
+		case errors.Is(err, fs.ErrNotExist):
+			// absent: Exists stays false
+		case errors.Is(err, fs.ErrPermission):
+			f.Err = "denied"
+		default:
+			f.Err = "error"
 		}
 		out.Paths = append(out.Paths, f)
 	}

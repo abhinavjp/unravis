@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestFactServiceWantedIsAFixedList(t *testing.T) {
@@ -24,14 +25,15 @@ func TestFactServiceWantedIsAFixedList(t *testing.T) {
 
 func TestFactsAreBoundedSortedAndClean(t *testing.T) {
 	in := &FactsGroup{OS: "Windows Server 2019 17763.1", TimeZone: "GMT Standard Time\x00", PendingReboot: true, SQL: map[string]string{"B": "16.0", "A": "15.0"}}
+	// More than the caps, all distinct, so the cap (not the duplicate rule) is what trims them.
 	for i := 0; i < maxFactServices+20; i++ {
 		in.Services = append(in.Services, ServiceFact{Name: fmt.Sprintf("svc%03d", i), State: "running", Start: "auto"})
 	}
-	in.Services = append(in.Services, ServiceFact{Name: "SVC000", State: "stopped", Start: "auto"}) // same service, other case
+	base := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < maxFactCerts+20; i++ {
-		in.Certs = append(in.Certs, CertFact{Subject: "CN=" + strings.Repeat("x", 300), Thumbprint: fmt.Sprintf("%040d", i), NotAfter: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(-i) * time.Hour).Format(time.RFC3339)})
+		// Cert 0 ends first, cert N last; listed in REVERSE so a cut before the sort would keep the wrong ones.
+		in.Certs = append([]CertFact{{Subject: "CN=" + strings.Repeat("x", 300), Thumbprint: fmt.Sprintf("%040d", i), NotAfter: base.Add(time.Duration(i) * time.Hour).Format(time.RFC3339)}}, in.Certs...)
 	}
-	in.Certs = append(in.Certs, in.Certs[0]) // the same certificate twice
 	for i := 0; i < 40; i++ {
 		in.Unread = append(in.Unread, "x")
 	}
@@ -39,27 +41,55 @@ func TestFactsAreBoundedSortedAndClean(t *testing.T) {
 	if len(out.Services) != maxFactServices || len(out.Certs) != maxFactCerts || len(out.Unread) != 16 {
 		t.Fatalf("sizes %d/%d/%d", len(out.Services), len(out.Certs), len(out.Unread))
 	}
+	if out.Certs[0].Thumbprint != fmt.Sprintf("%040d", 0) || out.Certs[maxFactCerts-1].Thumbprint != fmt.Sprintf("%040d", maxFactCerts-1) {
+		t.Errorf("the cut dropped the certificates that end soonest: first %s last %s", out.Certs[0].Thumbprint, out.Certs[maxFactCerts-1].Thumbprint)
+	}
 	if out.TimeZone != "GMT Standard Time" {
 		t.Errorf("control character kept: %q", out.TimeZone)
 	}
 	if len(out.Certs[0].Subject) > maxFactText {
 		t.Error("a long subject was not cut")
 	}
-	for i := 1; i < len(out.Certs); i++ {
-		if out.Certs[i-1].NotAfter > out.Certs[i].NotAfter {
-			t.Fatal("certificates are not sorted by end date")
-		}
-	}
 	for i := 1; i < len(out.Services); i++ {
 		if out.Services[i-1].Name >= out.Services[i].Name {
 			t.Fatal("services are not sorted and unique")
 		}
 	}
-	if len(in.Services) == len(out.Services) || len(in.Certs) == len(out.Certs) {
-		t.Error("the input was not trimmed")
-	}
 	if _, err := json.Marshal(out); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A cut is always said out loud, so a missing certificate is never mistaken for an absent one.
+func TestFactsSayWhenTheyAreCut(t *testing.T) {
+	in := &FactsGroup{}
+	for i := 0; i < maxFactCerts+1; i++ {
+		in.Certs = append(in.Certs, CertFact{Thumbprint: fmt.Sprintf("%040d", i), NotAfter: "2027-01-01T00:00:00Z"})
+	}
+	if u := boundFacts(in).Unread; len(u) != 1 || u[0] != "certs: truncated" {
+		t.Errorf("unread %v", u)
+	}
+}
+
+func TestFactsDeduplicate(t *testing.T) {
+	in := &FactsGroup{
+		Services: []ServiceFact{{Name: "W3SVC", State: "running"}, {Name: "w3svc", State: "stopped"}, {Name: "WAS"}},
+		Certs:    []CertFact{{Thumbprint: "AA", NotAfter: "2027-01-01T00:00:00Z"}, {Thumbprint: "AA", NotAfter: "2027-01-01T00:00:00Z"}, {Thumbprint: "BB", NotAfter: "2026-01-01T00:00:00Z"}},
+	}
+	out := boundFacts(in)
+	if len(out.Services) != 2 || len(out.Certs) != 2 {
+		t.Fatalf("services %d certs %d, want 2 and 2", len(out.Services), len(out.Certs))
+	}
+	if out.Certs[0].Thumbprint != "BB" {
+		t.Error("the soonest end date should be first")
+	}
+}
+
+func TestClipCutsOnACharacterBoundary(t *testing.T) {
+	s := strings.Repeat("é", maxFactText) // two bytes each
+	got := clip(s)
+	if len(got) > maxFactText || !utf8.ValidString(got) {
+		t.Errorf("clip gave %d bytes, valid=%v", len(got), utf8.ValidString(got))
 	}
 }
 

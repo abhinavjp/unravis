@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 	"unsafe"
@@ -130,14 +131,17 @@ func startWord(t uint32) string {
 	return "other"
 }
 
-// readServiceFacts reports the state and start type of the stack's services. The recorder runs as LocalSystem, so it
-// may open the service manager. Names and states only: never the account a service runs as or its command line.
+// readServiceFacts reports the state and start type of the stack's services. It asks Windows for the least it needs:
+// the service manager with the right to list, and each service with the right to read its status and settings, so a
+// service whose access list denies change rights is still reported. A service that cannot be read is named in Unread
+// rather than left out. Names and states only: never the account a service runs as or its command line.
 func readServiceFacts(unread *[]string) []ServiceFact {
-	m, err := mgr.Connect()
+	h, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_ENUMERATE_SERVICE)
 	if err != nil {
 		*unread = append(*unread, "services")
 		return nil
 	}
+	m := &mgr.Mgr{Handle: h}
 	defer m.Disconnect()
 	names, err := m.ListServices()
 	if err != nil {
@@ -149,10 +153,16 @@ func readServiceFacts(unread *[]string) []ServiceFact {
 		if !factServiceWanted(n) {
 			continue
 		}
-		s, err := m.OpenService(n)
+		name16, err := windows.UTF16PtrFromString(n)
 		if err != nil {
 			continue
 		}
+		sh, err := windows.OpenService(h, name16, windows.SERVICE_QUERY_STATUS|windows.SERVICE_QUERY_CONFIG)
+		if err != nil {
+			*unread = append(*unread, "service "+n)
+			continue
+		}
+		s := &mgr.Service{Name: n, Handle: sh}
 		fact := ServiceFact{Name: n, State: "other", Start: "other"}
 		if st, err := s.Query(); err == nil {
 			fact.State = stateWord(st.State)
@@ -166,6 +176,10 @@ func readServiceFacts(unread *[]string) []ServiceFact {
 	return out
 }
 
+// maxCertsRead bounds the enumeration. Every certificate is read and sorted before the cut to maxFactCerts, so the
+// ones ending soonest are kept; a store beyond this bound is marked as cut.
+const maxCertsRead = 2000
+
 // readCertFacts lists the certificates of the computer's Personal store: subject, thumbprint and end date. The store is
 // opened read-only. Private keys are never touched.
 func readCertFacts(unread *[]string) []CertFact {
@@ -176,6 +190,7 @@ func readCertFacts(unread *[]string) []CertFact {
 	store, err := windows.CertOpenStore(windows.CERT_STORE_PROV_SYSTEM, 0, 0,
 		windows.CERT_SYSTEM_STORE_LOCAL_MACHINE|windows.CERT_STORE_OPEN_EXISTING_FLAG|windows.CERT_STORE_READONLY_FLAG,
 		uintptr(unsafe.Pointer(name)))
+	runtime.KeepAlive(name)
 	if err != nil {
 		*unread = append(*unread, "certs")
 		return nil
@@ -183,15 +198,19 @@ func readCertFacts(unread *[]string) []CertFact {
 	defer windows.CertCloseStore(store, 0)
 	var out []CertFact
 	var prev *windows.CertContext
-	for len(out) < maxFactCerts {
+	unparsed := 0
+	for len(out) < maxCertsRead {
+		// The call frees prev itself and returns nil at the end of the store.
 		ctx, err := windows.CertEnumCertificatesInStore(store, prev)
 		if err != nil || ctx == nil {
+			prev = nil
 			break
 		}
 		prev = ctx
 		der := unsafe.Slice(ctx.EncodedCert, ctx.Length)
 		c, err := x509.ParseCertificate(der)
 		if err != nil {
+			unparsed++
 			continue
 		}
 		sum := sha1.Sum(c.Raw) //nolint:gosec // thumbprint, see above
@@ -200,6 +219,13 @@ func readCertFacts(unread *[]string) []CertFact {
 			Thumbprint: strings.ToUpper(hex.EncodeToString(sum[:])),
 			NotAfter:   c.NotAfter.UTC().Format(time.RFC3339),
 		})
+	}
+	if prev != nil { // stopped at the bound: free the context still held
+		_ = windows.CertFreeCertificateContext(prev)
+		*unread = append(*unread, "certs: truncated")
+	}
+	if unparsed > 0 {
+		*unread = append(*unread, fmt.Sprintf("certs: %d unreadable", unparsed))
 	}
 	return out
 }

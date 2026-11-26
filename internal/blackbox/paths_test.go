@@ -2,6 +2,8 @@ package blackbox
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,11 @@ func TestPathSettingsValidation(t *testing.T) {
 		{"relative", PathSettings{Extra: []string{"logs/app.log"}}, false},
 		{"empty", PathSettings{Extra: []string{""}}, false},
 		{"share", PathSettings{Extra: []string{`\\server\share\x.log`}}, false},
+		{"share with slashes", PathSettings{Extra: []string{"//server/share/x.log"}}, false},
+		{"folder jump", PathSettings{Extra: []string{filepath.Join(dir, "a") + string(filepath.Separator) + ".." + string(filepath.Separator) + "b"}}, false},
+		{"stream name", PathSettings{Extra: []string{good + ":hidden:$DATA"}}, false},
+		{"delete char", PathSettings{Extra: []string{good + "\x7f"}}, false},
+		{"same path with a trailing slash", PathSettings{Extra: []string{good, good + string(filepath.Separator)}}, false},
 		{"wildcard", PathSettings{Extra: []string{filepath.Join(dir, "*.log")}}, false},
 		{"control char", PathSettings{Extra: []string{good + "\n"}}, false},
 		{"twice", PathSettings{Extra: []string{good, strings.ToUpper(good)}}, false},
@@ -61,9 +68,6 @@ func TestPathsGroupReportsMetadataOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A stat stub that fails the test if anything asks for more than metadata.
-	real := g.(*pathsGroup).stat
-	g.(*pathsGroup).stat = func(p string) (os.FileInfo, error) { return real(p) }
 	v, err := g.Collect(time.Now(), 15)
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +85,9 @@ func TestPathsGroupReportsMetadataOnly(t *testing.T) {
 	}
 	if f := byPath[missing]; f.Exists || f.Size != 0 {
 		t.Errorf("missing fact %+v", f)
+	}
+	if f := byPath[missing]; f.Err != "" {
+		t.Errorf("a path that is not there carries an error: %+v", f)
 	}
 	for _, fixed := range FixedPaths() {
 		if _, ok := byPath[fixed]; !ok {
@@ -137,3 +144,46 @@ func TestCollectorEveryUsesTheCollectorsDefault(t *testing.T) {
 }
 
 func marshalForTest(s Sample) ([]byte, error) { return json.Marshal(s) }
+
+// A path that exists but cannot be looked at is never reported as missing.
+func TestPathsGroupSaysWhenAPathCouldNotBeRead(t *testing.T) {
+	g, _ := newPathsGroup(GroupDeps{Config: testConfig(t)})
+	pg := g.(*pathsGroup)
+	pg.list = []string{"a", "b", "c"}
+	pg.stat = func(p string) (os.FileInfo, error) {
+		switch p {
+		case "a":
+			return nil, fs.ErrPermission
+		case "b":
+			return nil, fs.ErrNotExist
+		}
+		return nil, errors.New("device not ready")
+	}
+	v, _ := g.Collect(time.Now(), 15)
+	got := v.(*PathsGroup).Paths
+	if got[0].Err != "denied" || got[0].Exists {
+		t.Errorf("denied: %+v", got[0])
+	}
+	if got[1].Err != "" || got[1].Exists {
+		t.Errorf("absent: %+v", got[1])
+	}
+	if got[2].Err != "error" {
+		t.Errorf("other error: %+v", got[2])
+	}
+}
+
+// logPaths entries only get the folder checks in Validate; the paths group holds them to the same rules.
+func TestPathsGroupSkipsBadLogPathEntries(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.LogPaths = []string{cfg.Folder, "relative", "//server/share", cfg.Folder + "\x01"}
+	g, _ := newPathsGroup(GroupDeps{Config: cfg})
+	fixed := map[string]bool{}
+	for _, p := range FixedPaths() {
+		fixed[p] = true
+	}
+	for _, p := range g.(*pathsGroup).list {
+		if !fixed[p] && pathEntryProblem(p) != "" {
+			t.Errorf("%q should have been skipped", p)
+		}
+	}
+}

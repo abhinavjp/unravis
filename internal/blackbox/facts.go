@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // B7: server facts, once an hour. Versions, the services of the stack and their state, certificate end dates, the time
@@ -108,16 +109,25 @@ func boundFacts(f *FactsGroup) *FactsGroup {
 	out.Certs = nil
 	seenC := map[string]bool{}
 	for _, c := range f.Certs {
-		if seenC[c.Thumbprint] || len(out.Certs) >= maxFactCerts {
+		if seenC[c.Thumbprint] {
 			continue
 		}
 		seenC[c.Thumbprint] = true
 		out.Certs = append(out.Certs, CertFact{Subject: clip(c.Subject), Thumbprint: clip(c.Thumbprint), NotAfter: c.NotAfter})
 	}
-	// The soonest end date first: that is the one worth looking at.
+	// The soonest end date first: that is the one worth looking at. The cut comes AFTER the sort, so a store with
+	// more than the cap never loses the certificates that are about to end.
 	sort.Slice(out.Certs, func(i, j int) bool { return out.Certs[i].NotAfter < out.Certs[j].NotAfter })
+	unread := append([]string(nil), f.Unread...)
+	if len(out.Certs) > maxFactCerts {
+		out.Certs = out.Certs[:maxFactCerts]
+		unread = append(unread, "certs: truncated")
+	}
+	if len(f.Services) > maxFactServices {
+		unread = append(unread, "services: truncated")
+	}
 	out.Unread = nil
-	for _, u := range f.Unread {
+	for _, u := range unread {
 		if len(out.Unread) < 16 {
 			out.Unread = append(out.Unread, clip(u))
 		}
@@ -127,7 +137,12 @@ func boundFacts(f *FactsGroup) *FactsGroup {
 
 func clip(s string) string {
 	if len(s) > maxFactText {
-		s = s[:maxFactText]
+		// Cut on a character boundary: half a character would be written as a replacement character.
+		cut := maxFactText
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut]
 	}
 	return strings.Map(func(r rune) rune {
 		if r < 0x20 {
