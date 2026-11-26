@@ -17,7 +17,7 @@ import (
 var parityFile = filepath.Join("testdata", "parity-routes.txt")
 
 // planIDPattern matches a plan item id of the plan: OPS-11, OPS-F1, OPS-S1.
-var planIDPattern = regexp.MustCompile(`^OPS-(0[1-9]|1[0-5]|F[12]|S1)$`)
+var planIDPattern = regexp.MustCompile(`^OPS-(0[1-9]|1[0-6]|F[12]|S1)$`)
 
 // maxUndecided is a ratchet: routes marked "undecided" may only go down. A new route cannot hide behind it, because adding
 // one raises the count above this number. When you decide a route, lower this number in the same change.
