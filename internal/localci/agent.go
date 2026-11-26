@@ -109,7 +109,8 @@ func (h Heartbeat) Fresh(now time.Time, stale time.Duration) bool {
 }
 
 // RequestDrain asks the named agent to stop claiming and exit once its running requests end. It works across
-// processes: the agent looks for the mark at every tick.
+// processes: the agent looks for the mark at every tick. The mark stays while the agent drains; removing it
+// (ResumeAgent) before the running requests end makes the agent take requests again.
 func RequestDrain(stateDir, name string) error {
 	if !ValidAgentName(name) {
 		return fmt.Errorf("%q is not an agent name", name)
@@ -118,6 +119,29 @@ func RequestDrain(stateDir, name string) error {
 		return err
 	}
 	return os.WriteFile(drainPath(stateDir, name), []byte("drain\n"), 0o600)
+}
+
+// DrainRequested says whether a drain mark exists for the named agent.
+func DrainRequested(stateDir, name string) bool {
+	if !ValidAgentName(name) {
+		return false
+	}
+	_, err := os.Stat(drainPath(stateDir, name))
+	return err == nil
+}
+
+// ResumeAgent withdraws a drain made with RequestDrain: it removes the agent's drain mark. An agent that still
+// finishes its running requests takes new ones again at its next tick; one that already ended (a drained agent
+// exits once nothing runs) has to be started again. cleared is false when there was no mark.
+func ResumeAgent(stateDir, name string) (cleared bool, err error) {
+	if !ValidAgentName(name) {
+		return false, fmt.Errorf("%q is not an agent name", name)
+	}
+	err = retryFS(func() error { return os.Remove(drainPath(stateDir, name)) })
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // Agent claims requests from the queue and runs them, Slots at a time. It writes a heartbeat file, takes back
@@ -170,7 +194,8 @@ type Agent struct {
 
 	mu          sync.Mutex
 	jobs        map[string]*agentJob
-	draining    bool
+	draining    bool // Drain was called (Ctrl-C on the agent's own console): final
+	markDrain   bool // a drain mark exists (RequestDrain from another process): ends when the mark is removed
 	started     time.Time
 	lastBeat    time.Time
 	lastState   string
@@ -310,7 +335,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	for {
 		a.tick(ctx)
 		a.mu.Lock()
-		done := a.draining && len(a.jobs) == 0
+		done := (a.draining || a.markDrain) && len(a.jobs) == 0
 		a.mu.Unlock()
 		if done {
 			a.logf("agent %s: drained, nothing running", a.Name)
@@ -368,11 +393,23 @@ func (a *Agent) tick(ctx context.Context) {
 	a.beat(false)
 }
 
+// checkDrainMark follows the drain mark: while it exists the agent drains, and when someone removes it before the
+// running requests end (ResumeAgent) the agent takes requests again. A drain from Drain stays whatever the mark.
 func (a *Agent) checkDrainMark() {
-	if _, err := os.Stat(drainPath(a.Dir, a.Name)); err == nil {
-		_ = os.Remove(drainPath(a.Dir, a.Name))
+	_, err := os.Stat(drainPath(a.Dir, a.Name))
+	marked := err == nil
+	a.mu.Lock()
+	was := a.markDrain
+	if marked != was {
+		a.markDrain, a.dirty = marked, true
+	}
+	a.mu.Unlock()
+	switch {
+	case marked && !was:
 		a.logf("agent %s: drain requested", a.Name)
-		a.Drain()
+		a.poke()
+	case !marked && was:
+		a.logf("agent %s: resumed, the drain was withdrawn", a.Name)
 	}
 }
 
@@ -403,7 +440,7 @@ func (a *Agent) claim(ctx context.Context) {
 	for {
 		a.mu.Lock()
 		free := a.slots() - len(a.jobs)
-		draining := a.draining
+		draining := a.draining || a.markDrain
 		a.mu.Unlock()
 		if free <= 0 || draining || ctx.Err() != nil {
 			return
@@ -689,7 +726,7 @@ func (a *Agent) setAwake(on bool) {
 
 func (a *Agent) state() string {
 	a.mu.Lock()
-	draining := a.draining
+	draining := a.draining || a.markDrain
 	a.mu.Unlock()
 	switch {
 	case draining:

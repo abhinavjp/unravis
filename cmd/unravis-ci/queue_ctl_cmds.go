@@ -79,6 +79,8 @@ type queueListJSON struct {
 	Filter       string            `json:"filter"`
 	Requests     []localci.Request `json:"requests"` // running first, then waiting in claim order, then finished newest first
 	PausedReason string            `json:"pausedReason,omitempty"`
+	// Why says, by request id, why each queued request waits (localci.WhyWaiting); absent when the folder cannot say.
+	Why map[string]localci.WaitReason `json:"why,omitempty"`
 }
 
 func cmdQueueList(args []string, stdout, stderr io.Writer, environ []string) int {
@@ -125,9 +127,20 @@ func cmdQueueList(args []string, stdout, stderr io.Writer, environ []string) int
 	if localci.IsPaused(dir) {
 		why = "the pause file " + localci.PausePath(dir) + " exists"
 	}
+	whyOf := map[string]localci.WaitReason{}
+	if in, err := localci.WaitInputOf(dir, now, agentStale); err != nil {
+		_, _ = fmt.Fprintln(stderr, "queue list: cannot say why requests wait:", err)
+		whyOf = nil
+	} else {
+		for _, r := range shown {
+			if r.State == localci.StateQueued {
+				whyOf[r.ID] = localci.WhyWaiting(r, in)
+			}
+		}
+	}
 	if *asJSON {
 		return writeJSON("queue list", stdout, stderr, queueListJSON{StateDir: dir, Paused: why != "", PausedReason: why, Waiting: waiting, Running: running,
-			Filter: *filter, Requests: nonNil(shown)})
+			Filter: *filter, Requests: nonNil(shown), Why: whyOf})
 	}
 	if why != "" {
 		_, _ = fmt.Fprintf(stdout, "claiming is paused: %s\n", why)
@@ -135,6 +148,9 @@ func cmdQueueList(args []string, stdout, stderr io.Writer, environ []string) int
 	_, _ = fmt.Fprintf(stdout, "queue: %d waiting, %d running\n", waiting, running)
 	for _, r := range shown {
 		_, _ = fmt.Fprintln(stdout, requestLine(now, r))
+		if w, ok := whyOf[r.ID]; ok {
+			_, _ = fmt.Fprintf(stdout, "    waiting: %s\n", w.Text)
+		}
 	}
 	return exitOK
 }
