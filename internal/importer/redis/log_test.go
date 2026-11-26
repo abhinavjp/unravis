@@ -531,3 +531,16 @@ func TestLogWindow(t *testing.T) {
 		t.Errorf("%d events %+v", len(evs), rep)
 	}
 }
+
+func TestLogNeedsYear(t *testing.T) {
+	var p importer.YearProber = Log{}
+	if !p.NeedsYear([]byte("[22044] 26 Nov 13:47:27.070 * 10 changes in 300 seconds. Saving...\n")) {
+		t.Error("a year-less line must need the year")
+	}
+	if p.NeedsYear([]byte(logNew)) {
+		t.Error("lines that carry the year need none")
+	}
+	if p.NeedsYear([]byte("hello\nworld\n")) {
+		t.Error("not a log needs no year")
+	}
+}
