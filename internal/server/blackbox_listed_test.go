@@ -1,7 +1,6 @@
 package server
 
 import (
-	"net/http"
 	"testing"
 
 	"api-audit-explorer/internal/blackbox"
@@ -103,5 +102,4 @@ func TestBlackboxFlaggedEntryStillWinsAndNothingFoundClaimsNothing(t *testing.T)
 	if l := b2.list(); l.ThisPC.Installed || l.ThisPC.Listed {
 		t.Fatalf("this PC = %+v", l.ThisPC)
 	}
-	_ = http.StatusOK
 }
