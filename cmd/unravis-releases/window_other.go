@@ -14,3 +14,6 @@ func appWindow(link, profile string) (*exec.Cmd, error) {
 
 // showError has nowhere to show a box off Windows; the message was already printed to the console.
 func showError(string) {}
+
+// rundll32Path is only used on Windows; the browser command off Windows never calls it.
+func rundll32Path() string { return "" }

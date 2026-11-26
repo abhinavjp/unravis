@@ -9,7 +9,23 @@ import (
 	"path/filepath"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
+
+// rundll32Path is rundll32.exe by full path in the Windows system folder, so the program is never looked up through PATH or the
+// current folder. It asks Windows for the folder (GetSystemDirectory), not the SystemRoot variable, which a parent process can change.
+func rundll32Path() string {
+	dir, err := windows.GetSystemDirectory()
+	if err != nil || dir == "" {
+		root := os.Getenv("SystemRoot")
+		if root == "" {
+			root = `C:\Windows`
+		}
+		dir = filepath.Join(root, "System32")
+	}
+	return filepath.Join(dir, "rundll32.exe")
+}
 
 // showError opens a message box. The program has no console, so this is the only way a start-up error reaches the person.
 func showError(msg string) {
