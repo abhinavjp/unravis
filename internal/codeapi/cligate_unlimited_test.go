@@ -203,7 +203,8 @@ func TestUnlimitedIsNeverWrittenToDiskAndAFileCannotTurnItOn(t *testing.T) {
 	r := newRig(t, rigOpts{spawner: &spawn{}, cliShut: true, settingsIn: dir})
 	r.enable()
 	r.setCLI(`{"cliUnlimited":true}`)
-	r.setCLI(`{"keepResults":true}`) // another save while unlimited is on
+	// Another save while unlimited is on.
+	r.setCLI(`{"keepResults":true}`)
 	b, err := os.ReadFile(filepath.Join(dir, settingsfile.FileName)) //nolint:gosec // a test file in the test's own temp folder
 	if err != nil {
 		t.Fatal(err)
@@ -270,5 +271,51 @@ func TestWindowChangesAreRecordedInTheLog(t *testing.T) {
 	r.setCLI(`{"enabled":true}`)
 	if got := lines(func() { r.setCLI(`{"cliUnlimited":true,"cliMinutes":5}`) }); strings.Contains(got, "Command line window") {
 		t.Fatalf("a refused request was recorded: %q", got)
+	}
+}
+
+// Shutting the command line needs no disk. When the settings cannot be read or saved (here: a folder stands where code-mode.json
+// should be, so the save is refused), a request that asks to close still closes, and says so. A request to open does not open.
+func TestACloseRequestStillClosesWhenTheSettingsCannotBeSaved(t *testing.T) {
+	for _, body := range []string{`{"cliUnlimited":false}`, `{"enabled":false}`, `{"cliMinutes":0}`, `{"cliMinutes":10}`, `{"cliUnlimited":false,"cliMinutes":5}`} {
+		dir := t.TempDir()
+		r := newRig(t, rigOpts{spawner: &spawn{}, cliShut: true, settingsIn: dir})
+		r.enable()
+		if res := r.setCLI(`{"cliUnlimited":true}`); res.Code != http.StatusOK || !r.gate.Unlimited() {
+			t.Fatalf("%s: not unlimited: %d", body, res.Code)
+		}
+		path := filepath.Join(dir, settingsfile.FileName)
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		res := r.setCLI(body)
+		if res.Code != http.StatusInternalServerError {
+			t.Fatalf("%s = %d %s, want 500", body, res.Code, res.Body)
+		}
+		if !strings.Contains(res.Body.String(), "command line was shut") {
+			t.Errorf("%s: the reply does not say the command line was shut: %s", body, res.Body)
+		}
+		if r.gate.Unlimited() || r.gate.Allows() {
+			t.Fatalf("%s: a failed save left the command line open", body)
+		}
+	}
+	// An open request that cannot be saved does not open anything.
+	dir := t.TempDir()
+	r := newRig(t, rigOpts{spawner: &spawn{}, cliShut: true, settingsIn: dir})
+	r.enable()
+	path := filepath.Join(dir, settingsfile.FileName)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{`{"cliUnlimited":true}`, `{"cliMinutes":10}`} {
+		if res := r.setCLI(body); res.Code != http.StatusInternalServerError || r.gate.Allows() {
+			t.Fatalf("%s = %d, open %v", body, res.Code, r.gate.Allows())
+		}
 	}
 }

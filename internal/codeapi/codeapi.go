@@ -256,10 +256,11 @@ type settingsDTO struct {
 func (a *api) settingsReply(set codemode.Settings, damaged bool) settingsDTO {
 	d := settingsDTO{Enabled: set.Enabled, AllowDegraded: set.AllowDegraded, KeepResults: set.KeepResults, AllowIdentifiers: a.allowIdentifiers, Damaged: damaged}
 	if a.cliGate != nil {
-		if until, open := a.cliGate.OpenUntil(); open {
+		until, open, unlimited := a.cliGate.Snapshot()
+		if open {
 			d.CLIOpenUntil = until.UTC().Format(time.RFC3339)
 		}
-		d.CLIUnlimited = a.cliGate.Unlimited()
+		d.CLIUnlimited = unlimited
 	}
 	return d
 }
@@ -303,11 +304,18 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	a.settingsMu.Lock()
 	defer a.settingsMu.Unlock()
+	// Shutting needs no disk, so a request that shuts the command line (or leaves the no-time-limit state for a timed window) does it first:
+	// a failed read or save below must never leave the command line open that the caller asked to close. Opening still waits for the save.
+	closedNow := a.closeFirst(in)
+	notChanged := "Nothing was changed."
+	if closedNow {
+		notChanged = "The command line was shut; nothing else was changed."
+	}
 	// A damaged file reads as all off: the save below starts from that, which repairs it.
 	set, lerr := a.files.Load()
 	if lerr != nil && !errors.Is(lerr, settingsfile.ErrCorrupt) {
 		// A read that failed (not a file that cannot be trusted): saving would turn off switches the caller did not send.
-		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be read. Nothing was changed.")
+		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be read. "+notChanged)
 		return
 	}
 	if in.Enabled != nil {
@@ -320,7 +328,7 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 		set.KeepResults = *in.KeepResults
 	}
 	if err := a.files.Save(set); err != nil {
-		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be saved. Nothing was changed.")
+		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be saved. "+notChanged)
 		return
 	}
 	// The window follows the save, so a failed save leaves it as it was. Switching code mode off closes it too: the next time it is
@@ -345,6 +353,32 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("Code mode settings were saved.")
 	reply(w, http.StatusOK, a.settingsReply(set, false))
+}
+
+// closeFirst shuts the command line before the settings are read or saved when the request asks to close it: code mode off, "no time
+// limit" off, a window of 0 minutes, or a timed window replacing the no-time-limit state (the state that has no end must not outlive a
+// failed request to leave it). It reports whether the gate was open and is now shut. The caller holds settingsMu.
+func (a *api) closeFirst(in settingsPatch) bool {
+	if a.cliGate == nil {
+		return false
+	}
+	closes := (in.Enabled != nil && !*in.Enabled) ||
+		(in.CLIUnlimited != nil && !*in.CLIUnlimited) ||
+		(in.CLIMinutes != nil && (*in.CLIMinutes == 0 || a.cliGate.Unlimited()) && (in.CLIUnlimited == nil || !*in.CLIUnlimited))
+	if !closes {
+		return false
+	}
+	before := cliStateOf(a.cliGate)
+	a.cliGate.Close()
+	if before == "closed" {
+		return false
+	}
+	if in.Enabled != nil && !*in.Enabled {
+		log.Printf("Command line window: closed because code mode is off.")
+	} else {
+		log.Printf("Command line window: closed.")
+	}
+	return true
 }
 
 // cliStateOf names what the gate allows now: "closed", "timed" or "unlimited".

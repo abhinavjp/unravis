@@ -87,6 +87,20 @@ func (g *CLIGate) OpenUntil() (time.Time, bool) {
 	return g.until, true
 }
 
+// Snapshot reads the whole state under one lock: when the timed window ends (open false when there is none or it has run out) and whether
+// the no-time-limit state is on. The two are never both set.
+func (g *CLIGate) Snapshot() (until time.Time, open, unlimited bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.unlimited {
+		return time.Time{}, false, true
+	}
+	if g.until.IsZero() || !g.now().Before(g.until) {
+		return time.Time{}, false, false
+	}
+	return g.until, true, false
+}
+
 // Allows reports whether a command-line run may start now: the no-time-limit state is on, or a timed window has not ended. A nil gate
 // allows nothing.
 func (g *CLIGate) Allows() bool {
