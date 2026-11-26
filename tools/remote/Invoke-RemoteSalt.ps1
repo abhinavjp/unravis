@@ -375,7 +375,7 @@ switch ($Action) {
                 $got = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash.ToLowerInvariant()
                 if ($got -ne $want) { throw "The copy does not match the file on the minion (expected $want, got $got). The copy was deleted." }
                 $ok = $true
-                Write-Host "Pulled $leaf: $size bytes in $pieces pieces, SHA-256 matches the minion's own hash: $got"
+                Write-Host "Pulled ${leaf}: $size bytes in $pieces pieces, SHA-256 matches the minion's own hash: $got"
                 return @{ Path = $dest; Sha = $got; Bytes = $size; Pieces = $pieces }
             } finally {
                 if ($null -ne $out) { $out.Dispose() }

@@ -100,7 +100,7 @@ try {
     Check 'bb write refused in readonly' ($null -ne (Test-BlackboxWrite 'blackbox.collector' 'redis.info' @('on') $cfg))
     Check 'bb collector on' ($null -eq (Test-BlackboxWrite 'blackbox.collector' 'redis.info' @('on') $wcfg))
     Check 'bb collector off every' ($null -eq (Test-BlackboxWrite 'blackbox.collector' 'host.tcp' @('off', 'every=60') $wcfg))
-    foreach ($bad in @(@('redis.info; calc', @('on')), @('Redis', @('on')), @('', @('on')), @('a', @('on')), @('redis.info', @()), @('redis.info', @('maybe')), @('redis.info', @('on', 'every=x')), @('redis.info', @('on', 'every=60', 'extra')), @('redis.info', @('on', 'every=1234567')), @('redis.info', @('on', 'every=99999')), @('Redis.info', @('on')), @('redis.info', @('ON')), @('redis.info', @('on', 'EVERY=60')), @('redis.info', @('on', ('every=' + [string][char]0x0666 + [char]0x0660)))) {
+    foreach ($bad in @(@('redis.info; calc', @('on')), @('Redis', @('on')), @('', @('on')), @('a', @('on')), @('redis.info', @()), @('redis.info', @('maybe')), @('redis.info', @('on', 'every=x')), @('redis.info', @('on', 'every=60', 'extra')), @('redis.info', @('on', 'every=1234567')), @('redis.info', @('on', 'every=99999')), @('Redis.info', @('on')), @('redis.info', @('ON')), @('redis.info', @('on', 'EVERY=60')), @('redis.info', @('on', ('every=' + [string][char]0x0666 + [char]0x0660))))) {
         Check ("bb collector refused: " + ($bad[0]) + ' ' + ($bad[1] -join ' ')) ($null -ne (Test-BlackboxWrite 'blackbox.collector' $bad[0] $bad[1] $wcfg))
     }
     Check 'bb counter add ok' ($null -eq (Test-BlackboxWrite 'blackbox.counter.add' '\Processor(_Total)\% Processor Time' @() $wcfg))
