@@ -29,6 +29,9 @@ const (
 	investigationMaxLabel    = 200
 	investigationMaxPool     = 100000
 	investigationIISSource   = "iis-w3c"
+
+	// investigationStalledText is the warning when an audit source says there is more but sends an empty page, so the read stopped early.
+	investigationStalledText = "An audit source stopped part way through, so its calls could not be read in full and none were used. Try the run again."
 )
 
 // investigationAuditBudget and investigationCaseBudget split the request's
@@ -275,6 +278,7 @@ func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]
 	read := investigationRead{Warnings: []string{}}
 	status := investigate.AuditPresent
 	cursor := ""
+	stalled := false // an empty page that still had a cursor: the read stopped before the end
 	// Per-source diagnostics: a start line and a finish line per source, so a
 	// failed read names the source, its error code and its sanitized reason.
 	start := time.Now()
@@ -329,7 +333,13 @@ func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]
 		if page.Truncated {
 			read.Truncated = true
 		}
-		if page.NextCursor == "" || len(page.Rows) == 0 {
+		if page.NextCursor == "" {
+			break
+		}
+		if len(page.Rows) == 0 {
+			// A source that says there is more but sends nothing: the read cannot go on, and what was read is not the whole picture.
+			read.Truncated = true
+			stalled = true
 			break
 		}
 		if len(rows) >= investigationMaxRows {
@@ -340,7 +350,11 @@ func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]
 	}
 	if read.Truncated {
 		status = investigate.AuditFailed
-		read.Warnings = append(read.Warnings, "There are too many audit calls in these windows to read in full, so none were used. Shorten the windows.")
+		if stalled {
+			read.Warnings = append(read.Warnings, investigationStalledText)
+		} else {
+			read.Warnings = append(read.Warnings, "There are too many audit calls in these windows to read in full, so none were used. Shorten the windows.")
+		}
 		rows = nil
 	}
 	read.Requests = len(rows)
