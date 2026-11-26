@@ -103,6 +103,8 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	compareEvery := fs.Duration("compare-every", defaultCompareEvery, "how often the comparison with GitHub is saved for the Releases app's Overview (0 turns it off)")
 	cacheLimit := fs.Int64("cache-limit-gb", 8, "size the build cache is trimmed to, in GB (half of it for runs of code that is not the owner's); -1 never trims")
 	minFree := fs.Int64("min-free-gb", 10, "the agent claims no request while the drive of the store has less free space than this, in GB (a full disk makes tests fail for the wrong reason); -1 never checks")
+	runKeepDays := fs.Int("run-keep-days", int(localci.DefaultRunKeep/(24*time.Hour)), "days the folders of a finished run (logs, work folder) are kept; -1 turns the age rule off (the size rule below still applies)")
+	runsLimit := fs.Int64("runs-limit-gb", localci.DefaultRunsLimit>>30, "size the run and work folders are cut down to after that, oldest finished run first, in GB; -1 turns the size rule off")
 	var wfFor, pushWf, protect, vars, labels, schedule, trustedBase, allowEnv, ctxFlag multiFlag
 	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
 	fs.Var(&pushWf, "push-workflow", "branch=file.yml: a workflow run when branch is pushed (repeatable; replaces the defaults)")
@@ -251,6 +253,8 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		Name: *name, Dir: store.Dir, Queue: queue, Slots: *slots, Labels: labels, Runner: runner,
 		CacheLimit: cacheLimitBytes(*cacheLimit),
 		MinFree:    cacheLimitBytes(*minFree),
+		RunKeep:    runKeepDuration(*runKeepDays),
+		RunsLimit:  cacheLimitBytes(*runsLimit),
 		Paused: func() bool {
 			why := pauseReason(pf, rdir, time.Now())
 			pauseMu.Lock()
@@ -430,6 +434,21 @@ func runnerFor(inProcess bool, store *localci.Store, host localci.Host, origin s
 		},
 	}
 	return er.Run
+}
+
+// maxRunKeepDays keeps --run-keep-days from overflowing time.Duration (213504 days already wraps around).
+const maxRunKeepDays = 36500
+
+// runKeepDuration turns --run-keep-days into the agent's RunKeep: a negative number turns the age rule off, 0 is
+// the agent's default, a very large number is cut to 100 years.
+func runKeepDuration(days int) time.Duration {
+	if days < 0 {
+		return -1
+	}
+	if days > maxRunKeepDays {
+		days = maxRunKeepDays
+	}
+	return time.Duration(days) * 24 * time.Hour
 }
 
 // cacheLimitBytes turns --cache-limit-gb into the agent's CacheLimit: a negative number turns trimming off.

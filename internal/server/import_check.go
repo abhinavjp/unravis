@@ -204,7 +204,7 @@ func (h *handler) postImportCheck(w http.ResponseWriter, r *http.Request, raw st
 				writeCaseFailure(w, http.StatusRequestEntityTooLarge, "too-many-files", "Too many files to check at once.")
 				return
 			}
-			item, ok := h.spoolCheckFile(w, part, key, limit)
+			item, ok := h.spoolCheckFile(job.ctx, w, part, key, limit)
 			if !ok {
 				return
 			}
@@ -244,7 +244,7 @@ func writeCheckFormError(w http.ResponseWriter, err error) {
 
 // spoolCheckFile takes one file part into an encrypted spool. On a refusal it
 // has answered and holds nothing.
-func (h *handler) spoolCheckFile(w http.ResponseWriter, part *multipart.Part, key string, limit int64) (checkItem, bool) {
+func (h *handler) spoolCheckFile(ctx context.Context, w http.ResponseWriter, part *multipart.Part, key string, limit int64) (checkItem, bool) {
 	name := baseName(part.FileName())
 	spool, err := newSpool(h.jobs.spoolDir)
 	if err != nil {
@@ -252,7 +252,7 @@ func (h *handler) spoolCheckFile(w http.ResponseWriter, part *multipart.Part, ke
 		return checkItem{}, false
 	}
 	tracked := &trackedReader{r: io.LimitReader(part, limit+1)}
-	size, err := spool.fill(tracked)
+	size, err := spool.fill(ctx, tracked)
 	if err != nil {
 		spool.close()
 		h.writeImportError(w, err, tracked, casestore.ImportResult{})

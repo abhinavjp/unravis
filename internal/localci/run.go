@@ -930,6 +930,10 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 
 	var outputs map[string]string
 	var runErr error
+	var watch *stepWatch
+	if line := r.o.Config.Override(r.file, in.job.ID).StepWatch[st.Name]; line != "" {
+		watch = in.startStepWatch(runCtx, line, n, env, func(m string) { emit("[ci] " + m) })
+	}
 	if st.Uses != "" {
 		with, werr := interpEnv(st.With, ec)
 		if werr != nil {
@@ -943,6 +947,14 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 		runErr = in.runScript(stepCtx, st, ec, n, env, lw)
 	}
 	lw.Flush()
+	if seen := watch.stop(); len(seen) > 0 {
+		for _, l := range seen {
+			emit("[ci] watcher: " + l)
+		}
+		if runErr == nil {
+			runErr = fmt.Errorf("the step watcher saw %d problem(s), first: %s", len(seen), seen[0])
+		}
+	}
 	_ = lf.Close()
 	// special files
 	if perr := in.applyFiles(files, st, &outputs, emit); perr != nil && runErr == nil {
