@@ -392,3 +392,32 @@ func MarkReported(path string) (string, error) {
 	}
 	return marked, nil
 }
+
+// RemoveAll deletes every file this package and the Rust half write in dir (names starting "crash-": raw .pending dumps, finished .txt
+// and .dmp files, reported ones) and then the folder itself if that left it empty. Anything else in the folder stays. A folder that does
+// not exist has nothing to remove. It returns how many files it removed. A raw dump still held open by a running copy cannot be removed
+// on Windows; that is reported as an error and the rest is still removed.
+func RemoveAll(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("crashlog: reading the crash folder: %w", err)
+	}
+	var errs []error
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, filePrefix) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("crashlog: removing %s: %w", name, err))
+			continue
+		}
+		n++
+	}
+	_ = os.Remove(dir) // only succeeds when empty
+	return n, errors.Join(errs...)
+}
