@@ -344,7 +344,7 @@ func TestTrimRunsAFileHeldOpenKeepsRunJSON(t *testing.T) {
 	now := time.Now()
 	id := idAt(now.Add(-10*dayDur), "pr1-ci")
 	mkRun(t, s, id, 100, now.Add(-10*dayDur))
-	f, err := os.Open(filepath.Join(s.RunsPath(), id, "logs", "j", "01-step.log"))
+	f, err := os.Open(filepath.Join(s.RunsPath(), id, "logs", "j", "01-step.log")) //nolint:gosec // a path inside the test's own temp folder
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestTrimRunsAFileHeldOpenKeepsRunJSON(t *testing.T) {
 	if res.Runs != 0 || !pathExists(filepath.Join(s.RunsPath(), id, "run.json")) {
 		t.Fatalf("run.json must survive a log held open: %+v", res)
 	}
-	f.Close()
+	_ = f.Close()
 	if res, err = s.TrimRuns(context.Background(), TrimRunsOptions{Now: now}); err != nil || res.Runs != 1 {
 		t.Fatalf("after the file is closed: %+v %v", res, err)
 	}
