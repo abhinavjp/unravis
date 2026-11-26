@@ -83,6 +83,11 @@ func crashReportedOnce(t *testing.T, folder string, restart func(t *testing.T, f
 	if err := os.MkdirAll(folder, 0o750); err != nil {
 		t.Fatal(err)
 	}
+	// A runner profile folder can come back as an 8.3 name (RUNNER~1). The folder securing refuses a path spelled differently from the one
+	// the open handle reports (SEC-FIX-06), so name the folder the way Windows reports it.
+	if l, err := filepath.EvalSymlinks(folder); err == nil {
+		folder = l
+	}
 
 	// A real crash: a child process panics with a planted secret in the message.
 	cmd := exec.Command(os.Args[0], "-test.run=NONE") //nolint:gosec // the test binary itself
