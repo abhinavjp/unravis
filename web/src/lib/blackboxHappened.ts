@@ -47,12 +47,44 @@ const NOTE_TITLES: Record<string, { title: string; tone: Tone }> = {
   housekeeping: { title: 'Old recordings were removed', tone: 'info' },
   'collect-failed': { title: 'A reading failed', tone: 'warn' },
   'write-failed': { title: 'A sample could not be saved', tone: 'bad' },
+  'collect-still-failing': { title: 'Readings are still failing', tone: 'warn' },
+  'collect-recovered': { title: 'Readings work again', tone: 'info' },
+  'write-still-failing': { title: 'Samples still cannot be saved', tone: 'bad' },
+  'write-recovered': { title: 'Samples are being saved again', tone: 'info' },
   'settings-applied': { title: 'New settings were applied', tone: 'info' }
 };
 const RESTART_DETAIL: Record<string, string> = {
   'after-stop': 'The earlier run had stopped cleanly.',
   'after-crash': 'The earlier run did not stop cleanly (power loss or a kill).'
 };
+
+/** Why a reading or a save failed, from the recorder's fixed codes. Anything else is not repeated. */
+const FAILURE_CAUSE: Record<string, string> = {
+  'collect-failed': 'the Windows counters could not be read',
+  'write-failed': 'the sample could not be written',
+  'permission-denied': 'permission was denied',
+  'disk-full': 'the drive is full'
+};
+const roundsWords = (n: number) => n + (n === 1 ? ' round' : ' rounds');
+
+/**
+ * The detail of a "still failing" note ("code=disk-full rounds=3") or a "recovered" note ("rounds=11 seconds=3300") in plain
+ * words. Only the fixed codes and whole numbers are read; a detail that does not fit gives no text at all.
+ */
+export function failureDetail(kind: string, detail: unknown): string {
+  if (typeof detail !== 'string') return '';
+  if (kind === 'collect-still-failing' || kind === 'write-still-failing') {
+    const m = /^code=([a-z-]{1,30}) rounds=(\d{1,9})$/.exec(detail);
+    if (!m) return '';
+    const cause = own(FAILURE_CAUSE, m[1]);
+    return (cause ? 'Latest cause: ' + cause + '. ' : '') + roundsWords(Number(m[2])) + ' failed since the last note.';
+  }
+  if (kind === 'collect-recovered' || kind === 'write-recovered') {
+    const m = /^rounds=(\d{1,9}) seconds=(\d{1,9})$/.exec(detail);
+    return m ? 'It failed for ' + roundsWords(Number(m[1])) + ' over ' + lengthWords(Number(m[2])) + ', then worked again.' : '';
+  }
+  return '';
+}
 
 export function lengthWords(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
@@ -89,7 +121,7 @@ export function noteItem(m: SeriesMarker, i: number): HappenedItem | null {
   const t = Date.parse(m.t);
   if (!Number.isFinite(t)) return null;
   const known = own(NOTE_TITLES, m.kind);
-  const detail = m.kind === 'restart' ? (own(RESTART_DETAIL, m.detail) ?? '') : '';
+  const detail = m.kind === 'restart' ? (own(RESTART_DETAIL, m.detail) ?? '') : failureDetail(m.kind, m.detail);
   return { id: 'note:' + i + ':' + t, kind: m.kind === 'restart' ? 'restart' : 'note', t, tone: known?.tone ?? 'info', title: known?.title ?? 'Recorder note: ' + (safeText(m.kind, 40) || 'unknown'), detail };
 }
 
