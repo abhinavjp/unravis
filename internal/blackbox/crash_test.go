@@ -24,6 +24,18 @@ func crashChild(folder string) {
 	panic("collector failed: password=" + crashPlanted)
 }
 
+// TestMain serves two jobs on every OS. A re-run of the test binary with the
+// crash env var set is the crashing child of the crash tests (it never reaches
+// m.Run). Otherwise the package's tests must never write to the real
+// %ProgramData%; each test that wants the copy points it at a temporary folder.
+func TestMain(m *testing.M) {
+	if dir := os.Getenv(envCrashChildDir); dir != "" {
+		crashChild(dir) // a panic ends the process
+	}
+	PublicConfigDir = func() string { return "" }
+	os.Exit(m.Run())
+}
+
 func crashEvents(t *testing.T, folder string) []Event {
 	t.Helper()
 	m, err := ReadManifest(folder)
