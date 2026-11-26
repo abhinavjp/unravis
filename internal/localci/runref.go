@@ -196,7 +196,7 @@ func RunRef(ctx context.Context, o RefOptions) (res *PRResult, err error) {
 	}
 	o.logf("running %s (%s) on %s at %s", file, o.Event, o.Ref, shortSHA(wt.Commit))
 	run, err := Run(ctx, RunOptions{
-		Workflow: wf, Config: cfg, Workdir: wt.Path, StateDir: runDir, GitHub: refGitHubContext(o, wf.Name, wt, start),
+		Workflow: wf, Config: cfg, Workdir: wt.Path, StateDir: runDir, LockDir: filepath.Join(o.Store.Dir, "locks"), GitHub: refGitHubContext(o, wf.Name, wt, start),
 		Vars: o.Vars, Env: env, Slots: o.Slots, Log: o.Log, Redact: o.Redact, Now: o.Now, Progress: o.Progress,
 		JobTree: func(c context.Context, name string) (string, func(), error) {
 			jt, err := co.JobTree(c, wt, name, false, nil)

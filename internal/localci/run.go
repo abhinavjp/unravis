@@ -28,6 +28,8 @@ type RunOptions struct {
 	// files from under another job's tests. name is a short tag unique within the run. cleanup always runs.
 	JobTree  func(ctx context.Context, name string) (path string, cleanup func(), err error)
 	StateDir string // per-run folder: logs, run.json, artifacts
+	// LockDir, when set, makes an "exclusive" resource hold across processes (every queue item runs in its own process) by a lock file in it.
+	LockDir string
 	GitHub   map[string]any
 	Inputs   map[string]string
 	Vars     map[string]string
@@ -603,7 +605,7 @@ func (r *runState) runInstance(ctx context.Context, job *Job, combo map[string]a
 		return fin("cancelled", "cancelled before it started")
 	}
 	if ov.Exclusive != "" {
-		release, err := acquireExclusive(ctx, ov.Exclusive, func() { r.logf("[%s] waiting for the exclusive resource %q", key, ov.Exclusive) })
+		release, err := acquireExclusive(ctx, ov.Exclusive, r.o.LockDir, func() { r.logf("[%s] waiting for the exclusive resource %q", key, ov.Exclusive) })
 		if err != nil {
 			return fin("cancelled", "cancelled before it started")
 		}
