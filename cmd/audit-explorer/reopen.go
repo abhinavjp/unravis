@@ -49,14 +49,17 @@ func (r *reopener) Reopen() {
 	r.busy = true
 	r.mu.Unlock()
 
-	worked := r.reopen()
-
-	r.mu.Lock()
-	r.busy = false
-	if worked {
-		r.last = r.now()
-	}
-	r.mu.Unlock()
+	// Cleared in a defer so a panic in the work (callers recover it) cannot leave busy set for the life of the process.
+	worked := false
+	defer func() {
+		r.mu.Lock()
+		r.busy = false
+		if worked {
+			r.last = r.now()
+		}
+		r.mu.Unlock()
+	}()
+	worked = r.reopen()
 }
 
 // reopen does the work of one request and says whether the browser was opened.

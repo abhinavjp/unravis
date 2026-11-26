@@ -422,3 +422,33 @@ func TestQuitSignalCancelsTheAppContext(t *testing.T) {
 		t.Fatal("main.go calls newLaunchCode directly")
 	}
 }
+
+// A panic inside the work (the callers recover it and the process lives on) must not leave the limiter busy: the next request has to be
+// tried, and the panicked attempt must not start the gap.
+func TestReopenPanicDoesNotLeaveTheLimiterBusy(t *testing.T) {
+	f := newFakeReopen()
+	f.r.rearm = func(string, time.Time) bool { panic("rearm blew up") }
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected the panic to reach the caller")
+			}
+		}()
+		f.r.Reopen()
+	}()
+
+	f.r.rearm = func(c string, u time.Time) bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.rearmCodes = append(f.rearmCodes, c)
+		return true
+	}
+	f.r.Reopen() // no time has passed: only a stuck busy flag or a started gap would drop this
+	if len(f.rearmCodes) != 1 || len(f.opened) != 1 {
+		t.Fatalf("after a panicked attempt, an immediate retry: rearm calls %d, opens %d, want 1 and 1", len(f.rearmCodes), len(f.opened))
+	}
+	f.r.Reopen() // that one worked, so the gap now applies
+	if len(f.opened) != 1 {
+		t.Fatalf("a request right after a success opened again: %d", len(f.opened))
+	}
+}
