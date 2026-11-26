@@ -194,7 +194,7 @@
                 <div class="cm-callout bad" role="alert"><div class="cm-callout-row"><CodeIcon name="alert" /><p><strong>{T.damagedTitle}</strong> {T.damagedBody}</p></div></div>
               {/if}
               <ul class="cm-facts">
-                {#each T.facts as fact}
+                {#each T.facts(settings.allowIdentifiers, draft.deg) as fact}
                   <li><CodeIcon name={fact.icon as 'box' | 'eye' | 'lock'} /><div><strong>{fact.title}</strong><p>{fact.body}</p></div></li>
                 {/each}
               </ul>

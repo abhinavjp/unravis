@@ -1649,12 +1649,12 @@
           "click": "role=button[name=\"Done\"s]"
         },
         {
-          "waitFor": "role=button[name=/^Code mode is on/]"
+          "waitFor": "role=button[name=/^Code mode on/]"
         }
       ],
       "after": [
         {
-          "click": "role=button[name=/^Code mode is on/]"
+          "click": "role=button[name=/^Code mode on/]"
         },
         {
           "waitFor": "role=heading[name=\"Code mode is on\"]"
@@ -1738,6 +1738,97 @@
         },
         {
           "waitFor": "role=button[name=\"Close the command line now\"s]"
+        }
+      ],
+      "after": [
+        {
+          "click": "role=button[name=\"Turn off code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Code mode is off\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-code-mode-nolimit",
+      "phase": "X",
+      "note": "Code mode popup with the command line open with no time limit: the typed phrase, the danger Result and the Code mode on, no time limit badge, read from the real settings. It turns code mode off again afterwards.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "click": "role=button[name=\"Open code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What code mode is\"]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Do you want to switch it on?\"]"
+        },
+        {
+          "click": "role=radio[name=/^Switch code mode on/]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"The command line\"]"
+        },
+        {
+          "click": "role=radio[name=/^No time limit/]"
+        },
+        {
+          "fill": [
+            "role=textbox[name=/To go on/]",
+            "no time limit"
+          ]
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Review and confirm\"]"
+        },
+        {
+          "click": "role=button[name=\"Turn on code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Code mode is on\"]"
+        },
+        {
+          "waitFor": "role=button[name=\"Close the command line now\"s]"
+        },
+        {
+          "waitFor": "text=Danger: the command line has no time limit"
+        },
+        {
+          "waitFor": "role=button[name=/^Code mode on · no time limit/]"
         }
       ],
       "after": [

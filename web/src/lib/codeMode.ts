@@ -152,6 +152,7 @@ export function minutesError(raw: string): string {
 export const phraseOk = (typed: string): boolean => typed.trim().toLowerCase() === NO_LIMIT_PHRASE;
 
 /** Step numbers (0 based): 0 What it is, 1 Switch on, 2 Assistants, 3 Safety, 4 Command line, 5 Review, 6 Result. */
+export const STEP_CLI = 4;
 export const STEP_REVIEW = 5;
 export const STEP_RESULT = 6;
 export const stepSkipped = (d: Draft, i: number): boolean => !d.enabled && i >= 2 && i <= 4;
@@ -160,7 +161,7 @@ export const backStep = (d: Draft, i: number): number => (i === STEP_REVIEW && !
 
 /** Whether Next is on at this step. Only the command-line step ever says no. */
 export function canNext(d: Draft, step: number, hasUnlimited: boolean): boolean {
-  if (step !== 4) return true;
+  if (step !== STEP_CLI) return true;
   if (d.mode === 'timed') {
     const n = parseMinutes(d.minsRaw);
     return n >= MIN_MINUTES && n <= MAX_MINUTES;
@@ -204,7 +205,8 @@ export function buildPatch(s: CodeSettings, d: Draft): SettingsPatch {
       patch.cliMinutes = n;
     }
   } else {
-    if (!s.hasUnlimited || !phraseOk(d.typed)) throw new PatchError(CODE_TEXT.noLimitSoon);
+    if (!s.hasUnlimited) throw new PatchError(CODE_TEXT.noLimitSoon);
+    if (!phraseOk(d.typed)) throw new PatchError(CODE_TEXT.phraseNotTyped);
     patch.cliUnlimited = true;
   }
   return patch;
@@ -219,6 +221,9 @@ export function quickPatch(s: CodeSettings, action: QuickAction): SettingsPatch 
   return s.hasUnlimited ? { cliMinutes: 0, cliUnlimited: false } : { cliMinutes: 0 };
 }
 
+/** How far below the minutes asked for a freshly opened window may read: the answer's travel time and the clock reading's seconds. */
+const WINDOW_SLACK_MS = 20_000;
+
 export type Applied = 'ok' | 'notApplied' | 'noLimitStillOn';
 
 /**
@@ -227,13 +232,19 @@ export type Applied = 'ok' | 'notApplied' | 'noLimitStillOn';
  */
 export function checkApplied(patch: SettingsPatch, reply: CodeSettings, nowMs: number, offsetMs: number): Applied {
   if (patch.enabled !== undefined && reply.enabled !== patch.enabled) return 'notApplied';
-  if (!reply.enabled) return 'ok';
+  // Off in the reply: fine for a request that closes things, but a window that was asked for was not opened.
+  if (!reply.enabled) return patch.cliUnlimited === true || (patch.cliMinutes !== undefined && patch.cliMinutes > 0) ? 'notApplied' : 'ok';
   if (patch.allowDegraded !== undefined && reply.allowDegraded !== patch.allowDegraded) return 'notApplied';
   if (patch.keepResults !== undefined && reply.keepResults !== patch.keepResults) return 'notApplied';
   const cli = cliState(reply, nowMs, offsetMs);
   if (patch.cliUnlimited === true) return cli.kind === 'unlimited' ? 'ok' : 'notApplied';
   if (patch.cliMinutes === 0) return cli.kind === 'unlimited' ? 'noLimitStillOn' : cli.kind === 'open' ? 'notApplied' : 'ok';
-  if (patch.cliMinutes !== undefined && patch.cliMinutes > 0) return cli.kind === 'open' ? 'ok' : cli.kind === 'unlimited' ? 'noLimitStillOn' : 'notApplied';
+  if (patch.cliMinutes !== undefined && patch.cliMinutes > 0) {
+    if (cli.kind === 'unlimited') return 'noLimitStillOn';
+    // A window is open, and it has to be the one asked for: about the minutes sent (a little less for the time the answer took).
+    const asked = patch.cliMinutes * 60_000;
+    return cli.kind === 'open' && cli.leftMs >= asked - WINDOW_SLACK_MS && cli.leftMs <= asked + 2_000 ? 'ok' : 'notApplied';
+  }
   return 'ok';
 }
 

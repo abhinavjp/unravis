@@ -74,14 +74,14 @@ test('the badge is hidden when off and says the full state otherwise', () => {
   assert.equal(shut.tone, 'on');
   assert.equal(shut.full + ' · ' + shut.detail, 'Code mode on · command line shut');
   assert.equal(shut.short, 'On');
-  assert.match(shut.aria, /Code mode is on and the command line is shut/);
+  assert.ok(shut.aria.startsWith('Code mode on · command line shut'), 'the accessible name starts with the words the badge shows (WCAG 2.5.3)');
 
   const open = m.badgeModel(settings({ cliOpenUntil: iso(T0 + 14 * 60_000 + 32_000) }), T0, 0);
   assert.equal(open.tone, 'on');
   assert.equal(open.detail, '14:32 left');
   assert.equal(open.isTime, true);
   assert.equal(open.short, '14:32');
-  assert.match(open.aria, /15 minutes left/);
+  assert.ok(open.aria.startsWith('Code mode on · about 15 minutes left'));
 
   const last = m.badgeModel(settings({ cliOpenUntil: iso(T0 + 8_000) }), T0, 0);
   assert.equal(last.tone, 'warn');
@@ -99,6 +99,7 @@ test('the badge is hidden when off and says the full state otherwise', () => {
   assert.equal(damaged.tone, 'warn');
   assert.equal(damaged.full + ' · ' + damaged.detail, 'Code mode off · settings file damaged');
   assert.equal(damaged.short, 'Off');
+  for (const b of [shut, open, last, danger, damaged]) assert.ok(b.aria.startsWith(b.full + ' · '), b.aria);
 });
 
 /* ------------------------------------------------------------------ the minutes and the typed phrase */
@@ -192,6 +193,32 @@ test('a reply that does not match what was asked is not reported as done', () =>
   assert.equal(m.checkApplied({ enabled: false }, settings({ enabled: false }), now, 0), 'ok');
   assert.equal(m.checkApplied({ enabled: false }, settings(), now, 0), 'notApplied');
   assert.equal(m.checkApplied({ enabled: true, keepResults: true }, settings(), now, 0), 'notApplied');
+});
+
+test('a window that was asked for is not done when the reply says code mode is off, or opened for other minutes', () => {
+  const off = settings({ enabled: false });
+  assert.equal(m.checkApplied({ cliMinutes: 15 }, off, T0, 0), 'notApplied');
+  assert.equal(m.checkApplied({ enabled: true, cliMinutes: 5 }, off, T0, 0), 'notApplied');
+  assert.equal(m.checkApplied({ cliUnlimited: true }, off, T0, 0), 'notApplied');
+  assert.equal(m.checkApplied({ cliMinutes: 0 }, off, T0, 0), 'ok', 'closing is done when code mode is off');
+  const at = (min) => settings({ cliOpenUntil: iso(T0 + min * 60_000) });
+  assert.equal(m.checkApplied({ cliMinutes: 15 }, at(15), T0, 0), 'ok');
+  assert.equal(m.checkApplied({ cliMinutes: 15 }, settings({ cliOpenUntil: iso(T0 + 15 * 60_000 - 5_000) }), T0, 0), 'ok', 'a few seconds went on the way');
+  assert.equal(m.checkApplied({ cliMinutes: 15 }, at(5), T0, 0), 'notApplied', 'an older, shorter window is still the one open');
+  assert.equal(m.checkApplied({ cliMinutes: 5 }, at(15), T0, 0), 'notApplied', 'an older, longer window is still the one open');
+  assert.equal(m.checkApplied({ cliMinutes: 1 }, at(1), T0, 0), 'ok');
+  assert.equal(m.checkApplied({ cliMinutes: 1 }, at(14), T0, 0), 'notApplied');
+});
+
+test('the words of step 1 follow what is really allowed', () => {
+  const plain = CODE_TEXT.facts(false, false).map((f) => f.body).join(' ');
+  assert.match(plain, /reach the internet/);
+  assert.doesNotMatch(plain, /weaker one/);
+  const ids = CODE_TEXT.facts(true, false).map((f) => f.body).join(' ');
+  assert.match(ids, /unless a script asks for the real ones/);
+  const deg = CODE_TEXT.facts(false, true).map((f) => f.body).join(' ');
+  assert.match(deg, /except when the full safe runner cannot start/);
+  assert.doesNotMatch(deg, /, reach the internet or open/);
 });
 
 /* ------------------------------------------------------------------ the assistants */
@@ -395,6 +422,28 @@ test('a refused save throws the server words and leaves what is shown as it was'
   assert.equal(s.status, 'ready');
 });
 
+test('a failed save reads again, because the server may have shut the command line before it refused', async () => {
+  const h = clockHarness();
+  h.reply = settings({ cliOpenUntil: iso(T0 + 600_000) });
+  const s = new storeMod.CodeModeStore(h.deps);
+  await s.refresh();
+  assert.equal(s.cli.kind, 'open');
+  // A read is on its way (it will still say "open") when a save to close fails; the server has closed the gate before failing.
+  let release;
+  h.held = new Promise((r) => { release = r; });
+  h.heldAnswer = settings({ cliOpenUntil: iso(T0 + 600_000) });
+  const slow = s.refresh();
+  h.putError = new apiMod.CodeApiError('The settings could not be saved. The command line was shut; nothing else was changed.', 500, 'internal_error');
+  h.reply = settings();
+  const before = h.gets;
+  await assert.rejects(s.save({ cliMinutes: 0 }), /command line was shut/);
+  await tick();
+  assert.equal(h.gets, before + 1, 'a new read followed the failed save');
+  assert.equal(s.cli.kind, 'shut', 'what is shown is what the server says now');
+  release(); await slow; await tick();
+  assert.equal(s.cli.kind, 'shut', 'the older read cannot bring the open window back');
+});
+
 /* ------------------------------------------------------------------ the popup logic */
 
 function flowOf(rawSettings, over = {}) {
@@ -512,6 +561,53 @@ test('Close the command line now on a no-limit window is not reported as done wh
   assert.equal(await flow.quick('closecli'), true);
   assert.equal(flow.notice, CODE_TEXT.closedCli);
   assert.equal(store.cli.kind, 'shut');
+});
+
+test('the Review step cannot be entered with a command-line choice that cannot be saved', async () => {
+  const { store, flow } = flowOf(settings({ cliUnlimited: false }));
+  await store.refresh(); flow.open(); flow.go(1); flow.setEnabled(true); flow.go(4);
+  flow.setMode('timed');
+  flow.go(5);
+  assert.equal(flow.step, 5, 'a good number of minutes goes on');
+  flow.go(4);
+  flow.setMinutes('90');
+  flow.go(1);
+  flow.go(5);
+  assert.equal(flow.step, 4, 'the rail lands on the command line step, where the number is shown');
+  assert.equal(flow.minsError, CODE_TEXT.minutesTooBig);
+  flow.setMode('unlimited');
+  flow.go(1);
+  flow.go(5);
+  assert.equal(flow.step, 4, 'no phrase typed');
+  flow.setTyped('no time limit');
+  flow.go(5);
+  assert.equal(flow.step, 5);
+  // Keeping it off has no command-line choice to make.
+  const off = flowOf(settings({ enabled: false }));
+  await off.store.refresh(); off.flow.open(); off.flow.setMode('timed'); off.flow.setMinutes('90');
+  off.flow.go(5);
+  assert.equal(off.flow.step, 5);
+});
+
+test('a save that is refused for the phrase or the minutes says so, not "needs the next update"', () => {
+  const s = settings({ cliUnlimited: false });
+  const d = (over) => ({ enabled: true, keep: false, deg: false, mode: 'unlimited', minsRaw: '15', typed: '', ...over });
+  assert.throws(() => m.buildPatch(s, d({})), (e) => e.message === CODE_TEXT.phraseNotTyped);
+  assert.throws(() => m.buildPatch(settings(), d({ typed: 'no time limit' })), (e) => e.message === CODE_TEXT.noLimitSoon);
+  assert.throws(() => m.buildPatch(s, d({ mode: 'timed', minsRaw: '90' })), (e) => e.message === CODE_TEXT.minutesTooBig);
+  assert.throws(() => m.buildPatch(s, d({ mode: 'timed', minsRaw: 'x' })), (e) => e.message === CODE_TEXT.minutesBad);
+  assert.notEqual(CODE_TEXT.phraseNotTyped, CODE_TEXT.noLimitSoon);
+});
+
+test('Review for "leave it as it is" does not say the command line is open after its window ran out', async () => {
+  const { h, store, flow } = flowOf(settings({ cliOpenUntil: iso(T0 + 60_000) }));
+  await store.refresh(); flow.open();
+  flow.go(1); flow.setEnabled(true);
+  assert.equal(flow.draft.mode, 'keep');
+  assert.match(flow.cliSummary.value, /^Open/);
+  h.now = T0 + 61_000; store.tick();
+  assert.equal(flow.cliSummary.value, CODE_TEXT.cliShut);
+  assert.doesNotMatch(flow.cliSummary.value + flow.cliSummary.sub, /00:00/);
 });
 
 test('Turn off code mode is one save of enabled false', async () => {

@@ -28,16 +28,30 @@ export const CODE_TEXT = {
   /* ---- step 1 ---- */
   s0Title: 'What code mode is',
   s0Lede: 'Code mode lets a short script look through your audit data for you. You, or an assistant, can write a few lines that ask many questions at once and put the answers together.',
-  facts: [
+  /** The three facts of step 1. The last two follow the choices that really apply: what this run of Unravis allows, and the weaker runner. */
+  facts: (allowIdentifiers: boolean, allowDegraded: boolean): readonly { icon: string; title: string; body: string }[] => [
     { icon: 'box', title: 'Where it runs', body: 'In a safe runner: a small program that is closed off from the rest of this PC.' },
-    { icon: 'eye', title: 'What it can read', body: 'The audit data of the open case, through the read-only tools the app already has. Real customer and user IDs are swapped for stand-ins.' },
-    { icon: 'lock', title: 'What it cannot do', body: 'Change your data, reach the internet or open your files.' }
-  ] as readonly { icon: string; title: string; body: string }[],
+    {
+      icon: 'eye',
+      title: 'What it can read',
+      body: 'The audit data of the open case, through the read-only tools the app already has. ' +
+        (allowIdentifiers
+          ? 'Real customer and user IDs are swapped for stand-ins, unless a script asks for the real ones. This run of Unravis was started so that it may.'
+          : 'Real customer and user IDs are swapped for stand-ins.')
+    },
+    {
+      icon: 'lock',
+      title: 'What it cannot do',
+      body: allowDegraded
+        ? 'Change your data or open your files. It cannot reach the internet either, except when the full safe runner cannot start: you allowed a weaker one that does not block the network.'
+        : 'Change your data, reach the internet or open your files.'
+    }
+  ],
   runnerTitle: 'The safe runner',
   runnerBody: 'A script runs only if the safe runner is installed on this PC. To check, type unravis code doctor in a terminal. If it is missing, a run is refused and says so.',
   fineOff: 'Code mode is off until you switch it on. Nothing changes until you press the button on the last step.',
   damagedTitle: 'The code-mode settings file could not be trusted, so code mode is off.',
-  damagedBody: 'Finish this guide and a fresh file is written.',
+  damagedBody: 'Finish this guide, even if you keep code mode off, and a fresh file is written.',
 
   /* ---- step 2 ---- */
   s1Title: 'Do you want to switch it on?',
@@ -100,6 +114,7 @@ export const CODE_TEXT = {
   chip: (m: number) => (m === 60 ? '1 hour' : m + ' min'),
   noLimitTitle: 'No time limit',
   noLimitBody: 'Danger: it stays open until you close it.',
+  phraseNotTyped: 'Type no time limit in the box on the command line step first. It is how you confirm this choice.',
   noLimitSoon: 'This choice needs the next update of Unravis. It is not available in this version.',
   dangerTitle: 'Danger: a window with no time limit',
   dangerBody: 'A program that runs as your Windows user can reach the Unravis command line. While the window is open, it can run scripts on your audit data. Unravis cannot tell it from you at the keyboard.',
@@ -148,7 +163,7 @@ export const CODE_TEXT = {
   offResultTitle: 'Code mode is off',
   offResultLede: 'No script can run, from the app, the command line or an assistant.',
   offDamagedTitle: 'The settings file could not be trusted.',
-  offDamagedBody: 'Switch code mode on again to write a fresh one.',
+  offDamagedBody: 'Press Set it up and finish the guide to write a fresh one, even if you keep it off.',
   setUp: 'Set it up',
   onResultTitle: 'Code mode is on',
   stateOnly: 'Only you can run scripts',
@@ -196,10 +211,11 @@ export const CODE_TEXT = {
   badgeShortOn: 'On',
   badgeShortOff: 'Off',
   badgeShortNoLimit: 'No limit',
-  badgeAriaShut: 'Code mode is on and the command line is shut. Open code mode settings.',
-  badgeAriaNoLimit: 'Code mode is on and the command line has no time limit. Open code mode settings.',
-  badgeAriaDamaged: 'Code mode is off. Its settings file is damaged. Open code mode settings.',
-  badgeAriaOpen: (minutes: number) => 'Code mode is on. The command line is open, ' + (minutes === 1 ? 'about 1 minute left' : 'about ' + minutes + ' minutes left') + '. Open code mode settings.',
+  // The accessible name starts with the words the badge shows ("Code mode on ·"), then says the state in full.
+  badgeAriaShut: 'Code mode on · command line shut. Scripts from a terminal are refused. Open code mode settings.',
+  badgeAriaNoLimit: 'Code mode on · no time limit. The command line stays open until you close it. Open code mode settings.',
+  badgeAriaDamaged: 'Code mode off · settings file damaged. Open code mode settings.',
+  badgeAriaOpen: (minutes: number) => 'Code mode on · ' + (minutes === 1 ? 'about 1 minute left' : 'about ' + minutes + ' minutes left') + '. The command line is open. Open code mode settings.',
 
   /* ---- the entry in AI access ---- */
   entryTitle: 'Code mode',
@@ -214,6 +230,11 @@ export function codeModeLintEntries(): LintEntry[] {
   const out: LintEntry[] = [];
   for (const [key, value] of Object.entries(CODE_TEXT)) {
     const id = 'code.' + key;
+    if (key === 'facts') {
+      // Every wording of the step 1 facts: the plain one, and the ones that follow what is allowed.
+      [[false, false], [true, false], [false, true]].forEach(([ids, deg], n) => (value as typeof CODE_TEXT.facts)(ids, deg).forEach((v, i) => out.push({ id: id + '.' + n + '.' + i, text: v.title + ' ' + v.body })));
+      continue;
+    }
     if (typeof value === 'string') out.push({ id, text: value });
     else if (typeof value === 'function') {
       const fn = value as (...a: never[]) => string;

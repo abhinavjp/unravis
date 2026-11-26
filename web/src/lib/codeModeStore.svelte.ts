@@ -127,6 +127,12 @@ export class CodeModeStore {
       reply = await this.deps.api.put(patch);
     } catch (error) {
       if (error instanceof CodeApiError && error.code === UNAVAILABLE_CODE) this.fail(error);
+      else {
+        // The server may have shut the command line before it refused or failed (closing needs no disk), so what is shown is read again.
+        // A read that was on its way started before the save, so the one below must be a new one.
+        this.inflight = null;
+        void this.refresh();
+      }
       throw error;
     }
     this.seq++;

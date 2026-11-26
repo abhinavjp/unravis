@@ -1,6 +1,6 @@
 import {
   assistantRows, backStep, buildPatch, canNext, checkApplied, cliState, DEFAULT_MINUTES, fmtClock, minutesError, newDraft, nextStep, parseMinutes, PatchError,
-  phraseOk, quickPatch, stepSkipped, STEP_RESULT, type AssistantRow, type CliChoice, type Draft, type QuickAction, type SettingsPatch
+  phraseOk, quickPatch, stepSkipped, STEP_CLI, STEP_RESULT, STEP_REVIEW, type AssistantRow, type CliChoice, type Draft, type QuickAction, type SettingsPatch
 } from './codeMode';
 import { listHosts } from './mcpGrantsApi';
 import type { McpList } from './mcpGrants';
@@ -67,6 +67,8 @@ export class CodeModeFlow {
   get allowedAssistants(): AssistantRow[] { return this.assistants.filter((a) => a.tone === 'allowed'); }
   get minsError(): string { return this.draft.mode === 'timed' ? minutesError(this.draft.minsRaw) : ''; }
   get typedOk(): boolean { return phraseOk(this.draft.typed); }
+  /** The command-line choice can be saved. Only matters while code mode is being switched on: off has no choice to make. */
+  get reviewReady(): boolean { return !this.draft.enabled || canNext(this.draft, STEP_CLI, this.hasUnlimited); }
   get nextOn(): boolean { return canNext(this.draft, this.step, this.hasUnlimited); }
   skipped(i: number): boolean { return i < STEP_RESULT && this.furthest >= 1 && stepSkipped(this.draft, i); }
   /** The rail button of step i can be pressed: it has been reached, it is not the current one, and Result is only there once code mode is on. */
@@ -84,7 +86,12 @@ export class CodeModeFlow {
     const T = CODE_TEXT;
     if (!d.enabled) return { value: T.cliShut, sub: T.cliOffSub, danger: false };
     const cli = this.store.cli;
-    if (d.mode === 'keep') return cli.kind === 'unlimited' ? { value: T.cliNoLimit, sub: T.cliStays, danger: true } : { value: T.cliOpenLeft(fmtClock(cli.leftMs)), sub: T.cliStays, danger: false };
+    if (d.mode === 'keep') {
+      if (cli.kind === 'unlimited') return { value: T.cliNoLimit, sub: T.cliStays, danger: true };
+      // A window that ran out while the guide was open is shut now: saving leaves it so, and the page must not say "Open, 00:00 left".
+      if (cli.kind !== 'open') return { value: T.cliShut, sub: T.cliShutSub, danger: false };
+      return { value: T.cliOpenLeft(fmtClock(cli.leftMs)), sub: T.cliStays, danger: false };
+    }
     if (d.mode === 'timed') { const n = parseMinutes(d.minsRaw); return { value: T.cliOpenFor(Number.isNaN(n) ? 0 : n), sub: T.cliOpenForSub, danger: false }; }
     if (d.mode === 'unlimited') return { value: T.cliNoLimit, sub: T.cliNoLimitSub, danger: true };
     return { value: T.cliShut, sub: T.cliShutSub, danger: false };
@@ -93,6 +100,9 @@ export class CodeModeFlow {
   /* ---- moving ---- */
 
   go(i: number): void {
+    // The Review step is never reached with a command-line choice that cannot be saved (a bad number of minutes, no phrase typed):
+    // a jump from the rail or a Change button lands on the command line step instead, where the problem is shown.
+    if (i === STEP_REVIEW && !this.reviewReady) i = STEP_CLI;
     // Leaving Result for an earlier step starts a new draft from what is true now.
     if (this.step === STEP_RESULT && i < STEP_RESULT) this.draft = newDraft(this.store.settings, this.store.cli);
     this.step = i;
@@ -166,7 +176,8 @@ export class CodeModeFlow {
       this.furthest = STEP_RESULT;
       return applied === 'ok';
     } catch (error) {
-      // A refused save changes nothing: the page stays where it is and says why, in the server's own words.
+      // A refused save leaves the choices as they were, but the server may already have shut the command line before it refused (closing
+      // never fails), so the store reads again. The page stays where it is and says why, in the server's own words.
       this.saveError = error instanceof Error && error.message ? error.message : CODE_TEXT.refusedBase;
       return false;
     } finally {
