@@ -91,7 +91,9 @@ func makeDotIcon(base windows.Handle) windows.Handle {
 	if got == 0 {
 		return 0
 	}
-	opaqueIfNoAlpha(pix)
+	if !hasAlpha(pix) { // an icon with no alpha is kept as it is
+		return 0
+	}
 	paintDot(pix, w, h)
 	colour, _, _ := procCreateBitmap.Call(uintptr(w), uintptr(h), 1, 32, uintptr(unsafe.Pointer(&pix[0])))   //nolint:gosec // Win32 call argument
 	maskBits := make([]byte, ((w+15)/16)*2*h)                                                                // all zero: every pixel is drawn
@@ -109,18 +111,6 @@ func makeDotIcon(base windows.Handle) windows.Handle {
 	out := iconInfo{fIcon: 1, hbmMask: mask, hbmColor: colour}
 	h2, _, _ := procCreateIconIndirect.Call(uintptr(unsafe.Pointer(&out))) //nolint:gosec // Win32 call argument
 	return windows.Handle(h2)
-}
-
-// opaqueIfNoAlpha makes every pixel opaque when the image has no alpha at all (an older icon): otherwise it would come out invisible.
-func opaqueIfNoAlpha(pix []byte) {
-	for i := 3; i < len(pix); i += 4 {
-		if pix[i] != 0 {
-			return
-		}
-	}
-	for i := 3; i < len(pix); i += 4 {
-		pix[i] = 255
-	}
 }
 
 func destroyIcon(h windows.Handle) {

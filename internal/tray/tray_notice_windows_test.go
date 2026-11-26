@@ -105,14 +105,21 @@ func TestNotifyWithoutAnIconAndWithABadNotice(t *testing.T) {
 	}
 }
 
-func TestNoticeIsDroppedWhileTheIconIsNotShowing(t *testing.T) {
+func TestNoticeWaitsWhileTheIconIsNotShowingThenIsShown(t *testing.T) {
 	r := newRig(t)
 	r.addErrs = []error{errors.New("explorer is not ready")}
 	r.start()
-	_ = Notify(Notice{Title: "x"})
+	if err := Notify(Notice{Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
 	r.canary()
 	if n := len(r.shownNotices()); n != 0 {
-		t.Errorf("a notice was shown with no icon (%d)", n)
+		t.Fatalf("a notice was shown with no icon (%d)", n)
+	}
+	sendMessage(r.hwnd, wmTimer, retryTimerID, 0) // the retry adds the icon (the next add works)
+	r.canary()
+	if n := len(r.shownNotices()); n != 1 {
+		t.Fatalf("the waiting notice was not shown once the icon was back (%d)", n)
 	}
 }
 

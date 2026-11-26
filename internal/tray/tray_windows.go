@@ -315,7 +315,7 @@ func Notify(n Notice) error {
 	st.pending = &n
 	st.noticeM.Unlock()
 	if r, _, err := procPostMessage.Call(h, noticeMsg, 0, 0); r == 0 {
-		return fmt.Errorf("tray: cannot queue the notice: %w", err)
+		return fmt.Errorf("tray: cannot queue the notice (%w): %v", ErrNotRunning, err)
 	}
 	return nil
 }
@@ -330,7 +330,13 @@ func (st *trayState) showPending(hwnd windows.Handle) {
 		return
 	}
 	if !st.added {
-		st.o.logf("tray: a notice was dropped because the icon is not showing")
+		// The icon is not showing (Explorer restarting, or the first add is being retried): keep the notice, unless a newer one came,
+		// and show it as soon as the icon is back (see tryAdd).
+		st.noticeM.Lock()
+		if st.pending == nil {
+			st.pending = n
+		}
+		st.noticeM.Unlock()
 		return
 	}
 	if err := showNoticeHook(hwnd, trayIconID, n.Title, n.Text); err != nil {
@@ -356,6 +362,7 @@ func (st *trayState) tryAdd(hwnd windows.Handle) {
 		st.retrying = false
 		disarmRetryHook(hwnd)
 	}
+	st.showPending(hwnd)
 }
 
 // wndProc is the single window procedure. It never lets a panic escape.

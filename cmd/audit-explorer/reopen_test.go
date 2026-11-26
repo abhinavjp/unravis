@@ -375,3 +375,14 @@ func TestReopenToEscapesTheScreenName(t *testing.T) {
 		t.Fatalf("opened = %v", f.opened)
 	}
 }
+
+func TestReopenToDifferentScreenIsNotThrottled(t *testing.T) {
+	f := newFakeReopen()
+	f.r.Reopen()
+	f.advance(time.Second)
+	f.r.ReopenTo("updates") // a notice click right after another open still works
+	f.r.ReopenTo("updates") // the same request again is dropped
+	if len(f.opened) != 2 {
+		t.Fatalf("opened %d times, want 2: %v", len(f.opened), f.opened)
+	}
+}

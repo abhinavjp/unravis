@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -152,6 +153,9 @@ type updateCache struct {
 	st       server.UpdateStatus
 	checking atomic.Bool
 	byPerson atomic.Bool // the person pressed Restart now, so no "updating" pop-up
+
+	installing atomic.Bool  // an install call is running, so a second press does nothing
+	installGen atomic.Int64 // counts install calls; a refresh that began before one must not clear byPerson
 }
 
 func newUpdateCache(read func() server.UpdateStatus) *updateCache {
@@ -161,7 +165,13 @@ func newUpdateCache(read func() server.UpdateStatus) *updateCache {
 }
 
 func (c *updateCache) refresh() server.UpdateStatus {
+	gen := c.installGen.Load()
 	st := c.read()
+	// Once the status no longer says "launched" (the setup was closed without updating, or the launch expired) the person's Restart now is
+	// over, so a later automatic launch is told about again. Not while an install call runs, or when one began during this read.
+	if (st.Install == nil || st.Install.State != "launched") && !c.installing.Load() && c.installGen.Load() == gen {
+		c.byPerson.Store(false)
+	}
 	c.mu.Lock()
 	c.st = st
 	c.mu.Unlock()
@@ -172,6 +182,22 @@ func (c *updateCache) get() server.UpdateStatus {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.st
+}
+
+// install runs one person-started install. A second press while one runs does nothing (and shows no warning). byPerson is set before the
+// call so the "launched" it causes is not announced as a surprise, and cleared again when nothing was launched.
+func (c *updateCache) install(do func() error) error {
+	if !c.installing.CompareAndSwap(false, true) {
+		return nil
+	}
+	defer c.installing.Store(false)
+	c.installGen.Add(1)
+	c.byPerson.Store(true)
+	if err := do(); err != nil {
+		c.byPerson.Store(false)
+		return err
+	}
+	return nil
 }
 
 // check runs one person-started check. A second press while one runs does nothing.
@@ -212,31 +238,41 @@ type trayNotice struct {
 	to    string
 }
 
-// pickNotice chooses the one pop-up the status calls for, or false. The states are checked from the most important down.
+// pickNotice is the most important pop-up the status calls for, or false.
 func pickNotice(st server.UpdateStatus, byPerson bool) (trayNotice, bool) {
+	if all := noticeCandidates(st, byPerson); len(all) > 0 {
+		return all[0], true
+	}
+	return trayNotice{}, false
+}
+
+// noticeCandidates lists every pop-up the status calls for, most important first. The caller shows the first one not yet told, so a
+// result that was told long ago (it stays in the status until it is dismissed on the Updates page) never hides a newer notice.
+func noticeCandidates(st server.UpdateStatus, byPerson bool) []trayNotice {
+	var out []trayNotice
 	if r := st.Result; r != nil && r.Outcome != "" {
 		key := r.Outcome + ":" + r.From + ">" + r.To
 		if r.Outcome == "done" {
 			if r.To != "" && st.Current == r.To {
-				return trayNotice{key, "Unravis has been updated to " + r.To, "Click to see what is new.", "whatsnew"}, true
+				out = append(out, trayNotice{key, "Unravis has been updated to " + r.To, "Click to see what is new.", "whatsnew"})
 			}
 		} else {
 			title := "Unravis could not update"
 			if r.To != "" {
 				title += " to " + r.To
 			}
-			return trayNotice{key, title, "You are still on " + st.Current + ". Nothing was lost.", "updates"}, true
+			out = append(out, trayNotice{key, title, "You are still on " + st.Current + ". Nothing was lost.", "updates"})
 		}
 	}
 	if in := st.Install; in != nil {
 		switch {
 		case in.State == "ready" && st.CanInstall && !st.ApplyAuto:
-			return trayNotice{"ready:" + in.Version, "An update is ready", in.Version + " will install when you restart Unravis.", "updates"}, true
+			out = append(out, trayNotice{"ready:" + in.Version, "An update is ready", in.Version + " will install when you restart Unravis.", "updates"})
 		case in.State == "launched" && !byPerson:
-			return trayNotice{"launching:" + in.Version, "Unravis is updating", "It will restart in a moment.", ""}, true
+			out = append(out, trayNotice{"launching:" + in.Version, "Unravis is updating", "It will restart in a moment.", ""})
 		}
 	}
-	return trayNotice{}, false
+	return out
 }
 
 // toldStore remembers which notices were shown, in a small file, so a restart does not show them again.
@@ -246,11 +282,28 @@ type toldStore struct {
 	keys []string
 }
 
-const toldKeep = 12
+const (
+	toldKeep     = 12
+	toldMaxBytes = 8 << 10
+)
+
+// readSmall reads a file of at most max bytes; a bigger or unreadable one gives nil. It never reads more than max+1 bytes.
+func readSmall(path string, max int64) []byte {
+	f, err := os.Open(path) //nolint:gosec // the path is built from the user cache folder, not from input
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil || int64(len(b)) > max {
+		return nil
+	}
+	return b
+}
 
 func openToldStore(path string) *toldStore {
 	s := &toldStore{path: path}
-	if b, err := os.ReadFile(path); err == nil && len(b) < 8<<10 { //nolint:gosec // the path is built from the user cache folder, not from input
+	if b := readSmall(path, toldMaxBytes); b != nil {
 		var f struct {
 			Keys []string `json:"keys"`
 		}
@@ -307,8 +360,15 @@ type noticer struct {
 // onStatus is called with every fresh status. A notice is remembered only after it was handed to the tray, so one asked for before the
 // icon is up is tried again on the next refresh.
 func (n *noticer) onStatus(st server.UpdateStatus) {
-	pick, ok := pickNotice(st, n.byPerson != nil && n.byPerson())
-	if !ok || n.told.has(pick.key) {
+	var pick trayNotice
+	found := false
+	for _, c := range noticeCandidates(st, n.byPerson != nil && n.byPerson()) {
+		if !n.told.has(c.key) {
+			pick, found = c, true
+			break
+		}
+	}
+	if !found {
 		return
 	}
 	note := tray.Notice{Title: clipRunes(pick.title, tray.MaxNoticeTitleRunes), Text: clipRunes(pick.text, tray.MaxNoticeTextRunes)}
@@ -348,14 +408,7 @@ func wireTrayUpdates(ctx context.Context, d *trayDeps, updater *server.Updater, 
 	d.update = cache.get
 	d.checking = cache.checking.Load
 	d.checkUpdates = func() { cache.check(updater.CheckNow) }
-	d.installUpdate = func() error {
-		cache.byPerson.Store(true)
-		err := updater.Install()
-		if err != nil {
-			cache.byPerson.Store(false)
-		}
-		return err
-	}
+	d.installUpdate = func() error { return cache.install(updater.Install) }
 	n := &noticer{told: openToldStore(toldPath()), notify: notify, openTo: d.openTo, byPerson: cache.byPerson.Load, logf: logf}
 	done := make(chan struct{})
 	go func() {

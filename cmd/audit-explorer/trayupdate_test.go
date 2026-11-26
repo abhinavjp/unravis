@@ -353,3 +353,94 @@ func TestWireTrayUpdatesWithNoUpdaterChangesNothing(t *testing.T) {
 		t.Fatal("wired something without an updater")
 	}
 }
+
+func TestAToldResultDoesNotHideALaterNotice(t *testing.T) {
+	r := newNoticeRig(t)
+	r.n.onStatus(doneStatus) // "updated" is told; the result stays in the status until it is dismissed on the Updates page
+	later := doneStatus
+	later.CanInstall = true
+	later.Install = inst("ready", "1.2.0")
+	r.n.onStatus(later)
+	if len(r.shown) != 2 || r.shown[1].Title != "An update is ready" {
+		t.Fatalf("the ready notice was hidden by the old result: %+v", r.shown)
+	}
+	r.n.onStatus(later)
+	if len(r.shown) != 2 {
+		t.Fatalf("repeated: %d", len(r.shown))
+	}
+}
+
+func TestInstallSecondPressDoesNothingAndKeepsByPerson(t *testing.T) {
+	c := newUpdateCache(func() server.UpdateStatus { return server.UpdateStatus{} })
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		done <- c.install(func() error { calls.Add(1); close(started); <-release; return nil })
+	}()
+	<-started
+	if err := c.install(func() error { calls.Add(1); return errors.New("busy") }); err != nil {
+		t.Fatalf("a second press returned %v, want nothing", err)
+	}
+	if calls.Load() != 1 || !c.byPerson.Load() {
+		t.Fatalf("calls=%d byPerson=%v: the second press changed the first install", calls.Load(), c.byPerson.Load())
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInstallFailureClearsByPersonAndCanBePressedAgain(t *testing.T) {
+	c := newUpdateCache(func() server.UpdateStatus { return server.UpdateStatus{} })
+	if err := c.install(func() error { return errors.New("no") }); err == nil || c.byPerson.Load() {
+		t.Fatalf("err=%v byPerson=%v", err, c.byPerson.Load())
+	}
+	if err := c.install(func() error { return nil }); err != nil || !c.byPerson.Load() {
+		t.Fatalf("second try: err=%v byPerson=%v", err, c.byPerson.Load())
+	}
+}
+
+func TestByPersonEndsWhenTheStatusLeavesLaunched(t *testing.T) {
+	var st atomic.Value
+	st.Store(server.UpdateStatus{Install: inst("launched", "1.2.0")})
+	c := newUpdateCache(func() server.UpdateStatus { return st.Load().(server.UpdateStatus) })
+	_ = c.install(func() error { return nil })
+	c.refresh()
+	if !c.byPerson.Load() {
+		t.Fatal("cleared while the setup is still launched")
+	}
+	st.Store(server.UpdateStatus{Install: inst("ready", "1.2.0")}) // the setup was closed without updating
+	c.refresh()
+	if c.byPerson.Load() {
+		t.Fatal("a later automatic launch would stay unannounced")
+	}
+	// A refresh while an install call runs must not clear it.
+	started, release := make(chan struct{}), make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = c.install(func() error { close(started); <-release; return nil })
+	}()
+	<-started
+	c.refresh()
+	if !c.byPerson.Load() {
+		t.Fatal("a refresh during the install cleared byPerson")
+	}
+	close(release)
+	<-done
+}
+
+func TestToldStoreIgnoresAnOversizedFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "t.json")
+	big := []byte(`{"keys":["` + strings.Repeat("a", toldMaxBytes) + `"]}`)
+	if err := os.WriteFile(p, big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s := openToldStore(p); len(s.keys) != 0 {
+		t.Fatalf("an oversized file was read: %d keys", len(s.keys))
+	}
+	if got := readSmall(p, int64(len(big))); len(got) != len(big) {
+		t.Fatalf("a file of exactly the limit was refused (%d)", len(got))
+	}
+}

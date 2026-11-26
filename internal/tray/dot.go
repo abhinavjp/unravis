@@ -41,3 +41,14 @@ func blend(px []byte, b, g, r byte, cov float64) {
 	px[0], px[1], px[2] = mix(px[0], b), mix(px[1], g), mix(px[2], r)
 	px[3] = mix(px[3], 255)
 }
+
+// hasAlpha reports whether the BGRA image has any transparency information. An icon with none (an older, mask-only icon) is left as it is:
+// the dot needs the alpha channel, and guessing would paint black corners.
+func hasAlpha(pix []byte) bool {
+	for i := 3; i < len(pix); i += 4 {
+		if pix[i] != 0 {
+			return true
+		}
+	}
+	return false
+}

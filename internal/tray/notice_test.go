@@ -64,3 +64,14 @@ func TestPaintDotIgnoresTinyOrShortBuffers(t *testing.T) {
 	short := make([]byte, 10)
 	paintDot(short, 32, 32) // must not panic
 }
+
+func TestHasAlpha(t *testing.T) {
+	if hasAlpha(make([]byte, 16)) {
+		t.Fatal("an all-zero image has no alpha")
+	}
+	px := make([]byte, 16)
+	px[11] = 255
+	if !hasAlpha(px) {
+		t.Fatal("an image with one opaque pixel has alpha")
+	}
+}

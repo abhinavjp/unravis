@@ -35,10 +35,11 @@ type reopener struct {
 
 	mu      sync.Mutex
 	last    time.Time
+	lastTo  string
 	warning atomic.Bool
 }
 
-// Reopen handles one open request. Requests closer than reopenMinGap to the
+// Reopen handles one open request. Requests for the same screen closer than reopenMinGap to the
 // last accepted one are dropped.
 func (r *reopener) Reopen() { r.ReopenTo("") }
 
@@ -46,11 +47,12 @@ func (r *reopener) Reopen() { r.ReopenTo("") }
 func (r *reopener) ReopenTo(to string) {
 	r.mu.Lock()
 	t := r.now()
-	if t.Sub(r.last) < reopenMinGap {
+	// A repeat of the same request is dropped; a request for a different screen is not, so a notice click right after another open still works.
+	if t.Sub(r.last) < reopenMinGap && to == r.lastTo {
 		r.mu.Unlock()
 		return
 	}
-	r.last = t
+	r.last, r.lastTo = t, to
 	r.mu.Unlock()
 
 	code, err := r.newCode()

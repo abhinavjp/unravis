@@ -55,7 +55,8 @@
   $effect(() => { if (info) return startUpdateWatch(); });
   // A start link from the tray (or a notice's click) can ask for one screen: the Updates or Blackbox panel, or What's new.
   $effect(() => {
-    if (!info) return;
+    // Wait for the first screen: moving to the start, case or unlock screen puts a side panel away, so a panel opened sooner would close at once.
+    if (!info || app.screen === 'loading') return;
     const to = takeLaunchTarget();
     if (to === 'whatsnew') openWhatsNew(false);
     else if (to) openSidePanel(to);
