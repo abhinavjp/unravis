@@ -60,6 +60,10 @@ func realMain(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return cmdQueue(args[1:], stdout, stderr, environ)
 	case "drain":
 		return cmdDrain(args[1:], stdout, stderr, environ)
+	case "policy":
+		return cmdPolicy(args[1:], stdout, stderr, environ)
+	case "machines":
+		return cmdMachines(args[1:], stdout, stderr, environ)
 	case "compare":
 		return cmdCompare(ctx, args[1:], stdout, stderr, environ)
 	case "claims":
@@ -101,6 +105,11 @@ func usage(w io.Writer) {
   unravis-ci queue list [--state-dir DIR] [--state queued|running|active|done|cancelled|superseded] [--json]
   unravis-ci queue top <id|pr> [--state-dir DIR]
   unravis-ci queue pause|resume [--state-dir DIR]
+  unravis-ci policy set <owner/name> --any|--only m1,m2|--except m1 [--force] [--dry-run] [--state-dir DIR] [--json]
+  unravis-ci policy show <owner/name> [--state-dir DIR] [--json]
+  unravis-ci machines [list] [--state-dir DIR] [--json]
+  unravis-ci machines allow|deny <name> --project owner/name [--force] [--dry-run] [--state-dir DIR] [--json]
+  unravis-ci machines resume <name> [--state-dir DIR] [--json]
   unravis-ci compare [--repo owner/name] [--state DIR] [--limit N] [--json] [--workflow-for base=file.yml]... [--context file.yml=name]...
   unravis-ci claims [--repo owner/name] [--clean]
   unravis-ci fallback <pr> [--repo owner/name] [--dry-run] [--workflow-for base=file.yml]...
