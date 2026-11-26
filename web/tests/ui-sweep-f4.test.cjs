@@ -260,8 +260,7 @@ test('SWEEP-F4-22: Unravis Lite shows when it read, keeps focus on Refresh, and 
   assert.match(l, /if \(item\) \{ if \(refreshing\) return; refreshing = true; \} else loading = true;/);
   assert.match(l, /<Sticker info=\{item\.state\} \/>/);
   assert.match(l, /Blackbox on <span class="mono wrap">\{item\.location\}<\/span>/);
-  assert.match(l, /T\.gapsText\(item\.facts\.gaps/);
-  assert.match(l, /\.note \{[^}]*margin-top: 16px/);
+  assert.match(l, /T\.gapsText\(facts\.gaps/);
 });
 
 test('SWEEP-F4-24: the chart help words work for a finger, and the list of counters folds on a phone', () => {

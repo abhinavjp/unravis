@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -72,7 +72,7 @@ func TestInfoOverlayServesVersionAndPassesTheRestThrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
 		t.Fatalf("served: %d %q %s", resp.StatusCode, resp.Header.Get("Content-Type"), body)
@@ -90,7 +90,7 @@ func TestTwoLitesAndBusyPortsDoNotClash(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer l.Close()
+		defer func() { _ = l.Close() }()
 		busy = append(busy, l)
 	}
 	ports := map[int]bool{}
@@ -112,7 +112,7 @@ func TestTwoLitesAndBusyPortsDoNotClash(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer l.Close()
+		defer func() { _ = l.Close() }()
 		add(l)
 	}
 	if len(ports) != 4 {
@@ -122,7 +122,7 @@ func TestTwoLitesAndBusyPortsDoNotClash(t *testing.T) {
 	taken := busy[0].Addr().(*net.TCPAddr).Port
 	l, err := listenLocal(taken)
 	if err == nil {
-		l.Close()
+		_ = l.Close()
 		t.Fatal("a port that is taken must be refused")
 	}
 	if !strings.Contains(err.Error(), strconv.Itoa(taken)) {
@@ -216,7 +216,7 @@ func snapshotDir(t *testing.T, dir string) string {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(&b, "%s|%d|%d;", p, info.Size(), info.ModTime().UnixNano())
+		_, _ = fmt.Fprintf(&b, "%s|%d|%d;", p, info.Size(), info.ModTime().UnixNano())
 		return nil
 	})
 	if err != nil {
