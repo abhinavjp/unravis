@@ -247,6 +247,11 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 		if !CommitsByOwner(owner, commits) {
 			trust.FromBase = true
 			note("not every commit of the branch was written and committed by %s: treated like a collaborator's pull request", owner)
+		} else if ok, why := HeadPushedByOwner(ctx, o.Host, o.Repo, owner, pr); !ok {
+			// The logins in a commit are text. Only a head commit that the host's own record says the owner
+			// pushed gets the owner's trust; any doubt, a failed lookup included, is the untrusted path.
+			trust.FromBase = true
+			note("%s: treated like a collaborator's pull request", why)
 		}
 	}
 	if trust.FromBase && !TrustedBase(pr.BaseRef, o.trustedBases()) {

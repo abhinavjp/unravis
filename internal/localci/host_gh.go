@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strings"
 )
@@ -110,6 +112,51 @@ func parseCommitList(out string) []PRCommit {
 		commits = append(commits, PRCommit{SHA: "(more commits than the host lists)"})
 	}
 	return commits
+}
+
+// ghPushListMax is how many push records of one branch HeadPusher asks for. The head commit is the newest push
+// of its branch, so it is on the first page; a head that is not there has no pusher on record.
+const ghPushListMax = 100
+
+// HeadPusher implements Host with the repository activity feed (repos/{repo}/activity), which records, for each
+// push to a branch, the new tip and the account that pushed it.
+func (h *GHHost) HeadPusher(ctx context.Context, repo, headRef, headSHA string) (string, error) {
+	if _, _, ok := splitRepo(repo); !ok {
+		return "", fmt.Errorf("repository %q is not owner/name", repo)
+	}
+	if headRef == "" || headSHA == "" {
+		return "", errors.New("the pull request has no head branch or head commit to look up")
+	}
+	// The branch name is outside the owner's control (a collaborator picks it), so it is escaped as one query
+	// value: an "&" or "#" in a name must not add or cut a parameter. The jq program is fixed.
+	path := fmt.Sprintf("repos/%s/activity?ref=%s&direction=desc&per_page=%d", repo, url.QueryEscape("refs/heads/"+headRef), ghPushListMax)
+	out, err := h.gh(ctx, "api", path, "--jq", `.[] | [.after, .activity_type, (.actor.login // "")] | @tsv`)
+	if err != nil {
+		return "", err
+	}
+	events, err := parsePushEvents(string(out))
+	if err != nil {
+		return "", err
+	}
+	return PusherOf(headSHA, events), nil
+}
+
+// parsePushEvents reads the tab separated lines HeadPusher asks gh for, newest first. A line that is not three
+// fields is an error, not a line to skip: a skipped line could be the newer push of somebody else.
+func parsePushEvents(out string) ([]PushEvent, error) {
+	var events []PushEvent
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) != 3 {
+			return nil, fmt.Errorf("the push record has an unreadable line (%d fields)", len(f))
+		}
+		events = append(events, PushEvent{After: f[0], Type: f[1], Actor: f[2]})
+	}
+	return events, nil
 }
 
 // CloneURL implements Host.

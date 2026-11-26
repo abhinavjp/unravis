@@ -187,3 +187,22 @@ func TestLiveClaimsReleaseOnCancel(t *testing.T) {
 	}
 	_ = h.DeleteRef(ctx, repo, RefNSAgent, "m-live000a")
 }
+
+// TestLiveHeadPusher asks the real host who pushed a head commit: LOCALCI_LIVE_PUSH_BRANCH and
+// LOCALCI_LIVE_PUSH_SHA name a branch of LOCALCI_LIVE_REPO and its tip, LOCALCI_LIVE_PUSH_WANT is the login that
+// pushed it. It also checks that a commit that was never pushed to the branch has no pusher. Read-only.
+func TestLiveHeadPusher(t *testing.T) {
+	h, repo := liveSetup(t)
+	branch, sha, want := os.Getenv("LOCALCI_LIVE_PUSH_BRANCH"), os.Getenv("LOCALCI_LIVE_PUSH_SHA"), os.Getenv("LOCALCI_LIVE_PUSH_WANT")
+	if branch == "" || sha == "" || want == "" {
+		t.Skip("LOCALCI_LIVE_PUSH_BRANCH, LOCALCI_LIVE_PUSH_SHA and LOCALCI_LIVE_PUSH_WANT are not set")
+	}
+	ctx := context.Background()
+	got, err := h.H.HeadPusher(ctx, repo, branch, sha)
+	if err != nil || got != want {
+		t.Fatalf("HeadPusher(%s, %s) = %q, %v; want %q", branch, sha, got, err, want)
+	}
+	if got, err := h.H.HeadPusher(ctx, repo, branch, randHex(20)); err != nil || got != "" {
+		t.Fatalf("a commit that was never pushed has no pusher: %q, %v", got, err)
+	}
+}

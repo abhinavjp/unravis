@@ -1,6 +1,7 @@
 package localci
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -53,6 +54,57 @@ func CommitsByOwner(owner string, commits []PRCommit) bool {
 		}
 	}
 	return true
+}
+
+// PushEvent is one record of a push to a branch: the commit the branch pointed to afterwards, what kind of push
+// it was (the host's word, such as "push" or "force_push"), and the account that pushed.
+type PushEvent struct {
+	After string
+	Type  string
+	Actor string
+}
+
+// pushKinds are the records that put a commit on a branch. Other records (a branch deleted, a pull request
+// merged into it) say nothing about who pushed a branch's head.
+var pushKinds = map[string]bool{"push": true, "force_push": true, "branch_creation": true}
+
+// PusherOf returns the account that pushed headSHA, from push records listed newest first: the newest
+// record of a push kind whose tip is headSHA. It returns "" when no record shows that push, or when the record
+// names no account. It never guesses from an older or a different push.
+func PusherOf(headSHA string, events []PushEvent) string {
+	headSHA = strings.TrimSpace(headSHA)
+	if headSHA == "" {
+		return ""
+	}
+	for _, e := range events {
+		if pushKinds[e.Type] && strings.EqualFold(strings.TrimSpace(e.After), headSHA) {
+			return strings.TrimSpace(e.Actor)
+		}
+	}
+	return ""
+}
+
+// HeadPushedByOwner reports whether the host's own record says that owner pushed the head commit of pr, as
+// the second proof that a branch is the owner's, next to CommitsByOwner. The logins in a commit are text its
+// pusher wrote, so a collaborator who forges the owner's identity passes CommitsByOwner; the pusher is the
+// account that held the credentials. It fails closed: a lookup error, an empty answer or any other account
+// is false, and the reason says which.
+func HeadPushedByOwner(ctx context.Context, h Host, repo, owner string, pr PullRequest) (bool, string) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return false, "the owner of the repository is unknown"
+	}
+	pusher, err := h.HeadPusher(ctx, repo, pr.HeadRef, pr.HeadSHA)
+	if err != nil {
+		return false, fmt.Sprintf("cannot tell who pushed the head commit: %v", err)
+	}
+	if pusher == "" {
+		return false, "the host has no record of who pushed the head commit"
+	}
+	if !strings.EqualFold(pusher, owner) {
+		return false, fmt.Sprintf("the head commit was pushed by %s, not by %s", pusher, owner)
+	}
+	return true, ""
 }
 
 // TrustedBase reports whether base is one of the branches whose content the runner may take the runner

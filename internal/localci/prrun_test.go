@@ -20,8 +20,28 @@ type fakeHost struct {
 	// commits are what the host lists for the pull request; nil means one commit written by the author.
 	commits    []PRCommit
 	commitsErr error
-	url        string
-	asked      int
+	// pusher is who the host says pushed the head commit; empty means the author of the pull request.
+	// noPusher makes the host answer "no record"; pusherErr makes the lookup fail.
+	pusher      string
+	noPusher    bool
+	pusherErr   error
+	pusherAsked []string // "ref@sha" of every HeadPusher call
+	url         string
+	asked       int
+}
+
+func (f *fakeHost) HeadPusher(_ context.Context, _, headRef, headSHA string) (string, error) {
+	f.pusherAsked = append(f.pusherAsked, headRef+"@"+headSHA)
+	if f.pusherErr != nil {
+		return "", f.pusherErr
+	}
+	if f.noPusher {
+		return "", nil
+	}
+	if f.pusher != "" {
+		return f.pusher, nil
+	}
+	return f.pr.Author, nil
 }
 
 func (f *fakeHost) Commits(context.Context, string, int) ([]PRCommit, error) {
@@ -328,6 +348,62 @@ func TestRunPROwnerPRWithAForeignCommitRunsTheBaseDefinition(t *testing.T) {
 	}
 	if !exists(filepath.Join(opts.Store.CachesPath(), "go-build")) || exists(opts.Store.UntrustedCachesPath()) && exists(filepath.Join(opts.Store.UntrustedCachesPath(), "go-build")) {
 		t.Fatal("the owner's run uses the owner's caches")
+	}
+}
+
+// TestRunPROwnerLoginsPushedBySomebodyElseRunsTheBaseDefinition is the test for RV-SEC-3: every commit of the
+// branch carries the owner's login (a collaborator can write any identity into a commit), but the host's record
+// says somebody else pushed the head, or says nothing, or cannot be asked. None of these may run the
+// pull request's own workflow files or use the owner's caches.
+func TestRunPROwnerLoginsPushedBySomebodyElseRunsTheBaseDefinition(t *testing.T) {
+	needBash(t)
+	o := newOrigin(t)
+	for name, tweak := range map[string]func(*fakeHost){
+		"a collaborator pushed it":          func(h *fakeHost) { h.pusher = "alice" },
+		"owner commits, other pusher login": func(h *fakeHost) { h.pusher = "mallory" },
+		"no record of the push":             func(h *fakeHost) { h.noPusher = true },
+		"the lookup failed":                 func(h *fakeHost) { h.pusherErr = errors.New("gh: 502") },
+		"the owner pushed other people's commits": func(h *fakeHost) {
+			h.commits = []PRCommit{{SHA: strings.Repeat("a", 40), AuthorLogin: "alice", CommitterLogin: "alice"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := &fakeHost{pr: okPR(o, 3, o.evil, "acme"), commits: []PRCommit{{SHA: strings.Repeat("a", 40), AuthorLogin: "acme", CommitterLogin: "acme"}}}
+			tweak(h)
+			opts, console := prOptions(t, o, h)
+			res, err := RunPR(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("%v\n%s", err, console.String())
+			}
+			log := logOf(t, opts.Store, res.RunID, "go")
+			if !strings.Contains(log, "workflow=base") || strings.Contains(log, "workflow=PR") {
+				t.Fatalf("a head the owner did not push must run the base definition:\n%s", log)
+			}
+			if !exists(filepath.Join(opts.Store.UntrustedCachesPath(), "go-build")) || exists(filepath.Join(opts.Store.CachesPath(), "go-build")) {
+				t.Fatal("such a run must use the caches kept apart from the owner's")
+			}
+		})
+	}
+	// without a trusted base the same pull request is refused, not run
+	h := &fakeHost{pr: okPR(o, 3, o.evil, "acme"), pusher: "alice"}
+	opts, _ := prOptions(t, o, h)
+	opts.Workflows, opts.Workflow = nil, "fast-gate.yml"
+	res, err := RunPR(context.Background(), opts)
+	if err != nil || res.Run.Conclusion != "failure" || !strings.Contains(res.Entry.Reason, "trusts") {
+		t.Fatalf("%v %+v", err, res)
+	}
+	// the owner pushed the head: the pull request's own definition, and the host was asked about this very head
+	h = &fakeHost{pr: okPR(o, 3, o.evil, "acme"), pusher: "ACME"}
+	opts, _ = prOptions(t, o, h)
+	res, err = RunPR(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logOf(t, opts.Store, res.RunID, "go"), "workflow=PR") {
+		t.Fatal("a head pushed by the owner keeps the owner's definition")
+	}
+	if len(h.pusherAsked) != 1 || h.pusherAsked[0] != "feature@"+o.evil {
+		t.Fatalf("the host must be asked about the head branch and commit that run: %v", h.pusherAsked)
 	}
 }
 
