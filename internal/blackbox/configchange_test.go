@@ -242,8 +242,8 @@ func TestPendingChangeIsFinishedByTheNextCommand(t *testing.T) {
 	if err := writePending(dir, pendingMark{Seq: 1, Snapshot: snap, Detail: "collector web.iis off"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.m.RollbackConfig(); !reasonIs(err, ReasonNothingToRollBack) {
-		t.Fatalf("%v", err) // the unfinished change is finished first, and then there is nothing earlier to go back to
+	if _, err := g.m.RollbackConfig(); !reasonIs(err, ReasonChangeRefused) {
+		t.Fatalf("%v", err) // the unfinished change is undone first, and rollback stops there
 	}
 	if hashConfig(g.installedCfg(t)) != hashConfig(orig) {
 		t.Fatal("the unfinished change was not undone")
@@ -345,8 +345,8 @@ func TestAFailedRollBackKeepsTheMarkerAndTheNextCommandFinishesIt(t *testing.T) 
 	}
 	g.env.aliveFails = 0
 	g.m.Env = g.env
-	// Any change command finishes the unfinished roll-back first.
-	if _, err := g.m.RollbackConfig(); !reasonIs(err, ReasonNothingToRollBack) {
+	// Any change command finishes the unfinished roll-back first; a rollback command stops after that.
+	if _, err := g.m.RollbackConfig(); !reasonIs(err, ReasonChangeRefused) {
 		t.Fatalf("%v", err)
 	}
 	if hashConfig(g.installedCfg(t)) != before {
@@ -426,5 +426,74 @@ func TestOnlyTheNewestTwentySnapshotsAreKept(t *testing.T) {
 	}
 	if h, _ := g.m.History(); len(h.Lines) != historyKeep || !h.Verified {
 		t.Errorf("history shows %d lines", len(h.Lines))
+	}
+}
+
+func TestRollbackAfterAnUnfinishedChangeDoesNotUndoTheOneBefore(t *testing.T) {
+	g := changeRig(t)
+	if _, err := g.m.ChangeConfig(off("web.iis")); err != nil { // change 1, finished
+		t.Fatal(err)
+	}
+	afterFirst := hashConfig(g.installedCfg(t))
+	dir := g.changeDir()
+	snap, err := writeSnapshot(dir, 2, g.installedCfg(t)) // change 2 starts, saves, and its process dies
+	if err != nil {
+		t.Fatal(err)
+	}
+	every := 300
+	changed, _ := (ChangeOp{Verb: OpCollector, ID: "web.apppool", EverySec: &every}).Apply(g.installedCfg(t))
+	if err := SaveConfig(g.p.ConfigPath, changed, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePending(dir, pendingMark{Seq: 2, Snapshot: snap, Detail: "collector web.apppool"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.m.RollbackConfig(); !reasonIs(err, ReasonChangeRefused) {
+		t.Fatalf("%v", err)
+	}
+	if hashConfig(g.installedCfg(t)) != afterFirst {
+		t.Fatal("rollback after an unfinished change undid more than that change")
+	}
+}
+
+func TestARecoveryThatDiedBeforeRemovingItsMarkerIsNotDoneTwice(t *testing.T) {
+	g := changeRig(t)
+	dir := g.changeDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Change 1 ended as rollback-failed, was recovered (line 2 says so), and the process died before the marker went.
+	l1, err := appendAudit(dir, AuditLine{Who: "x", Verb: OpCollector, Detail: "collector web.iis off", Result: "rollback-failed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appendAudit(dir, AuditLine{Who: "x", Verb: "recover", Detail: "x", Result: "recovered", Ref: l1.Seq}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePending(dir, pendingMark{Seq: l1.Seq, Snapshot: snapName(l1.Seq), Detail: "x"}); err != nil { // snapshot is gone
+		t.Fatal(err)
+	}
+	on := true
+	_, _ = g.m.ChangeConfig(ChangeOp{Verb: OpCollector, ID: "web.iis", On: &on}) // any command runs the recovery check
+	h, _ := g.m.History()
+	for _, l := range h.Lines {
+		if l.Result == "recover-failed" {
+			t.Fatalf("a spurious recover-failed line: %+v", l)
+		}
+	}
+	if h.Pending {
+		t.Error("the marker was not cleared")
+	}
+}
+
+func TestCutTextKeepsWholeCharacters(t *testing.T) {
+	if got := CutText("aé", 2); got != "a" {
+		t.Errorf("%q", got)
+	}
+	if got := CutText("héllo", 3); got != "hé" {
+		t.Errorf("%q", got)
+	}
+	if got := CutText("abc", 10); got != "abc" {
+		t.Errorf("%q", got)
 	}
 }

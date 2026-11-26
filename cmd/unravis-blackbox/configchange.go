@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -124,10 +123,7 @@ func cleanText(s string, max int) string {
 		}
 		return r
 	}, s)
-	if len(s) > max {
-		s = s[:max]
-	}
-	return s
+	return blackbox.CutText(s, max)
 }
 
 const validateMaxBytes = 1 << 20
@@ -137,7 +133,7 @@ const validateMaxBytes = 1 << 20
 // settings file. Every failure to read says the same sentence, so the answer tells nobody what exists on the disk.
 func validateFile(path string) (blackbox.Config, error) {
 	bad := fmt.Errorf("That file cannot be read as Blackbox settings. Give the full path of an ordinary settings file on this PC: %w", blackbox.ErrInvalidConfig)
-	if !filepath.IsAbs(path) || strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") || strings.ContainsAny(path, "\x00") {
+	if !validatePathAllowed(path) {
 		return blackbox.Config{}, bad
 	}
 	fi, err := os.Lstat(path)

@@ -391,3 +391,20 @@ func TestConfigVerbsTakeOnlyTheirOwnFlagsAndValidateOpensOnlyOrdinaryFiles(t *te
 		}
 	}
 }
+
+func TestWindowsPathRulesForValidate(t *testing.T) {
+	good := []string{`C:\ProgramData\x.json`, `d:/data/x.json`, `E:\a b\c.json`}
+	bad := []string{`\??\UNC\host\share\x.json`, `\\host\share\x.json`, `\\?\C:\x.json`, `\\.\pipe\x`, `C:x.json`, `\x.json`, `C:`, `C:\`,
+		`C:\a.json:stream`, `C:\a\..\b.json`, `C:\CON`, `C:\dir\nul.json`, `C:\dir\COM1.txt`, `C:\dir\aux `, `C:\x\?.json`, "C:\\x\x00.json", `1:\x.json`,
+		`//host/share/x.json`, `C:\LPT9`, `C:\CONIN$`}
+	for _, p := range good {
+		if !windowsPathOK(p) {
+			t.Errorf("%q was refused", p)
+		}
+	}
+	for _, p := range bad {
+		if windowsPathOK(p) {
+			t.Errorf("%q was accepted", p)
+		}
+	}
+}

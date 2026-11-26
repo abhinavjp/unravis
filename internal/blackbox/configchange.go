@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // B5: small, checked settings changes with a history, an undo, an automatic roll-back and a hash-chained audit file.
@@ -184,10 +185,18 @@ func oneLine(s string) string {
 		}
 		return r
 	}, s)
-	if len(s) > 200 {
-		s = s[:200]
+	return CutText(s, 200)
+}
+
+// CutText cuts s to at most n bytes without splitting a UTF-8 character.
+func CutText(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return s
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // ---- audit chain ----
@@ -199,9 +208,10 @@ type AuditLine struct {
 	Who    string    `json:"who"`
 	Verb   string    `json:"verb"`
 	Detail string    `json:"detail"`
-	Before string    `json:"before"` // SHA-256 of the settings before
-	After  string    `json:"after"`  // SHA-256 of the settings after (equals Before when nothing changed)
-	Result string    `json:"result"` // applied, rolled-back, rollback, refused, recovered
+	Before string    `json:"before"`        // SHA-256 of the settings before
+	After  string    `json:"after"`         // SHA-256 of the settings after (equals Before when nothing changed)
+	Result string    `json:"result"`        // applied, rolled-back, rollback, refused, recovered
+	Ref    int       `json:"ref,omitempty"` // for a recovery line: the number of the unfinished change it dealt with
 	Prev   string    `json:"prev"`
 	Hash   string    `json:"hash"`
 }
@@ -452,22 +462,35 @@ const staleLock = 6 * time.Minute
 
 const lockFileName = "lock"
 
-// acquireChangeLock takes the one lock of the change folder (created exclusively). A lock older than staleLock belongs
-// to a process that died and is taken over. The returned func releases it.
+// acquireChangeLock takes the one lock of the change folder (created exclusively and kept open until release). On
+// Windows an open file cannot be deleted by another process, so a live owner's lock cannot be taken over; a lock older
+// than staleLock whose owner is gone can. Release removes the file only if it is still the one this process made.
 func acquireChangeLock(dir string) (release func(), err error) {
 	path := filepath.Join(dir, lockFileName)
 	for try := 0; try < 2; try++ {
 		f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // program folder
 		if e == nil {
 			_, _ = f.WriteString(strconv.Itoa(os.Getpid()))
-			_ = f.Close()
-			return func() { _ = os.Remove(path) }, nil
+			return func() {
+				mine := false
+				if fi, e1 := f.Stat(); e1 == nil {
+					if cur, e2 := os.Lstat(path); e2 == nil && os.SameFile(fi, cur) {
+						mine = true
+					}
+				}
+				_ = f.Close()
+				if mine {
+					_ = os.Remove(path)
+				}
+			}, nil
 		}
 		if !errors.Is(e, os.ErrExist) {
 			return nil, applySaveError(e)
 		}
 		if fi, serr := os.Lstat(path); serr == nil && time.Since(fi.ModTime()) > staleLock {
-			_ = os.Remove(path)
+			if os.Remove(path) != nil {
+				break // still held open by a live process
+			}
 			continue
 		}
 		break
@@ -528,8 +551,13 @@ func (m *Manager) change(op ChangeOp, next func(cur Config, dir string) (Config,
 	}
 	defer release()
 	// Holding the lock means no other change is running: a marker that is still here belongs to one that died.
-	if err := m.recoverPending(progDir, dir); err != nil {
+	recovered, err := m.recoverPending(progDir, dir)
+	if err != nil {
 		return res, err
+	}
+	if recovered && op.Verb == OpRollback {
+		// The unfinished change was the one to undo. Going on would undo the change before it as well.
+		return res, refused("An earlier change had not finished. It was undone now. Nothing else was rolled back.")
 	}
 	installed := installedPaths(progDir).ConfigPath
 	cur, err := LoadConfig(installed)
@@ -641,64 +669,77 @@ func writePending(dir string, p pendingMark) error {
 
 // recoverPending finishes a change whose process died (the caller holds the lock, so no other change is running): the
 // settings of the snapshot (collectors and counters.extra only) are applied again and one line is written. When the
-// audit already has the line, the change did finish and only the marker is removed.
-func (m *Manager) recoverPending(_ string, dir string) error {
+// audit already has the line, the change did finish and only the marker is removed. It reports whether it undid a
+// change.
+func (m *Manager) recoverPending(_ string, dir string) (recovered bool, err error) {
 	b, err := os.ReadFile(filepath.Join(dir, pendingFileName)) //nolint:gosec // program folder
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return applySaveError(err)
+		return false, applySaveError(err)
 	}
-	remove := func() { _ = os.Remove(filepath.Join(dir, pendingFileName)) }
-	fail := func(why string) error {
-		_, aerr := appendAudit(dir, AuditLine{Who: "local-admin", Verb: "recover", Detail: "an unfinished change could not be undone (" + why + ")", Result: "recover-failed"})
-		remove()
-		return aerr
+	removeMarker := func() { _ = os.Remove(filepath.Join(dir, pendingFileName)) }
+	fail := func(why string, seq int) (bool, error) {
+		_, aerr := appendAudit(dir, AuditLine{Who: "local-admin", Verb: "recover", Detail: "an unfinished change could not be undone (" + why + ")", Result: "recover-failed", Ref: seq})
+		if aerr == nil {
+			removeMarker()
+		}
+		return false, aerr
 	}
 	var p pendingMark
 	if json.Unmarshal(b, &p) != nil || p.Seq < 1 || p.Snapshot != snapName(p.Seq) {
-		return fail("the marker is not valid")
+		return fail("the marker is not valid", 0)
 	}
-	detail := oneLine(p.Detail)
-	if len(detail) > 120 {
-		detail = detail[:120]
-	}
+	detail := CutText(oneLine(p.Detail), 120)
 	lines, problem, rerr := ReadAudit(dir)
 	if rerr != nil {
-		return applySaveError(rerr)
+		return false, applySaveError(rerr)
 	}
 	if problem != "" {
-		return auditBroken(problem)
+		return false, auditBroken(problem)
 	}
-	if len(lines) >= p.Seq && lines[p.Seq-1].Result != "rollback-failed" {
-		remove() // the change finished and wrote its line; only the marker was left
-		return nil
+	finished := len(lines) >= p.Seq && lines[p.Seq-1].Result != "rollback-failed"
+	for _, l := range lines {
+		if l.Ref == p.Seq && (l.Result == "recovered" || l.Result == "recover-failed") {
+			finished = true // an earlier recovery wrote its line and died before it removed the marker
+		}
+	}
+	if finished {
+		removeMarker() // the change finished and wrote its line; only the marker was left
+		_ = os.Remove(filepath.Join(dir, p.Snapshot))
+		return false, nil
 	}
 	data, err := os.ReadFile(filepath.Join(dir, p.Snapshot)) //nolint:gosec // program folder
 	if err != nil {
-		return fail("its snapshot is missing")
+		return fail("its snapshot is missing", p.Seq)
 	}
 	snap, err := ParseConfig(data)
 	if err != nil {
-		return fail("its snapshot is not valid")
+		return fail("its snapshot is not valid", p.Seq)
 	}
 	installed := installedPaths(filepath.Dir(dir)).ConfigPath
 	cur, err := LoadConfig(installed)
 	if err != nil {
-		return err
+		return false, err
 	}
 	old, err := tunables(cur, snap)
 	if err != nil {
-		return fail("the snapshot does not fit the settings now in force")
+		return fail("the snapshot does not fit the settings now in force", p.Seq)
 	}
-	if _, err := m.ApplyConfig(old); err != nil {
-		return err // the marker stays; the next command tries again
+	if hashConfig(old) != hashConfig(cur) { // nothing to put back when the dead process had not saved yet
+		if _, err := m.ApplyConfig(old); err != nil {
+			return false, &ApplyError{Reason: ReasonRestartFailed, Cause: err,
+				Message: "An earlier change did not finish and could not be undone now (the recorder would not restart). Start the recorder or fix it, then run any config command again."}
+		}
 	}
+	_, aerr := appendAudit(dir, AuditLine{Who: "local-admin", Verb: "recover", Detail: detail + " (the process that made it did not finish)", After: hashConfig(old), Result: "recovered", Ref: p.Seq})
+	if aerr != nil {
+		return false, aerr
+	}
+	removeMarker()
 	_ = os.Remove(filepath.Join(dir, p.Snapshot)) // it equals the settings now in force
-	_, aerr := appendAudit(dir, AuditLine{Who: "local-admin", Verb: "recover", Detail: detail + " (the process that made it did not finish)", After: hashConfig(old), Result: "recovered"})
-	remove()
-	return aerr
+	return true, nil
 }
 
 // ConfigHistory is what `config history` shows: the newest changes (at most historyKeep) and whether the chain verifies.
