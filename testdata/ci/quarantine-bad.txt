@@ -1,0 +1,3 @@
+p/b.TestBrandNew BL-593 until=2026-11-01 expired
+not a line
+p/b.TestBrandNew until=2026-12-10 no id
