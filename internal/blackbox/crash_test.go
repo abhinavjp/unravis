@@ -51,24 +51,34 @@ func crashEvents(t *testing.T, folder string) []Event {
 	return out
 }
 
-func runHostOnce(t *testing.T, g *hostRig) {
+// The start of RunHost that matters here, with no server and no collector, so it runs on every
+// OS (RunHost itself is only exercised on Windows, see crash_runhost_windows_test.go).
+func startReportStop(t *testing.T, folder string) {
 	t.Helper()
-	o := g.opts()
-	o.CrashCapture = true
-	g.start(t, o)
-	select {
-	case <-g.ready:
-	case <-time.After(5 * time.Second):
-		t.Fatal("server never listened")
+	if err := os.MkdirAll(folder, 0o750); err != nil {
+		t.Fatal(err)
 	}
-	if err := g.stop(t); err != nil {
+	logf := func(f string, a ...any) { t.Logf(f, a...) }
+	c := startCrashCapture(folder, logf)
+	defer c.CloseUnlessPanic()
+	s, err := OpenStore(folder, StoreOptions{Name: "box", Version: "test", Host: "H", IntervalSeconds: 15, RunID: newRunID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportPreviousCrashes(s, folder, logf)
+	if err := s.Close("stopped"); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCrashedRecorderIsReportedOnceAtTheNextStart(t *testing.T) {
-	g := newHostRig(t)
-	folder := g.cfg.Folder
+	crashReportedOnce(t, filepath.Join(t.TempDir(), "rec"), startReportStop)
+}
+
+// restart is one start of the recorder on the folder: it turns the crash record on, opens the
+// store and reports earlier crashes, then stops.
+func crashReportedOnce(t *testing.T, folder string, restart func(t *testing.T, folder string)) {
+	t.Helper()
 	if err := os.MkdirAll(folder, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +99,7 @@ func TestCrashedRecorderIsReportedOnceAtTheNextStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runHostOnce(t, g)
+	restart(t, folder)
 
 	evs := crashEvents(t, folder)
 	if len(evs) != 1 || !strings.HasPrefix(evs[0].Detail, "crashes=1 at=") {
@@ -114,9 +124,7 @@ func TestCrashedRecorderIsReportedOnceAtTheNextStart(t *testing.T) {
 	}
 
 	// A start after that reports nothing new.
-	g2 := newHostRig(t)
-	g2.cfg.Folder = folder
-	runHostOnce(t, g2)
+	restart(t, folder)
 	if evs := crashEvents(t, folder); len(evs) != 1 {
 		t.Fatalf("a second start reported the same crash again: %+v", evs)
 	}
