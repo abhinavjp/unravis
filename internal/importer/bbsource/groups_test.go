@@ -91,13 +91,13 @@ func TestGroupsBecomeCountersWithTheWindowsNames(t *testing.T) {
 	}
 }
 
-func TestABadGroupNumberLeavesOutTheSampleButKeepsItsStamp(t *testing.T) {
+func TestABadGroupNumberLeavesOutOnlyThatNumber(t *testing.T) {
 	bad := `{"v":1,"run":"r","seq":1,"t":"2001-09-09T01:47:00Z","cpu":5,"tcp":{"retransmitsPerSec":-3}}` + "\n"
 	evs, rep, err := parse(t, bad+good2, importer.Options{Limits: importer.Limits{MaxRejectFraction: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Rejected != 1 || len(counters(evs, "% Processor Time")) != 1 {
+	if rep.Rejected != 1 || len(counters(evs, "% Processor Time")) != 2 || find(evs, "Blackbox TCP", "Retransmits/sec", "") != nil {
 		t.Errorf("rejected %d, cpu events %d", rep.Rejected, len(counters(evs, "% Processor Time")))
 	}
 	starts := 0

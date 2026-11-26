@@ -76,3 +76,50 @@ func TestDumpFilesShowOnceAndNeverByName(t *testing.T) {
 		t.Error("existing dumps must be said")
 	}
 }
+
+func TestLogEntriesSurviveABadFigureOrABadNeighbour(t *testing.T) {
+	m := `"cpu":-1,"events":{"events":[{"channel":1,"eventId":1,"level":3,"count":1,"t":"2001-09-09T01:47:10Z"},` +
+		`{"channel":1,"eventId":2,"level":3,"count":1,"t":"garbage"},{"channel":2,"eventId":3,"level":3,"count":1,"t":"2001-09-09T01:47:11Z"}],"lost":4}`
+	evs, rep, err := parse(t, groupSample(1, "2001-09-09T01:47:15Z", m)+good2, importer.Options{Limits: importer.Limits{MaxRejectFraction: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(ofKind(evs, KindWinEvent)); n != 2 {
+		t.Errorf("%d event log entries, want the 2 valid ones", n)
+	}
+	if rep.Rejected != 1 {
+		t.Errorf("rejected %d: the bad figure still counts", rep.Rejected)
+	}
+	for _, g := range []string{GapRecorderLoss, GapNoProvider, GapGroupDamaged} {
+		if !contains(rep.KnownGaps, g) {
+			t.Errorf("known gap missing: %s", g)
+		}
+	}
+}
+
+func TestSQLKindsAndSeveritiesMatchTheSQLImporters(t *testing.T) {
+	m := `"sqlLog":{"errors":[{"instance":"x","kind":"error","number":18456,"severity":14,"count":3,"t":"2001-09-09T01:47:10Z"}],` +
+		`"health":[{"instance":"x","kind":"nonyield","count":1,"t":"2001-09-09T01:47:11Z"}]}`
+	evs, _, err := parse(t, groupSample(1, "2001-09-09T01:47:15Z", m), importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := ofKind(evs, "login-failed"); len(l) != 1 || l[0].Severity != "warning" || len(l[0].Attrs) != 0 {
+		t.Errorf("login failed %+v", l)
+	}
+	if n := ofKind(evs, "non-yielding"); len(n) != 1 || n[0].Severity != "error" {
+		t.Errorf("non-yielding %+v", n)
+	}
+}
+
+func TestADumpStillBeingWrittenIsOneDump(t *testing.T) {
+	a := `"dumps":{"dumps":[{"name":"w3wp.dmp","size":800,"mtime":"2001-09-09T01:47:10Z"}]}`
+	b := `"dumps":{"dumps":[{"name":"w3wp.dmp","size":2000,"mtime":"2001-09-09T01:47:40Z"}]}`
+	evs, _, err := parse(t, groupSample(1, "2001-09-09T01:47:15Z", a)+groupSample(2, "2001-09-09T01:47:45Z", b), importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(ofKind(evs, KindDumpFile)); n != 1 {
+		t.Errorf("%d dump events, want 1", n)
+	}
+}

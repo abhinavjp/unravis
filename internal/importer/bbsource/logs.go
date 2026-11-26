@@ -33,6 +33,9 @@ const (
 
 const maxLogEntries = 256 // per group and sample
 
+// errLoginFailed is SQL Server error 18456, which the ERRORLOG importer reads as a failed login.
+const errLoginFailed = 18456
+
 type winEventEntry struct {
 	Channel uint8     `json:"channel"`
 	EventID uint32    `json:"eventId"`
@@ -60,6 +63,21 @@ type dumpEntry struct {
 	Name  string    `json:"name"` // used only to tell one dump from another; never copied
 	Size  int64     `json:"size"`
 	MTime time.Time `json:"mtime"`
+}
+
+// decodeEach decodes a list entry by entry, so one damaged entry (a time that does not parse, a wrong type) costs only
+// itself.
+func decodeEach[T any](raw []json.RawMessage, nt *notes) []T {
+	out := make([]T, 0, len(raw))
+	for _, r := range raw {
+		var v T
+		if json.Unmarshal(r, &v) != nil {
+			nt.damaged = true
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 // logChannels is the recorder's fixed channel enum.
@@ -111,15 +129,22 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 
 	if len(l.Events) > 0 {
 		var g struct {
-			Events []winEventEntry `json:"events"`
+			Events     []json.RawMessage `json:"events"`
+			Truncated  bool              `json:"truncated"`
+			Unreadable uint32            `json:"unreadable"`
+			Lost       uint64            `json:"lost"`
 		}
 		if json.Unmarshal(l.Events, &g) != nil {
 			nt.damaged = true
 		}
-		es := g.Events
-		if len(es) > maxLogEntries {
-			es, nt.cut = es[:maxLogEntries], true
+		nt.eventsSeen = true
+		if g.Truncated || g.Unreadable > 0 || g.Lost > 0 {
+			nt.recorderLoss = true
 		}
+		if len(g.Events) > maxLogEntries {
+			g.Events, nt.cut = g.Events[:maxLogEntries], true
+		}
+		es := decodeEach[winEventEntry](g.Events, nt)
 		for i, x := range es {
 			log, known := logChannels[x.Channel]
 			at, good := okTime(x.T)
@@ -134,8 +159,12 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 	}
 	if len(l.SQLLog) > 0 {
 		var g struct {
-			Errors []sqlLogEntry    `json:"errors"`
-			Health []sqlHealthEntry `json:"health"`
+			Errors            []json.RawMessage `json:"errors"`
+			Health            []json.RawMessage `json:"health"`
+			Truncated         bool              `json:"truncated"`
+			Unreadable        uint32            `json:"unreadable"`
+			Lost              uint64            `json:"lost"`
+			HealthUnavailable bool              `json:"healthUnavailable"`
 		}
 		if json.Unmarshal(l.SQLLog, &g) != nil {
 			nt.damaged = true
@@ -143,10 +172,16 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 		if len(g.Errors) > 0 || len(g.Health) > 0 {
 			nt.sqlLog = true
 		}
-		es := g.Errors
-		if len(es) > maxLogEntries {
-			es, nt.cut = es[:maxLogEntries], true
+		if g.Truncated || g.Unreadable > 0 || g.Lost > 0 || g.HealthUnavailable {
+			nt.recorderLoss = true
 		}
+		if len(g.Errors) > maxLogEntries {
+			g.Errors, nt.cut = g.Errors[:maxLogEntries], true
+		}
+		if len(g.Health) > maxLogEntries {
+			g.Health, nt.cut = g.Health[:maxLogEntries], true
+		}
+		es := decodeEach[sqlLogEntry](g.Errors, nt)
 		for i, x := range es {
 			kind, known := sqlLogKinds[x.Kind]
 			at, good := okTime(x.T)
@@ -158,6 +193,11 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 			sev := "info"
 			switch kind {
 			case sqlserver.KindError:
+				if x.Number == errLoginFailed {
+					// A failed login is its own kind in the ERRORLOG importer, a warning with no attributes.
+					kind, sev = sqlserver.KindLoginFailed, "warning"
+					break
+				}
 				attrs["error_number"], attrs["sql_severity"] = strconv.FormatUint(uint64(x.Number), 10), strconv.Itoa(int(x.Severity))
 				sev = sqlserver.SeverityOf(int(x.Severity))
 			case sqlserver.KindIOStall:
@@ -167,10 +207,7 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 			e.Severity, e.Value, e.Unit = sev, count(x.Count), "count"
 			evs = append(evs, e)
 		}
-		hs := g.Health
-		if len(hs) > maxLogEntries {
-			hs, nt.cut = hs[:maxLogEntries], true
-		}
+		hs := decodeEach[sqlHealthEntry](g.Health, nt)
 		for i, x := range hs {
 			kind, known := sqlHealthKinds[x.Kind]
 			at, good := okTime(x.T)
@@ -180,6 +217,9 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 			}
 			e := mk(kind, idxSQLHealth+i, at, map[string]string{})
 			e.Severity, e.Value, e.Unit = "warning", count(x.Count), "count"
+			if kind == sqlserver.KindNonYielding {
+				e.Severity = "error"
+			}
 			if x.MaxMs > 0 && x.MaxMs < 1<<40 {
 				d := float64(x.MaxMs)
 				e.DurationMs = &d
@@ -189,16 +229,21 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 	}
 	if len(l.Dumps) > 0 {
 		var g struct {
-			Dumps []dumpEntry `json:"dumps"`
+			Dumps      []json.RawMessage `json:"dumps"`
+			Truncated  bool              `json:"truncated"`
+			Unreadable int               `json:"unreadable"`
 		}
 		if json.Unmarshal(l.Dumps, &g) != nil {
 			nt.damaged = true
 		}
 		nt.dumpsSeen = true
-		ds := g.Dumps
-		if len(ds) > maxLogEntries {
-			ds, nt.cut = ds[:maxLogEntries], true
+		if g.Truncated || g.Unreadable > 0 {
+			nt.recorderLoss = true
 		}
+		if len(g.Dumps) > maxLogEntries {
+			g.Dumps, nt.cut = g.Dumps[:maxLogEntries], true
+		}
+		ds := decodeEach[dumpEntry](g.Dumps, nt)
 		if nt.dumpSeen == nil {
 			nt.dumpSeen = map[dumpKey]struct{}{}
 		}
@@ -211,7 +256,7 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 			if at.Before(nt.firstT.Add(-beforeFileMargin)) {
 				continue // it existed before this file began: the file before it holds the sight
 			}
-			key := dumpKey{fnv(x.Name), at.Unix(), x.Size}
+			key := dumpKey{h: fnv(x.Name)}
 			if _, dup := nt.dumpSeen[key]; dup {
 				continue
 			}
@@ -229,11 +274,9 @@ func logEvents(l *line, t time.Time, no int64, opts importer.Options, host strin
 	return evs
 }
 
-// dumpKey tells one dump file from another without keeping its name.
-type dumpKey struct {
-	h    uint64
-	t, n int64
-}
+// dumpKey tells one dump file from another without keeping its name. The name alone decides: a dump that is still being
+// written changes its size and time between two scans and is still one dump.
+type dumpKey struct{ h uint64 }
 
 // fnv is a 64-bit FNV-1a of s, kept in memory only to tell two dump files apart; the name itself is never kept.
 func fnv(s string) uint64 {

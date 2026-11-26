@@ -50,7 +50,7 @@ var exportKinds = map[string]map[string]bool{
 	"win-counters":    set("counter"),
 	"sql-pdh":         set("counter"),
 	"blackbox-source": set("counter", "recorder-start", "recording-gap", "metric", "redis-start", "slow-command", "latency-spike",
-		"win-event", "dump-file", "error", "start", "stop", "io-stall", "non-yielding", "deadlock", "wait"),
+		"win-event", "dump-file", "error", "start", "stop", "io-stall", "non-yielding", "deadlock", "wait", "login-failed"),
 	"win-events": set("win-event", "apppool-recycle", "apppool-idle-shutdown", "task-start", "task-complete",
 		"task-fail", "task-skipped", "task-stop",
 		// W2-g

@@ -65,6 +65,8 @@ const (
 		"and a slow command or latency spike from more than five minutes before the first sample of a file is left out of it (the file before it holds it)."
 	GapSQLInstance   = "A SQL Server log entry of a Blackbox recording does not say which SQL Server instance it came from."
 	GapDumpsExisting = "A dump file that already existed more than five minutes before the first sample of a file is not shown as an event of that file."
+	GapRecorderLoss  = "The recorder marked part of its event log, SQL log or dump readings as cut, unreadable or lost; the timeline shows only what was kept."
+	GapNoProvider    = "A Blackbox event log entry carries no provider name, so it is shown as a plain event and never as a recognised service or application-pool event."
 	GapNoHostName    = "A Blackbox recording holds no machine name; its events are filed under the host that was picked."
 	GapIntervalGuess = "The recording interval is taken from the spacing of the neighbouring samples in this file; the file does not state it."
 	GapFileEdges     = "Gaps are judged inside one file: a hole at the start or the end of a file, or a missing hourly file, is not shown as a gap."
@@ -257,7 +259,6 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 		evs, reason := buildEvents(&l, t, no, opts, host, &nt)
 		if reason != "" {
 			acc.Reject(no, reason)
-			evs = nil
 		}
 		if l.Seq == 1 { // sample 1 of a run: the recorder started here (a later hourly file of the same run does not)
 			e := wincsv.NewEvent(opts, Name, no, idxRunStart)
@@ -358,6 +359,12 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 	if nt.dumpsSeen {
 		acc.Gap(GapDumpsExisting)
 	}
+	if nt.eventsSeen {
+		acc.Gap(GapNoProvider)
+	}
+	if nt.recorderLoss {
+		acc.Gap(GapRecorderLoss)
+	}
 	if dropped {
 		acc.Gap(importer.GapOutsideWindow)
 	}
@@ -367,6 +374,7 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 // buildEvents makes the counter events of one sample. reason is set when a figure is not a valid number.
 func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host string, notes *notes) ([]evidence.Event, importer.Reason) {
 	var evs []evidence.Event
+	var bad importer.Reason
 	add := func(r reading, idx int) {
 		vv := r.v
 		e := wincsv.NewEvent(opts, Name, no, idx)
@@ -381,6 +389,8 @@ func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host str
 		}
 		evs = append(evs, e)
 	}
+	// A figure that is not a valid number is left out by itself and the row is counted as rejected; nothing else of the
+	// sample is lost. The event and SQL log entries of a sample are never sent again by the recorder, so they must survive.
 	for i := range figures {
 		f := &figures[i]
 		p := f.get(l)
@@ -389,7 +399,8 @@ func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host str
 		}
 		v := *p
 		if !validNumber(v) || (f.max > 0 && v > f.max) {
-			return nil, importer.ReasonBadNumber // the whole sample's figures are left out: a half-read sample misleads
+			bad = importer.ReasonBadNumber
+			continue
 		}
 		if f.scale > 0 {
 			v *= f.scale
@@ -398,7 +409,7 @@ func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host str
 	}
 	rs, ok := groupReadings(l, notes)
 	if !ok {
-		return nil, importer.ReasonBadNumber
+		bad = importer.ReasonBadNumber
 	}
 	for i, r := range rs {
 		add(r, len(figures)+1+i)
@@ -409,7 +420,7 @@ func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host str
 	if len(l.Events) > 0 || len(l.SQLLog) > 0 || len(l.Dumps) > 0 {
 		evs = append(evs, logEvents(l, t, no, opts, host, notes)...)
 	}
-	return evs, ""
+	return evs, bad
 }
 
 func validNumber(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 }
