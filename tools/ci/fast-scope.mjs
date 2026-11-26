@@ -1,8 +1,8 @@
 // Decides what the fast gate (.github/workflows/fast-gate.yml) must check for one pull request into develop.
 //   node tools/ci/fast-scope.mjs [--base HEAD^1] [--head HEAD]     (run from the repo root, after `actions/checkout` fetch-depth 2)
 // Prints key=value lines (written to $GITHUB_OUTPUT when set) and a human summary:
-//   notes   true  only notes changed (docs outside docs/user, .forge, root *.md, LICENSE, NOTICE): nothing to run
-//   all     true  something changed that can break any package (go.mod, go.sum, ci.yml, the baseline, an unknown path): test every package
+//   notes   true  only notes changed (docs outside docs/user and docs/ci/flaky-tests.txt, .forge, root *.md, LICENSE, NOTICE): nothing to run
+//   all     true  something changed that can break any package (go.mod, go.sum, ci.yml, the baseline, docs/ci/flaky-tests.txt, an unknown path): test every package
 //   go      true  Go packages are affected
 //   web     true  web/ changed: type check, tests, build and the committed-build check
 //   gofiles       changed .go files (for the gofmt step)
@@ -13,9 +13,11 @@ import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { touchesWeb } from './web-scope.mjs';
 
-// Same split as the `changes` job of ci.yml. docs/user and the Linux and race baselines are NOT notes: tests read them.
-export const HEAVY_DOCS = /^(docs\/user\/|docs\/desktop\/baseline-go-(tests|race)\.txt$)/;
-export const NOTES = /^(\.forge\/|docs\/|[^/]+\.md$|LICENSE$|NOTICE$)/;
+// Same split as the `changes` job of ci.yml. docs/user, the Linux and race baselines and docs/ci/flaky-tests.txt (the quarantine
+// that compare-go-failures.mjs reads) are NOT notes: tests and the failure gate read them.
+// Case-insensitive, like `grep -Ei` in ci.yml: on a case-insensitive checkout (Windows, macOS) Docs/ is the same folder as docs/.
+export const HEAVY_DOCS = /^(docs\/user\/|docs\/desktop\/baseline-go-(tests|race)\.txt$|docs\/ci\/flaky-tests\.txt$)/i;
+export const NOTES = /^(\.forge\/|docs\/|[^/]+\.md$|LICENSE$|NOTICE$)/i;
 // Files that can change the result of any test in any package.
 const WIDE = /^(go\.mod$|go\.sum$|go\.work(\.sum)?$|\.golangci[^/]*$|build\.ps1$|\.github\/workflows\/ci\.yml$)/;
 // Paths that are not Go and not read by the Go tests (the desktop shell has its own workflow; other tooling has its own checks).
@@ -32,7 +34,7 @@ export function classify(files, pkgDirs) {
     const f = raw.replace(/\\/g, '/');
     if (HEAVY_DOCS.test(f)) {
       anyCode = true;
-      if (f.startsWith('docs/user/')) {
+      if (/^docs\/user\//i.test(f)) {
         // Read by the internal/investigate tests and embedded in the exe (root package).
         out.dirs.add('internal/investigate'); out.dirs.add('.'); out.web = true; out.reasons.push(`${f}: read by internal/investigate tests and the web tests, embedded in the exe`);
       } else { out.all = true; out.reasons.push(`${f}: changes how every Linux failure is judged, so every package`); }

@@ -100,9 +100,9 @@ jobs:
           fi
           code=false
           while IFS= read -r f; do
-            if printf '%s\n' "$f" | grep -Eq '^(docs/user/|docs/desktop/baseline-go-(tests|race)\.txt$)'; then
+            if printf '%s\n' "$f" | grep -Eiq '^(docs/user/|docs/desktop/baseline-go-(tests|race)\.txt$|docs/ci/flaky-tests\.txt$)'; then
               code=true; echo "heavy: $f"
-            elif printf '%s\n' "$f" | grep -Eq '^(\.forge/|docs/|[^/]+\.md$|LICENSE$|NOTICE$)'; then
+            elif printf '%s\n' "$f" | grep -Eiq '^(\.forge/|docs/|[^/]+\.md$|LICENSE$|NOTICE$)'; then
               echo "notes: $f"
             else
               code=true; echo "heavy: $f"
@@ -595,7 +595,8 @@ jobs:
           bin="${RUNNER_TEMP}/golangci-lint-bin"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "bin=${bin}" >> "$GITHUB_OUTPUT"
-          echo "key=golangci-lint-${version}-${RUNNER_OS}-$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+          # Runner OS, CPU and image are in the key: a binary built on one is not assumed to run on another.
+          echo "key=golangci-lint-${version}-${RUNNER_OS}-${RUNNER_ARCH}-${ImageOS:-noimage}-$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
           echo "${bin}" >> "$GITHUB_PATH"
 
       - name: Go - lint tool, restore
@@ -605,8 +606,26 @@ jobs:
           path: ${{ steps.golangci.outputs.bin }}
           key: ${{ steps.golangci.outputs.key }}
 
-      - name: Go - install golangci-lint (only when the cache had no copy)
-        if: ${{ steps.golangci-cache.outputs.cache-hit != 'true' }}
+      - name: Go - lint tool, check the restored copy
+        # A restored copy that is missing, broken or the wrong version is not used: it is built again below and not saved
+        # (the cache cannot replace a key that exists, so the bad copy stays until the key changes or the entry is deleted).
+        id: golangci-check
+        if: ${{ steps.golangci-cache.outputs.cache-hit == 'true' }}
+        env:
+          GOLANGCI_LINT_VERSION: ${{ steps.golangci.outputs.version }}
+          GOLANGCI_LINT_BIN: ${{ steps.golangci.outputs.bin }}
+        run: |
+          want="${GOLANGCI_LINT_VERSION#v}"
+          if got="$("${GOLANGCI_LINT_BIN}/golangci-lint" version 2>&1)" && printf '%s\n' "$got" | grep -qF "$want"; then
+            echo "Restored golangci-lint is the expected version $want."
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::The restored golangci-lint is not usable or not version $want (got: $got). Building it again."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Go - install golangci-lint (only when the cache had no usable copy)
+        if: ${{ steps.golangci-cache.outputs.cache-hit != 'true' || steps.golangci-check.outputs.ok != 'true' }}
         # Built here with the module's Go, not downloaded: the released binaries are built with Go 1.26
         # and refuse a module that says go 1.27 ("Go language version used to build golangci-lint is lower").
         # Go from go.mod is first on PATH (setup-go), so this builds with it.
@@ -617,7 +636,9 @@ jobs:
 
       - name: Go - lint tool, save
         # Right after the build, not at the end of the job: a lint finding must not throw the built tool away.
-        if: ${{ steps.golangci-cache.outputs.cache-hit != 'true' }}
+        # Only on master and develop pushes, like the other cache saves, so a pull request never writes the shared cache.
+        # Never after a cache hit (a bad copy under the same key is not overwritten, see the check above).
+        if: ${{ success() && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop') && steps.golangci-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.golangci.outputs.bin }}

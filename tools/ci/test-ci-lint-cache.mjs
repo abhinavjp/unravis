@@ -38,17 +38,26 @@ export function problems(text, job = 'linux-gates') {
   const restore = find(/lint tool, restore/)
   const install = find(/install golangci-lint/)
   const save = find(/lint tool, save/)
-  if (!where || !restore || !install || !save) return [`${job}: a step is missing (found: ${steps.map((s) => s.name).join(' | ')})`]
-  const order = [where, restore, install, save].map((s) => steps.indexOf(s))
-  if (order.some((v, i) => i > 0 && v <= order[i - 1])) bad.push('the steps are not in the order where, restore, install, save')
+  const check = find(/lint tool, check the restored copy/)
+  if (!where || !restore || !check || !install || !save) return [`${job}: a step is missing (found: ${steps.map((s) => s.name).join(' | ')})`]
+  const order = [where, restore, check, install, save].map((s) => steps.indexOf(s))
+  if (order.some((v, i) => i > 0 && v <= order[i - 1])) bad.push('the steps are not in the order where, restore, check, install, save')
   if (steps.indexOf(install) > steps.findIndex((s) => /^Go - lint \(/.test(s.name))) bad.push('the lint step runs before the install')
   if (!/\$\(go env GOVERSION\)/.test(where.text)) bad.push('the key does not hold the Go version (go env GOVERSION)')
   if (!/key=golangci-lint-\$\{version\}-/.test(where.text)) bad.push('the key does not hold the tool version')
   if (!/version=v\d+\.\d+\.\d+/.test(where.text)) bad.push('the tool version is not written once as vX.Y.Z')
   if (!/GITHUB_PATH/.test(where.text)) bad.push('the cached folder is not put on PATH (it must be, on a hit and on a miss)')
-  const miss = /if:\s*\$\{\{\s*steps\.golangci-cache\.outputs\.cache-hit != 'true'\s*\}\}/
-  if (!miss.test(install.text)) bad.push('the install does not run only on a cache miss')
-  if (!miss.test(save.text)) bad.push('the save does not run only on a cache miss')
+  // Install: on a miss, or when the restored copy failed the check. Save: only on a miss (never under the key of a bad copy), only on a
+  // master or develop push (like the other cache saves: a pull request never writes the shared cache), and only when the job is still green.
+  if (!/if:\s*\$\{\{\s*steps\.golangci-cache\.outputs\.cache-hit != 'true' \|\| steps\.golangci-check\.outputs\.ok != 'true'\s*\}\}/.test(install.text)) bad.push('the install does not run only on a cache miss or a failed check')
+  if (!/steps\.golangci-cache\.outputs\.cache-hit != 'true'/.test(save.text) || /golangci-check/.test(save.text)) bad.push('the save does not run only on a cache miss')
+  if (!/if:[^\n]*github\.ref == 'refs\/heads\/master' \|\| github\.ref == 'refs\/heads\/develop'/.test(save.text)) bad.push('the save has no master/develop ref guard')
+  if (!/if:[^\n]*success\(\)/.test(save.text)) bad.push('the save does not require success()')
+  if (!/if:\s*\$\{\{\s*steps\.golangci-cache\.outputs\.cache-hit == 'true'\s*\}\}/.test(check.text)) bad.push('the check does not run on a cache hit')
+  if (!/golangci-lint"? version/.test(check.text) || !/GOLANGCI_LINT_VERSION#v/.test(check.text)) bad.push('the check does not compare `golangci-lint version` with the expected version without the leading v')
+  if (!/ok=false/.test(check.text) || !/ok=true/.test(check.text)) bad.push('the check does not report ok=true or ok=false')
+  if (!/\$\{RUNNER_ARCH\}/.test(where.text)) bad.push('the key does not hold the runner CPU (RUNNER_ARCH)')
+  if (!/\$\{ImageOS/.test(where.text)) bad.push('the key does not hold the runner image (ImageOS)')
   if (!/GOBIN:\s*\$\{\{\s*steps\.golangci\.outputs\.bin\s*\}\}/.test(install.text)) bad.push('the install does not build into the cached folder (GOBIN)')
   if (!/@\$\{GOLANGCI_LINT_VERSION\}/.test(install.text)) bad.push('the install does not read the version the key was made from')
   for (const [what, s] of [['restore', restore], ['save', save]]) {
@@ -64,8 +73,12 @@ assert.deepEqual(problems(ci), [], 'ci.yml lint tool cache')
 
 // The checker catches what it is for.
 const bad = (edit) => problems(edit(ci)).join('\n')
-assert.match(bad((t) => t.replace("RUNNER_OS}-$(go env GOVERSION)",  '')), /Go version/)
-assert.match(bad((t) => t.replace(/ {8}if: \$\{\{ steps\.golangci-cache\.outputs\.cache-hit != 'true' \}\}\r?\n( {8}# Built here)/, '$1')), /install does not run only on a cache miss/)
+assert.match(bad((t) => t.replace('noimage}-$(go env GOVERSION)', 'noimage}')), /Go version/)
+assert.match(bad((t) => t.replace(/ \|\| steps\.golangci-check\.outputs\.ok != 'true'/, '')), /install does not run only on a cache miss or a failed check/)
+assert.match(bad((t) => t.replace(/ \&\& \(github\.ref == 'refs\/heads\/master' \|\| github\.ref == 'refs\/heads\/develop'\) \&\& steps\.golangci-cache/, ' && steps.golangci-cache')), /ref guard/)
+assert.match(bad((t) => t.replace('-${RUNNER_ARCH}-', '-')), /RUNNER_ARCH/)
+assert.match(bad((t) => t.replace('GOLANGCI_LINT_VERSION#v', 'GOLANGCI_LINT_VERSION')), /expected version without the leading v/)
+assert.match(bad((t) => t.replace('Go - lint tool, check the restored copy', 'Go - something else')), /a step is missing/)
 assert.match(bad((t) => t.replace('GOBIN: ${{ steps.golangci.outputs.bin }}', 'X: 1')), /GOBIN/)
 assert.match(bad((t) => t.replace('key=golangci-lint-${version}-', 'key=golangci-lint-')), /tool version/)
 assert.match(bad((t) => t.replace(/echo "\$\{bin\}" >> "\$GITHUB_PATH"/, 'true')), /PATH/)

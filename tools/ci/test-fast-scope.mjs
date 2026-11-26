@@ -1,5 +1,6 @@
 // Self-test of tools/ci/fast-scope.mjs (pure parts). Run: node tools/ci/test-fast-scope.mjs
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { classify, withDependents, CROSS_WEB } from './fast-scope.mjs';
 
 const dirs = new Set(['.', 'cmd/unravis-lite', 'cmd/unravis-setup', 'cmd/audit-explorer', 'internal/store', 'internal/investigate', 'internal/server', 'internal/evidence', 'internal/setup']);
@@ -13,6 +14,29 @@ assert.deepEqual(keys(c(['docs/user/guide.md'])).dirs, ['.', 'internal/investiga
 // Baseline file: every package (it changes how failures are judged).
 assert.equal(c(['docs/desktop/baseline-go-tests.txt']).all, true);
 assert.equal(c(['docs/desktop/baseline-go-race.txt']).all, true);
+// The quarantine file is read by compare-go-failures.mjs (linux-gates, go-race, the fast gate): it is a gate input, not a note.
+assert.equal(c(['docs/ci/flaky-tests.txt']).all, true);
+assert.equal(c(['docs/ci/flaky-tests.txt']).notes, false);
+assert.equal(c(['docs/ci/THREAD-GATE.md']).notes, true);    // the other files of docs/ci stay notes
+// The notes and heavy rules are case-insensitive: a changed Docs/ path must not slip through as a note.
+assert.equal(c(['Docs/Desktop/baseline-go-tests.txt']).all, true);
+assert.equal(c(['DOCS/ci/Flaky-Tests.txt']).all, true);
+assert.equal(c(['Docs/user/guide.md']).notes, false);
+assert.deepEqual(keys(c(['Docs/user/guide.md'])).dirs, ['.', 'internal/investigate']);
+assert.equal(c(['Docs/ci/RELEASE-TRAIN.md', 'README.MD', 'license', 'Notice']).notes, true);
+// ci.yml (job `changes`) and fast-scope.mjs must agree: read the two grep patterns from the workflow and compare them on sample paths.
+{
+  const yml = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const pats = [...yml.matchAll(/grep (-E\w*) '([^']+)'; then/g)].filter((m) => m[2].includes('docs/user/') || m[2].includes('LICENSE'));
+  assert.equal(pats.length, 2, 'the heavy and the notes grep of ci.yml');
+  for (const m of pats) assert.match(m[1], /i/, `grep flags ${m[1]} must be case-insensitive`);
+  const heavy = new RegExp(pats[0][2], 'i'), notes = new RegExp(pats[1][2], 'i');
+  for (const f of ['docs/ci/flaky-tests.txt', 'Docs/Desktop/baseline-go-tests.txt', 'docs/desktop/baseline-go-race.txt', 'docs/user/a.md', 'DOCS/USER/a.md', 'docs/ci/THREAD-GATE.md', 'Docs/x.md', 'README.md', 'internal/a.go', '.forge/a']) {
+    const inYml = heavy.test(f) ? 'code' : notes.test(f) ? 'notes' : 'code';
+    const inScope = c([f]).notes ? 'notes' : 'code';
+    assert.equal(inYml, inScope, `ci.yml and fast-scope.mjs disagree on ${f}`);
+  }
+}
 // A Go file maps to its package; a testdata file too; the root counts only for files directly in the root.
 assert.deepEqual(keys(c(['internal/store/q.go'])).dirs, ['internal/store']);
 assert.deepEqual(keys(c(['internal/store/testdata/a.json'])).dirs, ['internal/store']);
