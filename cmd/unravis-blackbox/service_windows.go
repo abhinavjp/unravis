@@ -74,7 +74,7 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	opts := blackbox.HostOptions{Config: cfg, KeyPath: h.keyPath, Version: version, Log: logf}
+	opts := blackbox.HostOptions{Config: cfg, KeyPath: h.keyPath, Version: version, Log: logf, CrashCapture: true}
 	// The service updates itself (docs/auto-updater/SPEC.md 8.1). Without trusted keys in this build, or on a development build, it
 	// runs exactly as before. The updater stops with the service.
 	if exe, xerr := os.Executable(); xerr == nil {

@@ -11,6 +11,9 @@ import (
 
 // The package's tests must never write to the real %ProgramData%; each test that wants the copy points it at a temporary folder.
 func TestMain(m *testing.M) {
+	if dir := os.Getenv(envCrashChildDir); dir != "" {
+		crashChild(dir) // a panic ends the process; see crash_test.go
+	}
 	PublicConfigDir = func() string { return "" }
 	os.Exit(m.Run())
 }

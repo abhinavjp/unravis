@@ -325,3 +325,20 @@ test('the repeat and recovered notes of a failing recorder get plain titles and 
   assert.equal(h.failureDetail('collect-recovered', undefined), '');
   assert.equal(h.failureDetail('housekeeping', 'rounds=1 seconds=1'), '');
 });
+
+test('a crash of the recorder gets a plain title and detail, and hostile detail text is dropped', () => {
+  const { items } = h.happenedItems(base({
+    markers: [
+      { t: '2026-11-18T06:10:00Z', kind: 'recorder-crashed', detail: 'crashes=1 at=2026-11-18T06:09:30Z' },
+      { t: '2026-11-18T06:20:00Z', kind: 'recorder-crashed', detail: 'crashes=3 at=2026-11-18T06:19:30Z' },
+      { t: '2026-11-18T06:30:00Z', kind: 'recorder-crashed', detail: 'crashes=<img src=x onerror=alert(1)> at=x' }
+    ]
+  }));
+  const byT = (iso) => items.find((i) => i.t === Date.parse(iso));
+  assert.equal(byT('2026-11-18T06:10:00Z').title, 'The recorder crashed and was started again');
+  assert.equal(byT('2026-11-18T06:10:00Z').tone, 'bad');
+  assert.match(byT('2026-11-18T06:10:00Z').detail, /^A crash file was saved in the "crash" folder/);
+  assert.match(byT('2026-11-18T06:20:00Z').detail, /^3 crash files were saved/);
+  assert.equal(byT('2026-11-18T06:30:00Z').detail, '', 'a detail that is not the fixed form is not repeated');
+  for (const i of items) assert.ok(!/^Recorder note: /.test(i.title), 'known kinds are not shown as unknown notes');
+});

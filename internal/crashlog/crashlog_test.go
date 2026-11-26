@@ -319,3 +319,51 @@ func TestStartNeedsAFolder(t *testing.T) {
 		t.Fatalf("got %v, %v", c, err)
 	}
 }
+
+func TestUnreportedListsFinishedFilesOldestFirstAndMarkReportedHidesThem(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(name string, age time.Duration) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Now().Add(-age)
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	newer := mk("crash-20261102T100000Z-2-go.txt", time.Hour)
+	older := mk("crash-20261101T100000Z-1-go.txt", 2*time.Hour)
+	mk("crash-20261103T100000Z-3-go.reported.txt", time.Minute) // already reported
+	mk("crash-20261104T100000Z-4-go.pending", time.Minute)      // raw, not finished
+	mk("notes.txt", time.Minute)                                // not a crash file
+
+	got, err := Unreported(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Path != older || got[1].Path != newer {
+		t.Fatalf("unreported = %+v", got)
+	}
+	marked, err := MarkReported(older)
+	if err != nil || !strings.HasSuffix(marked, "-go.reported.txt") {
+		t.Fatalf("mark: %q %v", marked, err)
+	}
+	if _, err := os.Stat(marked); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = Unreported(dir); len(got) != 1 || got[0].Path != newer {
+		t.Fatalf("after marking: %+v", got)
+	}
+	if _, err := MarkReported(filepath.Join(dir, "x.pending")); err == nil {
+		t.Fatal("a raw dump must not be markable")
+	}
+}
+
+func TestUnreportedOfAMissingFolderIsEmpty(t *testing.T) {
+	got, err := Unreported(filepath.Join(t.TempDir(), "nope"))
+	if err != nil || len(got) != 0 {
+		t.Fatalf("%v %v", got, err)
+	}
+}

@@ -92,6 +92,9 @@ const (
 	// "after-crash" (it did not). It is recorded even when the hole is too short
 	// to be a gap, so a restart is always visible.
 	EventRestart = "restart"
+	// EventCrashed is written at a start that finds a crash file an earlier run
+	// left (RV-BB-10). One event per start; the detail is "crashes=<n> at=<UTC time>".
+	EventCrashed = "recorder-crashed"
 )
 
 // Restart event details.
