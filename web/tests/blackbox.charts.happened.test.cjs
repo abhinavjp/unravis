@@ -343,17 +343,26 @@ test('a crash of the recorder gets a plain title and detail, and hostile detail 
   for (const i of items) assert.ok(!/^Recorder note: /.test(i.title), 'known kinds are not shown as unknown notes');
 });
 
-test('a support log that stopped getting a plain title and detail, and hostile detail text is dropped', () => {
+test('a diagnostics file that stopped growing, and one growing again, get plain notes; hostile detail text is dropped', () => {
   const { items } = h.happenedItems(base({
     markers: [
       { t: '2026-11-18T06:10:00Z', kind: 'diag-log-stopped', detail: 'diag-log-stuck' },
-      { t: '2026-11-18T06:20:00Z', kind: 'diag-log-stopped', detail: '<img src=x onerror=alert(1)>' }
+      { t: '2026-11-18T06:20:00Z', kind: 'diag-log-stopped', detail: '<img src=x onerror=alert(1)>' },
+      { t: '2026-11-18T06:30:00Z', kind: 'diag-log-resumed', detail: 'diag-log-ok' },
+      { t: '2026-11-18T06:40:00Z', kind: 'diag-log-resumed', detail: '<img src=x onerror=alert(1)>' }
     ]
   }));
   const byT = (iso) => items.find((i) => i.t === Date.parse(iso));
-  assert.equal(byT('2026-11-18T06:10:00Z').title, 'The recorder stopped writing its support log');
-  assert.equal(byT('2026-11-18T06:10:00Z').tone, 'warn');
-  assert.match(byT('2026-11-18T06:10:00Z').detail, /^Only the support log is affected: your recordings are not\./);
+  const stopped = byT('2026-11-18T06:10:00Z');
+  assert.equal(stopped.title, "The recorder's diagnostics file stopped growing");
+  assert.equal(stopped.tone, 'warn');
+  assert.match(stopped.detail, /^Your recordings are not affected\. Another program may be holding the file diagnostics\.log in the recordings folder\./);
+  assert.match(stopped.detail, /checks again every minute/);
+  assert.ok(!/support log/i.test(stopped.title + stopped.detail), 'it is not the Support logs panel');
   assert.equal(byT('2026-11-18T06:20:00Z').detail, '', 'a detail that is not the fixed code is not repeated');
+  assert.equal(byT('2026-11-18T06:30:00Z').title, "The recorder's diagnostics file is growing again");
+  assert.equal(byT('2026-11-18T06:30:00Z').tone, 'info');
+  assert.match(byT('2026-11-18T06:30:00Z').detail, /^The recorder can write to the file diagnostics\.log in the recordings folder again\./);
+  assert.equal(byT('2026-11-18T06:40:00Z').detail, '', 'a detail that is not the fixed code is not repeated');
   for (const i of items) assert.ok(!/^Recorder note: /.test(i.title), 'known kinds are not shown as unknown notes');
 });

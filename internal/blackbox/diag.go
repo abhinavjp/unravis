@@ -51,8 +51,9 @@ type DiagLog struct {
 	// stuck: a rotation could neither rename nor empty the file, so writing is
 	// stopped (the file cannot grow) until a later rotation works (RV-BB-12).
 	stuck bool
-	// onStuck is called once each time the log gets stuck, outside the lock.
-	onStuck func()
+	// onStuck is called once each time the log gets stuck, and onResumed once each
+	// time it writes again after that, both outside the lock.
+	onStuck, onResumed func()
 }
 
 // diagFS is what a rotation asks of the file system.
@@ -144,8 +145,8 @@ func diagValue(v any) string {
 }
 
 func (d *DiagLog) write(s string) {
-	if d.writeLocked(s) && d.onStuck != nil {
-		d.onStuck() // outside the lock: the callback may take other locks
+	if after := d.writeLocked(s); after != nil {
+		after() // outside the lock: the callback may take other locks, or write a line
 	}
 }
 
@@ -160,58 +161,73 @@ func (d *DiagLog) SetOnStuck(f func()) {
 	d.mu.Unlock()
 }
 
-// writeLocked writes one line under the lock and says whether the log has just
-// become stuck (the caller raises the event once, after the lock is released).
-func (d *DiagLog) writeLocked(s string) (becameStuck bool) {
+// SetOnResumed sets what happens when a stuck log can be rotated again and
+// writing starts again. It is called once per time that happens.
+func (d *DiagLog) SetOnResumed(f func()) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	d.onResumed = f
+	d.mu.Unlock()
+}
+
+// writeLocked writes one line under the lock. It returns what the caller must do
+// after the lock is released (raise the stuck or the resumed event), or nil. The
+// callbacks are copied out under the lock, so a SetOnStuck or SetOnResumed from
+// another goroutine cannot race with the read.
+func (d *DiagLog) writeLocked(s string) (after func()) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.off {
-		return false
+		return nil
 	}
 	if d.stuck {
 		// Writing is stopped so the file cannot grow; look again once a minute.
 		if now := d.now(); now.Before(d.retryAt) {
-			return false
+			return nil
 		}
 		d.rotateLocked()
 		if d.stuck {
-			return false // still stuck: the event was raised when it began
+			return nil // still stuck: the event was raised when it began
 		}
+		after = d.onResumed // writing starts again: say so once
 	}
 	if d.f == nil {
 		// A failed write or reopen: try again once a minute.
 		if now := d.now(); now.Before(d.retryAt) {
-			return false
+			return after
 		}
 		if d.open() != nil {
 			d.retryAt = d.now().Add(time.Minute)
-			return false
+			return after
 		}
 	}
 	if d.size+int64(len(s)) > diagMaxBytes {
 		d.rotateLocked()
 		if d.stuck {
-			return true
+			return d.onStuck
 		}
 		if d.f == nil {
-			return false
+			return after
 		}
 	}
 	n, err := d.f.WriteString(s)
 	d.size += int64(n)
 	if err != nil {
-		d.f.Close()
+		_ = d.f.Close()
 		d.f = nil
 		d.retryAt = d.now().Add(time.Minute)
 	}
-	return false
+	return after
 }
 
 // rotateLocked keeps the newest log as ".1" and starts a fresh file. A reader
 // holding a file open can make the rename fail on Windows; the cap still holds
 // then, because the current file is emptied instead. If that fails too the log
 // is stuck: nothing more is written to the file, so it cannot grow, and a later
-// write tries the rotation again once a minute (RV-BB-12).
+// write tries the rotation again once a minute (RV-BB-12). The old ".1" is kept
+// until the rename or the emptying has worked: it is never removed first.
 func (d *DiagLog) rotateLocked() {
 	if d.f != nil {
 		_ = d.f.Close()
@@ -219,12 +235,22 @@ func (d *DiagLog) rotateLocked() {
 	}
 	cur := filepath.Join(d.dir, DiagFileName)
 	old := filepath.Join(d.dir, diagOldName)
-	// Windows will not rename over an existing file. A failed remove is not
-	// the end: the rename may still work (other systems), and if not, the
-	// current file is emptied below.
-	_ = d.fsys.Remove(old)
+	err := d.fsys.Rename(cur, old)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		// Some systems will not rename over an existing file. Move the old ".1"
+		// aside, try again, and put it back if the rename still fails.
+		aside := old + ".tmp"
+		_ = d.fsys.Remove(aside)
+		if d.fsys.Rename(old, aside) == nil {
+			if err = d.fsys.Rename(cur, old); err == nil {
+				_ = d.fsys.Remove(aside)
+			} else {
+				_ = d.fsys.Rename(aside, old)
+			}
+		}
+	}
 	// A current file that is already gone has nothing to cap: open starts it.
-	if err := d.fsys.Rename(cur, old); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		if err := d.fsys.Truncate(cur, 0); err != nil {
 			d.stuck = true
 			d.retryAt = d.now().Add(time.Minute)

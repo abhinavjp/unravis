@@ -162,6 +162,7 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	diag := OpenDiagLog(store.Dir(), o.Now)
 	defer diag.Close()
 	diag.SetOnStuck(func() { store.Event(EventDiagStopped, "diag-log-stuck") })
+	diag.SetOnResumed(func() { store.Event(EventDiagResumed, "diag-log-ok") })
 	rec := NewRecorder(RecorderOptions{Config: cfg, Store: store, Collector: col, Disk: disk, RunID: runID,
 		Now: o.Now, Ticks: o.Ticks, Budget: budget, SelfUsage: SelfUsage, Diag: diag})
 	srv := NewServer(ServerOptions{Store: store, Recorder: rec, Config: cfg, Keys: keys, Now: o.Now, Diag: diag, Update: o.Update})
