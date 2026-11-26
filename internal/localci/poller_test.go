@@ -55,6 +55,9 @@ func (h *watchHost) PullRequest(context.Context, string, int) (PullRequest, erro
 func (h *watchHost) Collaborators(context.Context, string) ([]string, error)  { return nil, nil }
 func (h *watchHost) Commits(context.Context, string, int) ([]PRCommit, error) { return nil, nil }
 func (h *watchHost) CloneURL(string) string                                   { return "" }
+func (h *watchHost) PushHistory(context.Context, string, string) (PushHistory, error) {
+	return PushHistory{}, errors.New("not used")
+}
 
 func (h *watchHost) setPR(pr PullRequest) {
 	h.mu.Lock()
