@@ -182,6 +182,7 @@ export const IMPORT_TEXT = {
 export const REASON_TEXT: Record<string, string> = {
   'field-count': 'A row had the wrong number of fields.',
   'bad-time': 'A time value could not be read.',
+  'needs-year': 'This log does not say which year it was written in. Go back and give the year.',
   'tz-unlabelled': 'A time had no time zone. Pick the host so its zone can be used.',
   'dst-ambiguous': 'A local time fell in a clock change and could mean two moments.',
   'dst-nonexistent': 'A local time fell in a clock change gap, so it never happened.',

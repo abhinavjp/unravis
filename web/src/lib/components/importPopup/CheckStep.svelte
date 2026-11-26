@@ -5,9 +5,10 @@
   import { timeZoneRule, type StagedFile } from '../../fileKinds';
   import { tick } from 'svelte';
   import FixCard from './FixCard.svelte';
+  import YearCard from './YearCard.svelte';
   import GroupedList from './GroupedList.svelte';
   import NotSupported, { type UnsupportedFile } from './NotSupported.svelte';
-  import { cardIdOf, fileKeyOf, groupOf, type CardState } from './popupState.svelte';
+  import { cardIdOf, fileKeyOf, groupOf, yearCardOf, YEAR_MAX, YEAR_MIN, type CardState } from './popupState.svelte';
 
   // Step 2 of the "Import files" popup (wireframe: step2Checking and step2Results). While the server checks the files it shows a spinner.
   // Then, top to bottom: the groups that are ready, one fix card for each server name the computer list lacks, one card for each kind of
@@ -16,7 +17,7 @@
   // The footer (fix hint, acknowledgement, Import button) is drawn by the shell. `onResolve` is how the shell learns a fix was saved,
   // so it can check again and show a case the first check missed.
   let {
-    report, files, retryServerName = null, checking = false, cards = {}, expanded = {}, selected = {}, kinds = {}, zone = 'UTC', totalServers,
+    report, files, retryServerName = null, checking = false, cards = {}, years = {}, expanded = {}, selected = {}, kinds = {}, zone = 'UTC', totalServers,
     onResolve, onLeaveOut, onUndo, onAddAll, onRemoveUnsupported, onPickKind, onToggle, onGroupAll, onSelect
   }: {
     report: CheckReport | null;
@@ -25,6 +26,8 @@
     checking?: boolean;
     /** Keyed by card id. A card with no entry is open. */
     cards?: Record<string, CardState>;
+    /** The year given on each year card, keyed by card id. */
+    years?: Record<string, string>;
     /** Keyed by group or card name. */
     expanded?: Record<string, boolean>;
     /** Keyed by file key. A file with no entry counts as ticked. */
@@ -62,11 +65,29 @@
     return '';
   }
 
+  type YearCardInfo = { id: string; verdicts: CheckFileVerdict[]; kind: string; suggested: string };
+
+  // The year offered first: the year the file was last saved in (a log is written before it is saved), else this year.
+  function suggestedYearOf(verdicts: CheckFileVerdict[], staged: Map<string, StagedFile>): string {
+    for (const verdict of verdicts) {
+      const stamp = staged.get(verdict.key)?.file?.lastModified ?? 0;
+      if (stamp > 0) {
+        const year = new Date(stamp).getFullYear();
+        if (year >= YEAR_MIN && year <= YEAR_MAX) return String(year);
+      }
+    }
+    const now = new Date().getFullYear();
+    return String(Math.min(YEAR_MAX, Math.max(YEAR_MIN, now)));
+  }
+
+  const stagedFileOf = (verdict: CheckFileVerdict): File | undefined => files.find((item) => fileKeyOf(item) === verdict.key)?.file;
+
   const parts = $derived.by(() => {
     const ready = new Map<string, CheckFileVerdict[]>();
     const servers = new Map<string, CheckFileVerdict[]>();
     const unnamed = new Map<string, CheckFileVerdict[]>();
     const unsupported: CheckFileVerdict[] = [];
+    const yearLists = new Map<string, CheckFileVerdict[]>();
     const add = (map: Map<string, CheckFileVerdict[]>, id: string, verdict: CheckFileVerdict) => {
       const list = map.get(id);
       if (list) list.push(verdict);
@@ -76,7 +97,10 @@
       if (verdict.verdict === 'ready') add(ready, groupOf(verdict), verdict);
       else if (verdict.verdict === 'needs-computer') add(servers, cardIdOf(verdict) ?? '', verdict);
       else if (verdict.verdict === 'no-computer' || verdict.verdict === 'needs-zone') add(unnamed, cardIdOf(verdict) ?? '', verdict);
-      else unsupported.push(verdict);
+      else if (yearCardOf(verdict) === null) unsupported.push(verdict);
+      // A log that needs a year may also need a computer: it sits on both cards.
+      const yearCard = yearCardOf(verdict);
+      if (yearCard !== null) add(yearLists, yearCard, verdict);
     }
     const serverCards: Card[] = [...servers].map(([id, verdicts]) => ({
       id, verdicts, needsZone: false, suggested: id,
@@ -88,7 +112,8 @@
       const importer = verdicts[0].importer;
       return { id, verdicts, kind: kindText(importer), suggested: folderOf(verdicts, staged), needsZone: verdicts.some((verdict) => verdict.needsZone) || timeZoneRule(importer) === 'local' };
     });
-    return { ready: [...ready], serverCards, unnamedCards, unsupported };
+    const yearCards: YearCardInfo[] = [...yearLists].map(([id, verdicts]) => ({ id, verdicts, kind: kindText(verdicts[0].importer), suggested: suggestedYearOf(verdicts, staged) }));
+    return { ready: [...ready], serverCards, unnamedCards, yearCards, unsupported };
   });
 
   const serverTotal = $derived(totalServers ?? parts.serverCards.length);
@@ -181,6 +206,25 @@
         onToggle={() => onToggle?.(card.id)}
         onGroupAll={() => onGroupAll?.(card.id, !allOn(card.verdicts))}
         onSelect={(key, on) => onSelect?.(key, on)}
+      />
+    </div>
+  {/each}
+
+  {#each parts.yearCards as card (card.id)}
+    <div class="slot">
+      {@render anchor('card-' + card.id, () => focusCard(card.id))}
+      {@render anchor('head-' + card.id, headOf)}
+      <YearCard
+        bind:this={fixRefs[card.id]}
+        card={cards[card.id] ?? 'open'}
+        kind={card.kind}
+        year={years[card.id] ?? ''}
+        suggestedYear={card.suggested}
+        files={listed(card.verdicts)}
+        headFile={stagedFileOf(card.verdicts[0])}
+        onResolve={(year) => onResolve?.(card.id, year)}
+        onLeaveOut={() => onLeaveOut?.(card.id)}
+        onUndo={() => onUndo?.(card.id)}
       />
     </div>
   {/each}
