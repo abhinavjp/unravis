@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 )
 
@@ -81,6 +82,11 @@ type StateInput struct {
 	Reading *Reading
 	// Report is the report of the samples read, when samples were read.
 	Report *ReadReport
+	// Recent is the newest stretch of samples read for this state (the newest
+	// minutes, never a window picked in the past). It lets the state say that the
+	// PC's own readings keep being skipped. Empty means it was not read, and then
+	// nothing is said about the host read.
+	Recent []Sample
 }
 
 var stateLabels = map[PageState]string{
@@ -179,10 +185,11 @@ func DeriveState(in StateInput) StateInfo {
 	if r.Status == nil {
 		detail += " The clock was not compared: a folder or share has no second clock."
 	}
-	if hostSlowNow(m) {
+	if hostMostlySkipped(in.Recent) {
 		// The recorder is running and writing samples, but its read of this PC
-		// (CPU, memory, disk, network) keeps running over its time limit (RV-BB-1).
-		// Those lines have gaps; everything else is still recorded.
+		// (CPU, memory, disk, network) keeps running over its time limit (RV-BB-1):
+		// more than half of the newest samples have no host data. Those lines have
+		// gaps; everything else is still recorded.
 		return with(info(SRunning, ToneWarn, WordPartlyReady, detail+" "+HostSlowSentence))
 	}
 	return with(info(SRunning, ToneGood, WordReady, detail))
@@ -235,19 +242,31 @@ func pausedForDisk(m Manifest) bool {
 	return false
 }
 
-// hostSlowNow is true when the newest host event of the current run says the host
-// read is slow (and no recovered event followed). A restart ends it: a run that
-// died in the middle of a slow stretch must not leave the warning on for ever.
-func hostSlowNow(m Manifest) bool {
-	for i := len(m.Events) - 1; i >= 0; i-- {
-		switch m.Events[i].Kind {
-		case EventHostSlow, EventHostStillSlow:
-			return true
-		case EventHostRecovered, EventRestart:
-			return false
+// HostSkipWindow is how many of the newest samples the host-slow warning looks at.
+const HostSkipWindow = 20
+
+// hostMostlySkipped is true when more than half of the newest HostSkipWindow
+// samples had their host read skipped (slow or busy). One slow round, or a PC that
+// is slow only now and then, does not raise it; it clears by itself once the host
+// read has been back for about half a window.
+func hostMostlySkipped(recent []Sample) bool {
+	n := len(recent)
+	if n == 0 {
+		return false
+	}
+	ordered := make([]Sample, n)
+	copy(ordered, recent)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].T.Before(ordered[j].T) })
+	if n > HostSkipWindow {
+		ordered = ordered[n-HostSkipWindow:]
+	}
+	skipped := 0
+	for _, sm := range ordered {
+		if sm.HostSkipped() {
+			skipped++
 		}
 	}
-	return false
+	return skipped*2 > len(ordered)
 }
 
 // isLate says whether the newest sample is more than LateIntervals intervals

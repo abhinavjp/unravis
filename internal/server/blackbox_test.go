@@ -1192,6 +1192,46 @@ func TestHostSamplesLeaveOutRoundsWhoseHostReadWasSlow(t *testing.T) {
 	}
 }
 
+// W-04 / RV-BB-1: the status of a Blackbox reads its newest samples, and when more than half of the newest 20 lost their host
+// read the state is a warning inside Running. A recorder whose host read is fine stays plain Ready.
+func TestStatusWarnsWhenMostNewSamplesLostTheirHostRead(t *testing.T) {
+	start := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	record := func(skip func(i int) bool) bbLook {
+		t.Helper()
+		last := start
+		st, err := blackbox.OpenStore(t.TempDir(), blackbox.StoreOptions{Name: "pc", IntervalSeconds: 15, RunID: "r1", Now: func() time.Time { return last }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close("test-end") }()
+		cpu := 5.0
+		for i := 0; i < 24; i++ {
+			last = start.Add(time.Duration(i) * 15 * time.Second)
+			smp := blackbox.Sample{V: 1, Run: "r1", Seq: uint64(i + 1), T: last, CPU: &cpu}
+			if skip(i) {
+				smp = blackbox.Sample{V: 1, Run: "r1", Seq: uint64(i + 1), T: last, Missing: []string{blackbox.MissingHostSlow}}
+			}
+			if err := st.Append(smp, ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		loc, err := blackbox.ParseLocation(st.Dir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		hub := newBlackboxHub(BlackboxDeps{Now: func() time.Time { return last.Add(5 * time.Second) }})
+		return hub.lookAt(t.Context(), blackbox.NewFolderSource(loc), true)
+	}
+	slow := record(func(i int) bool { return i >= 8 }) // the newest 16 of 24 lost the host read
+	if slow.State.State != blackbox.SRunning || slow.State.Tone != blackbox.ToneWarn || !strings.Contains(slow.State.Detail, blackbox.HostSlowSentence) {
+		t.Fatalf("a PC whose host read keeps being skipped must warn: %+v", slow.State)
+	}
+	fine := record(func(i int) bool { return i == 23 }) // one slow round only
+	if fine.State.Tone != blackbox.ToneGood || strings.Contains(fine.State.Detail, blackbox.HostSlowSentence) {
+		t.Fatalf("one slow round must not warn: %+v", fine.State)
+	}
+}
+
 /* ---------------------------------------- wizard targets (BBX-1-10) */
 
 // The route table guard (TestRouteTableCoversEveryRoute) wants a row for every

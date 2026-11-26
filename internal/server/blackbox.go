@@ -399,13 +399,15 @@ func (b *blackboxHub) lookAt(ctx context.Context, src blackbox.Source, placed bo
 		return bbLook{Err: err, State: blackbox.DeriveState(blackbox.StateInput{Placed: true, Err: err})}
 	}
 	var rep *blackbox.ReadReport
+	var recent []blackbox.Sample
 	if rd.Manifest.LastSample != nil {
 		last := *rd.Manifest.LastSample
-		if _, r, rerr := blackbox.ReadSamples(ctx, src, rd.Manifest, last.Add(-bbNewestLook), last.Add(time.Second)); rerr == nil {
+		if got, r, rerr := blackbox.ReadSamples(ctx, src, rd.Manifest, last.Add(-bbNewestLook), last.Add(time.Second)); rerr == nil {
 			rep = &r
+			recent = got
 		}
 	}
-	return bbLook{Reading: &rd, Report: rep, State: blackbox.DeriveState(blackbox.StateInput{Placed: true, Reading: &rd, Report: rep})}
+	return bbLook{Reading: &rd, Report: rep, State: blackbox.DeriveState(blackbox.StateInput{Placed: true, Reading: &rd, Report: rep, Recent: recent})}
 }
 
 // scan asks this PC what it runs. nil means it could not be asked or cannot be.

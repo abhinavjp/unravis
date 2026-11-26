@@ -286,33 +286,68 @@ func TestStateOverALiveStatusServer(t *testing.T) {
 	}
 }
 
-// W-04 / RV-BB-1: while the host read is slow the recorder is still running, so the state stays Running, but the tone is a
-// warning and the detail says in plain words that the PC's own lines have gaps. A recovered event, or a restart, clears it.
+// W-04 / RV-BB-1: when more than half of the newest 20 samples had their host read skipped, the recorder is still running,
+// so the state stays Running, but the tone is a warning and the detail says in plain words that the PC's own lines have gaps.
+// One slow round does not raise it; a PC that alternates slow and fine rounds does, because the rule counts samples, not events.
 func TestRunningSaysWhenTheHostReadIsSlow(t *testing.T) {
 	now := t0.Add(2 * time.Hour)
 	fresh := now.Add(-5 * time.Second)
-	with := func(kinds ...string) StateInfo {
-		m := stManifest(fresh, func(m *Manifest) {
-			for i, k := range kinds {
-				m.Events = append(m.Events, Event{T: fresh.Add(-time.Duration(len(kinds)-i) * time.Minute), Kind: k})
+	// run builds the newest samples, oldest first: skipped[i] says whether round i lost its host read.
+	run := func(skipped ...bool) StateInfo {
+		recent := make([]Sample, len(skipped))
+		for i, sk := range skipped {
+			recent[i] = Sample{V: 1, Run: "r", Seq: uint64(i + 1), T: fresh.Add(-time.Duration(len(skipped)-i) * 15 * time.Second)}
+			if sk {
+				recent[i].Missing = []string{MissingHostSlow}
 			}
-		})
-		return derive(stReading(m, now, nil), nil)
-	}
-	si := with(EventHostSlow)
-	if si.State != SRunning || si.Tone != ToneWarn || si.Readiness != WordPartlyReady || !strings.Contains(si.Detail, HostSlowSentence) {
-		t.Fatalf("a slow host read must show as a warning inside Running: %+v", si)
-	}
-	if si := with(EventHostSlow, EventHostStillSlow); !strings.Contains(si.Detail, HostSlowSentence) {
-		t.Fatalf("still slow: %+v", si)
-	}
-	for name, kinds := range map[string][]string{
-		"recovered": {EventHostSlow, EventHostRecovered},
-		"restarted": {EventHostSlow, EventRestart},
-		"never":     nil,
-	} {
-		if si := with(kinds...); si.Tone != ToneGood || strings.Contains(si.Detail, HostSlowSentence) {
-			t.Errorf("%s: the warning must be gone: %+v", name, si)
 		}
+		// Hand them over newest first: the rule must order them itself.
+		for i, j := 0, len(recent)-1; i < j; i, j = i+1, j-1 {
+			recent[i], recent[j] = recent[j], recent[i]
+		}
+		return DeriveState(StateInput{Placed: true, Reading: stReading(stManifest(fresh, nil), now, nil), Recent: recent})
+	}
+	pattern := func(n int, skip func(i int) bool) []bool {
+		out := make([]bool, n)
+		for i := range out {
+			out[i] = skip(i)
+		}
+		return out
+	}
+	warned := func(si StateInfo) bool {
+		return si.State == SRunning && si.Tone == ToneWarn && si.Readiness == WordPartlyReady && strings.Contains(si.Detail, HostSlowSentence)
+	}
+
+	// (a) One slow round among 19 good ones is not a warning.
+	if si := run(pattern(20, func(i int) bool { return i == 19 })...); warned(si) || si.Tone != ToneGood {
+		t.Fatalf("a single slow round must not warn: %+v", si)
+	}
+	// (b) 11 of 20 skipped is more than half.
+	if si := run(pattern(20, func(i int) bool { return i >= 9 })...); !warned(si) {
+		t.Fatalf("11 of 20 skipped must warn inside Running: %+v", si)
+	}
+	// Exactly half is not more than half.
+	if si := run(pattern(20, func(i int) bool { return i >= 10 })...); warned(si) {
+		t.Fatalf("10 of 20 skipped must not warn: %+v", si)
+	}
+	// (c) Slow and fine rounds taking turns (12 of 20 skipped, three rounds in every five), with no host event at all.
+	if si := run(pattern(20, func(i int) bool { return i%5 < 3 })...); !warned(si) {
+		t.Fatalf("an alternating slow and fine PC must warn: %+v", si)
+	}
+	// Only the newest 20 count: a long slow stretch that ended 20 good rounds ago is over.
+	if si := run(append(pattern(30, func(int) bool { return true }), pattern(20, func(int) bool { return false })...)...); warned(si) {
+		t.Fatalf("an old slow stretch must not warn: %+v", si)
+	}
+	// A short recording counts what it has; none at all says nothing.
+	if si := run(true, true, false); !warned(si) {
+		t.Fatalf("2 of 3 skipped must warn: %+v", si)
+	}
+	if si := run(); warned(si) {
+		t.Fatalf("no samples must say nothing: %+v", si)
+	}
+	// The newest host event no longer decides: a host-slow event with healthy samples is not a warning.
+	m := stManifest(fresh, func(m *Manifest) { m.Events = append(m.Events, Event{T: fresh.Add(-time.Minute), Kind: EventHostSlow}) })
+	if si := derive(stReading(m, now, nil), nil); warned(si) {
+		t.Fatalf("an event alone must not warn: %+v", si)
 	}
 }

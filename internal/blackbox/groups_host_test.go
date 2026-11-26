@@ -222,7 +222,18 @@ func TestSlowHostReadEndToEndThroughTheRecorder(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		tick(5 * time.Minute) // +5 .. +50: the earlier read is still running (busy)
 	}
-	mid := derive(stReading(st.Manifest(), clk.t, nil), nil)
+	readBack := func() []Sample {
+		t.Helper()
+		got, _, err := ReadSamples(context.Background(), folderSource(t, st.Dir()), st.Manifest(), t0, t0.Add(8*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	deriveNow := func() StateInfo {
+		return DeriveState(StateInput{Placed: true, Reading: stReading(st.Manifest(), clk.t, nil), Recent: readBack()})
+	}
+	mid := deriveNow()
 	if !strings.Contains(mid.Detail, HostSlowSentence) || mid.Tone != ToneWarn {
 		t.Fatalf("state during the slow read: %+v", mid)
 	}
@@ -285,8 +296,14 @@ func TestSlowHostReadEndToEndThroughTheRecorder(t *testing.T) {
 			t.Fatalf("event %d = %s %q at +%s, want %s %q at +%s", i, ev[i].Kind, ev[i].Detail, ev[i].T.Sub(t0), w.kind, w.detail, w.at)
 		}
 	}
-	after := derive(stReading(m, clk.t, nil), nil)
-	if strings.Contains(after.Detail, HostSlowSentence) {
-		t.Fatalf("the warning must go once the host read is back: %+v", after)
+	// 11 of the 12 samples are still skipped, so the warning stays until the host read has been back for a while.
+	if still := deriveNow(); !strings.Contains(still.Detail, HostSlowSentence) {
+		t.Fatalf("one good round must not clear the warning at once: %+v", still)
+	}
+	for i := 0; i < 10; i++ {
+		tick(5 * time.Minute) // full samples again; the newest 20 now hold 9 skipped
+	}
+	if after := deriveNow(); strings.Contains(after.Detail, HostSlowSentence) || after.Tone != ToneGood {
+		t.Fatalf("the warning must go once the host read has been back: %+v", after)
 	}
 }
