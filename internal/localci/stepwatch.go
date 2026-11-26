@@ -22,13 +22,13 @@ type stepWatch struct {
 	cmd      *exec.Cmd
 	log      string
 	stopFile string
-	done     chan error
+	done     chan struct{}
 }
 
 // startStepWatch starts the watcher; warn is told why it could not start (the returned value is then nil).
 func (in *instance) startStepWatch(ctx context.Context, line string, n int, env *envList, warn func(string)) *stepWatch {
 	base := filepath.Join(in.tmpDir, fmt.Sprintf("watch-%02d", n))
-	w := &stepWatch{log: base + ".log", stopFile: base + ".stop", done: make(chan error, 1)}
+	w := &stepWatch{log: base + ".log", stopFile: base + ".stop", done: make(chan struct{})}
 	for _, p := range []string{w.log, w.stopFile, w.stopFile + ".ready", w.stopFile + ".done"} {
 		_ = os.Remove(p)
 	}
@@ -50,7 +50,7 @@ func (in *instance) startStepWatch(ctx context.Context, line string, n int, env 
 		return nil
 	}
 	w.cmd = cmd
-	go func() { w.done <- cmd.Wait() }()
+	go func() { _ = cmd.Wait(); close(w.done) }()
 	deadline := time.Now().Add(stepWatchReadyWait)
 	for time.Now().Before(deadline) && ctx.Err() == nil {
 		if _, err := os.Stat(w.stopFile + ".ready"); err == nil {
@@ -81,7 +81,7 @@ func (w *stepWatch) stop() []string {
 		_ = w.cmd.Process.Kill()
 		<-w.done
 	}
-	b, err := os.ReadFile(w.log) //nolint:gosec // the watcher's own log in the job's temp folder
+	b, err := os.ReadFile(w.log)
 	if err != nil {
 		return nil
 	}
