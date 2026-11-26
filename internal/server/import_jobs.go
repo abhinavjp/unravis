@@ -318,12 +318,18 @@ func (j *importJobs) shutdown(wait time.Duration) {
 	}
 }
 
+// fileJobShutdownWait is how long shutdown waits for the archive and verify jobs.
+const fileJobShutdownWait = 5 * time.Second
+
 // CancelImports cancels the background imports of a handler returned by New and
 // waits briefly for them to stop. The dashboard calls it as it shuts down, before
 // the case store closes.
 func CancelImports(served http.Handler) {
 	if h, ok := served.(*handler); ok && h != nil {
 		h.disc.shutdown(3 * time.Second)
+		// Archive and verify jobs stop before the sampler is stopped for good: a
+		// stopped archive puts a recording it paused back (RV-SRV-2).
+		h.caseFiles().jobs.shutdown(fileJobShutdownWait)
 		h.stopSamplerAll()
 		h.jobs.shutdown(3 * time.Second)
 	}
