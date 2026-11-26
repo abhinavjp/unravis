@@ -10,6 +10,7 @@
 - [ ] Goroutines, locks, channels or timers added: `go test -race` run on these packages: <!-- list, or "none added" -->
 - [ ] A test fails without this change (name it):
 - [ ] Nothing added to a baseline or known-failure file (or: backlog id and reason)
+- [ ] If people can see this change in the app: a What's new note is in `docs/whatsnew/fragments/` (see `docs/whatsnew/README.md`). Otherwise: "no visible change"
 
 ## Failures that are not from this change
 <!-- A test that also fails on a clean develop: name it and the backlog item. Otherwise "none". -->
