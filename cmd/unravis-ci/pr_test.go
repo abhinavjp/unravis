@@ -32,8 +32,9 @@ func (f *fakeHost) Commits(context.Context, string, int) ([]localci.PRCommit, er
 	}
 	return []localci.PRCommit{{SHA: f.pr.HeadSHA, AuthorLogin: f.pr.Author, CommitterLogin: f.pr.Author}}, nil
 }
-func (f *fakeHost) HeadPusher(context.Context, string, string, string) (string, error) {
-	return f.pr.Author, nil // the pull request's author pushed it
+func (f *fakeHost) PushHistory(context.Context, string, string) (localci.PushHistory, error) {
+	// the pull request's author pushed its head, and nobody else pushed to the branch
+	return localci.PushHistory{Events: []localci.PushEvent{{After: f.pr.HeadSHA, Type: "push", Actor: f.pr.Author}}, Complete: true}, nil
 }
 func (f *fakeHost) CloneURL(string) string { return f.url }
 func (f *fakeHost) OpenPullRequests(context.Context, string, string) (localci.PullList, error) {

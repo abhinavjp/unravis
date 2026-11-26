@@ -114,31 +114,40 @@ func parseCommitList(out string) []PRCommit {
 	return commits
 }
 
-// ghPushListMax is how many push records of one branch HeadPusher asks for. The head commit is the newest push
-// of its branch, so it is on the first page; a head that is not there has no pusher on record.
+// ghPushListMax is how many push records of one branch PushHistory asks for (one page).
 const ghPushListMax = 100
 
-// HeadPusher implements Host with the repository activity feed (repos/{repo}/activity), which records, for each
-// push to a branch, the new tip and the account that pushed it.
-func (h *GHHost) HeadPusher(ctx context.Context, repo, headRef, headSHA string) (string, error) {
+// PushHistory implements Host with the repository activity feed (repos/{repo}/activity), which records, for each
+// push to a branch, the new tip and the account that pushed it. The history is Complete when the page is not
+// full, or when its oldest record is the creation of the branch: otherwise older pushes may be cut off.
+func (h *GHHost) PushHistory(ctx context.Context, repo, headRef string) (PushHistory, error) {
 	if _, _, ok := splitRepo(repo); !ok {
-		return "", fmt.Errorf("repository %q is not owner/name", repo)
+		return PushHistory{}, fmt.Errorf("repository %q is not owner/name", repo)
 	}
-	if headRef == "" || headSHA == "" {
-		return "", errors.New("the pull request has no head branch or head commit to look up")
+	if headRef == "" {
+		return PushHistory{}, errors.New("the pull request has no head branch to look up")
 	}
 	// The branch name is outside the owner's control (a collaborator picks it), so it is escaped as one query
 	// value: an "&" or "#" in a name must not add or cut a parameter. The jq program is fixed.
 	path := fmt.Sprintf("repos/%s/activity?ref=%s&direction=desc&per_page=%d", repo, url.QueryEscape("refs/heads/"+headRef), ghPushListMax)
 	out, err := h.gh(ctx, "api", path, "--jq", `.[] | [.after, .activity_type, (.actor.login // "")] | @tsv`)
 	if err != nil {
-		return "", err
+		return PushHistory{}, err
 	}
 	events, err := parsePushEvents(string(out))
 	if err != nil {
-		return "", err
+		return PushHistory{}, err
 	}
-	return PusherOf(headSHA, events), nil
+	return PushHistory{Events: events, Complete: historyComplete(events, ghPushListMax)}, nil
+}
+
+// historyComplete reports whether events (newest first, as many as the host would give for a full page of
+// pageMax) show the whole life of the branch: the page is not full, or its oldest record is the branch's creation.
+func historyComplete(events []PushEvent, pageMax int) bool {
+	if len(events) < pageMax {
+		return true
+	}
+	return events[len(events)-1].Type == "branch_creation"
 }
 
 // parsePushEvents reads the tab separated lines HeadPusher asks gh for, newest first. A line that is not three

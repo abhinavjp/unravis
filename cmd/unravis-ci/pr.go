@@ -49,7 +49,7 @@ func cmdRunPR(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	workflow := fs.String("workflow", "", "run this workflow file whatever the base branch is")
 	keep := fs.Bool("keep", false, "keep the worktree after the run")
 	slots := fs.Int("slots", 2, "jobs at once")
-	trustOwner := fs.Bool("trust-owner-branch", false, "for a run you start by hand: trust the runner definition of your own pull request even when its commits carry no GitHub login")
+	trustOwner := fs.Bool("trust-owner-branch", false, "for a run you start by hand: do not require a GitHub login on every commit of your own pull request (the check of who pushed to the branch still runs, and a branch anybody else pushed to still runs from the base)")
 	var wfFor, protect, vars, trustedBase, allowEnv multiFlag
 	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
 	fs.Var(&protect, "protect", "extra path read from the base branch for pull requests of non-owners (repeatable; added to the defaults)")
