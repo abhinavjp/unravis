@@ -18,7 +18,7 @@ func isolatedTemp(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TMP", dir)
 	t.Setenv("TEMP", dir)
-	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMPDIR", dir) // winok: TMP and TEMP, the Windows names, are set on the two lines above
 }
 
 func callList(t *testing.T, path string) error {
@@ -110,7 +110,7 @@ func TestSessionFailureCodeSortsTheError(t *testing.T) {
 	for err, want := range map[error]string{
 		&fs.PathError{Op: "open", Path: "x", Err: fs.ErrPermission}: SessionFailAccess,
 		&fs.PathError{Op: "mkdir", Path: "x", Err: fs.ErrNotExist}:  SessionFailFolder,
-		errors.New("disk exploded"):                                SessionFailOther,
+		errors.New("disk exploded"):                                 SessionFailOther,
 	} {
 		if got := SessionFailureCode(err); got != want {
 			t.Errorf("%v: %q, want %q", err, got, want)

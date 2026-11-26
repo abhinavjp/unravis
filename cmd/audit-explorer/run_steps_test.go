@@ -124,7 +124,7 @@ func isolateTemp(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TMP", dir)
 	t.Setenv("TEMP", dir)
-	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMPDIR", dir) // winok: TMP and TEMP, the Windows names, are set on the two lines above
 }
 
 func sessionNotes(t *testing.T) []string {
