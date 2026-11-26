@@ -190,17 +190,17 @@ func MakeBundle(cfg Config, now time.Time, o BundleOptions) (res BundleResult, e
 		return res, bundleErr(SnapOther, "There are no recordings in that window.", nil)
 	}
 	if total > bundleMaxBytes {
-		return res, bundleErr(SnapOther, fmt.Sprintf("That window holds %s of recordings, more than one bundle may hold (%s). Use a shorter --since.", mb(uint64(total)), mb(uint64(bundleMaxBytes))), nil)
+		return res, bundleErr(SnapOther, fmt.Sprintf("That window holds %s of recordings, more than one bundle may hold (%s). Use a shorter --since.", mb(nonNeg(total)), mb(nonNeg(bundleMaxBytes))), nil)
 	}
-	if info, derr := o.Disk.Free(cfg.Folder); derr == nil && uint64(total) > info.Free {
-		return res, bundleErr(SnapDriveFull, fmt.Sprintf("The drive is full: %s needed, %s free. Free space, then bundle again.", mb(uint64(total)), mb(info.Free)), nil)
+	if info, derr := o.Disk.Free(cfg.Folder); derr == nil && nonNeg(total) > info.Free {
+		return res, bundleErr(SnapDriveFull, fmt.Sprintf("The drive is full: %s needed, %s free. Free space, then bundle again.", mb(nonNeg(total)), mb(info.Free)), nil)
 	}
 
 	base := filepath.Join(cfg.Folder, SnapshotsDir)
 	if fi, lerr := os.Lstat(base); lerr == nil && fi.Mode().Type() != os.ModeDir {
 		return res, bundleErr(SnapOther, "The snapshots folder is a link, not a folder. Nothing was written.", nil)
 	}
-	if merr := os.MkdirAll(base, 0o755); merr != nil {
+	if merr := os.MkdirAll(base, 0o750); merr != nil {
 		return res, classifySnapErr(merr, total)
 	}
 	if fi, lerr := os.Lstat(base); lerr != nil || fi.Mode().Type() != os.ModeDir {
@@ -289,7 +289,7 @@ func MakeBundle(cfg Config, now time.Time, o BundleOptions) (res BundleResult, e
 			return fail(err)
 		}
 	}
-	if raw, rerr := os.ReadFile(filepath.Join(cfg.Folder, ManifestName)); rerr == nil && len(raw) < 4<<20 { //nolint:gosec // fixed name
+	if raw, rerr := os.ReadFile(filepath.Join(cfg.Folder, ManifestName)); rerr == nil && len(raw) < 4<<20 {
 		if err := add("recorder-manifest.json", strings.NewReader(string(raw))); err != nil {
 			return fail(err)
 		}
@@ -367,4 +367,12 @@ func reservedDeviceBase(name string) bool {
 		return true
 	}
 	return false
+}
+
+// nonNeg turns a byte count into an unsigned one; a negative count (never expected) becomes 0.
+func nonNeg(n int64) uint64 {
+	if n < 0 {
+		return 0
+	}
+	return uint64(n) //nolint:gosec // checked above
 }

@@ -21,7 +21,7 @@ func bundleRig(t *testing.T) (Config, time.Time) {
 	t.Helper()
 	cfg := testConfig(t)
 	cfg.Name = "web-b"
-	if err := os.MkdirAll(cfg.Folder, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.Folder, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 11, 26, 12, 30, 0, 0, time.UTC)
@@ -95,12 +95,12 @@ func TestBundleHoldsTheWindowAndEveryHashIsRight(t *testing.T) {
 		}
 	}
 	// The copy beside the zip carries the zip's own hash.
-	raw, _ := os.ReadFile(res.ManifestPath) //nolint:gosec // test file
+	raw, _ := os.ReadFile(res.ManifestPath)
 	var outer BundleManifest
 	if err := json.Unmarshal(raw, &outer); err != nil {
 		t.Fatal(err)
 	}
-	zb, _ := os.ReadFile(res.Path) //nolint:gosec // test file
+	zb, _ := os.ReadFile(res.Path)
 	sum := sha256.Sum256(zb)
 	if outer.ZipSHA256 != hex.EncodeToString(sum[:]) || outer.ZipBytes != int64(len(zb)) || res.SHA256 != outer.ZipSHA256 {
 		t.Error("the manifest beside the zip does not carry the zip's hash")
@@ -219,7 +219,7 @@ func TestBundleCoverageStartsAtTheFirstWholeHourAndNoTempFilesRemain(t *testing.
 func TestBundleNeverOverwritesAnExistingManifestOrZip(t *testing.T) {
 	cfg, now := bundleRig(t)
 	snaps := filepath.Join(cfg.Folder, SnapshotsDir)
-	if err := os.MkdirAll(snaps, 0o755); err != nil {
+	if err := os.MkdirAll(snaps, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	man := filepath.Join(snaps, "case.manifest.json")
