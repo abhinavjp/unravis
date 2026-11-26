@@ -677,3 +677,9 @@ Findings and evidence: `docs/review/FINDINGS.md`. Work items (W-nn) with files, 
 - [ ] **RV-SEC-5** [Low, hardening] Client-log batch decode is not strict and four fields skip the scrubber (`internal/server/clientlog.go:37-39,76-81,103-106,126-133`). Plan W-40.
 - [ ] **RV-SEC-6** [Low, hardening, unconfirmed] A refused pipe peer is dropped with no back-off (`internal/pipesrv`). Plan W-51.
 - [ ] **RV-SEC-7** [Low, hardening] A failed session-file write is only logged, and no release check proves the shipped binary lacks the test-only `UNRAVIS_E2E_ALLOW_IMAGE` switch (`cmd/audit-explorer/main.go:570-584`, `internal/pipesec/testallow_e2e.go:39`). Plan W-41.
+
+## Remote operations and full UI/CLI parity (plan 2026-11-26, `docs/ops/CLI-PARITY-PLAN.md`)
+
+- [ ] **BL-610** Full UI/CLI parity and remote operations (owner ask 2026-11-26): `unravis ops` read-only commands (version, status, doctor, logs bundle, update status/history/check, Blackbox status, sources scan), gated signed update apply/rollback for Unravis and Blackbox, hash-chained operations audit log, code mode and MCP read bindings, parity table test. Work items OPS-01..OPS-15, OPS-S1 (auth decision, Opus review) in the plan. Plan written 2026-11-26, nothing built, not ticked. Writes are not started before OPS-S1 and the OPS-09 review.
+- [ ] **BL-611** Redis log could not be read on BG-SRV-UK-01 (owner report 2026-11-26): cause unknown (import error, remote tool allowlist, locked file or layout). Confirm first, then explain in plain words and fix. Plan item OPS-F1.
+- [ ] **BL-612** An IIS file loaded into a case did not show in the investigation timeline on BG-SRV-UK-01 (owner report 2026-11-26; only API audit and SQL lanes appeared). Four code paths can cause it (point events with no duration, unvalidated time zone rule, import status, host label mismatch in the lanes). Confirm first, then show the reason on the lane. Plan item OPS-F2.
