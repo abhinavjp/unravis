@@ -516,11 +516,17 @@ func (q *Queue) cancelNoteOf(id string) (cancelNote, bool) {
 }
 
 // Claim hands the next request to an agent, or nil when there is nothing it may take. Order is priority, then
-// first in first out. A request with labels only goes to an agent that has all of them. Two claimers never
-// get the same request: the rename of its file from queued/ to running/ succeeds for one of them only.
+// first in first out. A request with labels only goes to an agent that has all of them, and only to an agent
+// the machine policy of its project allows (policy.json beside the queue folder; deny wins, and a policy that
+// cannot be read lets the agent take nothing). Two claimers never get the same request: the rename of its file
+// from queued/ to running/ succeeds for one of them only.
 func (q *Queue) Claim(agent string, labels []string) (*Request, error) {
 	if agent == "" {
 		return nil, errors.New("claim: no agent name")
+	}
+	pol, err := LoadPolicy(filepath.Dir(q.Dir))
+	if err != nil {
+		return nil, err
 	}
 	rs, err := q.folderOf("queued")
 	if err != nil {
@@ -541,6 +547,9 @@ next:
 			if !have[l] {
 				continue next
 			}
+		}
+		if !pol.Allows(r.Repo, agent) {
+			continue // the project's machine policy does not let this agent run it
 		}
 		held, err := q.takeMarker(r.ID, agent)
 		if err != nil {
