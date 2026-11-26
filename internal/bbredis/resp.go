@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sort"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 )
-
-func sortStrings(s []string) { sort.Strings(s) }
 
 // Reply limits. A reply bigger than these is refused, not truncated: the caller is told, and the connection is closed.
 const (
@@ -20,6 +18,10 @@ const (
 	maxArray   = 10000
 	maxDepth   = 4
 	maxLineLen = 64 << 10
+	// One answer as a whole: the limits above are per item, so a hostile or broken listener could still send many
+	// items. These cap bytes and items for one command (bytes include line text, so an array of tiny items is counted).
+	maxTotalBytes = 8 << 20
+	maxTotalItems = 50000
 )
 
 // Errors of the client. None carries text from the server except RedisError, which holds the error word only.
@@ -38,7 +40,13 @@ func (e *RedisError) Error() string { return "bbredis: the server answered " + e
 // IsNoAuth reports whether err means the server wants a password (or refused the one given).
 func IsNoAuth(err error) bool {
 	var re *RedisError
-	return errors.As(err, &re) && (re.Word == "NOAUTH" || re.Word == "WRONGPASS" || re.Word == "NOPERM")
+	return errors.As(err, &re) && (re.Word == "NOAUTH" || re.Word == "WRONGPASS")
+}
+
+// IsNoPerm reports whether the server knows the user but the user may not run that command (Redis 6 ACL).
+func IsNoPerm(err error) bool {
+	var re *RedisError
+	return errors.As(err, &re) && re.Word == "NOPERM"
 }
 
 // Reply is one decoded answer.
@@ -55,6 +63,21 @@ type Client struct {
 	conn    net.Conn
 	r       *bufio.Reader
 	timeout time.Duration
+	overall time.Time // when set, no command may run past it
+	bytes   int       // left for the answer being read
+	items   int
+}
+
+// SetOverall sets one time by which every following command must be done (zero clears it). The recorder uses it to
+// keep a whole sample inside its budget, whatever the number of commands.
+func (c *Client) SetOverall(t time.Time) { c.overall = t }
+
+// Remaining is the time left until the overall limit; with no limit it is the per-command timeout.
+func (c *Client) Remaining() time.Duration {
+	if c.overall.IsZero() {
+		return c.timeout
+	}
+	return time.Until(c.overall)
 }
 
 // DefaultPort is the standard Redis port.
@@ -97,7 +120,15 @@ func (c *Client) Do(args ...string) (Reply, error) {
 }
 
 func (c *Client) roundTrip(args []string) (Reply, error) {
-	_ = c.conn.SetDeadline(time.Now().Add(c.timeout))
+	dl := time.Now().Add(c.timeout)
+	if !c.overall.IsZero() && c.overall.Before(dl) {
+		dl = c.overall
+	}
+	if !dl.After(time.Now()) {
+		return Reply{}, os.ErrDeadlineExceeded
+	}
+	_ = c.conn.SetDeadline(dl)
+	c.bytes, c.items = maxTotalBytes, maxTotalItems
 	var b strings.Builder
 	fmt.Fprintf(&b, "*%d\r\n", len(args))
 	for _, a := range args {
@@ -117,6 +148,10 @@ func (c *Client) line() (string, error) {
 			return "", err
 		}
 		out = append(out, part...)
+		if c.bytes -= len(part) + 2; c.bytes < 0 {
+			_ = c.conn.Close()
+			return "", ErrTooLarge
+		}
 		if len(out) > maxLineLen {
 			return "", ErrTooLarge
 		}
@@ -129,6 +164,10 @@ func (c *Client) line() (string, error) {
 func (c *Client) read(depth int) (Reply, error) {
 	if depth > maxDepth {
 		return Reply{}, ErrProtocol
+	}
+	if c.items--; c.items < 0 {
+		_ = c.conn.Close()
+		return Reply{}, ErrTooLarge
 	}
 	l, err := c.line()
 	if err != nil {
@@ -146,10 +185,7 @@ func (c *Client) read(depth int) (Reply, error) {
 		if i := strings.IndexByte(word, ' '); i >= 0 {
 			word = word[:i]
 		}
-		if len(word) > 32 {
-			word = word[:32]
-		}
-		return Reply{}, &RedisError{Word: strings.ToUpper(word)}
+		return Reply{}, &RedisError{Word: errorWord(word)}
 	case ':':
 		n, err := strconv.ParseInt(rest, 10, 64)
 		if err != nil {
@@ -164,10 +200,11 @@ func (c *Client) read(depth int) (Reply, error) {
 		if n == -1 {
 			return Reply{Kind: '$', Nil: true}, nil
 		}
-		if n > maxBulk {
+		if n > maxBulk || n+2 > c.bytes {
 			_ = c.conn.Close() // the rest of the stream is not read: the connection is done
 			return Reply{}, ErrTooLarge
 		}
+		c.bytes -= n + 2
 		buf := make([]byte, n+2)
 		if _, err := io.ReadFull(c.r, buf); err != nil {
 			return Reply{}, err
@@ -188,7 +225,7 @@ func (c *Client) read(depth int) (Reply, error) {
 			_ = c.conn.Close()
 			return Reply{}, ErrTooLarge
 		}
-		arr := make([]Reply, 0, n)
+		arr := make([]Reply, 0, min(n, 64)) // grown as items really arrive, never reserved up front
 		for i := 0; i < n; i++ {
 			el, err := c.read(depth + 1)
 			if err != nil {
@@ -199,4 +236,21 @@ func (c *Client) read(depth int) (Reply, error) {
 		return Reply{Kind: '*', Arr: arr}, nil
 	}
 	return Reply{}, ErrProtocol
+}
+
+// errorWord keeps the error word of a reply only when it is plain capitals, digits and underscores (ERR, NOAUTH,
+// WRONGPASS, NOPERM, LOADING ...). Anything else is stored as UNKNOWN: a strange server cannot put its own bytes into
+// a log line.
+func errorWord(w string) string {
+	w = strings.ToUpper(w)
+	if w == "" || len(w) > 32 {
+		return "UNKNOWN"
+	}
+	for i := 0; i < len(w); i++ {
+		c := w[i]
+		if !(c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
+			return "UNKNOWN"
+		}
+	}
+	return w
 }

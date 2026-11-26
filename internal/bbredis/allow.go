@@ -19,26 +19,8 @@ var infoSections = map[string]bool{
 	"persistence": true, "commandstats": true, "keyspace": true, "cpu": true,
 }
 
-// configParams are the only CONFIG GET parameters the recorder reads. requirepass, masterauth, masteruser and
-// anything else that can hold a secret are not here.
-var configParams = map[string]bool{
-	"maxmemory": true, "maxmemory-policy": true, "appendonly": true, "save": true, "dir": true,
-	"logfile": true, "dbfilename": true, "appendfilename": true, "latency-monitor-threshold": true,
-	"slowlog-log-slower-than": true, "slowlog-max-len": true, "timeout": true, "maxclients": true,
-}
-
 // MaxSlowlogGet bounds SLOWLOG GET so one answer stays small.
 const MaxSlowlogGet = 128
-
-// ConfigParams lists the parameters CONFIG GET may ask for, sorted by name.
-func ConfigParams() []string {
-	out := make([]string, 0, len(configParams))
-	for k := range configParams {
-		out = append(out, k)
-	}
-	sortStrings(out)
-	return out
-}
 
 // Allowed says whether the recorder may send args as one command. The check is on the exact words: the command name
 // (any case), then a fixed shape for each command. Anything else, including a command with an extra word, is refused.
@@ -48,7 +30,6 @@ func ConfigParams() []string {
 //	SLOWLOG GET [count]                   count 1..128 (never RESET, never LEN)
 //	LATENCY LATEST                        (never RESET, never HISTORY)
 //	CLIENT LIST                           (never KILL, never SETNAME)
-//	CONFIG GET <parameter>                parameter from the fixed list (never SET, never a pattern)
 //
 // AUTH is not allowed here at all: the password goes through Client.Auth only.
 func Allowed(args []string) error {
@@ -92,10 +73,6 @@ func Allowed(args []string) error {
 		}
 	case "CLIENT":
 		if len(args) == 2 && strings.EqualFold(args[1], "LIST") {
-			return nil
-		}
-	case "CONFIG":
-		if len(args) == 3 && strings.EqualFold(args[1], "GET") && configParams[strings.ToLower(args[2])] {
 			return nil
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"api-audit-explorer/internal/sealedfile"
 )
@@ -106,4 +107,14 @@ func RemovePassword(dir string) error {
 		return ErrPassword
 	}
 	return nil
+}
+
+// PasswordModTime is the time of the sealed file, or the zero time when there is none. The collector uses it to see
+// that the owner saved or removed a password, and only then tries a refused one again.
+func PasswordModTime(dir string) time.Time {
+	fi, err := os.Stat(passwordPath(dir))
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
 }

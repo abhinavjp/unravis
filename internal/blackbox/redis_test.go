@@ -25,6 +25,8 @@ type redisFake struct {
 	password string // "" = no password needed
 	authed   map[net.Conn]bool
 	unknown  map[string]bool // commands answered with -ERR unknown command
+	noperm   map[string]bool // commands answered with -NOPERM
+	delay    time.Duration   // every answer after PING waits this long
 }
 
 func redisBulk(s string) string { return fmt.Sprintf("$%d\r\n%s\r\n", len(s), s) }
@@ -39,7 +41,7 @@ func newRedisFake(t *testing.T) *redisFake {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &redisFake{ln: ln, authed: map[net.Conn]bool{}, unknown: map[string]bool{}}
+	f := &redisFake{ln: ln, authed: map[net.Conn]bool{}, unknown: map[string]bool{}, noperm: map[string]bool{}}
 	t.Cleanup(func() { ln.Close() })
 	go func() {
 		for {
@@ -105,6 +107,11 @@ func (f *redisFake) serve(c net.Conn) {
 			}
 		case !authed:
 			resp = "-NOAUTH Authentication required.\r\n"
+		case f.noperm[cmd]:
+			resp = "-NOPERM this user has no permissions to run the '" + cmd + "' command\r\n"
+		case f.delay > 0 && cmd != "PING" && cmd != "AUTH":
+			time.Sleep(f.delay)
+			resp = redisBulk(fakeInfo)
 		case f.unknown[cmd]:
 			resp = "-ERR unknown command '" + cmd + "'\r\n"
 		case cmd == "PING":
@@ -358,4 +365,146 @@ func TestRedisGroupIsRegisteredInTheCatalogue(t *testing.T) {
 	if !ok || info.ID != "redis.info" || info.Always {
 		t.Fatalf("%+v %v", info, ok)
 	}
+}
+
+func TestRedisDownIsHeldAndNotDialledEverySample(t *testing.T) {
+	f := newRedisFake(t)
+	cfg := redisTestConfig(t, "")
+	g, _ := newRedisGroup(GroupDeps{Config: cfg})
+	defer g.(*redisGroup).Close()
+	if s := collectN(t, g, 1)[0]; s.State != RedisOK {
+		t.Fatal(s.State)
+	}
+	dials := 0
+	old := redisDial
+	redisDial = func(int, time.Duration) (*bbredis.Client, error) { dials++; return nil, errors.New("refused") }
+	defer func() { redisDial = old }()
+	f.ln.Close()
+	g.(*redisGroup).drop() // the connection died with the server
+	got := collectN(t, g, 6)
+	for i, s := range got {
+		if s.State != RedisDown {
+			t.Errorf("sample %d: %s", i, s.State)
+		}
+	}
+	if dials != 1 {
+		t.Errorf("dialled %d times in 6 samples; a stopped Redis must be left alone for a while", dials)
+	}
+}
+
+func TestRedisRefusedPasswordIsNotRetriedUntilTheFileChanges(t *testing.T) {
+	f := newRedisFake(t)
+	f.password = "s3cr3t"
+	cfg := redisTestConfig(t, "")
+	dir := RedisDataDir(cfg.Folder)
+	if err := bbredis.SavePassword(dir, "wrong", xorSealer{}); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := newRedisGroup(GroupDeps{Config: cfg})
+	defer g.(*redisGroup).Close()
+	for _, s := range collectN(t, g, 5) {
+		if s.State != RedisPasswordRefused {
+			t.Fatal(s.State)
+		}
+	}
+	auths := 0
+	for _, c := range f.commands() {
+		if strings.EqualFold(c[0], "AUTH") {
+			auths++
+		}
+	}
+	if auths != 1 {
+		t.Errorf("AUTH sent %d times for 5 samples; each is a failed login in a Redis 6 log", auths)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := bbredis.SavePassword(dir, "s3cr3t", xorSealer{}); err != nil {
+		t.Fatal(err)
+	}
+	if s := collectN(t, g, 1)[0]; s.State != RedisOK {
+		t.Fatalf("a new saved password should be tried at once: %s", s.State)
+	}
+}
+
+func TestRedisPasswordIsNotSentToAnUntrustedListener(t *testing.T) {
+	f := newRedisFake(t)
+	f.password = "s3cr3t"
+	cfg := redisTestConfig(t, "")
+	if err := bbredis.SavePassword(RedisDataDir(cfg.Folder), "s3cr3t", xorSealer{}); err != nil {
+		t.Fatal(err)
+	}
+	old := bbredis.ListenerCheck
+	bbredis.ListenerCheck = func(int) error { return bbredis.ErrUntrustedListener }
+	defer func() { bbredis.ListenerCheck = old }()
+	g, _ := newRedisGroup(GroupDeps{Config: cfg})
+	defer g.(*redisGroup).Close()
+	if s := collectN(t, g, 1)[0]; s.State != RedisNotTrusted {
+		t.Fatalf("state %s", s.State)
+	}
+	for _, c := range f.commands() {
+		if strings.EqualFold(c[0], "AUTH") {
+			t.Fatal("the password was sent to a listener that is not trusted")
+		}
+	}
+}
+
+func TestRedisNoPermIsSaidAndNotARetryLoop(t *testing.T) {
+	f := newRedisFake(t)
+	f.noperm["CLIENT"] = true
+	cfg := redisTestConfig(t, RedisProfileEverything)
+	g, _ := newRedisGroup(GroupDeps{Config: cfg})
+	defer g.(*redisGroup).Close()
+	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	var last *RedisGroup
+	for i := 0; i < 12; i++ {
+		v, _ := g.Collect(t0.Add(time.Duration(i)*15*time.Second), 15)
+		last = v.(*RedisGroup)
+	}
+	if last.State != RedisOK || len(last.Denied) != 1 || last.Denied[0] != "clients" || len(last.Unsupported) != 0 {
+		t.Fatalf("%+v", last)
+	}
+	clients, conns := 0, 0
+	for _, c := range f.commands() {
+		if strings.EqualFold(c[0], "CLIENT") {
+			clients++
+		}
+		if strings.EqualFold(c[0], "PING") {
+			conns++
+		}
+	}
+	if clients != 1 || conns != 1 {
+		t.Errorf("CLIENT sent %d times and %d connections opened; want 1 and 1", clients, conns)
+	}
+	// INFO itself denied: its own state, and the connection stays.
+	f.noperm["INFO"] = true
+	if s := collectN(t, g, 1)[0]; s.State != RedisDenied {
+		t.Errorf("INFO denied: %s", s.State)
+	}
+}
+
+func TestRedisSampleStaysInsideItsBudgetWhenRedisIsSlow(t *testing.T) {
+	f := newRedisFake(t)
+	f.delay = 500 * time.Millisecond
+	cfg := redisTestConfig(t, RedisProfileEverything)
+	g, _ := newRedisGroup(GroupDeps{Config: cfg})
+	defer g.(*redisGroup).Close()
+	start := time.Now()
+	g.Collect(time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC), 15)
+	if took := time.Since(start); took > redisBudget+150*time.Millisecond {
+		t.Errorf("one sample took %v; the group has one second and the whole sample is limited to %v", took, redisBudget)
+	}
+}
+
+func TestRedisCloseWhileCollectingIsSafe(t *testing.T) {
+	f := newRedisFake(t)
+	f.delay = 200 * time.Millisecond
+	cfg := redisTestConfig(t, "")
+	g, _ := newRedisGroup(GroupDeps{Config: cfg})
+	done := make(chan struct{})
+	go func() {
+		g.Collect(time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC), 15)
+		close(done)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	g.(*redisGroup).Close()
+	<-done
 }

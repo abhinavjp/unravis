@@ -21,7 +21,6 @@ func TestAllowedIsAnAllowlist(t *testing.T) {
 		{"INFO"}, {"INFO", "server"}, {"info", "Memory", "stats", "commandstats"},
 		{"SLOWLOG", "GET"}, {"slowlog", "get", "32"}, {"SLOWLOG", "GET", "128"},
 		{"LATENCY", "LATEST"}, {"CLIENT", "LIST"},
-		{"CONFIG", "GET", "maxmemory"}, {"config", "get", "MAXMEMORY-POLICY"}, {"CONFIG", "GET", "dir"},
 	}
 	for _, a := range ok {
 		if err := Allowed(a); err != nil {
@@ -38,18 +37,13 @@ func TestAllowedIsAnAllowlist(t *testing.T) {
 		{"SLOWLOG"}, {"SLOWLOG", "RESET"}, {"SLOWLOG", "LEN"}, {"SLOWLOG", "GET", "0"}, {"SLOWLOG", "GET", "129"}, {"SLOWLOG", "GET", "-1"}, {"SLOWLOG", "GET", "x"}, {"SLOWLOG", "GET", "1", "2"},
 		{"LATENCY"}, {"LATENCY", "RESET"}, {"LATENCY", "HISTORY", "command"}, {"LATENCY", "LATEST", "x"},
 		{"CLIENT"}, {"CLIENT", "KILL", "ID", "3"}, {"CLIENT", "SETNAME", "x"}, {"CLIENT", "LIST", "TYPE", "pubsub"}, {"CLIENT", "PAUSE", "1000"},
-		{"CONFIG"}, {"CONFIG", "SET", "maxmemory", "1"}, {"CONFIG", "GET"}, {"CONFIG", "GET", "*"}, {"CONFIG", "GET", "requirepass"},
+		{"CONFIG", "GET", "maxmemory"}, {"CONFIG", "GET", "dir"}, {"CONFIG"}, {"CONFIG", "SET", "maxmemory", "1"}, {"CONFIG", "GET"}, {"CONFIG", "GET", "*"}, {"CONFIG", "GET", "requirepass"},
 		{"CONFIG", "GET", "masterauth"}, {"CONFIG", "GET", "maxmemory", "dir"}, {"CONFIG", "REWRITE"}, {"CONFIG", "RESETSTAT"},
 		{"PING\r\nFLUSHALL"}, {"INFO", "server\x00"},
 	}
 	for _, a := range bad {
 		if err := Allowed(a); !errors.Is(err, ErrNotAllowed) {
 			t.Errorf("%q was not refused (err=%v)", a, err)
-		}
-	}
-	for _, p := range ConfigParams() {
-		if strings.Contains(p, "auth") || strings.Contains(p, "pass") {
-			t.Errorf("config parameter %q can hold a secret", p)
 		}
 	}
 }
@@ -402,5 +396,84 @@ func TestPasswordStoreRefusals(t *testing.T) {
 	}
 	if _, found, err := LoadPassword(dir, xorProtector{}); !found || !errors.Is(err, ErrPassword) {
 		t.Errorf("oversize: found=%v err=%v", found, err)
+	}
+}
+
+func TestWholeAnswerLimits(t *testing.T) {
+	big := strings.Repeat("x", 1<<20)
+	manyBulks := "*20\r\n" + strings.Repeat(bulk(big), 20) // 20 MB: each item is inside its cap, the sum is not
+	manyItems := "*10000\r\n" + strings.Repeat("*5\r\n:1\r\n:1\r\n:1\r\n:1\r\n:1\r\n", 10000)
+	for name, resp := range map[string]string{"bytes": manyBulks, "items": manyItems} {
+		resp := resp
+		s := newFakeServer(t, func([]string) string { return resp })
+		c := dial(t, s)
+		if _, err := c.Do("INFO", "server"); !errors.Is(err, ErrTooLarge) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// A normal answer is far inside the limits.
+	s := newFakeServer(t, func([]string) string { return bulk(big) })
+	if r, err := dial(t, s).Do("INFO", "server"); err != nil || len(r.Str) != len(big) {
+		t.Errorf("a 1 MB answer: %v", err)
+	}
+}
+
+func TestOverallDeadlineStopsACommandBeforeItIsSent(t *testing.T) {
+	s := newFakeServer(t, func([]string) string { return "+PONG\r\n" })
+	c := dial(t, s)
+	c.SetOverall(time.Now().Add(-time.Millisecond))
+	if _, err := c.Do("PING"); err == nil {
+		t.Fatal("a command ran past the overall deadline")
+	}
+	select {
+	case got := <-s.got:
+		t.Fatalf("the server was sent %v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+	c.SetOverall(time.Time{})
+	if _, err := c.Do("PING"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestErrorWordIsPlainCapitalsOrUnknown(t *testing.T) {
+	for in, want := range map[string]string{"-err x\r\n": "ERR", "-NOPERM no\r\n": "NOPERM", "-\x1b[31mred x\r\n": "UNKNOWN", "-é x\r\n": "UNKNOWN", "-" + strings.Repeat("A", 40) + "\r\n": "UNKNOWN"} {
+		in := in
+		s := newFakeServer(t, func([]string) string { return in })
+		_, err := dial(t, s).Do("INFO", "server")
+		var re *RedisError
+		if !errors.As(err, &re) || re.Word != want {
+			t.Errorf("%q: %v want %s", in, err, want)
+		}
+	}
+	if IsNoAuth(&RedisError{Word: "NOPERM"}) || !IsNoPerm(&RedisError{Word: "NOPERM"}) {
+		t.Error("NOPERM is not a missing password")
+	}
+}
+
+func TestSlowEntryZeroIsReportedWithTheStartCursor(t *testing.T) {
+	r := slowReply(slowEntry(0, 1, 1, "GET", "k"))
+	if got := SlowEntries(r, -1, false); len(got) != 1 || got[0].ID != 0 {
+		t.Errorf("%+v", got)
+	}
+}
+
+func TestPathUnder(t *testing.T) {
+	for file, want := range map[string]bool{
+		`C:\Program Files\Redis\redis-server.exe`: true,
+		`c:\program files\Memurai\memurai.exe`:    true,
+		`C:/Program Files/Redis/x.exe`:            true,
+		`C:\Program Files (x86)\Redis\x.exe`:      false,
+		`C:\Users\bob\Program Files\x.exe`:        false,
+		`C:\Program Files\..\Users\bob\x.exe`:     false,
+		`C:\Program FilesEvil\x.exe`:              false,
+		`C:\Program Files`:                        false,
+	} {
+		if got := pathUnder(file, `C:\Program Files`); got != want {
+			t.Errorf("%s: %v", file, got)
+		}
+	}
+	if pathUnder(`C:\x.exe`, "") {
+		t.Error("an empty folder matched")
 	}
 }

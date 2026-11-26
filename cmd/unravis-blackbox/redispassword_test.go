@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"api-audit-explorer/internal/bbredis"
@@ -140,5 +145,100 @@ func TestRedisPasswordIsNotACommandLineArgument(t *testing.T) {
 	r, path, _ := redisRig(t, "pw\n")
 	if c, _, _ := r.do("set-redis-password", "--config", path, "extra-secret"); c != exitUsage {
 		t.Errorf("a stray argument (a password typed on the command line) was accepted: %d", c)
+	}
+}
+
+// miniRedis answers PING with the given line and records every command word it receives.
+func miniRedis(t *testing.T, pingAnswer string) (port int, words func() []string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	var mu sync.Mutex
+	var seen []string
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				authed := false
+				r := bufio.NewReader(c)
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil || !strings.HasPrefix(line, "*") {
+						return
+					}
+					n, _ := strconv.Atoi(strings.TrimSpace(line[1 : len(line)-2]))
+					var first string
+					for i := 0; i < n; i++ {
+						l, _ := r.ReadString('\n')
+						sz, _ := strconv.Atoi(strings.TrimSpace(l[1:]))
+						buf := make([]byte, sz+2)
+						if _, err := io.ReadFull(r, buf); err != nil {
+							return
+						}
+						if i == 0 {
+							first = strings.ToUpper(string(buf[:sz]))
+						}
+					}
+					mu.Lock()
+					seen = append(seen, first)
+					mu.Unlock()
+					if first == "AUTH" {
+						authed = true
+					}
+					if first == "PING" && !authed {
+						_, _ = io.WriteString(c, pingAnswer)
+					} else {
+						_, _ = io.WriteString(c, "+OK\r\n")
+					}
+				}
+			}()
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), seen...)
+	}
+}
+
+func TestRedisCheckSendsThePasswordOnlyWhereItIsAskedForAndTrusted(t *testing.T) {
+	// A Redis with no password: nothing is sent, and the owner is told.
+	port, words := miniRedis(t, "+PONG\r\n")
+	if err := redisCheck(port, "pw"); !errors.Is(err, errRedisNoPassword) {
+		t.Fatalf("no-password server: %v", err)
+	}
+	for _, w := range words() {
+		if w == "AUTH" {
+			t.Fatal("a password was sent to a Redis that did not ask for one")
+		}
+	}
+	// A Redis that asks, behind a listener that is not trusted: nothing is sent.
+	port, words = miniRedis(t, "-NOAUTH Authentication required.\r\n")
+	old := bbredis.ListenerCheck
+	bbredis.ListenerCheck = func(int) error { return bbredis.ErrUntrustedListener }
+	err := redisCheck(port, "pw")
+	bbredis.ListenerCheck = old
+	if !errors.Is(err, errRedisNotTrusted) {
+		t.Fatalf("untrusted: %v", err)
+	}
+	for _, w := range words() {
+		if w == "AUTH" {
+			t.Fatal("the password was sent to an untrusted listener")
+		}
+	}
+	// Trusted: it is sent.
+	port, words = miniRedis(t, "-NOAUTH x\r\n")
+	if err := redisCheck(port, "pw"); err != nil {
+		t.Fatal(err)
+	}
+	if w := words(); len(w) < 2 || w[1] != "AUTH" {
+		t.Fatalf("commands %v", w)
 	}
 }

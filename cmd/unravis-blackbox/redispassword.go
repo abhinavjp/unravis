@@ -29,6 +29,8 @@ const (
 	reasonRedisUnreachable = "redis-unreachable"
 	reasonRedisRefused     = "redis-password-refused"
 	reasonRedisSave        = "redis-password-save"
+	reasonRedisNoPassword  = "redis-no-password"
+	reasonRedisNotTrusted  = "redis-not-trusted"
 )
 
 var redisReasonSentences = map[string]string{
@@ -36,6 +38,8 @@ var redisReasonSentences = map[string]string{
 	reasonRedisUnreachable: "Redis did not answer on this PC. Check the port in the Blackbox settings and that Redis is running. Nothing was saved.",
 	reasonRedisRefused:     "Redis did not accept that password. Nothing was saved.",
 	reasonRedisSave:        "The Redis password could not be saved or removed.",
+	reasonRedisNoPassword:  "This Redis does not ask for a password. Nothing was saved and nothing was sent.",
+	reasonRedisNotTrusted:  "The program on the Redis port is not an installed program or a service. The password was not sent and nothing was saved.",
 }
 
 func (a answer) failRedis(reason string) int {
@@ -48,20 +52,35 @@ func (a answer) failRedis(reason string) int {
 	return exitFail
 }
 
-// redisCheck tests a password against the Redis on this PC. A variable (on deps) so tests need no server.
+// redisCheck tests a password against the Redis on this PC. A variable (on deps) so tests need no server. The
+// password is sent only when the server asks for one AND the program on the port is an installed one or a service
+// account (any local user can open a port, so loopback alone is not proof).
 func redisCheck(port int, password string) error {
 	c, err := bbredis.Dial(port, 3*time.Second)
 	if err != nil {
 		return errRedisUnreachable
 	}
 	defer c.Close()
-	if password != "" {
-		if err := c.Auth(password); err != nil {
-			if bbredis.IsNoAuth(err) {
-				return errRedisRefused
-			}
-			return errRedisUnreachable
+	_, perr := c.Do("PING")
+	switch {
+	case perr == nil:
+		if password != "" {
+			return errRedisNoPassword // nothing asks for a password: do not send one
 		}
+		return nil
+	case !bbredis.IsNoAuth(perr):
+		return errRedisUnreachable
+	case password == "":
+		return errRedisRefused
+	}
+	if bbredis.ListenerCheck(port) != nil {
+		return errRedisNotTrusted
+	}
+	if err := c.Auth(password); err != nil {
+		if bbredis.IsNoAuth(err) {
+			return errRedisRefused
+		}
+		return errRedisUnreachable
 	}
 	if _, err := c.Do("PING"); err != nil {
 		return errRedisRefused
@@ -72,6 +91,8 @@ func redisCheck(port int, password string) error {
 var (
 	errRedisUnreachable = errors.New("redis unreachable")
 	errRedisRefused     = errors.New("redis refused")
+	errRedisNoPassword  = errors.New("redis has no password")
+	errRedisNotTrusted  = errors.New("redis port not trusted")
 )
 
 // redisPasswordDir returns the locked folder for the password, creating it when it is not there. The administrator
@@ -152,8 +173,13 @@ func runRedisPassword(cmd, configPath string, d deps, ans answer) int {
 		check = redisCheck
 	}
 	if err := check(cfg.RedisPort(), pw); err != nil {
-		if errors.Is(err, errRedisRefused) {
+		switch {
+		case errors.Is(err, errRedisRefused):
 			return ans.failRedis(reasonRedisRefused)
+		case errors.Is(err, errRedisNoPassword):
+			return ans.failRedis(reasonRedisNoPassword)
+		case errors.Is(err, errRedisNotTrusted):
+			return ans.failRedis(reasonRedisNotTrusted)
 		}
 		return ans.failRedis(reasonRedisUnreachable)
 	}
