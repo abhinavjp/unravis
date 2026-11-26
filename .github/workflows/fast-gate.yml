@@ -102,6 +102,7 @@ jobs:
       - name: Checks that always run (tests of the CI tools, action pins)
         run: |
           set -euo pipefail
+          node tools/ci/test-ci-lint-cache.mjs
           node tools/ci/test-fast-scope.mjs
           node tools/ci/test-diff-cover.mjs
           node tools/ci/test-web-scope.mjs
