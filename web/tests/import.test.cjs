@@ -313,7 +313,7 @@ test('local only: none of the six files names an outside address', () => {
 test('the screen reaches the shell through one side panel and one header button', () => {
   assert.match(read('src/App.svelte'), /panels\.importPopup\}<ImportPopup caseId=\{panels\.importPopup\.caseId\}[^>]* query=\{scope\.query\} \{zone\}/);
   assert.match(read('src/components/AppHeader.svelte'), /id: 'import', label: 'Add files', open: \(\) => openSidePanel\('import'\)/);
-  assert.match(read('src/lib/appState.svelte.ts'), /export function openSidePanel\(which: 'patterns' \| 'ledger' \| 'export' \| 'import' \| 'blackbox' \| 'mcp'\)/);
+  assert.match(read('src/lib/appState.svelte.ts'), /export function openSidePanel\(which: 'patterns' \| 'ledger' \| 'export' \| 'import' \| 'blackbox' \| 'mcp' \| 'updates'\)/);
 });
 
 /* ------------------------------------------------------------------ integration: names, order, hosts, timeline, case export */
