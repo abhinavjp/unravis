@@ -54,7 +54,8 @@ const NOTE_TITLES: Record<string, { title: string; tone: Tone }> = {
   'collect-recovered': { title: 'Readings work again', tone: 'info' },
   'write-still-failing': { title: 'Samples still cannot be saved', tone: 'bad' },
   'write-recovered': { title: 'Samples are being saved again', tone: 'info' },
-  'settings-applied': { title: 'New settings were applied', tone: 'info' }
+  'settings-applied': { title: 'New settings were applied', tone: 'info' },
+  'recorder-crashed': { title: 'The recorder crashed and was started again', tone: 'bad' }
 };
 const RESTART_DETAIL: Record<string, string> = {
   'after-stop': 'The earlier run had stopped cleanly.',
@@ -84,6 +85,12 @@ export function failureDetail(kind: string, detail: unknown): string {
     if (!m) return '';
     const cause = own(FAILURE_CAUSE, m[1]);
     return (cause ? 'Latest cause: ' + cause + '. ' : '') + roundsWords(Number(m[2])) + (slow ? ' had no reading of this PC since the last note.' : ' failed since the last note.');
+  }
+  if (kind === 'recorder-crashed') {
+    const m = /^crashes=([0-9]{1,6}) at=/.exec(detail);
+    if (!m) return '';
+    const n = Number(m[1]);
+    return (n === 1 ? 'A crash file was saved' : n + ' crash files were saved') + ' in the "crash" folder inside the recordings folder. Keep it: it shows what the recorder was doing when it stopped.';
   }
   if (kind === 'collect-recovered' || kind === 'write-recovered' || kind === 'host-recovered') {
     const m = /^rounds=(\d{1,9}) seconds=(\d{1,9})$/.exec(detail);
