@@ -59,6 +59,8 @@ type Sample struct {
 	VM          *VMGroup          `json:"vm,omitempty"`
 	Dumps       *DumpsGroup       `json:"dumps,omitempty"`
 	SQLLog      *SQLLogGroup      `json:"sqlLog,omitempty"`
+	// ExtraCounters holds the counters the owner added by path (settings "counters.extra").
+	ExtraCounters *ExtraCountersGroup `json:"extraCounters,omitempty"`
 
 	Missing []string `json:"missing,omitempty"`
 }

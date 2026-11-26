@@ -139,14 +139,18 @@ func run(args []string) error {
 }
 
 func openBrowser(u string) {
-	var c *exec.Cmd
-	switch runtime.GOOS {
+	_ = browserCommand(runtime.GOOS, u).Start()
+}
+
+// browserCommand builds the command that opens u in the default browser. On Windows the program is rundll32 by its full
+// path in the Windows system folder (see rundll32Path), so a planted rundll32.exe on PATH is never started.
+func browserCommand(goos, u string) *exec.Cmd {
+	switch goos {
 	case "windows":
-		c = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
+		return exec.Command(rundll32Path(), "url.dll,FileProtocolHandler", u) //nolint:gosec // G204: a fixed program; u is the loopback URL of this dashboard
 	case "darwin":
-		c = exec.Command("open", u)
+		return exec.Command("open", u) //nolint:gosec // G204: a fixed program; u is the loopback URL of this dashboard
 	default:
-		c = exec.Command("xdg-open", u)
+		return exec.Command("xdg-open", u) //nolint:gosec // G204: a fixed program; u is the loopback URL of this dashboard
 	}
-	_ = c.Start()
 }
