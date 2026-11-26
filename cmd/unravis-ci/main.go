@@ -70,6 +70,8 @@ func realMain(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return cmdCompare(ctx, args[1:], stdout, stderr, environ)
 	case "claims":
 		return cmdClaims(ctx, args[1:], stdout, stderr, environ)
+	case "exclusive":
+		return cmdExclusive(ctx, args[1:], stdout, stderr, environ)
 	case "fallback":
 		return cmdFallback(ctx, args[1:], stdout, stderr, environ)
 	case "help", "-h", "--help":
@@ -96,6 +98,7 @@ func usage(w io.Writer) {
         [--protect PATH]... [--trusted-base B]... [--allow-env NAME]... [--var k=v]...
         [--no-status] [--post-required] [--context file.yml=name]...
         [--no-claims] [--claim-ttl 5m] [--compare-every 10m]
+  unravis-ci exclusive <resource> [--state DIR] -- <command> [args...]
   unravis-ci run-item <id> [--state DIR] [--child] [--origin URL] [--job-slots N] [--protect PATH]... [--trusted-base B]... [--allow-env NAME]...
   unravis-ci status [--state DIR] [--recent N]
   unravis-ci cancel <id|pr> [--state DIR] [--reason TEXT]
