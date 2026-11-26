@@ -275,6 +275,20 @@ func TestTheStateMovingDuringTheProbeStopsTheFlip(t *testing.T) {
 	for name, move := range moves {
 		t.Run(name, func(t *testing.T) {
 			lr := newLaunchRig(t)
+			// A move may start a download in the background: wait for it to end before the temp folder goes, or the removal can
+			// meet a file the download is still writing.
+			t.Cleanup(func() {
+				deadline := time.Now().Add(10 * time.Second)
+				for time.Now().Before(deadline) {
+					lr.u.inst.mu.Lock()
+					running := lr.u.inst.running
+					lr.u.inst.mu.Unlock()
+					if !running {
+						return
+					}
+					time.Sleep(10 * time.Millisecond) // winok: polls a flag under a 10 s deadline
+				}
+			})
 			if err := lr.u.Install(); err != nil {
 				t.Fatal(err)
 			}

@@ -366,3 +366,289 @@ type diagStuckHost struct{ stall chan struct{} }
 
 func (b *diagStuckHost) Collect(time.Time) (Sample, error) { <-b.stall; return Sample{}, nil }
 func (b *diagStuckHost) Close() error                      { return nil }
+
+// failingDiagFS is the real file system with switches that make a step fail.
+// failRename refuses to move the current file (anything else may move);
+// noReplace makes a rename refuse a target that exists, as some systems do.
+type failingDiagFS struct {
+	osDiagFS
+	failRename, failTruncate, noReplace bool
+	removed                             []string
+}
+
+func (f *failingDiagFS) Remove(name string) error {
+	f.removed = append(f.removed, filepath.Base(name))
+	return f.osDiagFS.Remove(name)
+}
+
+func (f *failingDiagFS) Rename(a, b string) error {
+	if f.failRename && filepath.Base(a) == DiagFileName {
+		return errors.New("rename refused")
+	}
+	if _, err := os.Stat(b); f.noReplace && err == nil {
+		return errors.New("target exists")
+	}
+	return f.osDiagFS.Rename(a, b)
+}
+
+func (f *failingDiagFS) Truncate(name string, n int64) error {
+	if f.failTruncate {
+		return errors.New("truncate refused")
+	}
+	return f.osDiagFS.Truncate(name, n)
+}
+
+func diagFileSize(t *testing.T, dir string) int64 {
+	t.Helper()
+	st, err := os.Stat(filepath.Join(dir, DiagFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.Size()
+}
+
+// fillDiagNearCap writes lines until the file is just under its cap.
+func fillDiagNearCap(t *testing.T, d *DiagLog, c *clock, dir string) {
+	t.Helper()
+	for diagFileSize(t, dir) < diagMaxBytes-400 {
+		c.t = c.t.Add(time.Millisecond)
+		d.Line("round", "pad", strings.Repeat("x", 150))
+	}
+}
+
+// RV-BB-12: when the rename fails the file is emptied in place and the cap holds.
+func TestDiagLogRenameFailsSoTheFileIsEmptied(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	d := OpenDiagLog(dir, c.now)
+	defer d.Close()
+	d.fsys = &failingDiagFS{failRename: true}
+	stuck := 0
+	d.SetOnStuck(func() { stuck++ })
+	fillDiagNearCap(t, d, c, dir)
+	for i := 0; i < 20; i++ { // crosses the cap
+		c.t = c.t.Add(time.Millisecond)
+		d.Line("round", "pad", strings.Repeat("x", 150), "seq", i)
+	}
+	if n := diagFileSize(t, dir); n > diagMaxBytes {
+		t.Fatalf("file is %d bytes, cap is %d: it was not emptied", n, diagMaxBytes)
+	}
+	if !strings.Contains(string(d.Tail(DiagTailBytes)), "seq=19") {
+		t.Fatal("the newest line must be written after the file was emptied")
+	}
+	if stuck != 0 {
+		t.Fatalf("an emptied file is not stuck, event raised %d times", stuck)
+	}
+}
+
+// RV-BB-12: when neither the rename nor the emptying works, writing stops (the
+// file cannot grow), one event is raised, and writing starts again once a
+// rotation works.
+func TestDiagLogStopsWritingWhenRotationAndEmptyingFail(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	d := OpenDiagLog(dir, c.now)
+	defer d.Close()
+	fs := &failingDiagFS{failRename: true, failTruncate: true}
+	d.fsys = fs
+	stuck, resumed := 0, 0
+	d.SetOnStuck(func() { stuck++ })
+	d.SetOnResumed(func() { resumed++ })
+	fillDiagNearCap(t, d, c, dir)
+	for i := 0; i < 20; i++ {
+		c.t = c.t.Add(time.Millisecond)
+		d.Line("round", "pad", strings.Repeat("x", 150), "seq", i)
+	}
+	frozen := diagFileSize(t, dir)
+	if frozen > diagMaxBytes {
+		t.Fatalf("file is %d bytes, cap is %d", frozen, diagMaxBytes)
+	}
+	if stuck != 1 {
+		t.Fatalf("event raised %d times, want once", stuck)
+	}
+	// Retries that fail leave the file as it is and raise nothing more.
+	for i := 0; i < 50; i++ {
+		c.t = c.t.Add(10 * time.Second)
+		d.Line("round", "pad", strings.Repeat("y", 150))
+	}
+	if n := diagFileSize(t, dir); n != frozen {
+		t.Fatalf("file grew from %d to %d while stuck", frozen, n)
+	}
+	if stuck != 1 {
+		t.Fatalf("event raised %d times while stuck, want once", stuck)
+	}
+	if resumed != 0 {
+		t.Fatalf("resumed raised %d times while still stuck", resumed)
+	}
+	// The way clears: the next try rotates and writing resumes.
+	fs.failRename, fs.failTruncate = false, false
+	c.t = c.t.Add(2 * time.Minute)
+	d.Line("round", "seq", "back")
+	if !strings.Contains(string(d.Tail(DiagTailBytes)), "seq=back") {
+		t.Fatal("writing must resume after a rotation works")
+	}
+	if n := diagFileSize(t, dir); n >= frozen {
+		t.Fatalf("file is %d bytes after the rotation, was %d", n, frozen)
+	}
+	if stuck != 1 {
+		t.Fatalf("event raised %d times in all, want once", stuck)
+	}
+	if resumed != 1 {
+		t.Fatalf("resumed raised %d times, want once", resumed)
+	}
+}
+
+// RV-BB-12: the log can get stuck, recover and get stuck again; each change is
+// said once, and the second stop is not hidden by the first.
+func TestDiagLogRecoversThenGetsStuckAgain(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	d := OpenDiagLog(dir, c.now)
+	defer d.Close()
+	fs := &failingDiagFS{failRename: true, failTruncate: true}
+	d.fsys = fs
+	stuck, resumed := 0, 0
+	d.SetOnStuck(func() { stuck++ })
+	d.SetOnResumed(func() { resumed++ })
+	cross := func() {
+		fillDiagNearCap(t, d, c, dir)
+		for i := 0; i < 5; i++ {
+			c.t = c.t.Add(time.Millisecond)
+			d.Line("round", "pad", strings.Repeat("x", 150))
+		}
+	}
+	cross()
+	if stuck != 1 || resumed != 0 {
+		t.Fatalf("after the first stop: stuck %d resumed %d, want 1 and 0", stuck, resumed)
+	}
+	fs.failRename, fs.failTruncate = false, false
+	c.t = c.t.Add(2 * time.Minute)
+	d.Line("round", "seq", "back")
+	if stuck != 1 || resumed != 1 {
+		t.Fatalf("after recovery: stuck %d resumed %d, want 1 and 1", stuck, resumed)
+	}
+	// A line while it runs fine raises nothing.
+	c.t = c.t.Add(time.Millisecond)
+	d.Line("round", "seq", "again")
+	if stuck != 1 || resumed != 1 {
+		t.Fatalf("a normal line changed the counts: stuck %d resumed %d", stuck, resumed)
+	}
+	fs.failRename, fs.failTruncate = true, true
+	cross()
+	if stuck != 2 || resumed != 1 {
+		t.Fatalf("after the second stop: stuck %d resumed %d, want 2 and 1", stuck, resumed)
+	}
+	fs.failRename, fs.failTruncate = false, false
+	c.t = c.t.Add(2 * time.Minute)
+	d.Line("round", "seq", "back2")
+	if stuck != 2 || resumed != 2 {
+		t.Fatalf("after the second recovery: stuck %d resumed %d, want 2 and 2", stuck, resumed)
+	}
+}
+
+// RV-BB-12: a rename that fails must not cost the old ".1": it stays as it was,
+// whether the emptying then works or not, and no side file is left behind.
+func TestDiagLogFailedRenameKeepsTheOldFile(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		failTruncate bool
+	}{{"emptied instead", false}, {"stuck", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			const oldText = "2020-01-01T00:00:00.000Z round old=kept\n"
+			oldPath := filepath.Join(dir, diagOldName)
+			if err := os.WriteFile(oldPath, []byte(oldText), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			c := &clock{t: t0}
+			d := OpenDiagLog(dir, c.now)
+			defer d.Close()
+			fs := &failingDiagFS{failRename: true, failTruncate: tc.failTruncate}
+			d.fsys = fs
+			fillDiagNearCap(t, d, c, dir)
+			for i := 0; i < 5; i++ {
+				c.t = c.t.Add(time.Millisecond)
+				d.Line("round", "pad", strings.Repeat("x", 150))
+			}
+			got, err := os.ReadFile(oldPath) //nolint:gosec // G304: a test temp file
+			if err != nil || string(got) != oldText {
+				t.Fatalf("the old file changed: %q, %v", got, err)
+			}
+			if _, err := os.Stat(oldPath + ".tmp"); err == nil {
+				t.Fatal("a side file was left behind")
+			}
+			for _, n := range fs.removed {
+				if n == diagOldName {
+					t.Fatal("the old file was removed before the rename worked")
+				}
+			}
+		})
+	}
+}
+
+// A system that will not rename over an existing file still gets the new ".1":
+// the old one is moved aside, replaced, and then dropped.
+func TestDiagLogReplacesTheOldFileWhereRenameCannotOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	oldPath := filepath.Join(dir, diagOldName)
+	if err := os.WriteFile(oldPath, []byte("older\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &clock{t: t0}
+	d := OpenDiagLog(dir, c.now)
+	defer d.Close()
+	d.fsys = &failingDiagFS{noReplace: true}
+	stuck := 0
+	d.SetOnStuck(func() { stuck++ })
+	fillDiagNearCap(t, d, c, dir)
+	for i := 0; i < 5; i++ {
+		c.t = c.t.Add(time.Millisecond)
+		d.Line("round", "pad", strings.Repeat("x", 150))
+	}
+	got, err := os.ReadFile(oldPath) //nolint:gosec // G304: a test temp file
+	if err != nil || strings.Contains(string(got), "older") || len(got) < diagMaxBytes-1000 {
+		t.Fatalf("the old file was not replaced by the full one (%d bytes, %v)", len(got), err)
+	}
+	if _, err := os.Stat(oldPath + ".tmp"); err == nil {
+		t.Fatal("a side file was left behind")
+	}
+	if n := diagFileSize(t, dir); n > diagMaxBytes/2 {
+		t.Fatalf("the current file is %d bytes: it was not started again", n)
+	}
+	if stuck != 0 {
+		t.Fatalf("a rotation that worked raised the stuck event %d times", stuck)
+	}
+}
+
+// The callbacks run after the lock is released: they may write a line (the real
+// one takes the store lock and may log), and must not deadlock the log.
+func TestDiagLogCallbacksRunOutsideTheLock(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	d := OpenDiagLog(dir, c.now)
+	defer d.Close()
+	fs := &failingDiagFS{failRename: true, failTruncate: true}
+	d.fsys = fs
+	d.SetOnStuck(func() { d.Line("note", "what", "stuck-seen") })
+	d.SetOnResumed(func() { d.Line("note", "what", "resumed-seen") })
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fillDiagNearCap(t, d, c, dir)
+		for i := 0; i < 5; i++ {
+			c.t = c.t.Add(time.Millisecond)
+			d.Line("round", "pad", strings.Repeat("x", 150))
+		}
+		fs.failRename, fs.failTruncate = false, false
+		c.t = c.t.Add(2 * time.Minute)
+		d.Line("round", "seq", "back")
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a callback that writes a line deadlocked the log")
+	}
+	if !strings.Contains(string(d.Tail(DiagTailBytes)), "what=resumed-seen") {
+		t.Fatal("the line written by the resumed callback is missing")
+	}
+}

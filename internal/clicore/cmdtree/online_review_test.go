@@ -101,6 +101,37 @@ func TestEndOfContextWinsOverBusyPipe(t *testing.T) {
 	}
 }
 
+// RV-SUP-5: only a code that can pass by itself is retryable when the owner sent it (D27). An owner that marks a refusal as retryable on
+// the wire, or sends a refusal that repeating cannot change, does not make the command line say "try again". The command line never
+// retries by itself; the flag only tells the caller.
+func TestOwnerRefusalCodesAreNotRetryable(t *testing.T) {
+	answer := func(code string) *owner {
+		o := newOwner(t, nil)
+		o.serve(200, o.helloBody(nil), func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"`+code+`","message":"no","retryable":true}}`)
+		})
+		return o
+	}
+	retryable := func(o *owner) bool {
+		r := o.run("sources", "list", "--json")
+		if r.code == 0 {
+			t.Fatalf("an error answer gave exit 0: %+v", r)
+		}
+		v, _ := decode(t, r.err)["error"].(map[string]any)["retryable"].(bool)
+		return v
+	}
+	for _, code := range []string{"PERMISSION_DENIED", "APPROVAL_REQUIRED", "RESULT_EXPIRED", "INVALID_ARGUMENT", "NOT_FOUND", "CASE_LOCKED", "ENDPOINT_UNAVAILABLE", "UNSUPPORTED_FORMAT", "RESULT_TOO_LARGE", "NOT_A_CODE"} {
+		if retryable(answer(code)) {
+			t.Errorf("%s sent by the owner was marked retryable", code)
+		}
+	}
+	for _, code := range []string{"OWNER_BUSY", "UPDATE_IN_PROGRESS", "BUDGET_EXCEEDED", "UPSTREAM_UNAVAILABLE"} {
+		if !retryable(answer(code)) {
+			t.Errorf("%s sent by the owner passes by itself and should stay retryable for a cheap read", code)
+		}
+	}
+}
+
 func TestOwnerBusyRetryRuleFollowsTheOperation(t *testing.T) {
 	busy := fakeBackend(func(context.Context, string, json.RawMessage) (any, *clicore.Error) {
 		return nil, clicore.NewErrorAfterWork(clicore.CodeOwnerBusy, "busy", "")
