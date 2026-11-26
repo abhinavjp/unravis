@@ -40,7 +40,7 @@ func TestSilentNoUACNeedsNoServiceLeftOver(t *testing.T) {
 	servicesInstalled = func(...string) bool { return true }
 	defer func() { servicesInstalled = old }()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "setup-state.json"), []byte(`{"scope":"user"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "setup-state.json"), []byte(`{"scope":"user"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if SilentNoUAC(dir) {
