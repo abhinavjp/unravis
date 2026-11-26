@@ -17,7 +17,8 @@
 # sql/incident_2026-10-22.sql stays tracked (gitignore does not untrack).
 /sql/
 /.mcp.json
-/.claude/
+/.claude/*
+!/.claude/settings.json
 /.qoder/
 /unravis-review-pack.zip
 # e2e scratch logs/results (direct children only; fixtures/files/*.txt stay tracked)
