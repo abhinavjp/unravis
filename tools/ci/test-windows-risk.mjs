@@ -18,6 +18,20 @@ assert.deepEqual(ids(patch('a/x_test.go', 'p := `C:\\Users\\me`')), ['abs-drive'
 assert.deepEqual(ids(patch('a/x.go', 'syscall.Kill(pid, syscall.SIGTERM)')), ['unix-syscall']);
 assert.equal(scanPatch(patch('a/x_test.go', 'ok', 'os.Chmod(d, 0o500)'))[0].line, 2);
 
+// Review round 1: shapes that must NOT be reported, and shapes that must.
+assert.deepEqual(ids(patch('a/x_test.go', 'c := exec.Command(bin, "config", "set", "x", "true")')), []);
+assert.deepEqual(ids(patch('a/x_test.go', 'c := exec.CommandContext(ctx, "sh", "-c", "x")')), ['shell-out']);
+assert.deepEqual(ids(patch('a/main.go', 'signal.Notify(c, os.Interrupt, syscall.SIGTERM)', 'u := os.Getuid()')), []);
+assert.deepEqual(ids(patch('a/x.go', 'a := &syscall.SysProcAttr{Setpgid: true}')), ['unix-syscall']);
+assert.deepEqual(ids(patch('a/x_test.go', 't.Setenv("HOME", d)', 't.Setenv("USERPROFILE", d)')), []);
+assert.deepEqual(ids(patch('a/x_test.go', 'time.Sleep(10 * time.Millisecond)')), []);
+assert.deepEqual(ids(patch('a/x_test.go', 'time.Sleep(50 * time.Millisecond)')), ['timing']);
+assert.deepEqual(ids(patch('a/x_test.go', 'if time.Since(s) < 5*time.Second {')), []);
+assert.deepEqual(ids(patch('a/x_test.go', 'b, _ := os.ReadFile("testdata/x.json")')), []);
+assert.deepEqual(ids(patch('a/x_test.go', 'b, _ := os.ReadFile(filepath.Join("testdata", "x.txt"))')), ['golden-eol']);
+assert.deepEqual(ids(patch('a/x_test.go', 'if fi.Mode()&os.ModePerm != 0o600 {')), ['file-mode']);
+assert.deepEqual(ids(patch('a/x_test.go', 'want := "a:\\nb"')), []);
+
 // Test-only rules stay quiet in production code; the syscall rule does not.
 assert.deepEqual(ids(patch('a/x.go', 'p := "/tmp/x"')), []);
 // Escape hatch needs a reason; a bare marker does not count.
@@ -34,5 +48,6 @@ assert.deepEqual(ids(patch('a/x_test.go', 'dir := t.TempDir()', 'p := filepath.J
 
 assert.equal(hasBuildTag('//go:build windows\n\npackage a\n'), true);
 assert.equal(hasBuildTag('package a\n'), false);
+assert.equal(hasBuildTag('//go:build !tauri_sidecar\n\npackage a\n'), false);
 
 console.log('test-windows-risk: ok');

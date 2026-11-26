@@ -25,7 +25,10 @@ It works in Git Bash on the PC and in a Linux container. It repeats what GitHub 
 
 Options: `--skip-tests` (the slow step; only when the change is docs or tooling and the scope says Go is not affected anyway), `--skip-web`, `--no-fetch`, `--base <ref>`. Exit 0 means "ready to push".
 
+Also run (not numbered above): the scope (`fast-scope.mjs`), the action-pin check, and `go test -tags tauri_sidecar .` like the Fast gate.
+
 What it cannot do, so the rules below fill the gap:
+- It does not run the web build (it rewrites the generated folders); the Fast gate does.
 - It does not run the Windows test shards or the race job (they are in the full CI). Rules 3 and 4 below cover that.
 - On the owner's PC, the baseline compare can show "new" failures that come from the PC (a full case folder, a running app). See the flaky policy; do not fix them in your change.
 
