@@ -460,16 +460,16 @@ func TestSlowEntryZeroIsReportedWithTheStartCursor(t *testing.T) {
 
 func TestPathUnder(t *testing.T) {
 	for file, want := range map[string]bool{
-		`C:\Program Files\Redis\redis-server.exe`: true,
+		`C:\Program Files\Redis\redis-server.exe`: true, // winok: string compare only, no filesystem
 		`c:\program files\Memurai\memurai.exe`:    true,
 		`C:/Program Files/Redis/x.exe`:            true,
-		`C:\Program Files (x86)\Redis\x.exe`:      false,
-		`C:\Users\bob\Program Files\x.exe`:        false,
-		`C:\Program Files\..\Users\bob\x.exe`:     false,
-		`C:\Program FilesEvil\x.exe`:              false,
-		`C:\Program Files`:                        false,
+		`C:\Program Files (x86)\Redis\x.exe`:      false, // winok: string compare only, no filesystem
+		`C:\Users\bob\Program Files\x.exe`:        false, // winok: string compare only, no filesystem
+		`C:\Program Files\..\Users\bob\x.exe`:     false, // winok: string compare only, no filesystem
+		`C:\Program FilesEvil\x.exe`:              false, // winok: string compare only, no filesystem
+		`C:\Program Files`:                        false, // winok: string compare only, no filesystem
 	} {
-		if got := pathUnder(file, `C:\Program Files`); got != want {
+		if got := pathUnder(file, `C:\Program Files`); got != want { // winok: string compare only, no filesystem
 			t.Errorf("%s: %v", file, got)
 		}
 	}

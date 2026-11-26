@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -416,7 +417,11 @@ func TestRedisRefusedPasswordIsNotRetriedUntilTheFileChanges(t *testing.T) {
 	if auths != 1 {
 		t.Errorf("AUTH sent %d times for 5 samples; each is a failed login in a Redis 6 log", auths)
 	}
-	time.Sleep(20 * time.Millisecond)
+	// Make the first file clearly older, so the change is seen on any clock granularity.
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, bbredis.PasswordFile), old, old); err != nil {
+		t.Fatal(err)
+	}
 	if err := bbredis.SavePassword(dir, "s3cr3t", xorSealer{}); err != nil {
 		t.Fatal(err)
 	}
@@ -481,16 +486,20 @@ func TestRedisNoPermIsSaidAndNotARetryLoop(t *testing.T) {
 	}
 }
 
-func TestRedisSampleStaysInsideItsBudgetWhenRedisIsSlow(t *testing.T) {
+func TestRedisSlowerReadIsSkippedWhenLittleTimeIsLeft(t *testing.T) {
 	f := newRedisFake(t)
-	f.delay = 500 * time.Millisecond
+	f.delay = 800 * time.Millisecond // INFO takes most of the 900 ms budget: nothing is left for the extra read
 	cfg := redisTestConfig(t, RedisProfileEverything)
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
 	defer g.(*redisGroup).Close()
-	start := time.Now()
-	g.Collect(time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC), 15)
-	if took := time.Since(start); took > redisBudget+150*time.Millisecond {
-		t.Errorf("one sample took %v; the group has one second and the whole sample is limited to %v", took, redisBudget)
+	v, _ := g.Collect(time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC), 15)
+	if s := v.(*RedisGroup); s.State != RedisOK && s.State != RedisDown {
+		t.Fatalf("state %s", s.State)
+	}
+	for _, c := range f.commands() {
+		if len(c) == 2 && strings.EqualFold(c[0], "INFO") && c[1] == "commandstats" {
+			t.Fatal("the slower read ran although the sample budget was almost used up")
+		}
 	}
 }
 
@@ -504,7 +513,9 @@ func TestRedisCloseWhileCollectingIsSafe(t *testing.T) {
 		g.Collect(time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC), 15)
 		close(done)
 	}()
-	time.Sleep(50 * time.Millisecond)
+	for i := 0; i < 400 && len(f.commands()) == 0; i++ { // wait until Collect is really talking to the server
+		time.Sleep(5 * time.Millisecond) // winok: polling a condition with a generous limit
+	}
 	g.(*redisGroup).Close()
 	<-done
 }
