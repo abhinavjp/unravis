@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"sync/atomic"
@@ -407,5 +408,78 @@ func TestWindowInstallerAgainRightAfterALaunchIsNotBlockedByTheStartingGuard(t *
 	}
 	if rg.launch.Load() != 2 {
 		t.Fatalf("installer started %d times, want 2", rg.launch.Load())
+	}
+}
+
+// Close waits for the quiet-time loop (RV-SRV-3): while a step is still running, Close does not return; once it ends, it does.
+func TestCloseWaitsForTheAutomaticLoop(t *testing.T) {
+	rg, _ := autoRig(t)
+	u := rg.u
+	oldTick := autoTick
+	autoTick = 5 * time.Millisecond
+	t.Cleanup(func() { autoTick = oldTick })
+	entered := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	u.canSilently = func() bool {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-gate
+		return false
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	u.StartAuto(ctx)
+	<-entered // the loop is inside a step
+	cancel()
+	closed := make(chan struct{})
+	go func() { u.Close(); close(closed) }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while the automatic loop was still running")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(gate)
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return after the loop ended")
+	}
+	u.auto.mu.Lock()
+	done := u.auto.loops[0]
+	u.auto.mu.Unlock()
+	select {
+	case <-done:
+	default:
+		t.Fatal("Close returned before the loop had exited")
+	}
+}
+
+// A step that never ends does not hold the program: Close gives up after its limit.
+func TestCloseGivesUpOnAStuckAutomaticLoop(t *testing.T) {
+	rg, _ := autoRig(t)
+	u := rg.u
+	oldTick, oldWait := autoTick, autoCloseWait
+	autoTick, autoCloseWait = 5*time.Millisecond, 100*time.Millisecond
+	t.Cleanup(func() { autoTick, autoCloseWait = oldTick, oldWait })
+	entered := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	t.Cleanup(func() { close(gate) })
+	u.canSilently = func() bool {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-gate
+		return false
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	u.StartAuto(ctx)
+	<-entered
+	cancel()
+	start := time.Now()
+	u.Close()
+	if d := time.Since(start); d < autoCloseWait || d > 3*time.Second {
+		t.Fatalf("Close took %v, want about %v", d, autoCloseWait)
 	}
 }

@@ -51,6 +51,7 @@ type autoState struct {
 	mu     sync.Mutex
 	tries  map[string]int // version -> automatic applies tried; also kept on disk, so a restart does not forget it
 	loaded bool
+	loops  []chan struct{} // one per StartAuto; each closes when its loop has ended
 	// failedByAuto is set when an automatic apply was launched; only then may autoStep turn a launch failure back into "ready"
 	// (a failure of the person's own Apply now stays on screen with its reason).
 	failedByAuto bool
@@ -156,6 +157,39 @@ func (u *Updater) touchPower() {
 	u.powerMu.RUnlock()
 	if touch != nil {
 		touch()
+	}
+}
+
+// autoCloseWait is how long Close waits for the quiet-time loop to end (RV-SRV-3). A step that is stuck in a slow call is left
+// behind after this; the program is ending either way.
+var autoCloseWait = 3 * time.Second
+
+// StartAuto runs RunAuto in the background and remembers it, so Close can wait for it. The loop is registered before this returns:
+// a Close that follows at once still sees it.
+func (u *Updater) StartAuto(ctx context.Context) {
+	done := make(chan struct{})
+	u.auto.mu.Lock()
+	u.auto.loops = append(u.auto.loops, done)
+	u.auto.mu.Unlock()
+	go func() {
+		defer close(done)
+		u.RunAuto(ctx)
+	}()
+}
+
+// waitAuto waits for the loops StartAuto began, for at most d in all (the way fileJobs.shutdown waits).
+func (u *Updater) waitAuto(d time.Duration) {
+	u.auto.mu.Lock()
+	loops := append([]chan struct{}(nil), u.auto.loops...)
+	u.auto.mu.Unlock()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for _, done := range loops {
+		select {
+		case <-done:
+		case <-timer.C:
+			return
+		}
 	}
 }
 
