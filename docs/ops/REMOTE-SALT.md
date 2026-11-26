@@ -77,9 +77,14 @@ Needs `unravis-blackbox.exe` (with `config` and `bundle`, B5 and B8) installed o
 - The recorder checks the change, restarts, waits up to 60 s for a healthy recorder and **rolls back by itself** if it is not.
   A change therefore takes 1 to 2 minutes; the approve call waits up to 200 s. If it times out, run `BlackboxShow` and
   `BlackboxHistory` before asking again.
-- `LogPull` reads one `.zip` or `.manifest.json` directly inside a `snapshots` folder under `REMOTE_LOG_PATHS`, as base64
-  pieces (default 192 KB, `-ChunkKB 16..1024`), and refuses to keep a copy whose SHA-256 differs from the one the minion
-  computes. Saved under `~/.unravis-remote/bundles/`. Not verified: Salt output limits, speed, a 100 MB bundle (start with 5 MB).
+- `LogPull` reads one `.zip` or `.manifest.json` that sits in a `snapshots` folder directly inside a folder named in
+  `REMOTE_LOG_PATHS`, as base64 pieces (default 192 KB, `-ChunkKB 16..1024`, at most `-MaxMB` 512). The minion refuses a link
+  (junction or symbolic link) in the file or any parent folder. A copy whose SHA-256 differs from the one the minion computes is
+  deleted. For a `.zip` it then pulls the `.manifest.json` beside it and compares `ZipSHA256` in code. Saved under
+  `~/.unravis-remote/bundles/` (newest 10 kept). The audit log gets one line at the start and one at the end, not one per piece.
+  Not verified: Salt output limits, speed, a 100 MB bundle (start with 5 MB).
+- A change fails loudly: Salt runs with `--retcode-passthrough` and the command ends with the recorder's exit code, so a refused
+  change or a rollback exits non-zero. The hint then says to check `BlackboxShow` and `BlackboxHistory`.
 
 ## Safety rules
 

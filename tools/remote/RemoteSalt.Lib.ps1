@@ -340,20 +340,25 @@ $script:BlackboxWrites = @('blackbox.collector', 'blackbox.counter.add', 'blackb
 # Stricter than the recorder's own check: no & ^ " $ or * in a counter path, so no shell on the way can read it as more than text.
 $script:BlackboxCounterRe = '^\\[A-Za-z0-9 .#_%/:-]+(\([A-Za-z0-9 .#_%/:-]+\))?\\[A-Za-z0-9 .#_%/:()-]+\z'
 # The command starts with a variable, not '&': Salt reads a command-line value as YAML, and a leading & is a YAML anchor.
-$script:BlackboxExe = '$x=Join-Path $env:ProgramFiles ''Unravis Blackbox\unravis-blackbox.exe''; & $x'
+# ProgramW6432 is the 64-bit Program Files even for a 32-bit process; ProgramFiles is the fallback.
+$script:BlackboxExe = '$pf=$env:ProgramW6432;if(!$pf){$pf=$env:ProgramFiles};$x=Join-Path $pf ''Unravis Blackbox\unravis-blackbox.exe''; & $x'
 
 function Test-BlackboxWrite {
     # Returns $null when allowed, otherwise the reason it is refused. $WriteArgs: collector = on|off then optional every=<seconds>;
     # counter add/remove = nothing (the path is $Name); rollback = nothing.
     param([string]$Fn, [string]$Name, [string[]]$WriteArgs = @(), $Config)
+    if ($null -eq $WriteArgs) { $WriteArgs = @() }
     if ($Config.Mode -ne 'write') { return 'REMOTE_MODE is readonly; set REMOTE_MODE=write in the settings file to request changes' }
     if ($script:BlackboxWrites -notcontains $Fn) { return "'$Fn' is not a Blackbox change this tool can make ($($script:BlackboxWrites -join ', '))" }
     switch ($Fn) {
         'blackbox.collector' {
-            if ($Name -notmatch '^[a-z][a-z0-9._]{1,62}\z') { return 'collector id must be a plain id such as redis.info' }
+            if ($Name -cnotmatch '^[a-z][a-z0-9._]{1,62}\z') { return 'collector id must be a plain id such as redis.info' }
             if ($WriteArgs.Count -lt 1 -or $WriteArgs.Count -gt 2) { return 'give on or off, and optionally every=<seconds>' }
-            if ($WriteArgs[0] -notin 'on', 'off') { return 'the first argument must be on or off' }
-            if ($WriteArgs.Count -eq 2 -and $WriteArgs[1] -notmatch '^every=\d{1,5}\z') { return 'the second argument must be every=<whole seconds>, for example every=60' }
+            if ($WriteArgs[0] -cnotin 'on', 'off') { return 'the first argument must be on or off' }
+            if ($WriteArgs.Count -eq 2) {
+                if ($WriteArgs[1] -cnotmatch '^every=[0-9]{1,5}\z') { return 'the second argument must be every=<whole seconds>, for example every=60' }
+                if ([int]$WriteArgs[1].Substring(6) -gt 86400) { return 'every must be 0 to 86400 seconds' }
+            }
         }
         { $_ -in 'blackbox.counter.add', 'blackbox.counter.remove' } {
             if ($Name -notmatch $script:BlackboxCounterRe) { return 'counter path must look like \Object(instance)\Counter, with letters, digits, space and . # _ % / : - only' }
@@ -362,7 +367,7 @@ function Test-BlackboxWrite {
             if ($WriteArgs.Count -ne 0) { return 'a counter change takes no extra arguments' }
         }
         'blackbox.rollback' {
-            if ($Name -ne 'last') { return "rollback takes the name 'last' (it undoes the last change)" }
+            if ($Name -cne 'last') { return "rollback takes the name 'last' (it undoes the last change)" }
             if ($WriteArgs.Count -ne 0) { return 'rollback takes no extra arguments' }
         }
     }
@@ -388,7 +393,8 @@ function New-BlackboxCommand {
         'blackbox.counter.remove' { $tail = "config set counters.extra remove '$Name' --json" }
         default { throw "unknown Blackbox verb '$Fn'" }
     }
-    $cmd = "$exe $tail"
+    # The exit code is passed on, so Salt (with --retcode-passthrough) and the caller see a refused or rolled-back change as a failure.
+    $cmd = "$exe $tail; exit `$LASTEXITCODE"
     return @{ Cmd = $cmd; Kwargs = @('shell=powershell'); Text = "unravis-blackbox $tail" }
 }
 
@@ -409,18 +415,36 @@ function Test-PullPath {
     if ($Path -match '[*?]') { return 'wildcards are not allowed when pulling' }
     if ($Path -notmatch '^[A-Za-z]:') { return 'pulling is for Windows minions (a full drive-letter path)' }
     if ($Path -notmatch '(?i)\\snapshots\\[A-Za-z0-9][A-Za-z0-9._\-]{0,63}\.(zip|manifest\.json)\z') { return 'only a bundle (.zip) or its .manifest.json directly inside a snapshots folder can be pulled' }
+    if ($Path -match '(?i)\\snapshots\\(con|prn|aux|nul|com[0-9]|lpt[0-9])\.') { return 'that is a Windows device name, not a file' }
+    # The snapshots folder must sit directly in a folder REMOTE_LOG_PATHS names, not somewhere below it.
+    $parent = $Path.Substring(0, $Path.ToLowerInvariant().LastIndexOf('\snapshots\')).TrimEnd('\')
+    if (@($Config.LogPaths | Where-Object { $_.TrimEnd('\', '/') -ieq $parent }).Count -eq 0) { return 'the snapshots folder must be directly inside a folder named in REMOTE_LOG_PATHS' }
     if (-not (Test-YamlSafe $Path)) { return 'path could be read as YAML; rephrase it' }
     return $null
 }
 
 function New-PullChunkCommand {
     # PowerShell text for the minion that prints one line "size|sha256|offset|base64" for one chunk. The first chunk also
-    # carries the SHA-256 of the whole file (Get-FileHash reads the file once); later chunks print '-'.
+    # carries the SHA-256 of the whole file (Get-FileHash reads the file once); later chunks print '-'. It refuses a link
+    # (junction or symbolic link) in the file or any parent folder, because the minion runs it as SYSTEM.
     param([string]$Path, [long]$Offset, [int]$ChunkBytes, [bool]$WithHash)
     $hash = if ($WithHash) { "(Get-FileHash -LiteralPath '__P__' -Algorithm SHA256).Hash" } else { "'-'" }
-    $t = '$f=[IO.File]::Open(''__P__'',''Open'',''Read'',''ReadWrite'');try{$n=$f.Length;[void]$f.Seek(__O__,''Begin'');$b=New-Object byte[] __C__;$r=$f.Read($b,0,__C__);' +
+    $t = '$ProgressPreference=''SilentlyContinue'';$q=''__P__'';while($q){if((Get-Item -LiteralPath $q -Force).Attributes -band ''ReparsePoint''){throw ''link''};$q=Split-Path $q};' +
+        '$f=[IO.File]::Open(''__P__'',''Open'',''Read'',''ReadWrite'');try{$n=$f.Length;[void]$f.Seek(__O__,''Begin'');$b=New-Object byte[] __C__;$r=$f.Read($b,0,__C__);' +
         '(''{0}|{1}|{2}|{3}'' -f $n,__H__,__O__,[Convert]::ToBase64String($b,0,$r))}finally{$f.Dispose()}'
     return $t.Replace('__H__', $hash).Replace('__P__', $Path).Replace('__O__', [string]$Offset).Replace('__C__', [string]$ChunkBytes)
+}
+
+function ConvertFrom-PullPiece {
+    # Reads the one data line of a piece. Anything else in the minion's answer (progress text, a warning) before it is ignored;
+    # a line that is not exactly size|sha256-or-dash|offset|base64 is refused. The first piece must carry a real SHA-256.
+    param([string]$Text, [long]$ExpectOffset, [bool]$First)
+    $m = [regex]::Match([string]$Text, '(?m)^([0-9]{1,15})\|([0-9A-Fa-f]{64}|-)\|([0-9]{1,15})\|([A-Za-z0-9+/]*={0,2})\s*\z')
+    if (-not $m.Success) { throw 'the minion did not answer in the expected shape' }
+    if ([long]$m.Groups[3].Value -ne $ExpectOffset) { throw 'the minion answered for a different offset' }
+    if ($First -and $m.Groups[2].Value -eq '-') { throw 'the first piece has no SHA-256 (could the minion not hash the file?)' }
+    try { $bytes = [Convert]::FromBase64String($m.Groups[4].Value) } catch { throw 'a piece is not valid base64' }
+    return @{ Size = [long]$m.Groups[1].Value; Hash = $m.Groups[2].Value.ToLowerInvariant(); Offset = $ExpectOffset; Data = $bytes }
 }
 
 function Test-SaltRunCall {
@@ -432,13 +456,14 @@ function Test-SaltRunCall {
 # ---------------------------------------------------------------- building the remote command (one string, every word quoted)
 function New-SaltRemoteCommand {
     # $Tool = salt | salt-run | salt-key. $Words are already validated; each is single-quoted for the master's shell.
-    param([string]$Tool, [string[]]$Words, $Config, [int]$TimeoutSec = 30)
+    param([string]$Tool, [string[]]$Words, $Config, [int]$TimeoutSec = 30, [switch]$Retcode)
     $parts = New-Object System.Collections.Generic.List[string]
     if ($Config.UseSudo) { $parts.Add('sudo'); $parts.Add('-n') }
     $parts.Add($Tool)
     $parts.Add('--out=json'); $parts.Add('--no-color')
     if ($Tool -eq 'salt') { $parts.Add('--static') }
     if ($Tool -eq 'salt') { $parts.Add('-t'); $parts.Add([string]$TimeoutSec) }
+    if ($Retcode) { $parts.Add('--retcode-passthrough') }   # the master exits non-zero when the command on the minion fails
     foreach ($x in $Words) { $parts.Add((ConvertTo-ShSingleQuoted $x)) }
     return ($parts -join ' ')
 }
