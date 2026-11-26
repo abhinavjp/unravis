@@ -39,3 +39,5 @@
 /web/dist/** -text
 /cmd/unravis-setup/ui/** -text
 /cmd/unravis-lite/ui/** -text
+# Shell scripts run on Linux runners and in Git Bash: a CRLF checkout breaks them (a carriage return ends up in the shebang line). Scoped, like the rules above; blobs are already LF.
+/tools/ci/*.sh text eol=lf
