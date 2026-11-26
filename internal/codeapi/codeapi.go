@@ -245,6 +245,10 @@ type settingsDTO struct {
 	// CLIOpenUntil is when the window that lets the command line run scripts ends (RFC 3339, UTC); empty while it is closed. The window
 	// is not a setting: it is kept in memory, so it is closed whenever the app starts.
 	CLIOpenUntil string `json:"cliOpenUntil"`
+	// CLIUnlimited is true while the command line is allowed with no end ("no time limit"). Always present, false when it is not on. Like
+	// the window it is kept in memory only: it is false whenever the app starts or code mode is switched off, and while it is true
+	// cliOpenUntil stays empty.
+	CLIUnlimited bool `json:"cliUnlimited"`
 	// Damaged is true when code-mode.json cannot be read or trusted: code mode is then off until the settings are saved again.
 	Damaged bool `json:"damaged"`
 }
@@ -255,6 +259,7 @@ func (a *api) settingsReply(set codemode.Settings, damaged bool) settingsDTO {
 		if until, open := a.cliGate.OpenUntil(); open {
 			d.CLIOpenUntil = until.UTC().Format(time.RFC3339)
 		}
+		d.CLIUnlimited = a.cliGate.Unlimited()
 	}
 	return d
 }
@@ -271,6 +276,10 @@ type settingsPatch struct {
 	KeepResults   *bool `json:"keepResults"`
 	// CLIMinutes opens the window that lets the command line run scripts: 1 to 60 minutes from now, or 0 to close it. Not saved to disk.
 	CLIMinutes *int `json:"cliMinutes"`
+	// CLIUnlimited true allows the command line with no end (until it is closed, code mode goes off, or the app stops). It cannot be sent
+	// with cliMinutes above 0. False closes the command line (unless cliMinutes above 0 opens a timed window in the same request). Not
+	// saved to disk.
+	CLIUnlimited *bool `json:"cliUnlimited"`
 }
 
 func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
@@ -281,6 +290,16 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 	if in.CLIMinutes != nil && (a.cliGate == nil || *in.CLIMinutes < 0 || *in.CLIMinutes > int(codemode.MaxCLIWindow/time.Minute)) {
 		fail(w, http.StatusBadRequest, codeBadRequest, "The command line can be allowed for 1 to 60 minutes, or 0 to close it.")
 		return
+	}
+	if in.CLIUnlimited != nil && *in.CLIUnlimited {
+		if a.cliGate == nil {
+			fail(w, http.StatusBadRequest, codeBadRequest, "The command line cannot be allowed in this build.")
+			return
+		}
+		if in.CLIMinutes != nil && *in.CLIMinutes > 0 {
+			fail(w, http.StatusBadRequest, codeBadRequest, "Choose either a number of minutes or no time limit, not both.")
+			return
+		}
 	}
 	a.settingsMu.Lock()
 	defer a.settingsMu.Unlock()
@@ -305,17 +324,56 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The window follows the save, so a failed save leaves it as it was. Switching code mode off closes it too: the next time it is
-	// switched on, the command line starts shut again.
+	// switched on, the command line starts shut again. The no-time-limit state follows the same rules (and a timed window replaces it).
+	// Every case that is not a clear "open" closes: an unlimited request while code mode is off, or a window of 0 minutes, ends shut.
 	if a.cliGate != nil {
+		before := cliStateOf(a.cliGate)
 		switch {
 		case !set.Enabled:
 			a.cliGate.Close()
+			logCLIChange(before, cliStateOf(a.cliGate), " because code mode is off", 0)
+		case in.CLIUnlimited != nil && *in.CLIUnlimited:
+			a.cliGate.OpenUnlimited()
+			logCLIChange(before, cliStateOf(a.cliGate), "", 0)
 		case in.CLIMinutes != nil:
 			a.cliGate.Open(time.Duration(*in.CLIMinutes) * time.Minute)
+			logCLIChange(before, cliStateOf(a.cliGate), "", *in.CLIMinutes)
+		case in.CLIUnlimited != nil:
+			a.cliGate.Close()
+			logCLIChange(before, cliStateOf(a.cliGate), "", 0)
 		}
 	}
 	log.Printf("Code mode settings were saved.")
 	reply(w, http.StatusOK, a.settingsReply(set, false))
+}
+
+// cliStateOf names what the gate allows now: "closed", "timed" or "unlimited".
+func cliStateOf(g *codemode.CLIGate) string {
+	switch {
+	case g.Unlimited():
+		return "unlimited"
+	case g.Allows():
+		return "timed"
+	}
+	return "closed"
+}
+
+// logCLIChange is the record of a change to the command-line window (BL-371), one line in the app's log: opened for a time, opened with no
+// time limit, or closed, and whether code mode going off was the reason. It holds no case, record or script text. It is called only when
+// a request acted on the gate. A timed window that is opened again is a change (the end moves), so every "timed" result is recorded; a
+// request that left the gate shut when it was already shut is not. The window running out by itself is not a settings change and is not
+// recorded here.
+func logCLIChange(before, after, why string, minutes int) {
+	switch after {
+	case "unlimited":
+		log.Printf("Command line window: opened with no time limit.")
+	case "timed":
+		log.Printf("Command line window: opened for %d minutes.", minutes)
+	default:
+		if before != "closed" {
+			log.Printf("Command line window: closed%s.", why)
+		}
+	}
 }
 
 /* ----------------------------------------------------------------- run */
