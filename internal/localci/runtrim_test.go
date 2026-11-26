@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -308,4 +309,129 @@ func TestAgentRunKeepNegativeRemovesNothing(t *testing.T) {
 	if !pathExists(filepath.Join(s.RunsPath(), oldID)) {
 		t.Fatal("RunKeep -1 must keep every run")
 	}
+}
+
+func TestTrimRunsRemovesRunJSONLastSoAFailedRemovalLeavesTheRunFinished(t *testing.T) {
+	s := newTrimStore(t)
+	now := time.Now()
+	id := idAt(now.Add(-10*dayDur), "pr1-ci")
+	mkRun(t, s, id, 100, now.Add(-10*dayDur))
+	failLogs := func(p string) error {
+		if strings.Contains(p, "logs") {
+			return errors.New("the file is in use")
+		}
+		return os.RemoveAll(p)
+	}
+	res, err := s.TrimRuns(context.Background(), TrimRunsOptions{Now: now, RemoveAll: failLogs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Runs != 0 || len(res.Skipped) != 1 || !pathExists(filepath.Join(s.RunsPath(), id, "run.json")) {
+		t.Fatalf("a failed removal must leave run.json: %+v", res)
+	}
+	// The run is still finished, so the next trim removes it.
+	res, err = s.TrimRuns(context.Background(), TrimRunsOptions{Now: now})
+	if err != nil || res.Runs != 1 || pathExists(filepath.Join(s.RunsPath(), id)) {
+		t.Fatalf("second trim: %+v %v", res, err)
+	}
+}
+
+func TestTrimRunsAFileHeldOpenKeepsRunJSON(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("an open file can be deleted on this OS; the hook test above covers the order")
+	}
+	s := newTrimStore(t)
+	now := time.Now()
+	id := idAt(now.Add(-10*dayDur), "pr1-ci")
+	mkRun(t, s, id, 100, now.Add(-10*dayDur))
+	f, err := os.Open(filepath.Join(s.RunsPath(), id, "logs", "j", "01-step.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.TrimRuns(context.Background(), TrimRunsOptions{Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Runs != 0 || !pathExists(filepath.Join(s.RunsPath(), id, "run.json")) {
+		t.Fatalf("run.json must survive a log held open: %+v", res)
+	}
+	f.Close()
+	if res, err = s.TrimRuns(context.Background(), TrimRunsOptions{Now: now}); err != nil || res.Runs != 1 {
+		t.Fatalf("after the file is closed: %+v %v", res, err)
+	}
+}
+
+func TestTrimRunsSizeRuleIgnoresSpaceThatCannotBeReclaimed(t *testing.T) {
+	s := newTrimStore(t)
+	now := time.Now()
+	young := idAt(now.Add(-time.Hour), "young")
+	mkRun(t, s, young, 100, time.Time{}) // no run.json, younger than Keep: untouchable
+	mkWork(t, s, young, 5000, now.Add(-time.Hour))
+	ids := []string{idAt(now.Add(-3*time.Hour), "a"), idAt(now.Add(-dayDur), "b"), idAt(now.Add(-3*dayDur), "c")}
+	for i, id := range ids {
+		mkRun(t, s, id, 100, now.Add([]time.Duration{-3 * time.Hour, -dayDur, -3 * dayDur}[i]))
+	}
+	res, err := s.TrimRuns(context.Background(), TrimRunsOptions{Now: now, Limit: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Runs != 0 {
+		t.Fatalf("the finished runs fit the limit once the untouchable run is left out: %+v", res)
+	}
+	for _, id := range append(ids, young) {
+		if !pathExists(filepath.Join(s.RunsPath(), id)) {
+			t.Fatalf("%s was removed", id)
+		}
+	}
+}
+
+func TestTrimRunsLeavesAWorkFolderThatIsNotACIOneAndIgnoresStrayFiles(t *testing.T) {
+	s := newTrimStore(t)
+	now := time.Now()
+	mkWork(t, s, "notes", 10, now.Add(-30*dayDur))
+	if err := os.WriteFile(filepath.Join(s.WorkPath(), "stray.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.TrimRuns(context.Background(), TrimRunsOptions{Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Work != 0 || !pathExists(filepath.Join(s.WorkPath(), "notes", "src", "main.go")) {
+		t.Fatalf("work/notes must stay: %+v", res)
+	}
+	if len(res.Skipped) != 1 || !strings.HasPrefix(res.Skipped[0], "work/notes") {
+		t.Fatalf("skipped %v: want only work/notes, no line for the stray file", res.Skipped)
+	}
+}
+
+func TestTrimRunsNegativeKeepHasNoAgeRuleAndASmallKeepNeverReachesTheLastTwoHours(t *testing.T) {
+	s := newTrimStore(t)
+	now := time.Now()
+	old := idAt(now.Add(-30*dayDur), "old")
+	recent := idAt(now.Add(-10*time.Minute), "recent")
+	mkRun(t, s, old, 10, now.Add(-30*dayDur))
+	mkRun(t, s, recent, 10, now.Add(-10*time.Minute))
+	if res, err := s.TrimRuns(context.Background(), TrimRunsOptions{Now: now, Keep: -time.Hour}); err != nil || res.Runs != 0 {
+		t.Fatalf("negative Keep removed something: %+v %v", res, err)
+	}
+	if res, err := s.TrimRuns(context.Background(), TrimRunsOptions{Now: now, Keep: time.Second}); err != nil || res.Runs != 1 {
+		t.Fatalf("small Keep: %+v %v", res, err)
+	}
+	if !pathExists(filepath.Join(s.RunsPath(), recent)) || pathExists(filepath.Join(s.RunsPath(), old)) {
+		t.Fatalf("recent exists=%v old exists=%v", pathExists(filepath.Join(s.RunsPath(), recent)), pathExists(filepath.Join(s.RunsPath(), old)))
+	}
+}
+
+func TestAgentRunKeepNegativeStillRunsTheSizeRule(t *testing.T) {
+	rig := newAgentRig(t, "a1", 1, func(ctx context.Context, r Request) (Outcome, error) { return Outcome{Conclusion: "success"}, nil })
+	rig.agent.RunKeep = -1
+	rig.agent.RunsLimit = 1000
+	s, err := OpenStore(rig.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldID := idAt(time.Now().Add(-10*dayDur), "pr1-ci")
+	mkRun(t, s, oldID, 5000, time.Now().Add(-10*dayDur))
+	rig.start()
+	waitFor(t, "the size rule to remove the old run", func() bool { return !pathExists(filepath.Join(s.RunsPath(), oldID)) })
 }

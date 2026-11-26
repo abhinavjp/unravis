@@ -27,7 +27,8 @@ const (
 
 // TrimRunsOptions say what TrimRuns may remove.
 type TrimRunsOptions struct {
-	// Keep: finished runs that ended longer ago than this are removed. Zero: DefaultRunKeep.
+	// Keep: finished runs that ended longer ago than this are removed. Zero: DefaultRunKeep. Negative: no age
+	// rule (only the size rule removes anything). The cutoff is never later than runMinAge ago, whatever Keep says.
 	Keep time.Duration
 	// Limit: after the age rule, the oldest finished runs are removed until runs/ and work/ together are no larger
 	// than this. Zero: DefaultRunsLimit. Negative: no size rule.
@@ -42,6 +43,9 @@ type TrimRunsOptions struct {
 	// RemoveWork removes one worktree folder (it has been checked to be a plain folder inside work/). Nil: a
 	// Checkout of the store, which also drops the worktree's record in the mirror.
 	RemoveWork func(ctx context.Context, path string) error
+	// RemoveAll removes a file or folder tree inside a run folder (it has been checked to be inside runs/<id>).
+	// Nil: os.RemoveAll.
+	RemoveAll func(path string) error
 }
 
 // TrimRunsResult is what one TrimRuns did.
@@ -73,6 +77,7 @@ func (s *Store) TrimRuns(ctx context.Context, o TrimRunsOptions) (TrimRunsResult
 	if keep == 0 {
 		keep = DefaultRunKeep
 	}
+	ageRule := keep > 0
 	limit := o.Limit
 	if limit == 0 {
 		limit = DefaultRunsLimit
@@ -80,6 +85,10 @@ func (s *Store) TrimRuns(ctx context.Context, o TrimRunsOptions) (TrimRunsResult
 	now := o.Now
 	if now.IsZero() {
 		now = time.Now()
+	}
+	removeAll := o.RemoveAll
+	if removeAll == nil {
+		removeAll = os.RemoveAll
 	}
 	removeWork := o.RemoveWork
 	if removeWork == nil {
@@ -131,9 +140,16 @@ func (s *Store) TrimRuns(ctx context.Context, o TrimRunsOptions) (TrimRunsResult
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
+		if !e.IsDir() && e.Type()&fs.ModeSymlink == 0 && e.Type()&fs.ModeIrregular == 0 {
+			continue // a stray file
+		}
 		p, why := safeChild(s, s.WorkPath(), e.Name())
 		if why != "" {
 			res.Skipped = append(res.Skipped, "work/"+e.Name()+": "+why)
+			continue
+		}
+		if !isCIWorkName(e.Name()) {
+			res.Skipped = append(res.Skipped, "work/"+e.Name()+": not named like a CI work folder")
 			continue
 		}
 		id := e.Name()
@@ -156,7 +172,11 @@ func (s *Store) TrimRuns(ctx context.Context, o TrimRunsOptions) (TrimRunsResult
 		total += n
 	}
 
+	// The cutoff is never later than runMinAge ago, so a small or odd Keep cannot reach a run that just ended.
 	cutoff := now.Add(-keep)
+	if latest := now.Add(-runMinAge); !ageRule || cutoff.After(latest) {
+		cutoff = latest
+	}
 	activeCut := time.Time{}
 	if !o.ActiveSince.IsZero() {
 		activeCut = o.ActiveSince.Add(-time.Minute)
@@ -168,7 +188,7 @@ func (s *Store) TrimRuns(ctx context.Context, o TrimRunsOptions) (TrimRunsResult
 		}
 		// A run with no run.json is going or crashed: only a crashed one older than Keep that began before
 		// every running request can go.
-		if u.started.IsZero() || !u.started.Before(cutoff) {
+		if !ageRule || u.started.IsZero() || !u.started.Before(cutoff) {
 			return false
 		}
 		return activeCut.IsZero() || u.started.Before(activeCut)
@@ -183,6 +203,11 @@ func (s *Store) TrimRuns(ctx context.Context, o TrimRunsOptions) (TrimRunsResult
 	for _, u := range units {
 		if eligible(u) {
 			order = append(order, u)
+		} else {
+			// Space that can never be reclaimed here (a run that may be going, a crashed one younger than Keep)
+			// does not count toward the limit: otherwise the size rule would remove every finished run each hour
+			// and still not get under it.
+			total -= u.size
 		}
 	}
 	sort.Slice(order, func(i, k int) bool {
@@ -203,7 +228,7 @@ func (s *Store) TrimRuns(ctx context.Context, o TrimRunsOptions) (TrimRunsResult
 			res.Work++
 		}
 		if u.runPath != "" && ok {
-			if err := os.RemoveAll(u.runPath); err != nil {
+			if err := removeRunFolder(u.runPath, removeAll); err != nil {
 				res.Skipped = append(res.Skipped, "runs/"+u.id+": "+err.Error())
 				ok = false
 			} else {
@@ -221,7 +246,7 @@ func (s *Store) TrimRuns(ctx context.Context, o TrimRunsOptions) (TrimRunsResult
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		if age(u).Before(cutoff) {
+		if ageRule && age(u).Before(cutoff) {
 			remove(u)
 			continue
 		}
@@ -244,6 +269,45 @@ func (s *Store) TrimRuns(ctx context.Context, o TrimRunsOptions) (TrimRunsResult
 		}
 	}
 	return res, nil
+}
+
+// removeRunFolder removes a run folder with run.json going last. A file that is held open (a dashboard reading a
+// log, a virus scanner) makes its removal fail; if run.json were already gone by then the run would look unfinished
+// (still going) and never be trimmed again. With run.json removed last, a failed removal leaves the run finished
+// and the next trim tries again.
+func removeRunFolder(dir string, removeAll func(string) error) error {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, e := range ents {
+		if e.Name() == "run.json" {
+			continue
+		}
+		if err := removeAll(filepath.Join(dir, e.Name())); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return firstErr
+	}
+	if err := removeAll(filepath.Join(dir, "run.json")); err != nil {
+		return err
+	}
+	return removeAll(dir)
+}
+
+// isCIWorkName says whether a folder name in work/ is one the CI makes: a run id, or a run id and "-j<N>".
+func isCIWorkName(name string) bool {
+	if _, ok := IDTime(name); ok {
+		return true
+	}
+	if base, ok := stripJobTree(name); ok {
+		_, ok = IDTime(base)
+		return ok
+	}
+	return false
 }
 
 // stripJobTree turns "<run id>-j3" (the extra checkout of one job) into the run id.

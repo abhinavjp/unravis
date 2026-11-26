@@ -153,7 +153,7 @@ type Agent struct {
 	// Zero: DefaultCacheLimit. Negative: never trim.
 	CacheLimit int64
 	// RunKeep is how long the folders of a finished run (runs/ and work/) stay; checked once an hour and at start.
-	// Zero: DefaultRunKeep. Negative: never removed.
+	// Zero: DefaultRunKeep. Negative: no age rule (the size rule still runs unless RunsLimit is negative too).
 	RunKeep time.Duration
 	// RunsLimit is the size runs/ and work/ are cut down to after that (the oldest finished runs first).
 	// Zero: DefaultRunsLimit. Negative: no size rule.
@@ -635,7 +635,7 @@ func (a *Agent) trimCaches(ctx context.Context, now time.Time, div int64) {
 // the oldest running request is read first, so a folder a running request may be using is never touched. When
 // the queue cannot be read nothing is removed.
 func (a *Agent) trimRuns(ctx context.Context, now time.Time) {
-	if a.RunKeep < 0 || a.Dir == "" || !a.trimmingRun.CompareAndSwap(false, true) {
+	if (a.RunKeep < 0 && a.RunsLimit < 0) || a.Dir == "" || !a.trimmingRun.CompareAndSwap(false, true) {
 		return
 	}
 	rs, err := a.Queue.List()
