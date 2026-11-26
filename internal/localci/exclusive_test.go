@@ -173,7 +173,7 @@ jobs:
 		if time.Now().After(deadline) {
 			t.Fatalf("the guarded step never waited:\n%s", h.logText())
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) // winok: polls a log condition under a 20 s deadline
 	}
 	if !strings.Contains(h.logText(), "step 1/2 free ... ok") {
 		t.Fatalf("the free step should not wait:\n%s", h.logText())
