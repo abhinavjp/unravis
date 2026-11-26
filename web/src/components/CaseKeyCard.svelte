@@ -9,8 +9,10 @@
   // Screen 7: open a case that has its own key. One field, one primary button. The PC key does not open this case.
   // The key (never logged, never stored): it lives only in `pass` below, goes only in the unlock request body, and is cleared the moment
   // it is read. A refused key reads the same every time and says nothing was opened or changed.
-  let { caseId, ending, onOpened, onCancel }: { caseId: string; ending?: string; onOpened: () => void; onCancel: () => void } = $props();
+  // onErased: the key was right but the case was past its 30-day keep time, so the server erased it at the unlock. The card says so in one sentence.
+  let { caseId, ending, onOpened, onCancel, onErased }: { caseId: string; ending?: string; onOpened: () => void; onCancel: () => void; onErased?: () => void } = $props();
 
+  let erased = $state(false);
   let pass = $state('');
   let busy = $state(false);
   let problem = $state('');
@@ -51,7 +53,15 @@
     busy = true;
     problem = '';
     try {
-      await unlockCase(caseId, attempt, controller.signal);
+      const opened = await unlockCase(caseId, attempt, controller.signal);
+      if (opened.erased) {
+        // Nothing is left to open: say why, and let the person go back to the list.
+        erased = true;
+        busy = false;
+        await tick();
+        sectionEl?.querySelector<HTMLElement>('h2')?.focus();
+        return;
+      }
       onOpened();
       return;
     } catch (error) {
@@ -85,6 +95,12 @@
 <section class="key-card" aria-labelledby="key-card-title" bind:this={sectionEl}>
   <p class="eyebrow">Case {caseCode(caseId)}{#if endingText}<span class="sticker">{endingText}</span>{/if}</p>
   <h2 id="key-card-title" tabindex="-1">{CASE_KEY_TEXT.unlockTitle}</h2>
+  {#if erased}
+    <p class="note" role="status">{CASE_KEY_TEXT.erasedExpired}</p>
+    <div class="actions">
+      <button type="button" class="secondary-button" onclick={() => (onErased ?? onCancel)()}>{CASE_KEY_TEXT.erasedExpiredBack}</button>
+    </div>
+  {:else}
   <p class="note">{CASE_KEY_TEXT.unlockIntro}</p>
   <form onsubmit={submit}>
     <label for="case-key-unlock">{CASE_KEY_TEXT.unlockLabel}</label>
@@ -98,6 +114,7 @@
     </div>
   </form>
   <p class="note">{CASE_KEY_TEXT.unlockNote}</p>
+  {/if}
 </section>
 
 <style>

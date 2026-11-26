@@ -1045,17 +1045,24 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 	// Previews built from the case are exports of it too: drop them.
 	h.exports().dropCase(string(id))
 	// Erase is idempotent, so a retry after a ledger failure completes the job.
-	if stripper, ok := h.ledger.(ledger.Stripper); ok && h.ledger != nil {
-		if _, err := stripper.StripEvidence(evidence.CasePrefixes(string(id)), erasedReference); err != nil {
-			writeCaseFailure(w, http.StatusInternalServerError, "ledger-not-stripped", "The case was erased but the ledger could not be updated. Erase it again to retry.")
-			return
-		}
+	if err := h.stripLedger(id); err != nil {
+		writeCaseFailure(w, http.StatusInternalServerError, "ledger-not-stripped", "The case was erased but the ledger could not be updated. Erase it again to retry.")
+		return
 	}
 	h.pending.remove(id)
 	h.event(r, "case_erased")
 	h.noteErased(id)
 	h.noteFreedArchives(context.Background()) // an erased freed archive is no longer counted by M12
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// stripLedger takes the erased case's evidence out of the ledger (the manual erase and the erase at an expired unlock both do it).
+func (h *handler) stripLedger(id casestore.CaseID) error {
+	if stripper, ok := h.ledger.(ledger.Stripper); ok && h.ledger != nil {
+		_, err := stripper.StripEvidence(evidence.CasePrefixes(string(id)), erasedReference)
+		return err
+	}
+	return nil
 }
 
 // eraseCodeLen is the length of the short code typed to erase a case.
@@ -1065,10 +1072,13 @@ const eraseCodeLen = 8
 const defaultEraseWait = 30 * time.Second
 
 // eraseTimer starts the wait of one erase.
-func (h *handler) eraseTimer() <-chan time.Time {
+func (h *handler) eraseTimer() <-chan time.Time { return h.eraseTimerFor(defaultEraseWait) }
+
+// eraseTimerFor starts a wait of at most max: the configured wait (tests) wins when it is shorter.
+func (h *handler) eraseTimerFor(max time.Duration) <-chan time.Time {
 	d := h.eraseWait
-	if d <= 0 {
-		d = defaultEraseWait
+	if d <= 0 || d > max {
+		d = max
 	}
 	if h.eraseAfter != nil {
 		return h.eraseAfter(d)
