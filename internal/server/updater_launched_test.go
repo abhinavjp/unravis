@@ -222,3 +222,77 @@ func TestDismissingTheTimeoutNoteClearsIt(t *testing.T) {
 		t.Fatalf("the note came back: %+v", s.Result)
 	}
 }
+
+// S1: the run writes its result while the probe is looking. The result that exists at the moment of the flip wins: nothing flips.
+func TestAResultWrittenWhileTheProbeRunsStopsTheFlip(t *testing.T) {
+	lr := newLaunchRig(t)
+	dir := t.TempDir()
+	lr.u.SetResultDir(dir)
+	if err := lr.u.Install(); err != nil {
+		t.Fatal(err)
+	}
+	ver := lr.u.Status().Install.Version
+	lr.advance(launchedLimit + time.Minute)
+	lr.u.setupAlive = func() bool {
+		err := update.WriteApplyResult(dir, update.ApplyResult{From: "0.1.0-rc.47", To: ver, Outcome: "failed", Message: "Windows asked for approval and it was refused.", At: lr.now})
+		if err != nil {
+			t.Error(err)
+		}
+		return false
+	}
+	// Called directly with the note read before the probe (none): the locked look must find the new file.
+	lr.u.expireStaleLaunch(nil)
+	lr.u.inst.mu.Lock()
+	note := lr.u.inst.note
+	lr.u.inst.mu.Unlock()
+	if note != nil {
+		t.Fatalf("a time-out note was set over a result the run had just written: %+v", note)
+	}
+	lr.u.setupAlive = nil
+	s := lr.status(t)
+	wantInstallState(t, s, "failed") // Status then does what it always did with the run's own result
+	if s.Install.Error != "Windows asked for approval and it was refused." {
+		t.Fatalf("%+v", s.Install)
+	}
+}
+
+// S2: while the probe runs the state moves on (a new launch, a new download, a check that drops the offer): the locked look sees
+// it, nothing flips and no note appears.
+func TestTheStateMovingDuringTheProbeStopsTheFlip(t *testing.T) {
+	moves := map[string]func(lr *launchRig){
+		"a new launch": func(lr *launchRig) {
+			if err := lr.u.Install(); err != nil {
+				t.Error(err)
+			}
+		},
+		"a new download": func(lr *launchRig) {
+			if err := lr.u.StartDownload(); err != nil {
+				t.Error(err)
+			}
+		},
+		"the offer dropped": func(lr *launchRig) { lr.u.noteCheck(nil) },
+	}
+	for name, move := range moves {
+		t.Run(name, func(t *testing.T) {
+			lr := newLaunchRig(t)
+			if err := lr.u.Install(); err != nil {
+				t.Fatal(err)
+			}
+			lr.advance(launchedLimit + time.Minute)
+			lr.u.setupAlive = func() bool { move(lr); return false }
+			lr.u.expireStaleLaunch(nil)
+			lr.u.inst.mu.Lock()
+			note := lr.u.inst.note
+			lr.u.inst.mu.Unlock()
+			if note != nil {
+				t.Fatalf("a time-out note after the state moved on: %+v", note)
+			}
+			lr.u.inst.mu.Lock()
+			st := lr.u.inst.info.State
+			lr.u.inst.mu.Unlock()
+			if name == "a new launch" && st != "launched" {
+				t.Fatalf("state = %q after a new launch", st)
+			}
+		})
+	}
+}

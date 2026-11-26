@@ -347,7 +347,13 @@ func (u *Updater) expireStaleLaunch(res *update.ApplyResult) {
 		return // the setup program is still running: it is working, not lost
 	}
 	u.inst.mu.Lock()
-	// Look again: it may have moved on while the probe ran (another launch, a download, a check that dropped the offer).
+	// Look again: it may have moved on while the probe ran (another launch, a download, a check that dropped the offer), and the
+	// run may have written its result in that window. The file is read once more under the lock, so a result that exists at the
+	// moment of the flip always wins and nothing flips. (A small file read; nothing else takes inst.mu around a disk wait.)
+	if now := u.readApplyResult(); now != nil && now.At.After(u.inst.launchedAt) {
+		u.inst.mu.Unlock()
+		return
+	}
 	if !u.inst.launchedAt.Equal(at) || u.inst.info.State != "launched" || u.inst.info.Version != ver || u.inst.running || u.inst.busy {
 		u.inst.mu.Unlock()
 		return
@@ -357,6 +363,7 @@ func (u *Updater) expireStaleLaunch(res *update.ApplyResult) {
 	u.inst.note = &UpdateNotice{Outcome: "failed", From: version.Version, To: ver, Message: launchTimeoutMessage}
 	u.inst.mu.Unlock()
 	u.auto.mu.Lock()
+	u.auto.failedByAuto = false // this "ready" is not a launch failure that autoStep should turn back; the back-off below paces the retry
 	if u.auto.lnFor != ver {
 		u.auto.lnFor, u.auto.lnFails = ver, 0
 	}
@@ -366,7 +373,7 @@ func (u *Updater) expireStaleLaunch(res *update.ApplyResult) {
 }
 
 // launchTimeoutMessage is shown to the person when a started update never reported back.
-const launchTimeoutMessage = "The update did not finish, and this copy of Unravis is still the old version. You can try again with Apply now."
+const launchTimeoutMessage = "The update has not reported back after 20 minutes. Unravis is still on the old version for now. You can try again with Apply now."
 
 // staleLaunch says whether the launch is old enough and still without a result of its own.
 func (u *Updater) staleLaunch(res *update.ApplyResult) (at time.Time, ver string, total int64, ok bool) {
