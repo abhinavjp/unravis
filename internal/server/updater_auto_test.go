@@ -340,3 +340,72 @@ func TestFileStillThereIsRemembered(t *testing.T) {
 		t.Fatal("a missing file was reported as there after the memory expired")
 	}
 }
+
+// Apply now uses the launcher that reopens the page; the automatic apply never does.
+func TestApplyNowUsesTheReopenLauncherAndAutoDoesNot(t *testing.T) {
+	rg, applied := autoRig(t)
+	u := rg.u
+	var reopened atomic.Int32
+	u.EnableSilentReopen(func(path, sha, ver string) error { reopened.Add(1); return nil })
+	u.presence.mu.Lock()
+	u.presence.last = time.Now().Add(-10 * time.Minute)
+	u.presence.mu.Unlock()
+	u.autoStep()
+	if applied.Load() != 1 || reopened.Load() != 0 {
+		t.Fatalf("auto: silent %d, reopen %d", applied.Load(), reopened.Load())
+	}
+	u.inst.mu.Lock()
+	u.inst.info.State = "ready"
+	u.inst.mu.Unlock()
+	if err := u.Install(); err != nil {
+		t.Fatal(err)
+	}
+	if applied.Load() != 1 || reopened.Load() != 1 {
+		t.Fatalf("apply now: silent %d, reopen %d", applied.Load(), reopened.Load())
+	}
+}
+
+func TestSecondApplyNowRightAfterALaunchIsRefused(t *testing.T) {
+	rg, _ := autoRig(t)
+	u := rg.u
+	var reopened atomic.Int32
+	u.EnableSilentReopen(func(path, sha, ver string) error { reopened.Add(1); return nil })
+	u.inst.mu.Lock()
+	u.inst.info.State = "ready"
+	u.inst.mu.Unlock()
+	if err := u.Install(); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Install(); err != errStarting {
+		t.Fatalf("second press: %v", err)
+	}
+	if reopened.Load() != 1 {
+		t.Fatalf("setup started %d times", reopened.Load())
+	}
+	u.inst.mu.Lock()
+	u.inst.launchedAt = time.Now().Add(-time.Minute)
+	u.inst.mu.Unlock()
+	if err := u.Install(); err != nil || reopened.Load() != 2 {
+		t.Fatalf("a press a minute later must start again: %v, %d", err, reopened.Load())
+	}
+}
+
+// The 20 second guard is for the silent setup only (no window to close). With the window installer the person may close it and press
+// again at once, so a second press right after "launched" must start it again.
+func TestWindowInstallerAgainRightAfterALaunchIsNotBlockedByTheStartingGuard(t *testing.T) {
+	rg := newInstallRig(t)
+	rg.readyDownload()
+	u := rg.u // no EnableSilentApply: this is the installer window path
+	if u.silent != nil {
+		t.Fatal("the rig must have no silent launcher")
+	}
+	if err := u.Install(); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Install(); err != nil {
+		t.Fatalf("second press with the window installer: %v", err)
+	}
+	if rg.launch.Load() != 2 {
+		t.Fatalf("installer started %d times, want 2", rg.launch.Load())
+	}
+}
