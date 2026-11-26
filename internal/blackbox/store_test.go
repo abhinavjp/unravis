@@ -562,7 +562,7 @@ func TestStoreManifestRetryDoesNotStallReaders(t *testing.T) {
 	c := &clock{t: t0}
 	s := openT(t, dir, "r1", c)
 	_ = os.Remove(filepath.Join(dir, ManifestName))
-	if err := os.MkdirAll(filepath.Join(dir, ManifestName, "keep"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ManifestName, "keep"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	var pauses []time.Duration
