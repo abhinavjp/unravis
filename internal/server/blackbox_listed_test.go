@@ -14,6 +14,17 @@ const bbLocalHost = "WEB-HOST"
 
 func bbListedEnv(t *testing.T) *bbEnv {
 	t.Helper()
+	old := blackbox.ResolveHost
+	t.Cleanup(func() { blackbox.ResolveHost = old })
+	blackbox.ResolveHost = func(h string) []string {
+		if h == "web-host.corp.local" {
+			return []string{"10.1.2.3"}
+		}
+		if h == "web-host.partner.example" {
+			return []string{"203.0.113.9"}
+		}
+		return nil
+	}
 	b := newBBEnv(t, func(d *BlackboxDeps) {
 		d.LocalNames = func() []string { return []string{bbLocalHost, "10.1.2.3"} }
 	})
@@ -80,8 +91,12 @@ func TestBlackboxOtherBlackboxesDoNotHideThePrompt(t *testing.T) {
 	b.mustAdd("http://127.0.0.1:7790", "ubk-cache")
 	b.mustAdd(`\\other-pc\UnravisBlackbox`, "")
 	b.mustAdd("http://other-pc:7788", "ubk-other-web")
+	// A host of another domain that shares only this PC's first label is not this PC
+	// (the source wizard would attach a remote recorder as "this PC").
+	b.world.put("http://web-host.partner.example:7788", other("web", "web-host.partner.example", "ubk-partner"))
+	b.mustAdd("http://web-host.partner.example:7788", "ubk-partner")
 	l := b.list()
-	if len(l.Items) != 4 || !l.ThisPC.Installed || l.ThisPC.Listed || l.ThisPC.ListID != "" {
+	if len(l.Items) != 5 || !l.ThisPC.Installed || l.ThisPC.Listed || l.ThisPC.ListID != "" {
 		t.Fatalf("this PC = %+v with %d entries", l.ThisPC, len(l.Items))
 	}
 }

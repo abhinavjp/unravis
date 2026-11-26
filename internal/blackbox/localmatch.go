@@ -1,9 +1,11 @@
 package blackbox
 
 import (
+	"context"
 	"net"
 	"os"
 	"strings"
+	"time"
 )
 
 // LocalNames is every way this PC is called on a network: its host name, and
@@ -22,6 +24,15 @@ func LocalNames() []string {
 		}
 	}
 	return out
+}
+
+// ResolveHost gives the addresses a host name points to (tests replace it). A name
+// that does not resolve gives none, so it is never taken for this PC.
+var ResolveHost = func(host string) []string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	addrs, _ := net.DefaultResolver.LookupHost(ctx, host)
+	return addrs
 }
 
 // IsEntry says whether a saved place (and the recorder it was read from) is the
@@ -77,17 +88,26 @@ func isLocalName(host string, local []string) bool {
 			}
 			continue
 		}
-		// A short name and its fully qualified form are one PC.
-		if net.ParseIP(n) == nil && shortName(n) == shortName(h) {
+	}
+	if ip != nil {
+		return false
+	}
+	// Another spelling of this PC's name (its fully qualified form) points at one of
+	// its own addresses. Matching only the first label would take a host in another
+	// domain with the same first label (web.partner.example) for this PC.
+	for _, a := range ResolveHost(h) {
+		r := net.ParseIP(strings.TrimSpace(a))
+		if r == nil {
+			continue
+		}
+		if r.IsLoopback() || r.IsUnspecified() {
 			return true
+		}
+		for _, n := range local {
+			if other := net.ParseIP(strings.Trim(strings.TrimSpace(n), "[]")); other != nil && other.Equal(r) {
+				return true
+			}
 		}
 	}
 	return false
-}
-
-func shortName(s string) string {
-	if i := strings.IndexByte(s, '.'); i > 0 {
-		return s[:i]
-	}
-	return s
 }
