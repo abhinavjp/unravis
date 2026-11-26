@@ -171,10 +171,13 @@ type bbSeriesAnswer struct {
 	EventIDs        []bbSeriesEventID    `json:"eventIds"`
 	Dumps           []bbSeriesDump       `json:"dumps"`
 	Gaps            []bbSeriesGap        `json:"gaps"`
-	Markers         []bbSeriesMarker     `json:"markers"`
-	Read            bbReadSummary        `json:"read"`
-	State           blackbox.StateInfo   `json:"state"`
-	Truncated       bool                 `json:"truncated,omitempty"` // more measurements than the answer carries
+	// HostBreaks are the runs of samples whose host read was slow: each runs from the last host reading to the next one. The host
+	// lines (CPU, memory, disk, network) must break across them, while the group lines, which were read, carry on.
+	HostBreaks []bbSeriesGap      `json:"hostBreaks,omitempty"`
+	Markers    []bbSeriesMarker   `json:"markers"`
+	Read       bbReadSummary      `json:"read"`
+	State      blackbox.StateInfo `json:"state"`
+	Truncated  bool               `json:"truncated,omitempty"` // more measurements than the answer carries
 	// SQL says what the SQL service's part of the answer rests on (absent when it was not asked for).
 	SQL *bbSeriesSQL `json:"sql,omitempty"`
 }
@@ -492,9 +495,20 @@ func buildBBSeriesWith(m blackbox.Manifest, samples []blackbox.Sample, rep black
 	dumps := map[string]bbSeriesDump{}
 	var prev *blackbox.Sample
 	var times []time.Time
+	var hostBreaks []bbSeriesGap
+	var lastHost time.Time // the newest sample that read the host
+	hostRun := false       // samples whose host read was slow follow lastHost
 	for i := range samples {
 		s := samples[i]
 		times = append(times, s.T)
+		if s.HostSkipped() {
+			hostRun = !lastHost.IsZero()
+		} else {
+			if hostRun {
+				hostBreaks = append(hostBreaks, bbSeriesGap{From: lastHost.UTC(), To: s.T.UTC(), Seconds: int(s.T.Sub(lastHost) / time.Second), Cause: blackbox.MissingHostSlow})
+			}
+			hostRun, lastHost = false, s.T
+		}
 		raw, err := json.Marshal(s)
 		if err != nil {
 			continue
@@ -691,7 +705,7 @@ func buildBBSeriesWith(m blackbox.Manifest, samples []blackbox.Sample, rep black
 	ans := bbSeriesAnswer{
 		Start: win.Start, End: win.End, BucketSeconds: int(width / time.Second), IntervalSeconds: m.CadenceSeconds(),
 		Samples: len(samples), Lines: lines, Groups: groups, Processes: procs, EventIDs: evs, Dumps: dl,
-		Gaps: gaps, Markers: marks, Read: summarize(rep), State: state, Truncated: bk.over, SQL: bbSQLSummary(sqlIn),
+		Gaps: gaps, HostBreaks: hostBreaks, Markers: marks, Read: summarize(rep), State: state, Truncated: bk.over, SQL: bbSQLSummary(sqlIn),
 	}
 	if len(samples) > 0 {
 		f, l := samples[0].T.UTC(), samples[len(samples)-1].T.UTC()
