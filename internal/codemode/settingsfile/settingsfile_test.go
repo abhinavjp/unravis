@@ -177,3 +177,27 @@ func TestSaveFailsWhenTheFolderIsAFile(t *testing.T) {
 		t.Fatal("a failed save turned code mode on")
 	}
 }
+
+// The command line's "no time limit" state is memory only: Save never writes it, and a file that carries the field is a damaged file
+// (code mode off), so editing the file by hand cannot turn it on or keep code mode on.
+func TestTheNoTimeLimitStateIsNeverInTheFileAndAFileThatHasItIsNotHonoured(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(codemode.Settings{Enabled: true, AllowDegraded: true, KeepResults: true}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if low := strings.ToLower(string(b)); strings.Contains(low, "unlimited") || strings.Contains(low, "cli") {
+		t.Fatalf("the file holds the command-line state: %s", b)
+	}
+	write(t, s, `{"enabled":true,"cliUnlimited":true}`)
+	set, err := s.Load()
+	if !errors.Is(err, ErrCorrupt) || set != (codemode.Settings{}) {
+		t.Fatalf("Load = %+v, %v; want damaged and off", set, err)
+	}
+	if s.Settings().Enabled {
+		t.Fatal("a file with cliUnlimited kept code mode on")
+	}
+}
