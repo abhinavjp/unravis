@@ -108,7 +108,7 @@ func TestOldManifestWithoutTheFieldStillReadsPaused(t *testing.T) {
 		doc := `{"format":1,"name":"box","version":"old","host":"H","intervalSeconds":15,` +
 			`"created":"2026-10-27T10:00:00Z","updated":"2026-10-27T11:00:00Z","state":"running",` +
 			`"runs":[],"files":[],"gaps":[],"events":` + events + `,"probe":{"enabled":false}}`
-		if err := os.WriteFile(filepath.Join(dir, ManifestName), []byte(doc), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, ManifestName), []byte(doc), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		return dir
