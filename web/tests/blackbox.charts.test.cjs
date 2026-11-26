@@ -302,6 +302,42 @@ test('gapRanges turns the server gaps into ms ranges and drops bad ones', () => 
   assert.deepEqual(g, [{ fromMs: Date.parse('2026-01-01T00:00:00Z'), toMs: Date.parse('2026-01-01T00:01:00Z') }]);
 });
 
+test('a slow host read is a gap in the host lines, never a 0: hostBreaks survive the reader and break CPU but not a group line', () => {
+  const T = Date.parse('2026-11-18T06:00:00Z');
+  const hostBreaks = [{ from: '2026-11-18T06:00:15Z', to: '2026-11-18T06:01:00Z', seconds: 45, cause: 'host: slow' }, 'not a gap'];
+  const a = s.readSeriesAnswer({
+    start: '2026-11-18T06:00:00Z', end: '2026-11-18T06:02:00Z', bucketSeconds: 15, intervalSeconds: 15, samples: 8,
+    lines: [], groups: [], processes: [], eventIds: [], dumps: [], gaps: [], markers: [], hostBreaks,
+    read: { files: 1, samples: 8, torn: 0, dropped: null, missing: null }
+  });
+  assert.equal(a.hostBreaks.length, 1, 'a break that is not a gap object is dropped');
+  const older = s.readSeriesAnswer({ ...a, hostBreaks: undefined, gaps: [] });
+  assert.deepEqual(older.hostBreaks, [], 'an older server sends none');
+  // The server leaves the slow rounds out of the CPU line (15 s .. 45 s) but keeps the group line's points there.
+  const cpu = [[T, 5, 5, 5], [T + 60000, 7, 7, 7]];
+  const tcp = [[T, 1, 1, 1], [T + 15000, 2, 2, 2], [T + 30000, 3, 3, 3], [T + 45000, 4, 4, 4], [T + 60000, 5, 5, 5]];
+  const cpuData = s.chartData(cpu, s.gapsForLine(a, 'cpu'), false).data;
+  assert.deepEqual(cpuData.map((p) => p[1]), [5, null, 7], 'the CPU line breaks across the slow read');
+  assert.ok(cpuData.every((p) => p[1] !== 0), 'never drawn as 0');
+  const tcpData = s.chartData(tcp, s.gapsForLine(a, 'tcp.retransmitsPerSec'), false).data;
+  assert.deepEqual(tcpData.map((p) => p[1]), [1, 2, 3, 4, 5], 'a counter group that was read carries on');
+  assert.equal(s.gapsForLine(a, 'diskFreePct').length, 0, 'free space of the recordings drive is read by the recorder, not the host read');
+  for (const k of ['cpu', 'memAvail', 'memCommit', 'diskQueue', 'diskMs', 'netInBps', 'netOutBps']) assert.ok(s.isHostLine(k), k);
+  // The same answer through the binary reader keeps the breaks too (the server writes the whole answer as the header).
+  const enc = (o) => new TextEncoder().encode(JSON.stringify(o));
+  const head = enc({ ...a, lines: [{ key: 'cpu', group: 'host', label: 'CPU', unit: 'pct', points: { n: 1 } }], processes: [] });
+  const buf = new ArrayBuffer(10 + head.length + 48);
+  const dv = new DataView(buf);
+  'UBB1'.split('').forEach((ch, i) => dv.setUint8(i, ch.charCodeAt(0)));
+  dv.setUint16(4, 1, true);
+  dv.setUint32(6, head.length, true);
+  new Uint8Array(buf, 10, head.length).set(head);
+  for (let i = 0; i < 6; i++) dv.setFloat64(10 + head.length + i * 8, 5, true);
+  const bin = s.readSeriesBinary(buf);
+  assert.ok(bin, 'the binary frame is read');
+  assert.equal(bin.hostBreaks.length, 1);
+});
+
 test('lineFigures: last, average, lowest of the lows, highest of the highs, inside the zoom only', () => {
   const pts = [[T0, 10, 5, 20], [T0 + 15000, 30, 25, 40], [T0 + 30000, 50, 1, 90]];
   assert.deepEqual(s.lineFigures(pts), { last: 50, avg: 30, min: 1, max: 90, maxAt: T0 + 30000, n: 3 });

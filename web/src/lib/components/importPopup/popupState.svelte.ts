@@ -102,6 +102,8 @@ export interface PopupState {
   cards: Record<string, CardState>;
   /** The name of the computer added for each resolved card, keyed by card id. */
   labels: Record<string, string>;
+  /** The year given for each resolved year card, keyed by card id (`needs-year:<kind>`). */
+  years: Record<string, string>;
   /** The kind picked for a file the check could not place, keyed by file key. */
   kinds: Record<string, string>;
   ack: boolean;
@@ -158,8 +160,21 @@ export function cardIdOf(verdict: CheckFileVerdict): string | null {
   return null;
 }
 
+/** Prefix of a year card's id. */
+export const YEAR_CARD = 'needs-year:';
+
+/** The range a year card accepts. */
+export const YEAR_MIN = 2000;
+export const YEAR_MAX = 2100;
+export const yearProblem = (text: string): boolean => !/^[0-9]{4}$/.test(text.trim()) || Number(text) < YEAR_MIN || Number(text) > YEAR_MAX;
+
+/** The year card a verdict also belongs to (a log with no year on its lines), or null. It sits beside the computer card: one file can have both. */
+export function yearCardOf(verdict: CheckFileVerdict): string | null {
+  return verdict.needsYear || verdict.verdict === 'needs-year' ? YEAR_CARD + verdict.importer : null;
+}
+
 /** The group a verdict is listed under. */
-export const groupOf = (verdict: CheckFileVerdict): string => cardIdOf(verdict) ?? (verdict.verdict === 'ready' ? 'kind:' + verdict.importer : 'unsupported');
+export const groupOf = (verdict: CheckFileVerdict): string => cardIdOf(verdict) ?? yearCardOf(verdict) ?? (verdict.verdict === 'ready' ? 'kind:' + verdict.importer : 'unsupported');
 
 const GROUP_NAMES: Record<string, string> = { 'iis-w3c': 'IIS web logs', 'sql-errorlog': 'SQL error log' };
 
@@ -171,16 +186,12 @@ const initialExpanded = (): Record<string, boolean> => ({ unsupported: true });
 export function createPopupState(api: PopupApi = realPopupApi): PopupState {
   const cardOf = (id: string): CardState => s.cards[id] ?? 'open';
   const checked = (): CheckFileVerdict[] => s.report?.files ?? [];
-  const leftOut = (verdict: CheckFileVerdict): boolean => {
-    const id = cardIdOf(verdict);
-    return id !== null && cardOf(id) === 'leftout';
-  };
+  const leftOut = (verdict: CheckFileVerdict): boolean => [cardIdOf(verdict), yearCardOf(verdict)].some((id) => id !== null && cardOf(id) === 'leftout');
   const cardIds = (): string[] => {
     const ids: string[] = [];
     if (!s.report && s.retryServerName) ids.push(s.retryServerName);
     for (const verdict of checked()) {
-      const id = cardIdOf(verdict);
-      if (id !== null && !ids.includes(id)) ids.push(id);
+      for (const id of [cardIdOf(verdict), yearCardOf(verdict)]) if (id !== null && !ids.includes(id)) ids.push(id);
     }
     return ids;
   };
@@ -225,7 +236,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
     carryNotImported = [];
     s.step = 1; s.checking = false; s.checkError = ''; s.closeNote = ''; s.addNotes = []; s.importing = false; s.stopping = false; s.importDone = false;
     s.importProgress = 0; s.importTotal = 0; s.importGroups = []; s.result = null;
-    s.expanded = initialExpanded(); s.selected = {}; s.cards = {}; s.labels = {}; s.kinds = {};
+    s.expanded = initialExpanded(); s.selected = {}; s.cards = {}; s.labels = {}; s.years = {}; s.kinds = {};
     s.ack = false; s.discard = false; s.retryServerName = null; s.focus = null;
     s.files = []; s.report = null;
   };
@@ -233,7 +244,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
   /** What the check would say about a file it was not asked about: one that is refused before sending, or one the server left out. */
   function localVerdict(item: StagedFile): CheckFileVerdict {
     const reason = item.refusal === 'compressed' ? 'archive-extract-first' : item.refusal === 'empty' ? 'no-rows' : '';
-    return { key: fileKeyOf(item), name: item.name, size: item.size, verdict: 'not-supported', importer: '', tied: [], serverName: '', needsZone: false, reason };
+    return { key: fileKeyOf(item), name: item.name, size: item.size, verdict: 'not-supported', importer: '', tied: [], serverName: '', needsZone: false, needsYear: false, reason };
   }
 
   /** The server's verdicts in the order the files are listed. */
@@ -413,7 +424,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
   const s: PopupState = $state<PopupState>({
     caseId: '', step: 1, checking: false, rechecking: false, checkError: '', closeNote: '', addNotes: [], importing: false, stopping: false, importDone: false,
     importProgress: 0, importTotal: 0, importGroups: [], result: null,
-    expanded: initialExpanded(), selected: {}, cards: {}, labels: {}, kinds: {},
+    expanded: initialExpanded(), selected: {}, cards: {}, labels: {}, years: {}, kinds: {},
     ack: false, discard: false, closed: false, timeline: false,
     retryServerName: null, focus: null, files: [], report: null,
 
@@ -448,7 +459,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
     },
     continueToCheck() {
       if (s.files.length === 0) return;
-      s.step = 2; s.checking = true; s.report = null; s.cards = {}; s.ack = false; s.checkError = '';
+      s.step = 2; s.checking = true; s.report = null; s.cards = {}; s.years = {}; s.ack = false; s.checkError = '';
       for (const item of s.files) {
         const key = fileKeyOf(item);
         if (!(key in s.selected)) s.selected[key] = true;
@@ -471,6 +482,11 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
       for (const verdict of checked()) if (groupOf(verdict) === group) s.selected[verdict.key] = on;
     },
     resolveCard(name, label) {
+      // A year card keeps the year it was given. It changes no verdict, so there is nothing to read again.
+      if (name.startsWith(YEAR_CARD)) {
+        s.cards[name] = 'resolved'; s.years[name] = label ?? ''; s.focus = 'card-' + name;
+        return;
+      }
       s.cards[name] = 'resolved'; s.labels[name] = label ?? name; s.focus = 'card-' + name;
       if (!s.report && s.files.length === 0) { s.retryServerName = null; s.focus = null; s.goTo(1); return; }
       void recheck(filesOfServer(name), true);
@@ -535,7 +551,9 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
         const card = cardIdOf(verdict);
         // A file that names its computer is matched against the list by the server. A card that named none gives its files the computer typed on it.
         const host = verdict.verdict === 'needs-computer' || card === null ? '' : (s.labels[card] ?? '');
-        items.push({ key: verdict.key, file: staged.file, importer: verdict.importer, host });
+        const yearCard = yearCardOf(verdict);
+        const year = yearCard === null ? '' : (s.years[yearCard] ?? '');
+        items.push({ key: verdict.key, file: staged.file, importer: verdict.importer, host, ...(year === '' ? {} : { supplied: { year } }) });
       }
       if (items.length === 0) return;
       void runImport(items);

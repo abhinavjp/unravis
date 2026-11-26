@@ -217,6 +217,7 @@ func wordsFromSource() []wordsCase {
 		{"state.late", "No sample for 5 minutes, which is more than 3 intervals. The recorder may be stuck or the PC was busy."},
 		{"state.disk-low", "The recordings drive has 4% free, under 10%. The Blackbox will pause when it runs out of room."},
 		{"state.clock", "The Blackbox clock differs from this PC by 3.0 seconds. Times from it are shifted by that much until the clocks agree."},
+		{"state.host-slow", HostSlowSentence},
 		{"state.running-note", "The clock was not compared: a folder or share has no second clock."},
 		{"state.unreadable", "The Blackbox could not be read."},
 		// reader.go

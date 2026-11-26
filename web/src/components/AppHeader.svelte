@@ -18,6 +18,7 @@
   import { UPD_TEXT } from '../lib/copy/updatesCopy';
   import { chipState } from '../lib/updatesPage';
   import { updates, openWhatsNew } from '../lib/updateState.svelte';
+  import CodeModeBadge from './CodeModeBadge.svelte';
 
   // The top bar: brand, the mode badge, the Sources popover, the drawer buttons and the theme toggle, on one row while they fit and wrapping to a second row from 721px when they do not.
   // Below 1100px Patterns, Ledger, Export, Import and Glossary fold into a "More" menu, together with the Explain simply switch. The depth breadcrumb sits on its own bar beneath.
@@ -129,6 +130,7 @@
   {/if}
   <div class="actions">
     <div class="status">
+    <CodeModeBadge />
     {#if info}<span class:demo-badge={info.demo} class="mode-badge badge" title={info.demo ? 'Demo data. Reference time ' + referenceTime : 'Live mode'}>{info.demo ? 'Demo data' : 'Live mode'}</span>{/if}
     {#if info?.demo}<span class="updated-label reference"><span class="ref-full">Data reference time</span><span class="ref-short" aria-hidden="true">Ref.</span> <time>{referenceTime}</time></span>{/if}
     {#if info && !app.firstRun && working}

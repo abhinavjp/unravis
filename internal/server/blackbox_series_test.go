@@ -308,3 +308,45 @@ func TestSeriesVMBalloon(t *testing.T) {
 		}
 	}
 }
+
+// hostMissing is fullSample as the recorder writes it when the host read ran over its budget (RV-BB-1): the group readings are
+// there, every host reading (CPU, memory, disk, network, processes) is absent, and Missing says why.
+func hostMissing(t time.Time, i int, why string) blackbox.Sample {
+	s := fullSample(t, i)
+	s.CPU, s.MemAvail, s.MemCommit, s.DiskQueue, s.DiskMs, s.DiskFreePct, s.NetIn, s.NetOut, s.Procs = nil, nil, nil, nil, nil, nil, nil, nil, nil
+	s.Missing = []string{"host: " + why}
+	return s
+}
+
+// W-04 / RV-BB-1: a sample whose host read was slow still carries the group readings, but its CPU is not read, so it is not a
+// zero. The host lines must break across the run (the chart joins two points of one line unless the answer says there is a hole),
+// the group lines must carry on, and nothing is drawn as 0.
+func TestSeriesPartialHostSampleIsAGapNotZeroCPU(t *testing.T) {
+	start := time.Date(2026, 11, 18, 6, 0, 0, 0, time.UTC)
+	at := func(i int) time.Time { return start.Add(time.Duration(i) * 30 * time.Second) }
+	samples := []blackbox.Sample{fullSample(at(0), 0), hostMissing(at(1), 1, "slow"), hostMissing(at(2), 2, "busy"), fullSample(at(3), 3)}
+	win := bbWindow{Start: start, End: start.Add(2 * time.Minute)}
+	ans := buildBBSeries(blackbox.Manifest{IntervalSeconds: 30}, samples, blackbox.ReadReport{}, blackbox.StateInfo{}, win, 4)
+	byKey := map[string]bbSeriesLine{}
+	for _, l := range ans.Lines {
+		byKey[l.Key] = l
+	}
+	cpu := byKey["cpu"]
+	if len(cpu.Points) != 2 {
+		t.Fatalf("cpu has %d points, want 2 (only the two samples that read the host): %v", len(cpu.Points), cpu.Points)
+	}
+	for _, p := range cpu.Points {
+		if p[1] == 0 {
+			t.Fatalf("a missing host reading was drawn as 0 CPU: %v", cpu.Points)
+		}
+	}
+	if got := len(byKey["tcp.retransmitsPerSec"].Points); got != 4 {
+		t.Fatalf("a group line lost points because the host read was slow: %d of 4", got)
+	}
+	if len(ans.HostBreaks) != 1 || !ans.HostBreaks[0].From.Equal(at(0)) || !ans.HostBreaks[0].To.Equal(at(3)) {
+		t.Fatalf("hostBreaks = %+v, want one from the last host reading to the next", ans.HostBreaks)
+	}
+	if len(ans.Gaps) != 0 {
+		t.Fatalf("a slow host read must not make the whole sample a gap: %+v", ans.Gaps)
+	}
+}

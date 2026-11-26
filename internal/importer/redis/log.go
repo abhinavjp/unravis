@@ -62,7 +62,7 @@ const (
 )
 
 // ErrYearNotStated is joined to the refusal of a year-less redis.log with no owner year.
-var ErrYearNotStated = errors.New("log year not stated")
+var ErrYearNotStated = importer.ErrYearNotStated
 
 const (
 	gapLogLocal     = "Redis log times have no time zone; the time zone of the picked host was used"
@@ -350,6 +350,27 @@ func (Log) SuppliedKeys() map[string]importer.SuppliedSpec {
 	return map[string]importer.SuppliedSpec{
 		logYearKey: {Kind: importer.SuppliedNumber, Min: 2000, Max: 2100, Integer: true},
 	}
+}
+
+// NeedsYear says the first lines of the file are year-less (the Windows port writes day and month only),
+// so the owner has to supply the year.
+func (Log) NeedsYear(head []byte) bool {
+	if importer.Sniff(head) != nil {
+		return false
+	}
+	text := headText(head)
+	for i := 0; i < logDetectRows && len(text) > 0; i++ {
+		var line []byte
+		if j := bytes.IndexByte(text, '\n'); j >= 0 {
+			line, text = text[:j], text[j+1:]
+		} else {
+			line, text = text, nil
+		}
+		if h, ok := parseLogHeader(line); ok && h.yearless {
+			return true
+		}
+	}
+	return false
 }
 
 // Detect recognises the header of redis.log lines in the first lines of the file. A

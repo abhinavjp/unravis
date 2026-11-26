@@ -44,6 +44,8 @@ const (
 	codeCollectFailed      = "collect-failed"
 	codeWriteFailed        = "write-failed"
 	codeHousekeepingFailed = "housekeeping-failed"
+	codeHostSlow           = "host-slow"
+	codeHostBusy           = "host-busy"
 )
 
 // eventCode maps a failure to a fixed event code: a known cause gets a
@@ -119,6 +121,7 @@ type Recorder struct {
 	collectOK  bool
 	collectF   failureTrack // tick goroutine only
 	writeF     failureTrack // tick goroutine only
+	hostF      failureTrack // slow host reads; tick goroutine only
 
 	lastTickWall time.Time
 	lastTickMono time.Duration
@@ -365,6 +368,18 @@ func (r *Recorder) Tick(now time.Time) {
 	}
 	r.collectOK = true
 	r.recoveredEvent(&r.collectF, now, EventCollectRecovered)
+	if s.HostSkipped() {
+		// The groups were read but the host was not: the sample is kept, its host
+		// fields are absent (a gap in the host lines, never 0), and this says why.
+		code := codeHostSlow
+		if hostBusyWord(s) {
+			code = codeHostBusy
+		}
+		rd.Err = code
+		r.failureEvent(&r.hostF, now, code, EventHostSlow, EventHostStillSlow)
+	} else {
+		r.recoveredEvent(&r.hostF, now, EventHostRecovered)
+	}
 
 	r.mu.Lock()
 	r.seq++
