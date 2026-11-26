@@ -324,3 +324,4 @@ finally {
 }
 Write-Host ("{0} passed, {1} failed" -f $script:pass, $script:fail)
 if ($script:fail -gt 0) { exit 1 }
+exit 0   # a refused child run above leaves a non-zero $LASTEXITCODE, which pwsh -command would otherwise return
