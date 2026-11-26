@@ -108,6 +108,7 @@ jobs:
           node tools/ci/test-web-scope.mjs
           node tools/ci/test-compare.mjs
           node tools/ci/test-promote-dist.mjs
+          node tools/ci/test-check-no-e2e-switch.mjs
           node tools/ci/test-compare-e2e.mjs
           node tools/ci/test-backlog-ids.mjs
           node tools/ci/test-whatsnew.mjs

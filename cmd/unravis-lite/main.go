@@ -37,7 +37,9 @@ import (
 //go:embed all:ui
 var uiFiles embed.FS
 
-const codeLife = 2 * time.Minute
+// codeLife is how long the printed one-time link works. The link is made to be opened by hand (the browser is only started with
+// --open), often on a slow server, so it gets the same 10 minutes the full app gives a link printed for the user (RV-LITE-1).
+const codeLife = 10 * time.Minute
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
