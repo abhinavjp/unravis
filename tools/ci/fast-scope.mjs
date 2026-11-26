@@ -15,9 +15,11 @@ import { touchesWeb } from './web-scope.mjs';
 
 // Same split as the `changes` job of ci.yml. docs/user, the Linux and race baselines and docs/ci/flaky-tests.txt (the quarantine
 // that compare-go-failures.mjs reads) are NOT notes: tests and the failure gate read them.
-// Case-insensitive, like `grep -Ei` in ci.yml: on a case-insensitive checkout (Windows, macOS) Docs/ is the same folder as docs/.
+// HEAVY is case-insensitive, like `grep -Eiq` in ci.yml: on a case-insensitive checkout (Windows, macOS) Docs/ is the same folder as docs/,
+// so a gate input spelled Docs/... must still widen. NOTES stays case-sensitive (`grep -Eq`): a path that only looks like a note on such a
+// disk (Docs/pkg/a.go, .FORGE/x.go) is a real path on the case-sensitive Linux runner and must run the heavy jobs. Widening is the safe side.
 export const HEAVY_DOCS = /^(docs\/user\/|docs\/desktop\/baseline-go-(tests|race)\.txt$|docs\/ci\/flaky-tests\.txt$)/i;
-export const NOTES = /^(\.forge\/|docs\/|[^/]+\.md$|LICENSE$|NOTICE$)/i;
+export const NOTES = /^(\.forge\/|docs\/|[^/]+\.md$|LICENSE$|NOTICE$)/;
 // Files that can change the result of any test in any package.
 const WIDE = /^(go\.mod$|go\.sum$|go\.work(\.sum)?$|\.golangci[^/]*$|build\.ps1$|\.github\/workflows\/ci\.yml$)/;
 // Paths that are not Go and not read by the Go tests (the desktop shell has its own workflow; other tooling has its own checks).

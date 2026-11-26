@@ -102,7 +102,7 @@ jobs:
           while IFS= read -r f; do
             if printf '%s\n' "$f" | grep -Eiq '^(docs/user/|docs/desktop/baseline-go-(tests|race)\.txt$|docs/ci/flaky-tests\.txt$)'; then
               code=true; echo "heavy: $f"
-            elif printf '%s\n' "$f" | grep -Eiq '^(\.forge/|docs/|[^/]+\.md$|LICENSE$|NOTICE$)'; then
+            elif printf '%s\n' "$f" | grep -Eq '^(\.forge/|docs/|[^/]+\.md$|LICENSE$|NOTICE$)'; then
               echo "notes: $f"
             else
               code=true; echo "heavy: $f"
@@ -614,13 +614,14 @@ jobs:
         env:
           GOLANGCI_LINT_VERSION: ${{ steps.golangci.outputs.version }}
           GOLANGCI_LINT_BIN: ${{ steps.golangci.outputs.bin }}
+          GOLANGCI_KEY: ${{ steps.golangci.outputs.key }}
         run: |
           want="${GOLANGCI_LINT_VERSION#v}"
           if got="$("${GOLANGCI_LINT_BIN}/golangci-lint" version 2>&1)" && printf '%s\n' "$got" | grep -qF "$want"; then
             echo "Restored golangci-lint is the expected version $want."
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::The restored golangci-lint is not usable or not version $want (got: $got). Building it again."
+            echo "::warning::The restored golangci-lint is not usable or not version $want (got: $got). Building it again. To stop this on every run, delete the bad entry: gh cache delete ${GOLANGCI_KEY}"
             echo "ok=false" >> "$GITHUB_OUTPUT"
           fi
 
