@@ -408,3 +408,27 @@ func TestWindowsPathRulesForValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestBundleCommand(t *testing.T) {
+	r := installedRig(t)
+	cfg, err := blackbox.LoadConfig(filepath.Join(r.env.prog, "blackbox.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, out, _ := r.do("bundle", "--json"); c != exitFail || !strings.Contains(out, `"ok":false`) {
+		t.Fatalf("no recordings: %d %s", c, out)
+	}
+	hour := r.d.now().UTC().Format("20060102-15")
+	if err := os.WriteFile(filepath.Join(cfg.Folder, "bb-"+hour+".ndjson"), []byte(`{"t":"x"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errs := r.do("bundle", "--since", "3h", "--out", "case-7", "--json")
+	if c != 0 || !strings.Contains(out, `"sha256"`) || !strings.Contains(out, "case-7.zip") {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	for _, args := range [][]string{{"bundle", "--since", "soon"}, {"bundle", "--out", "../x"}, {"bundle", "--out", "a.zip"}} {
+		if c, _, _ := r.do(args...); c != exitFail {
+			t.Errorf("%v: %d", args, c)
+		}
+	}
+}

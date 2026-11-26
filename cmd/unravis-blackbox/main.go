@@ -91,6 +91,11 @@ Other commands:
   config rollback         Put the settings from before the last change back.
   config show Print the settings in force and every collector with its id, what
               it reads, and whether it is on. Read-only: changes nothing.
+  bundle      One zip for one question: the recordings of the last --since (default
+              2h, up to 7d), the settings, the newest server facts and a list of
+              every file with its SHA-256, in <folder>\snapshots\. A second copy
+              of the list, with the zip's own SHA-256, is written beside it.
+              Options: --since 2h --out <name>
   snapshot    Copy the recordings into <folder>\snapshots\<name>-<date>-<time>.
   run         Record in this window instead of as a service (Ctrl+C to stop).
   vm-probe    Read-only: list which VMware counters this host has and what they
@@ -372,6 +377,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	confirm := fs.String("confirm-name", "", "the Blackbox name, to confirm deleting the recordings (remove)")
 	answerFile := fs.String(strings.TrimPrefix(blackbox.AnswerFileFlag, "--"), "", "write the answer to this file instead of the console (set by Unravis)")
 	expectSHA := fs.String("expect-sha256", "", "SHA-256 the new program must have (update)")
+	since := fs.String("since", "", "how far back the bundle goes: 90m, 2h, 1d (bundle)")
+	outName := fs.String("out", "", "bundle file name, without folder and .zip (bundle)")
 	every := fs.String("every", "", "how often a collector runs: seconds or 60s, 5m (config set)")
 	configSHA := fs.String("config-sha256", "", "SHA-256 of the settings file Unravis checked (install, apply)")
 	if err := fs.Parse(rest); err != nil {
@@ -661,6 +668,21 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		}
 		return ans.ok(fmt.Sprintf("Snapshot saved: %s (%s). Recordings: %d files. Log files: %d.", res.Dir, humanBytes(res.Bytes), res.Recordings, res.Logs),
 			map[string]any{"dir": res.Dir, "bytes": res.Bytes, "recordings": res.Recordings, "logs": res.Logs})
+	case "bundle":
+		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
+		if err != nil {
+			return ans.fail(err)
+		}
+		win, perr := blackbox.ParseBundleSince(*since)
+		if perr != nil {
+			return ans.fail(fmt.Errorf("%s: %w", perr.Error(), blackbox.ErrInvalidConfig))
+		}
+		res, err := blackbox.MakeBundle(cfg, d.now(), blackbox.BundleOptions{Since: win, Out: *outName, Disk: d.disk})
+		if err != nil {
+			return ans.fail(err)
+		}
+		return ans.ok(fmt.Sprintf("Bundle saved: %s (%s, %d files, SHA-256 %s). The list of files is beside it: %s.", res.Path, humanBytes(res.ZipBytes), res.Files, res.SHA256, res.ManifestPath),
+			map[string]any{"path": res.Path, "manifest": res.ManifestPath, "files": res.Files, "bytes": res.Bytes, "zipBytes": res.ZipBytes, "sha256": res.SHA256, "from": res.From, "to": res.To, "notes": res.Notes})
 	case "run":
 		return runForeground(paths, d, ans, stderr)
 	case "install-sql":
