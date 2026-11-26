@@ -29,7 +29,7 @@ export const CASE_KEY_TEXT = {
   unlockEmpty: 'Type the case key first.',
   unlockNote: 'Case keys cannot be recovered. If it is lost, only erasing the case frees the space.',
   // The key was right, but the case had been closed for over 30 days while it was locked, so it was erased as the 30-day rule says.
-  erasedExpired: 'This case was past its 30-day keep time, so it was erased when it unlocked.',
+  erasedExpired: 'This case was closed more than 30 days ago, so it was erased when you unlocked it.',
   erasedExpiredBack: 'Back to the cases',
 
   // Keys page (screens 125 and 126)

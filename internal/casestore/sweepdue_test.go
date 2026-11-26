@@ -16,6 +16,7 @@ func TestSweepDueIsOneRuleForEveryStore(t *testing.T) {
 		{"never closed", CaseInfo{}, false},
 		{"closed exactly 30 days ago", CaseInfo{Closed: at(Retention)}, false},
 		{"closed just over 30 days ago", CaseInfo{Closed: at(Retention + time.Second)}, true},
+		{"closed in the future (a clock that ran ahead)", CaseInfo{Closed: at(-2 * Retention)}, false},
 		{"locked own-key case has no close date", CaseInfo{OwnKey: true, KeyLocked: true}, false},
 		{"missing folder", CaseInfo{Closed: at(2 * Retention), Missing: true}, false},
 		{"archiving", CaseInfo{Closed: at(2 * Retention), Mark: MarkArchiving}, false},

@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -93,11 +96,15 @@ func TestCaseKeyWrongKeyDoesNotEraseAnExpiredCase(t *testing.T) {
 	}
 }
 
-// An unlock that erased the case says so: a status the page reads, not an empty 200 followed by a "case not found" page.
+// An unlock that erased the case says so (erased: true and when it was closed): a reply the page reads, not an empty 200
+// followed by a "case not found" page. The erase leaves the "case_erased" event and exactly one Erased line.
 func TestCaseKeyUnlockReplyNamesTheErase(t *testing.T) {
 	clock := &ckClock{}
-	clock.set(time.Now().Add(-casestore.Retention - 48*time.Hour))
-	e := newCKEnvClock(t, clock.now)
+	closedAt := time.Now().Add(-casestore.Retention - 48*time.Hour)
+	clock.set(closedAt)
+	var events bytes.Buffer
+	erasedLog := NewErasedFile(filepath.Join(t.TempDir(), "erased.json"))
+	e := newCKEnvClock(t, clock.now, WithLogger(bufLogger(&events)), WithErasedLog(erasedLog))
 	old := e.newKeyedCase("old and closed")
 	if err := e.store.CloseCase(context.Background(), casestore.CaseID(old.ID)); err != nil {
 		t.Fatal(err)
@@ -108,8 +115,95 @@ func TestCaseKeyUnlockReplyNamesTheErase(t *testing.T) {
 	res := e.keyCall(old.ID, "unlock", `{"passphrase":`+q(ckPass)+`}`)
 	var out caseKeyDTO
 	decodeBody(t, res, &out)
-	if res.Code != http.StatusOK || out.Status != "erased-expired" || out.OwnKey || out.Locked {
-		t.Fatalf("unlock of an expired case = %d %+v, want 200 with status erased-expired", res.Code, out)
+	if res.Code != http.StatusOK || !out.Erased || out.OwnKey || out.Locked {
+		t.Fatalf("unlock of an expired case = %d %+v, want 200 with erased true", res.Code, out)
+	}
+	if out.ClosedAt == nil || out.ClosedAt.Sub(closedAt).Abs() > 2*time.Second {
+		t.Errorf("closedAt = %v, want about %v", out.ClosedAt, closedAt)
+	}
+	if got := events.String(); !strings.Contains(got, "case_erased") || !strings.Contains(got, "expired_unlock") {
+		t.Errorf("no case_erased event for the unlock erase: %s", got)
+	}
+	if lines := erasedLog.Lines(); len(lines) != 1 || string(lines[0].ID) != old.ID {
+		t.Errorf("Erased lines = %+v, want exactly one for the case", lines)
+	}
+}
+
+// A close date in the future (a clock that was set forward when the case was closed) is never "over 30 days ago": nothing is erased.
+func TestCaseKeyUnlockKeepsACaseClosedInTheFuture(t *testing.T) {
+	clock := &ckClock{}
+	clock.set(time.Now().Add(casestore.Retention + 48*time.Hour))
+	e := newCKEnvClock(t, clock.now)
+	c := e.newKeyedCase("closed by a clock that ran ahead")
+	if err := e.store.CloseCase(context.Background(), casestore.CaseID(c.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.keyCall(c.ID, "lock", `{}`); res.Code != http.StatusOK {
+		t.Fatalf("lock = %d %s", res.Code, res.Body)
+	}
+	res := e.keyCall(c.ID, "unlock", `{"passphrase":`+q(ckPass)+`}`)
+	var out caseKeyDTO
+	decodeBody(t, res, &out)
+	if res.Code != http.StatusOK || out.Erased || !e.listed(c.ID) {
+		t.Fatalf("unlock = %d %+v, listed %v, want the case kept", res.Code, out, e.listed(c.ID))
+	}
+}
+
+// A running archive of the case is never cut short: the unlock keeps the case (the manual erase refuses the same way).
+func TestCaseKeyUnlockKeepsAnExpiredCaseWhileItsArchiveRuns(t *testing.T) {
+	clock := &ckClock{}
+	clock.set(time.Now().Add(-casestore.Retention - 48*time.Hour))
+	e := newCKEnvClock(t, clock.now)
+	old := e.newKeyedCase("old, closed, archive running")
+	if err := e.store.CloseCase(context.Background(), casestore.CaseID(old.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.keyCall(old.ID, "lock", `{}`); res.Code != http.StatusOK {
+		t.Fatalf("lock = %d %s", res.Code, res.Body)
+	}
+	_, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	e.h.(*handler).caseFiles().jobs.put(newFileJob(jobArchive, casestore.CaseID(old.ID), cancel))
+	res := e.keyCall(old.ID, "unlock", `{"passphrase":`+q(ckPass)+`}`)
+	var out caseKeyDTO
+	decodeBody(t, res, &out)
+	if res.Code != http.StatusOK || out.Erased || !out.OwnKey {
+		t.Fatalf("unlock = %d %+v, want a normal unlocked answer", res.Code, out)
+	}
+	if !e.listed(old.ID) {
+		t.Fatal("a case with a running archive was erased at unlock")
+	}
+}
+
+// The case is reopened while the unlock waits for its slot: the close date is gone, so the case is kept.
+func TestCaseKeyUnlockKeepsACaseReopenedWhileItWaits(t *testing.T) {
+	clock := &ckClock{}
+	clock.set(time.Now().Add(-casestore.Retention - 48*time.Hour))
+	var e *mkEnv
+	var oldID string
+	e = newCKEnvClock(t, clock.now, withEraseTimer(func(d time.Duration) <-chan time.Time {
+		// The timer is made after the first expiry check and before the slot is taken: reopen the case here.
+		if err := e.store.ReopenCase(context.Background(), casestore.CaseID(oldID)); err != nil {
+			t.Errorf("reopen: %v", err)
+		}
+		return time.After(d)
+	}))
+	old := e.newKeyedCase("old, closed, then reopened")
+	oldID = old.ID
+	if err := e.store.CloseCase(context.Background(), casestore.CaseID(old.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.keyCall(old.ID, "lock", `{}`); res.Code != http.StatusOK {
+		t.Fatalf("lock = %d %s", res.Code, res.Body)
+	}
+	res := e.keyCall(old.ID, "unlock", `{"passphrase":`+q(ckPass)+`}`)
+	var out caseKeyDTO
+	decodeBody(t, res, &out)
+	if res.Code != http.StatusOK || out.Erased || !out.OwnKey {
+		t.Fatalf("unlock = %d %+v, want a normal unlocked answer", res.Code, out)
+	}
+	if !e.listed(old.ID) {
+		t.Fatal("a case reopened during the unlock was erased")
 	}
 }
 
@@ -145,7 +239,7 @@ func TestCaseKeyUnlockKeepsAnExpiredArchivedCase(t *testing.T) {
 	res := e.keyCall(old.ID, "unlock", `{"passphrase":`+q(ckPass)+`}`)
 	var out caseKeyDTO
 	decodeBody(t, res, &out)
-	if res.Code != http.StatusOK || out.Status != "" || !out.OwnKey {
+	if res.Code != http.StatusOK || out.Erased || !out.OwnKey {
 		t.Fatalf("unlock of an archived case = %d %+v", res.Code, out)
 	}
 	if !e.listed(old.ID) {
@@ -174,7 +268,7 @@ func TestCaseKeyUnlockKeepsTheCaseWhenTheEraseFails(t *testing.T) {
 	res := e.keyCall(old.ID, "unlock", `{"passphrase":`+q(ckPass)+`}`)
 	var out caseKeyDTO
 	decodeBody(t, res, &out)
-	if res.Code != http.StatusOK || out.Status != "" || !out.OwnKey || out.Locked {
+	if res.Code != http.StatusOK || out.Erased || !out.OwnKey || out.Locked {
 		t.Fatalf("unlock with a failing erase = %d %+v, want a normal unlocked answer", res.Code, out)
 	}
 	if !e.listed(old.ID) {
@@ -235,7 +329,7 @@ func TestCaseKeyUnlockWaitingForTheGateHoldsNoKeyLockAndKeepsTheCase(t *testing.
 	case res := <-done:
 		var out caseKeyDTO
 		decodeBody(t, res, &out)
-		if res.Code != http.StatusOK || out.Status != "" || !out.OwnKey || out.Locked {
+		if res.Code != http.StatusOK || out.Erased || !out.OwnKey || out.Locked {
 			t.Fatalf("unlock after the wait = %d %+v, want a normal unlocked answer", res.Code, out)
 		}
 	case <-time.After(10 * time.Second):

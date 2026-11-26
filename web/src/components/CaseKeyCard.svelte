@@ -54,7 +54,7 @@
     problem = '';
     try {
       const opened = await unlockCase(caseId, attempt, controller.signal);
-      if (opened.status === 'erased-expired') {
+      if (opened.erased) {
         // Nothing is left to open: say why, and let the person go back to the list.
         erased = true;
         busy = false;

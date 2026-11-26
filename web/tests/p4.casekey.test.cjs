@@ -95,12 +95,13 @@ test('the key ending sticker is shown only for four hex digits', () => {
 
 test('an unlock that erased the case (past its 30-day keep time) is read as such and the card says so, not "case not found"', () => {
   const caseKey = loadTypeScript('src/lib/caseKey.ts');
-  assert.deepEqual({ ...caseKey.parseCaseKeyStatus({ ownKey: false, locked: false, ending: '', status: 'erased-expired' }) }, { ownKey: false, locked: false, status: 'erased-expired' });
-  assert.equal(caseKey.parseCaseKeyStatus({ ownKey: true, locked: false, status: 'something-else' }).status, undefined, 'only the one known status is read');
+  assert.deepEqual({ ...caseKey.parseCaseKeyStatus({ ownKey: false, locked: false, ending: '', erased: true, closedAt: '2026-10-01T00:00:00Z' }) }, { ownKey: false, locked: false, erased: true, closedAt: '2026-10-01T00:00:00Z' });
+  assert.equal(caseKey.parseCaseKeyStatus({ ownKey: true, locked: false, erased: 'yes' }).erased, undefined, 'only a real true is read as erased');
+  assert.equal(caseKey.parseCaseKeyStatus({ ownKey: true, locked: false }).erased, undefined, 'a plain unlock is not erased');
   const copy = loadTypeScript('src/lib/copy/caseKeyCopy.ts');
-  assert.equal(copy.CASE_KEY_TEXT.erasedExpired, 'This case was past its 30-day keep time, so it was erased when it unlocked.');
+  assert.equal(copy.CASE_KEY_TEXT.erasedExpired, 'This case was closed more than 30 days ago, so it was erased when you unlocked it.');
   const card = read('src/components/CaseKeyCard.svelte');
-  assert.match(card, /opened\.status === 'erased-expired'/);
+  assert.match(card, /opened\.erased/);
   assert.match(card, /\{#if erased\}\s*<p class="note" role="status">\{CASE_KEY_TEXT\.erasedExpired\}<\/p>/);
   assert.match(read('src/lib/components/CaseHome.svelte'), /<CaseKeyCard [^>]*onErased=\{erasedDone\}/, 'the page gives the case up only when the person leaves the card');
 });
