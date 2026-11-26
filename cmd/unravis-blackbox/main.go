@@ -330,7 +330,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	if cmd == "config" {
 		// "config show" is one read-only command; its flags follow it.
 		if len(rest) == 0 || rest[0] != "show" {
-			fmt.Fprintln(stderr, `usage: unravis-blackbox config show [--json] [--config <file>]`)
+			_, _ = fmt.Fprintln(stderr, `usage: unravis-blackbox config show [--json] [--config <file>]`)
 			return exitUsage
 		}
 		cmd, rest = "config-show", rest[1:]

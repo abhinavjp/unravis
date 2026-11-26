@@ -449,7 +449,7 @@ func TestConfigShowListsEveryCollector(t *testing.T) {
 	if err := blackbox.SaveConfig(path, cfg, false); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.ReadFile(path)
+	before, _ := os.ReadFile(path) //nolint:gosec // test file
 	// Read-only: no admin needed, and nothing is written.
 	r.env.admin = false
 	c, out, errs := r.do("config", "show", "--json", "--config", path)
@@ -492,7 +492,7 @@ func TestConfigShowListsEveryCollector(t *testing.T) {
 	if c, _, _ := r.do("config", "set", "host.tcp", "off"); c != exitUsage {
 		t.Fatalf("config set is not built yet and must be refused: %d", c)
 	}
-	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) { //nolint:gosec // test file
 		t.Fatal("config show changed the settings file")
 	}
 	if c, out, _ := r.do("config", "show", "--json", "--config", filepath.Join(r.dir, "missing.json")); c != exitFail || !strings.Contains(out, `"ok":false`) {
