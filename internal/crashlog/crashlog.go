@@ -339,3 +339,85 @@ func Prune(opts Options) error {
 	}
 	return errors.Join(errs...)
 }
+
+// reportedMark is put before the ".txt" of a finished crash file once a program has told its owner about it (MarkReported).
+const reportedMark = ".reported"
+
+// Finished is one finished crash file: its path and the time of the crash (the file's modification time).
+type Finished struct {
+	Path string
+	Time time.Time
+}
+
+// Unreported lists the finished crash files (crash-*.txt) that MarkReported has not marked, oldest first. Call it after Start, which
+// finishes the dumps an earlier run left. A folder that does not exist has none.
+func Unreported(dir string) ([]Finished, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("crashlog: reading the crash folder: %w", err)
+	}
+	var out []Finished
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, filePrefix) || !strings.HasSuffix(name, finishedExt) || strings.HasSuffix(strings.TrimSuffix(name, finishedExt), reportedMark) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		out = append(out, Finished{Path: filepath.Join(dir, name), Time: info.ModTime().UTC()})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Time.Equal(out[j].Time) {
+			return out[i].Time.Before(out[j].Time)
+		}
+		return out[i].Path < out[j].Path
+	})
+	return out, nil
+}
+
+// MarkReported renames a finished crash file so Unreported no longer lists it (crash-x.txt becomes crash-x.reported.txt). The file stays
+// and is still pruned like any other. It returns the new path.
+func MarkReported(path string) (string, error) {
+	if !strings.HasSuffix(path, finishedExt) {
+		return "", fmt.Errorf("crashlog: %s is not a finished crash file", filepath.Base(path))
+	}
+	marked := strings.TrimSuffix(path, finishedExt) + reportedMark + finishedExt
+	if err := os.Rename(path, marked); err != nil {
+		return "", fmt.Errorf("crashlog: marking %s: %w", filepath.Base(path), err)
+	}
+	return marked, nil
+}
+
+// RemoveAll deletes every file this package and the Rust half write in dir (names starting "crash-": raw .pending dumps, finished .txt
+// and .dmp files, reported ones) and then the folder itself if that left it empty. Anything else in the folder stays. A folder that does
+// not exist has nothing to remove. It returns how many files it removed. A raw dump still held open by a running copy cannot be removed
+// on Windows; that is reported as an error and the rest is still removed.
+func RemoveAll(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("crashlog: reading the crash folder: %w", err)
+	}
+	var errs []error
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, filePrefix) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("crashlog: removing %s: %w", name, err))
+			continue
+		}
+		n++
+	}
+	_ = os.Remove(dir) // only succeeds when empty
+	return n, errors.Join(errs...)
+}

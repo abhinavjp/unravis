@@ -41,6 +41,12 @@ type HostOptions struct {
 	// Ready is called once the status server listens, with its address.
 	Ready func(addr string)
 
+	// CrashCapture turns on the local crash record (RV-BB-10): a panic or fatal
+	// error anywhere in the process leaves a crash file in the crash folder, and the
+	// next start reports it in the recording. Off by default: it takes the one
+	// process-wide crash output, which a test must not.
+	CrashCapture bool
+
 	// ListenRetry is how long to wait before trying a busy port again.
 	ListenRetry time.Duration
 }
@@ -78,12 +84,20 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	if err := os.MkdirAll(cfg.Folder, 0o755); err != nil {
 		return fmt.Errorf("the recordings folder cannot be made: %w", err)
 	}
+	if o.CrashCapture {
+		// Started before the store opens, so a crash while opening is kept too. Left
+		// open while a panic unwinds, so the runtime can still write its dump.
+		defer startCrashCapture(cfg.Folder, logf).CloseUnlessPanic()
+	}
 	host, _ := os.Hostname()
 	runID := newRunID()
 	store, err := OpenStore(cfg.Folder, StoreOptions{Name: cfg.Name, Version: o.Version, Host: host,
 		IntervalSeconds: cfg.IntervalSeconds, RunID: runID, Now: o.Now})
 	if err != nil {
 		return fmt.Errorf("the recordings cannot be opened: %w", err)
+	}
+	if o.CrashCapture {
+		reportPreviousCrashes(store, cfg.Folder, logf)
 	}
 	col := o.Collector
 	if col == nil {

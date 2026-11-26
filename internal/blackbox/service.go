@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"api-audit-explorer/internal/crashlog"
 )
 
 // SvcState is the state of the Windows service as far as the recorder cares.
@@ -934,7 +936,8 @@ func isStoreTemp(name string) bool { return strings.HasPrefix(name, ManifestName
 
 // RemoveRecordings deletes what the recorder wrote in dir and nothing else: the
 // recording files, the diagnostics log, the manifest (and its .bad- copies and temp files), and the
-// snapshot folders Snapshot made. The folder itself goes only when that leaves
+// snapshot folders Snapshot made, and the crash files of the recorder (crash
+// folder). The folder itself goes only when that leaves
 // it empty. A drive root or a system folder is refused outright.
 func RemoveRecordings(dir string) (int, error) {
 	return removeRecordings(dir, nil, true)
@@ -976,6 +979,14 @@ func removeRecordings(dir string, keep map[string]bool, removeDir bool) (int, er
 				}
 			}
 			_ = os.Remove(path) // only succeeds when empty
+		case e.IsDir() && name == CrashDirName:
+			// The recorder's own crash files (RV-BB-10); anything else in a folder of
+			// that name is not ours and stays, and so does the folder then.
+			cn, cerr := crashlog.RemoveAll(path)
+			n += cn
+			if cerr != nil {
+				return n, cerr
+			}
 		case !e.IsDir() && (ValidFileName(name) || name == ManifestName || name == DiagFileName || name == diagOldName || strings.HasPrefix(name, ManifestName+".bad-") || isStoreTemp(name)):
 			if err := os.Remove(path); err != nil {
 				return n, err
