@@ -149,11 +149,18 @@ Every error says what happened and what to do (for example: "The server's key ch
 | Pull | `unravis ops server pull <id> <kind> --since ... --into <case>` | `servers.pull(plan)` (starts the same job; pull is read-only on the server) |
 | Schedule | `unravis ops server schedule ...` | not offered |
 
-## 8. Questions for the owner (none block the prototype)
+## 8. Decisions (owner delegated, 2026-11-26)
 
-1. Which folders and event log channels do you want as defaults on your servers (IIS site ids, Redis log path, SQL instance)?
-2. Pull into a case or into the Blackbox view by default? The prototype defaults to the case that is open and offers the Blackbox view for recordings.
-3. Is a key file the normal login on your servers, or mostly passwords? Passwords work but the screen will recommend a key.
+1. Defaults: the Blackbox folder, IIS logs, Windows event logs, and Redis and SQL logs where found. Editable per server.
+2. A pull lands in the Blackbox view by default, with a one-click "Add to a case".
+3. Key sign-in is the default and recommended. Password sign-in is an explicit opt-in per server (the current Salt server uses a password), stored only in the sealed vault.
+
+### 8.1 Coexistence with the installed app
+
+- Nothing here uses a fixed port. The SSH tunnel to a recorder binds an ephemeral 127.0.0.1 port and closes with the job, so it cannot clash with a local recorder on 7790 or with a second Unravis.
+- `servers.dat` sits beside `blackboxes.dat` in the per-user data folder and uses the same sealed Protector, so an install, update or uninstall treats it like the other sealed registries. No machine-wide state.
+- Pulled files go to a staging folder inside the data folder (`remote-staging/<job>`), never into the Blackbox recorder's own folder or the install folder.
+- The Salt tool's settings (`~/.unravis-remote`) are read once to offer an import into `servers.dat`, never shared as live state.
 
 ## 9. Delivery order (small PRs, dependency graph)
 

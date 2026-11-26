@@ -498,7 +498,7 @@ function recHtml(s){
    <span class="note">${n} files, ${MB(total)}. Recordings are one file per hour.</span></div>
    <table class="tbl"><thead><tr><th>File</th><th>Hour</th><th class="r">Size</th><th>State</th></tr></thead><tbody>${prev}${n>8?`<tr class="dim"><td colspan="4">and ${n-8} more files</td></tr>`:''}</tbody></table>
    <p class="note" style="margin-top:12px">The hour being written is read up to its last whole line and fetched again next time, so you never get half a line. A gap means the recorder was paused; the charts will show "no data" there, not a flat line.</p>
-   <div class="foot"><span class="sum"><b>${n} files, ${MB(total)}</b> into <b>Payroll slowdown, 24 Nov</b></span><span class="sp"></span><button class="btn primary" data-act="pull-rec">Review and pull</button></div>`;
+   <div class="foot"><span class="sum"><b>${n} files, ${MB(total)}</b> into the <b>Blackbox view</b></span><span class="sp"></span><button class="btn primary" data-act="pull-rec">Review and pull</button></div>`;
 }
 function logsHtml(s){
   const rows = KINDS.filter(k=>k.id!=='bb').map(k=>{
@@ -557,9 +557,9 @@ function addSheet(){
     <label class="chk"><input type="checkbox" id="a-bb" ${a.bb?'checked':''}><span>Blackbox status page<small>Found on this server automatically when you test. Needs its read key later only if it is not on this computer.</small></span></label>`;
     foot = `<button class="btn" data-act="close">Cancel</button><span class="sp"></span><button class="btn primary" data-act="add-next">Next: sign in</button>`;
   } else if (n===2) {
-    body += `<div class="field"><label>Sign in with</label><div class="row"><label class="row"><input type="radio" name="auth" value="key" ${a.auth==='key'?'checked':''}> A key file (recommended)</label><label class="row"><input type="radio" name="auth" value="password" ${a.auth==='password'?'checked':''}> A password</label></div></div>
+    body += `<div class="field"><label>Sign in with</label><div class="row"><label class="row"><input type="radio" name="auth" value="key" ${a.auth==='key'?'checked':''}> A key file (recommended)</label><label class="row"><input type="radio" name="auth" value="password" ${a.auth==='password'?'checked':''}> A password (only if this server has no key)</label></div></div>
     ${a.auth==='key'?`<div class="field"><label for="a-key">Key file</label><input type="text" id="a-key" class="mono" value="${esc(a.key)}"><span class="hint">OpenSSH or PEM key. A PuTTY .ppk must be exported first (PuTTYgen, Conversions, Export OpenSSH key). Unravis reads the file once and keeps a sealed copy; the original stays where it is.</span></div>`
-    :`<div class="field"><label for="a-pw">Password</label><input type="password" id="a-pw" value="${esc(a.pw)}" autocomplete="off"><span class="hint">Stored sealed on this PC with Windows data protection. It is never shown again, never written to a log, and never sent anywhere except to this server.</span></div>`}
+    :`<div class="field"><label for="a-pw">Password</label><input type="password" id="a-pw" value="${esc(a.pw)}" autocomplete="off"><span class="hint">Passwords are less safe than keys, so this is an opt-in for this one server. Stored sealed on this PC with Windows data protection. It is never shown again, never written to a log, and never sent anywhere except to this server.</span></div>`}
     <p class="note">Nothing connects yet. The next step shows the server's fingerprint so you can check it.</p>`;
     foot = `<button class="btn" data-act="add-back">Back</button><span class="sp"></span><button class="btn primary" data-act="add-next">Next: check the server's fingerprint</button>`;
   } else if (n===3) {
@@ -601,7 +601,7 @@ function pathRow(p,i){ const e = checkPath(p); return `<div class="field" style=
 /* ===== pull ===== */
 function buildPlan(kindTab){
   if (kindTab==='rec'){ const n=winCount(st.win), rows=HRS.slice(0,n); return {title:'Blackbox recordings', items:[{label:`Blackbox recordings, ${({'1h':'last hour','24h':'last 24 hours','7d':'7 days'})[st.win]}`, files:n, bytes:rows.reduce((a,r)=>a+r.bytes,0)}], into:'Blackbox view', kind:'bb'}; }
-  const p = logsPlan(); return {title:'Logs', items:p.map(x=>({label:x.label,files:x.files,bytes:x.size})), into:'case', kind:'log'};
+  const p = logsPlan(); return {title:'Logs', items:p.map(x=>({label:x.label,files:x.files,bytes:x.size})), into:'Blackbox view', kind:'log'};
 }
 function planTotals(pl){ return {files:pl.items.reduce((a,x)=>a+x.files,0), bytes:pl.items.reduce((a,x)=>a+x.bytes,0)}; }
 function pullSheet(){
@@ -611,7 +611,7 @@ function pullSheet(){
     const rows = pl.items.map(x=>`<tr><td>${x.label}</td><td class="r mono">${x.files}</td><td class="r mono">${MB(x.bytes)}</td></tr>`).join('');
     const body = `<table class="tbl"><thead><tr><th>What</th><th class="r">Files</th><th class="r">Size</th></tr></thead><tbody>${rows}<tr><td><b>Total</b></td><td class="r mono"><b>${T.files}</b></td><td class="r mono"><b>${MB(T.bytes)}</b></td></tr></tbody></table>
      ${over?`<p class="note warnbox" style="margin-top:14px"><b>Too big for one pull.</b> The limit is 4 GB and this is ${MB(T.bytes)}. Go back and pick fewer days; the last 3 days of IIS logs is 2.8 GB.</p>`:`<p class="note" style="margin-top:14px">Within the limits (4 GB, 512 MB a file, 25 MB/s, 20 minutes). About ${Math.max(1,Math.round(T.bytes/25e6/60))} min at full speed.</p>`}
-     <h3>Where it goes</h3><div class="field"><select id="p-into" aria-label="Where it goes"><option ${pl.into==='case'?'selected':''}>Case: Payroll slowdown, 24 Nov (offer to import)</option><option ${pl.into==='Blackbox view'?'selected':''}>Blackbox view</option></select></div>
+     <h3>Where it goes</h3><div class="field"><select id="p-into" aria-label="Where it goes"><option ${pl.into==='Blackbox view'?'selected':''}>Blackbox view (default)</option><option ${pl.into==='case'?'selected':''}>Straight into the case: Payroll slowdown, 24 Nov</option></select></div>
      <h3>What Unravis does with each file</h3><ul class="checks"><li><span class="ico ok">${ICO.ok}</span><span>Reads it from the server, nothing is changed there</span></li><li><span class="ico ok">${ICO.ok}</span><span>Checks it arrived intact (the server and Unravis compare fingerprints of the file)</span></li><li><span class="ico ok">${ICO.ok}</span><span>Hides passwords, keys and tokens before anything is saved on this PC</span></li><li><span class="ico ok">${ICO.ok}</span><span>Carries on where it stopped if the connection drops</span></li></ul>`;
     return shell('Pull from '+srv().name, body, `<button class="btn" data-act="close">Cancel</button><span class="sp"></span><button class="btn primary" data-act="start" ${over?'disabled':''}>Start pull</button>`);
   }
@@ -624,8 +624,8 @@ function pullSheet(){
   let head = '', foot = '';
   if (P.phase==='run'){ head = `<p style="font-size:var(--fs-4);margin-bottom:12px"><b>${pct} %</b> of ${MB(tot)}. File ${Math.min(doneN+1,files.length)} of ${files.length}. <span class="mono">${(P.speed).toFixed(1)} MB/s</span></p>`; foot = `<button class="btn" data-act="cancel">Cancel pull</button><span class="sp"></span><button class="btn" data-act="drop">Prototype: drop the connection</button>`; }
   if (P.phase==='stopped'){ head = `<div class="stop" style="margin-bottom:14px" role="alert"><h2 style="color:var(--warn)">The connection was lost</h2><p class="note" style="color:var(--text)">${doneN} files are complete and checked. The file in progress stopped at ${MB(files[Math.max(0,cur)].done)} and will continue from there. Nothing needs to be started again.</p></div>`; foot = `<button class="btn" data-act="close">Close</button><span class="sp"></span><button class="btn primary" data-act="resume-run">Resume</button>`; }
-  if (P.phase==='done'){ head = `<p style="font-size:var(--fs-5);font-weight:600;margin-bottom:6px">Done. ${files.length} files, ${MB(tot)}.</p><dl class="kv" style="margin-bottom:16px"><dt>Checked</dt><dd>All ${files.length} fingerprints match the server</dd><dt>Secrets hidden</dt><dd class="mono">${P.masked} lines</dd><dt>Saved to</dt><dd>${pl.into==='Blackbox view'?'Blackbox view, source "web-01 (pulled)"':'Case folder remote/web-01/ (ready to import)'}</dd><dt>Recorded</dt><dd>Server, folder, time, sizes and fingerprints are kept with the case</dd></dl>`;
-    foot = `<button class="btn" data-act="close">Close</button><span class="sp"></span><button class="btn primary" data-act="close">${pl.into==='Blackbox view'?'Open in Blackbox view':'Check and import'}</button>`; }
+  if (P.phase==='done'){ head = `<p style="font-size:var(--fs-5);font-weight:600;margin-bottom:6px">Done. ${files.length} files, ${MB(tot)}.</p><dl class="kv" style="margin-bottom:16px"><dt>Checked</dt><dd>All ${files.length} fingerprints match the server</dd><dt>Secrets hidden</dt><dd class="mono">${P.masked} lines</dd><dt>Saved to</dt><dd>${pl.into==='Blackbox view'?'Blackbox view, source "web-01 (pulled)". Nothing is in a case yet.':'Case folder remote/web-01/ (ready to import)'}</dd><dt>Recorded</dt><dd>Server, folder, time, sizes and fingerprints are kept with the case</dd></dl>`;
+    foot = `<button class="btn" data-act="close">Close</button><span class="sp"></span>${pl.into==='Blackbox view'?'<button class="btn" data-act="close">Add to a case</button>':''}<button class="btn primary" data-act="close">${pl.into==='Blackbox view'?'Open in Blackbox view':'Check and import'}</button>`; }
   return shell('Pull from '+srv().name, head+`<table class="tbl"><thead><tr><th>File</th><th>Progress</th><th class="r">Size</th><th>State</th></tr></thead><tbody>${rows}</tbody></table>${files.length>shown.length?`<p class="note" style="margin-top:8px">${files.length-shown.length} more files, not shown.</p>`:''}`, foot);
 }
 function startRun(){
