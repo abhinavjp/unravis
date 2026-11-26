@@ -20,6 +20,10 @@ const good = `{"v":1,"run":"r-one","seq":1,"t":"2001-09-09T01:46:40Z","cpu":12.5
 {"v":1,"run":"r-one","seq":3,"t":"2001-09-09T01:47:10Z","cpu":91.25,"diskMs":14}
 `
 
+// goodGroups is good plus a sample with the groups, the fixture of the conformance run and the fuzz seed.
+const goodGroups = good + `{"v":1,"run":"r-one","seq":4,"t":"2001-09-09T01:47:25Z","sqlHost":{"instances":[{"instance":"i","batchRequestsPerSec":5}]},"http":{"queues":[{"pool":"a","currentQueueSize":1}]},"iis":{"workers":[{"pool":"a","activeRequests":2}]},"tcp":{"retransmitsPerSec":0.5}}
+`
+
 const bad = `{"v":1,"run":"r-one","seq":1,"t":"2001-09-09T01:46:40Z","cpu":12.5}
 {"v":1,"run":"r-one","seq":2,"t":"SENTINEL-7f3a","cpu":12.5}
 {"v":1,"run":"SENTINEL-7f3a","seq":3,"t":"2001-09-09T01:47:10Z","cpu":-4}
@@ -27,7 +31,7 @@ const bad = `{"v":1,"run":"r-one","seq":1,"t":"2001-09-09T01:46:40Z","cpu":12.5}
 
 func fixtures() importertest.Fixtures {
 	return importertest.Fixtures{
-		Good: []byte(good), Bad: []byte(bad), NoFreeText: true,
+		Good: []byte(goodGroups), Bad: []byte(bad), NoFreeText: true,
 		Options: importer.Options{Host: &importer.HostHint{Label: "web-a", Role: "iis"}},
 	}
 }
