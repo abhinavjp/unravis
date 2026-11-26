@@ -48,16 +48,16 @@ func (u *Updater) EnableInstall(dir string, launch Launcher) {
 // CanInstall tells the screens whether the Install buttons make sense.
 func (u *Updater) CanInstall() bool { return u.channel != "" && u.dl != nil && u.launch != nil }
 
-// Close stops a download that is running, then waits (at most autoCloseWait) for the quiet-time loop to end. The caller cancels
-// the loop's context first; Close does not.
+// Close waits (at most autoCloseWait) for the quiet-time loop to end, then stops a download that is running. The loop goes first so a
+// step still in flight cannot start a download after the stop. The caller cancels the loop's context first; Close does not.
 func (u *Updater) Close() {
+	u.waitAuto(autoCloseWait)
 	u.inst.mu.Lock()
 	cancel := u.inst.cancel
 	u.inst.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	u.waitAuto(autoCloseWait)
 }
 
 var (

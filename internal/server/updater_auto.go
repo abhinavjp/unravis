@@ -177,11 +177,13 @@ func (u *Updater) StartAuto(ctx context.Context) {
 	}()
 }
 
-// waitAuto waits for the loops StartAuto began, for at most d in all (the way fileJobs.shutdown waits).
+// waitAuto waits for the loops StartAuto began, for at most d in all (the way fileJobs.shutdown waits). It forgets the loops it waited
+// for, so a second call does not wait for them again.
 func (u *Updater) waitAuto(d time.Duration) {
 	u.auto.mu.Lock()
 	loops := append([]chan struct{}(nil), u.auto.loops...)
 	u.auto.mu.Unlock()
+	defer u.forgetAuto(loops)
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	for _, done := range loops {
@@ -191,6 +193,26 @@ func (u *Updater) waitAuto(d time.Duration) {
 			return
 		}
 	}
+}
+
+// forgetAuto drops the given loops from the list, keeping any that StartAuto added since.
+func (u *Updater) forgetAuto(gone []chan struct{}) {
+	u.auto.mu.Lock()
+	defer u.auto.mu.Unlock()
+	kept := u.auto.loops[:0]
+	for _, l := range u.auto.loops {
+		waited := false
+		for _, g := range gone {
+			if l == g {
+				waited = true
+				break
+			}
+		}
+		if !waited {
+			kept = append(kept, l)
+		}
+	}
+	u.auto.loops = kept
 }
 
 // RunAuto is the quiet-time loop. It stops when ctx ends. It does nothing for a development build, while updates are off, or when

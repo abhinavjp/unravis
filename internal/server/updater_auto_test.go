@@ -431,6 +431,9 @@ func TestCloseWaitsForTheAutomaticLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	u.StartAuto(ctx)
 	<-entered // the loop is inside a step
+	u.auto.mu.Lock()
+	done := u.auto.loops[0]
+	u.auto.mu.Unlock()
 	cancel()
 	closed := make(chan struct{})
 	go func() { u.Close(); close(closed) }()
@@ -445,13 +448,51 @@ func TestCloseWaitsForTheAutomaticLoop(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close did not return after the loop ended")
 	}
-	u.auto.mu.Lock()
-	done := u.auto.loops[0]
-	u.auto.mu.Unlock()
 	select {
 	case <-done:
 	default:
 		t.Fatal("Close returned before the loop had exited")
+	}
+	// A second Close has nothing left to wait for.
+	started := time.Now()
+	u.Close()
+	if time.Since(started) > autoCloseWait/2 {
+		t.Fatal("a second Close waited again")
+	}
+}
+
+// A step still in flight must not be able to start a download after Close stopped it: the loop is waited for first, the download
+// is stopped after.
+func TestCloseStopsTheDownloadOnlyAfterTheLoopEnded(t *testing.T) {
+	rg, _ := autoRig(t)
+	u := rg.u
+	oldTick := autoTick
+	autoTick = 5 * time.Millisecond
+	t.Cleanup(func() { autoTick = oldTick })
+	entered := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	var loopEnded atomic.Bool
+	u.canSilently = func() bool {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-gate
+		loopEnded.Store(true)
+		return false
+	}
+	var loopEndedAtStop atomic.Bool
+	u.inst.mu.Lock()
+	u.inst.cancel = func() { loopEndedAtStop.Store(loopEnded.Load()) }
+	u.inst.mu.Unlock()
+	ctx, cancel := context.WithCancel(t.Context())
+	u.StartAuto(ctx)
+	<-entered
+	cancel()
+	time.AfterFunc(50*time.Millisecond, func() { close(gate) })
+	u.Close()
+	if !loopEndedAtStop.Load() {
+		t.Fatal("the download was stopped while the automatic loop was still running")
 	}
 }
 
