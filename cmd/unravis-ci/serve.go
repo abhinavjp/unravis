@@ -24,7 +24,7 @@ const defaultRepo = "abhinavjp/unravis"
 var defaultPushWorkflows = map[string][]string{"develop": {"fast-gate.yml", "ci.yml"}, "master": {"ci.yml"}}
 
 // pauseFileName is the file in the state folder whose presence stops the agent from taking new requests.
-const pauseFileName = "PAUSE"
+const pauseFileName = localci.PauseFileName
 
 // How often serve saves the comparison with GitHub for the Releases app, and how many recent runs it looks at.
 const (
