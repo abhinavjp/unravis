@@ -426,9 +426,42 @@ func (s *Service) Export() ([]Record, error) {
 	return v.Records, nil
 }
 
-// Import adds records, keeping their ids and save times, so a page that holds an old id still finds it. A record whose id or whose server,
-// login and database are already saved is skipped (the copy already here wins). It returns how many were added. ErrFull means the result
-// would hold more than MaxRecords; nothing is written then.
+// checkedRecord runs one imported record through the checks Save applies to typed details, so a record that arrives over the keeper pipe
+// is held to the same rules as one saved on the page. The dialled "server" text is never taken from the record: it is rebuilt from the
+// record's host and port, so a label and host that name one server cannot carry a Server field that points at another. The id and save
+// time are kept; every other field is the validated result. A record that Save could never have produced (a bad id, auth or encrypt
+// word, an out-of-range port, a host that does not read back as written, or a password that does not match its flag or sign-in kind)
+// is ErrInvalid.
+func checkedRecord(rec Record) (Record, error) {
+	if rec.ID == "" || len(rec.ID) > 64 || rec.Host == "" || rec.HasPassword != (rec.Password != "") {
+		return Record{}, ErrInvalid
+	}
+	port := rec.Port
+	if port == 0 {
+		port = 1433
+	}
+	if port < 1 || port > 65535 {
+		return Record{}, ErrInvalid
+	}
+	// The comma spelling reads back the same for names, named instances and IPv6 addresses; Server itself is never read.
+	checked, err := validate(Input{
+		Label: rec.Label, Server: rec.Host + "," + strconv.Itoa(port), Auth: rec.Auth, Username: rec.Username, Password: rec.Password,
+		RememberPassword: rec.HasPassword, Database: rec.Database, Encrypt: rec.Encrypt, TrustServerCertificate: rec.TrustServerCertificate,
+	})
+	if err != nil {
+		return Record{}, err
+	}
+	if checked.Host != rec.Host || checked.Port != port || checked.Password != rec.Password || checked.HasPassword != rec.HasPassword {
+		return Record{}, ErrInvalid
+	}
+	checked.ID, checked.SavedAt = rec.ID, rec.SavedAt
+	return checked, nil
+}
+
+// Import adds records, keeping their ids and save times, so a page that holds an old id still finds it. Each record is checked and
+// rebuilt by checkedRecord first; one record that fails makes the whole call return ErrInvalid with nothing written (a bad record is not
+// skipped quietly). A record whose id or whose server, login and database are already saved is skipped (the copy already here wins).
+// It returns how many were added. ErrFull means the result would hold more than MaxRecords; nothing is written then.
 func (s *Service) Import(records []Record) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -444,8 +477,9 @@ func (s *Service) Import(records []Record) (int, error) {
 	added := 0
 next:
 	for _, rec := range records {
-		if rec.ID == "" || len(rec.ID) > 64 || rec.Host == "" || rec.HasPassword != (rec.Password != "") {
-			return 0, ErrInvalid
+		rec, err := checkedRecord(rec)
+		if err != nil {
+			return 0, err
 		}
 		for _, prior := range v.Records {
 			if prior.ID == rec.ID || (prior.Host == rec.Host && prior.Port == rec.Port && prior.Username == rec.Username && prior.Auth == rec.Auth && strings.EqualFold(prior.Database, rec.Database)) {
