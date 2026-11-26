@@ -45,6 +45,7 @@ type CollectorInfo struct {
 }
 
 var catalogue = []CollectorInfo{
+	{ID: "redis.info", Kind: KindCommand, Title: "Redis on this PC: figures, slow commands, latency, clients", Group: "redis", Load: LoadLight, Needs: "read-only access to Redis on this PC (a password, if it has one)"},
 	{ID: "host.facts", Kind: KindCommand, Title: "Server facts: versions, services, certificate dates", Group: "facts", Load: LoadLight, DefaultEverySec: 3600},
 	{ID: "paths.files", Kind: KindPath, Title: "Where the logs and settings files are", Group: "paths", Load: LoadLight, DefaultEverySec: 3600},
 	{ID: "counters.extra", Kind: KindCounter, Title: "Extra Windows counters you add", Group: "extraCounters", Load: LoadLight},
