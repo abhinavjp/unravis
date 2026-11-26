@@ -219,6 +219,9 @@ func recordView(info casestore.CaseInfo) caseViewDTO {
 func (h *handler) viewOf(ctx context.Context, c casestore.Case) caseViewDTO {
 	info := c.Info()
 	v := recordView(info)
+	if p, ok := innerCase(c).(casestore.Preparer); ok {
+		v.Preparing = p.Preparing()
+	}
 	if rs, ok := innerCase(c).(casestore.RetryStore); ok {
 		if items, err := rs.Retries(ctx); err == nil {
 			v.Retries = toRetryDTOs(items)

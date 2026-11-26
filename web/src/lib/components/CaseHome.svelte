@@ -3,7 +3,7 @@
   import { api, ApiError } from '../api';
   import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing, results, scope } from '../appState.svelte';
   import { pacedTimeout } from '../visibility';
-  import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
+  import { JOB_POLL_MS, PREPARING_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, closeButton, closedEraseAt, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
   import { archiveFilePath, archivedActions, type ArchiveDrawerKind } from '../archiveModel';
   import { ARCHIVE_TEXT, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
@@ -510,6 +510,23 @@
     return pacedTimeout(() => { if (id === caseId && !archiveDrawer) void load(id, true); }, JOB_POLL_MS);
   });
 
+  // An old case builds its helper indexes once, in the background, and says so ("Preparing this case"). The case is read again, only the
+  // case itself (not the files, checks or theories, and the page does not go back to its home), until it stops saying so. A read that
+  // fails is tried again at the next turn of the counter, so the note never stays on for good.
+  let preparingTurn = $state(0);
+  $effect(() => {
+    const id = caseId;
+    void preparingTurn;
+    if (!id || !info?.preparing) return;
+    return pacedTimeout(() => { void rereadPreparing(id); }, PREPARING_POLL_MS);
+  });
+  async function rereadPreparing(id: string) {
+    const token = caseReads.begin();
+    const fresh = await getCaseView(id).catch(() => null);
+    if (!destroyed && id === caseId && fresh && caseReads.accept(token)) info = fresh;
+    preparingTurn += 1;
+  }
+
   // Every date on this page follows the time zone choice in the header (London by default), like the start screen's case list.
   const when = (value: string): string => formatTime(value, { zone: timeZone.zone, year: true, precision: 'minute', fallback: value });
   const kindLabel = { case: CASE_HOME_TEXT.kindCase, file: CASE_HOME_TEXT.kindFile, health: CASE_HOME_TEXT.kindHealth, theory: CASE_HOME_TEXT.kindTheory } as const;
@@ -586,6 +603,7 @@
         <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('archive', e.currentTarget)}>{ARCHIVE_TEXT.showProgress}</button></div>
       {:else if info && believedState(info) === 'closed'}<p class="notice" role="status">{CASE_HOME_TEXT.closedNote}{#if eraseAt} {closedEraseText(when(eraseAt))}{/if}</p>{/if}
       {#if archiveNote}<p class="notice" role="status">{archiveNote}</p>{/if}
+      {#if info?.preparing}<p class="notice" role="status" data-testid="case-preparing">{CASE_HOME_TEXT.preparing}</p>{/if}
       {#if archiveState !== 'hidden' || isArchived || closeState !== 'hidden'}
         <div class="actions">
           {#if archiveState !== 'hidden'}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={archiveState !== 'enabled' || stale} onclick={(e) => openArchiveDrawer('archive', e.currentTarget)}>{ARCHIVE_TEXT.archiveButton}</button>{/if}

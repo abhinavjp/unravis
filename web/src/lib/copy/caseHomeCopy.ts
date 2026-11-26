@@ -21,6 +21,7 @@ export const CASE_HOME_TEXT = {
   theoriesCount: 'Theories',
   checksCount: 'Health checks',
   untrusted: 'This case came from another place, so it is read-only here.',
+  preparing: 'Preparing this case. This happens once.',
   closedNote: 'This case is closed. You can read it, but nothing can be added.',
   closeButton: 'Close this case',
   closing: 'Closing…',

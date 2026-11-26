@@ -83,6 +83,8 @@ export interface CaseInfo {
   archive?: ArchiveInfo;
   /** How far a running archive has got, on an Archiving row. */
   percent?: number;
+  /** True while an old case builds its helper indexes in the background (its first charts are slow until it ends). Absent when not. */
+  preparing?: boolean;
 }
 
 /** What happened to a case: made, closed, reopened, archived, restored, freed (A8). `detail` is a short fact such as a file name or a code, never a key or a path. */
@@ -293,6 +295,7 @@ export function toCase(raw: Partial<CaseInfo>): CaseInfo {
   const archive = parseArchive(raw.archive);
   if (archive) out.archive = archive;
   if (typeof raw.percent === 'number' && Number.isFinite(raw.percent)) out.percent = Math.max(0, Math.min(100, Math.floor(raw.percent)));
+  if (raw.preparing === true) out.preparing = true;
   return out;
 }
 
@@ -709,6 +712,8 @@ export async function cancelImportJob(caseId: string, jobId: string, signal?: Ab
 }
 
 export const JOB_POLL_MS = 1000;
+/** How often a case that says it is preparing is read again, to see when it stops. */
+export const PREPARING_POLL_MS = 2000;
 /** A few lost answers in a row are tolerated (the server may be busy); more than this and the wait gives up. */
 export const JOB_MAX_UNREACHABLE = 5;
 

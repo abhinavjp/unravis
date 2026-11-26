@@ -770,10 +770,13 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*caseState, erro
 		keys.Zero()
 		return nil, err
 	}
-	if st.idxPending {
-		// A case from before schema 3 has no series-key indexes. Build them now, in
-		// the background, so the first series query does not stall on a large case;
-		// a query that arrives meanwhile waits for the same build.
+	if st.idxPending || attrIndexesMissing(ctx, db) {
+		// A case from before schema 3 has no series-key indexes (idxPending), and a
+		// case whose build was cut short by a close still lacks them on its next
+		// open. Build them now, in the background, so the first series query does
+		// not stall on a large case; a query that arrives meanwhile waits for the
+		// same build.
+		st.preparing.Store(true) // before the goroutine runs, so the first page read already says so
 		go (&Case{caseState: st}).ensureAttrIndexes()
 	}
 	if timelineIndexesMissing(ctx, db) {

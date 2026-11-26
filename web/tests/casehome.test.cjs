@@ -112,3 +112,22 @@ test('the case home still treats a 409 from the shared theories as fine, and kee
   assert.match(page, /isCaseLocked/);
   assert.match(page, /phase = 'locked'; return;/);
 });
+
+// W-34: an old case builds its helper indexes in the background, and the page says so until it stops.
+test('a case that is preparing says so once, in plain words, and is read again until it stops', () => {
+  const cases = loadTypeScript('src/lib/cases.ts');
+  assert.equal(copy.CASE_HOME_TEXT.preparing, 'Preparing this case. This happens once.');
+  assert.equal(cases.toCase({ id: 'a'.repeat(26), preparing: true }).preparing, true);
+  for (const raw of [false, 'true', 1, null, undefined]) {
+    assert.equal('preparing' in cases.toCase({ id: 'a'.repeat(26), preparing: raw }), false, 'only a real true counts: ' + String(raw));
+  }
+  assert.equal(cases.toView({ id: 'a'.repeat(26), preparing: true }).preparing, true);
+  assert.ok(cases.PREPARING_POLL_MS >= 1000, 'the case is not read every moment');
+  const page = read('src/lib/components/CaseHome.svelte');
+  assert.match(page, /\{#if info\?\.preparing\}<p class="notice" role="status"[^>]*>\{CASE_HOME_TEXT\.preparing\}<\/p>\{\/if\}/);
+  assert.match(page, /pacedTimeout\(\(\) => \{ void rereadPreparing\(id\); \}, PREPARING_POLL_MS\)/);
+  // The read that follows a preparing case reads the case only: it never sends the page back to its home or reloads the files.
+  const fn = page.slice(page.indexOf('async function rereadPreparing'), page.indexOf('async function rereadPreparing') + 500);
+  assert.match(fn, /getCaseView\(id\)/);
+  assert.doesNotMatch(fn, /load\(|loadPage\(|listImports\(|view = /);
+});

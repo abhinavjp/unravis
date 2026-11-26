@@ -85,6 +85,10 @@ type caseState struct {
 	// idxPending is set when open migrated a case from before schema 3: the
 	// load then builds the indexes in the background (see Store.load).
 	idxPending bool
+	// preparing is true from open until the background series-key index build
+	// ends (set in Store.load, cleared by ensureAttrIndexes however it ends). The
+	// case page reads it through Preparing, to say "Preparing this case".
+	preparing atomic.Bool
 	// bg is the background timeline index build of this open case, if one is running
 	// (guarded by mu). It holds a reference of its own (see startTimelineBuild).
 	bg *tlBuild
@@ -1676,6 +1680,9 @@ func (c *Case) attrIndexHint(q casestore.EventQuery) string {
 // the case is closing) the query runs without the indexes, as slowly as before,
 // and a failed build is not tried again until the case is reopened.
 func (c *Case) ensureAttrIndexes() {
+	// However this ends (built, failed, cancelled, or an import held the lock) the
+	// case is no longer "preparing"; a later query that builds them sets nothing.
+	defer c.preparing.Store(false)
 	if c.attrIdx.Load() != 0 {
 		return
 	}
@@ -1691,6 +1698,9 @@ func (c *Case) ensureAttrIndexes() {
 		return
 	}
 	defer c.importMu.Unlock()
+	if attrBuildHook != nil {
+		attrBuildHook()
+	}
 	db, err := c.handle()
 	if err != nil {
 		return
