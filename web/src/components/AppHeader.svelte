@@ -15,6 +15,9 @@
   import { formatTime } from '../lib/time';
   import SourcePopover from './SourcePopover.svelte';
   import Eli10Toggle from './Eli10Toggle.svelte';
+  import { UPD_TEXT } from '../lib/copy/updatesCopy';
+  import { chipState } from '../lib/updatesPage';
+  import { updates, openWhatsNew } from '../lib/updateState.svelte';
 
   // The top bar: brand, the mode badge, the Sources popover, the drawer buttons and the theme toggle, on one row while they fit and wrapping to a second row from 721px when they do not.
   // Below 1100px Patterns, Ledger, Export, Import and Glossary fold into a "More" menu, together with the Explain simply switch. The depth breadcrumb sits on its own bar beneath.
@@ -34,15 +37,20 @@
     { id: 'import', label: 'Add files', open: () => openSidePanel('import') },
     { id: 'blackbox', label: 'Blackbox', open: () => openSidePanel('blackbox') },
     { id: 'mcp', label: MCP_TEXT.open, open: () => openSidePanel('mcp') },
+    { id: 'updates', label: UPD_TEXT.open, open: () => openSidePanel('updates') },
     { id: 'glossary', label: 'Glossary', open: () => openGlossary() }
   ];
   // Patterns, Ledger, Export and Import are the page's navigation; Glossary sits with the utilities at the far right.
-  const navDrawers = drawers.filter(item => item.id !== 'glossary' && item.id !== 'blackbox' && item.id !== 'mcp');
+  const navDrawers = drawers.filter(item => item.id !== 'glossary' && item.id !== 'blackbox' && item.id !== 'mcp' && item.id !== 'updates');
   // Blackbox is placed before a case exists, so it is a utility: it shows on every screen, beside Glossary.
   const blackbox = drawers.find(item => item.id === 'blackbox')!;
   // AI access sits with the utilities too: approving AI programs has nothing to do with a case or an analysis.
   const mcp = drawers.find(item => item.id === 'mcp')!;
   const glossary = drawers.find(item => item.id === 'glossary')!;
+  // Updates is a utility too: the version chip opens it, and the More menu lists it with What's new.
+  const updatesEntry = drawers.find(item => item.id === 'updates')!;
+  const whatsNewEntry = { id: 'whatsnew', label: UPD_TEXT.openWhatsNew, open: () => openWhatsNew(false) };
+  const chip = $derived(chipState(updates.reply));
   // The analysis controls belong to the working screen. The start, unlock and set-up screens keep only the brand and the utilities.
   const working = $derived(app.screen === 'running');
   // Home leads to the start screen (the demo has no case list, so no Home there). Lock shows while a master key is set and open.
@@ -54,7 +62,7 @@
   const home = { id: 'home', label: KEY_TEXT.home, open: () => goHome() };
   const caseHome = { id: 'case-home', label: CASE_HOME_TEXT.navButton, open: () => openCaseHome() };
   const lock = { id: 'lock', label: KEY_TEXT.lock, open: () => { void lockCases(); } };
-  const menuEntries = $derived([...(showHome ? [home] : []), ...(showCaseHome ? [caseHome] : []), ...(working ? navDrawers : []), blackbox, mcp, glossary, ...(showLock ? [lock] : [])]);
+  const menuEntries = $derived([...(showHome ? [home] : []), ...(showCaseHome ? [caseHome] : []), ...(working ? navDrawers : []), blackbox, mcp, updatesEntry, whatsNewEntry, glossary, ...(showLock ? [lock] : [])]);
   const isOpen = (id: string) => id === 'glossary' ? panels.glossaryOpen : panels.sidePanel === id;
   const anyOpen = $derived(drawers.some(item => isOpen(item.id)));
   const ledgerTotal = $derived(ledger.items.length);
@@ -149,6 +157,7 @@
       <Eli10Toggle />
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(blackbox.id)} onclick={blackbox.open}>{blackbox.label}</button>
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(mcp.id)} data-testid="open-mcp" onclick={mcp.open}>{mcp.label}</button>
+      {#if chip.text}<button type="button" class="header-button version-chip" class:attention={chip.pip !== 'none'} aria-haspopup="dialog" aria-expanded={isOpen(updatesEntry.id)} aria-label={UPD_TEXT.chipLabel(chip.text)} data-testid="version-chip" onclick={updatesEntry.open}>{#if chip.pip !== 'none'}<span class="pip" class:busy={chip.pip === 'busy'} aria-hidden="true"></span>{/if}{chip.text}</button>{/if}
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(glossary.id)} onclick={glossary.open}>{glossary.label}</button>
       {#if showLock}<button type="button" class="header-button" aria-label={KEY_TEXT.lockLabel} onclick={() => { void lockCases(); }}>{KEY_TEXT.lock}</button>{/if}
     {/if}
@@ -239,4 +248,10 @@
     /* Keeps the brand mark and gives the Sources button the room; the brand name stays for screen readers. */
     .brand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   }
+  .version-chip { font-variant-numeric: tabular-nums; }
+  .version-chip.attention { color: var(--text); border-color: var(--accent); }
+  .pip { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .pip.busy { animation: chip-pulse 1.2s var(--ease) infinite; }
+  @keyframes chip-pulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .pip.busy { animation: none; } }
 </style>
