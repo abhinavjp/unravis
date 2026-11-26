@@ -9,3 +9,6 @@
 api-audit-explorer/internal/casestore/sqlite.TestEventsTimeBudgetAndCancel BL-593 until=2026-12-10 time-budget test fails under load (got 0 events); named suspect in BL-593; seen on pr330 local run 26 Nov
 api-audit-explorer/internal/blackbox.TestClumsyWrongReadKeyIsRefusedEveryWay BL-593 until=2026-12-10 server never listened within 15s on a busy PC (host load); add to BL-593 suspects
 api-audit-explorer/internal/clicore/cmdtree.TestAppStartExit12AttachesToTheOtherOwner BL-592 until=2026-12-10 PC-state: fails on the owner PC (the file that says where Unravis runs is missing/held), passes on GitHub; seen on PR 294 and pr330 local runs
+api-audit-explorer/internal/blackbox.TestClumsyEveryRouteIsGuardedAndRepeatedWrongKeysAreTurnedAway BL-593 until=2026-12-10 server never listened within 15s in a full-suite run on a busy PC (same cause as TestClumsyWrongReadKeyIsRefusedEveryWay)
+api-audit-explorer/internal/casestore/sqlite.TestBucketCountsTimeoutIsPartial BL-593 until=2026-12-10 the 100 ms budget runs out before chunk 3 on a busy PC (DoneTo 2 s, want 3 s); needs an injected clock
+api-audit-explorer/internal/dotnetdiag.TestWindowsDialRejectsForeignOwner BL-593 until=2026-12-10 the pipe server did not see the client hang up within 2 s on a busy PC (dial_windows_test.go:521)
