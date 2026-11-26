@@ -71,7 +71,16 @@ const (
 	EventHousekeeping    = "housekeeping"
 	EventCollectFailed   = "collect-failed"
 	EventWriteFailed     = "write-failed"
-	EventSettingsRestart = "settings-applied"
+	// The repeat and recovered events of a collect or write failure (W-03). The
+	// first failure keeps its own event above; while the failure goes on, one
+	// still-failing event is raised at most every failureEventEvery, and one
+	// recovered event closes it. Their detail is fixed keys and numbers only:
+	// "code=<fixed code> rounds=<n>" and "rounds=<n> seconds=<n>".
+	EventCollectStillFailing = "collect-still-failing"
+	EventCollectRecovered    = "collect-recovered"
+	EventWriteStillFailing   = "write-still-failing"
+	EventWriteRecovered      = "write-recovered"
+	EventSettingsRestart     = "settings-applied"
 	// EventRestart is written at every start that follows an earlier run. The
 	// detail is a fixed code: "after-stop" (the earlier run stopped cleanly) or
 	// "after-crash" (it did not). It is recorded even when the hole is too short

@@ -2,6 +2,7 @@ import { api } from './api';
 import { updatePreviewNow } from './updateCheck';
 import type { UpdateCheckReply } from './types';
 import { visiblePoll } from './visibility';
+import { GONE_AFTER_FAILURES, GONE_CHECK_MS, HICCUP_NOTE, lostServer } from './updateLink';
 import { normalizeVersion, parseableVersion, readSeen, shouldAutoOpen, writeSeen } from './updateNotes';
 
 // The update status shown across the app: the "Version X is available" bar and the Help panel's Updates section.
@@ -22,15 +23,47 @@ function readDismissed(): string {
 /** Replaces the shared answer, for example with the reply to "Check for updates" or to a settings change. */
 export function setUpdateReply(reply: UpdateCheckReply | null): void { updates.reply = reply; }
 
+/** Whether this page has lost the app: it was restarted (an update) and now answers on another address, or not at all. */
+export const appLink = $state<{ gone: boolean; recheckFailed: boolean }>({ gone: false, recheckFailed: false });
+let failedReads = 0;
+
+/** Notes that the app answered: whatever was thought lost is back. */
+function appAnswered(): void { failedReads = 0; appLink.gone = false; appLink.recheckFailed = false; }
+
+/** Notes a read that failed. A page that is waiting for the restart (the update was launched) gives up after a few misses. */
+function readFailed(cause: unknown): void {
+  if (!lostServer(cause)) return;
+  failedReads += 1;
+  if (failedReads >= GONE_AFTER_FAILURES && updates.reply?.install?.state === 'launched') markGone();
+}
+
+function markGone(): void {
+  appLink.gone = true;
+  installing.error = '';
+  stopDownloadPoll?.();
+  stopDownloadPoll = undefined;
+  stopLaunchPoll?.();
+  stopLaunchPoll = undefined;
+}
+
 export async function refreshUpdateStatus(): Promise<void> {
   try {
     const reply = await api.updateStatus(updatePreviewNow());
+    appAnswered();
     if (reply && typeof reply.status === 'string') {
       updates.reply = reply;
       if (reply.install?.state === 'ready' || reply.install?.state === 'launched') installing.error = ''; // an old refusal is stale now
       if (reply.install?.state === 'downloading') pollWhileDownloading(); // also after a page reload mid-download
+      if (reply.install?.state === 'launched') pollWhileLaunched(); // also after a page reload mid-update
     }
-  } catch { /* the bar just stays as it was */ }
+  } catch (cause) { readFailed(cause); /* the bar otherwise stays as it was */ }
+}
+
+/** "Check again" on the lost-app note: one more look; the note goes away when the app answers. */
+export async function checkAppAgain(): Promise<void> {
+  failedReads = 0;
+  await refreshUpdateStatus();
+  appLink.recheckFailed = appLink.gone; // still no answer: the note says so
 }
 
 /** "Not now": hides the bar for this version. A newer version shows it again. */
@@ -61,9 +94,23 @@ function pollWhileDownloading(): void {
   }, 1000);
 }
 
+let stopLaunchPoll: (() => void) | undefined;
+// While an update is being applied the app quits and starts again, usually on another address. Look every few seconds, so the bar tells
+// the person it is gone instead of waiting for a button press to fail. It ends when the app answers with another state, or is gone.
+function pollWhileLaunched(): void {
+  if (stopLaunchPoll || appLink.gone) return;
+  stopLaunchPoll = visiblePoll(async () => {
+    await refreshUpdateStatus();
+    if (updates.reply?.install?.state === 'launched' && !appLink.gone) return true;
+    stopLaunchPoll = undefined;
+    return false;
+  }, GONE_CHECK_MS);
+}
+
 /** busy: a button was pressed and its answer has not come back. error: the reason the last press was refused, in plain words. */
 export const installing = $state<{ busy: boolean; error: string }>({ busy: false, error: '' });
 
+/** A press that fails because the app is gone is not an error to show raw ("Failed to fetch"): the bar says the app is gone instead. */
 function failureText(cause: unknown): string {
   return cause instanceof Error && cause.message ? cause.message : 'That did not work. Try again.';
 }
@@ -75,9 +122,10 @@ export async function startUpdateDownload(): Promise<void> {
   installing.error = '';
   try {
     const reply = await api.updateDownload(updatePreviewNow());
+    appAnswered();
     if (reply && typeof reply.status === 'string') updates.reply = reply;
     if (reply?.install?.state === 'downloading') pollWhileDownloading();
-  } catch (cause) { installing.error = failureText(cause); await refreshUpdateStatus(); } finally { installing.busy = false; }
+  } catch (cause) { await pressFailed(cause); } finally { installing.busy = false; }
 }
 
 /** "Install": opens the installer for the downloaded file. */
@@ -87,8 +135,26 @@ export async function startUpdateInstall(): Promise<void> {
   installing.error = '';
   try {
     const reply = await api.updateInstall(updatePreviewNow());
+    appAnswered();
     if (reply && typeof reply.status === 'string') updates.reply = reply;
-  } catch (cause) { installing.error = failureText(cause); await refreshUpdateStatus(); } finally { installing.busy = false; }
+    if (reply?.install?.state === 'launched') pollWhileLaunched(); // look for the restart now, not only after a page reload
+  } catch (cause) { await pressFailed(cause); } finally { installing.busy = false; }
+}
+
+async function pressFailed(cause: unknown): Promise<void> {
+  if (lostServer(cause)) {
+    // One more look before saying so: a single lost request on a live app is only a hiccup.
+    try {
+      const reply = await api.updateStatus(updatePreviewNow());
+      appAnswered();
+      if (reply && typeof reply.status === 'string') updates.reply = reply;
+      // The press may have worked and only its reply was lost: if the read says the setup was launched, that is not an error. Keep watching.
+      if (reply?.install?.state === 'launched') { installing.error = ''; pollWhileLaunched(); } else installing.error = HICCUP_NOTE;
+    } catch (again) { if (lostServer(again)) markGone(); else installing.error = failureText(again); }
+    return;
+  }
+  installing.error = failureText(cause);
+  await refreshUpdateStatus();
 }
 
 /** True from the press of "Update now" until the installer has been started or the download failed: it spans download, check and install. */

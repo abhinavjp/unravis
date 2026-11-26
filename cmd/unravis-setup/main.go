@@ -101,10 +101,10 @@ func osEnv() env {
 }
 
 type options struct {
-	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture, closeApp, recover, noRestart, withReleases bool
-	config, logPath, pipe, verify                                                                                                           string
-	expectSHA, expectVersion                                                                                                                string // --expect-sha256 / --expect-version: what the updater verified
-	parent                                                                                                                                  uint
+	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture, closeApp, reopen, recover, noRestart, withReleases bool
+	config, logPath, pipe, verify                                                                                                                   string
+	expectSHA, expectVersion                                                                                                                        string // --expect-sha256 / --expect-version: what the updater verified
+	parent                                                                                                                                          uint
 }
 
 func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
@@ -121,6 +121,8 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	fl.StringVar(&o.expectSHA, "expect-sha256", "", "refuse to run unless this setup program's own file has this SHA-256 (the update check passes it)")
 	fl.StringVar(&o.expectVersion, "expect-version", "", "refuse to run unless this setup installs exactly this version (the update check passes it)")
 	fl.StringVar(&o.verify, "verify", "", "check a release in this folder offline (update-manifest.json, its .sig and the files) and print the result; installs nothing")
+	// Never remove or reword this help line without updating reopenMarker in internal/update/reopen.go: the app's marker check tests for this flag.
+	fl.BoolVar(&o.reopen, "reopen", false, "with --close-app: start the app again with its browser page (the person pressed Apply now), not only in the tray")
 	fl.BoolVar(&o.closeApp, "close-app", false, "with --silent --upgrade and the --expect flags: ask a running Unravis to quit, upgrade, then start it again (what an automatic update does)")
 	fl.BoolVar(&o.recover, "recover", false, "put back what a setup run that was cut off (power loss, a killed setup) changed, from its journal, and start Unravis again; installs nothing")
 	fl.BoolVar(&o.withReleases, "with-releases", false, "with --silent: also install (or keep) the optional read-only Unravis Releases window; off for a normal install")
@@ -167,6 +169,9 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	}
 	if o.closeApp && !(o.silent && o.upgrade && o.hasExpect()) {
 		return o, errors.New("--close-app is for an update the app started: use it with --silent --upgrade --expect-sha256 --expect-version")
+	}
+	if o.reopen && !o.closeApp {
+		return o, errors.New("--reopen is for an update the person started from the app: use it with --close-app")
 	}
 	if o.config != "" && !o.silent {
 		return o, errors.New("--config is for --silent; add --silent, or leave --config out to open the setup window")
@@ -368,9 +373,15 @@ func afterUnattended(o options, e env, d setup.Dirs, old *setup.Installed, res s
 	// browser tab (the new version after a good run, the old one after a rollback) unless it is already up. Waiting for a snapshot
 	// would lose the app when it left before setup looked.
 	failedToStart := false
-	if loc != "" && e.startBackground != nil {
+	// --reopen (the person pressed Apply now) opens the browser page too: the page they were looking at belongs to the old run and
+	// cannot reach the new one, so without a new tab the banner there would stay stuck on a dead address.
+	start := e.startBackground
+	if o.reopen && e.startApp != nil {
+		start = e.startApp
+	}
+	if loc != "" && start != nil {
 		if running, _ := appRunning(e, loc); !running {
-			if err := e.startBackground(filepath.Join(loc, "unravis.exe")); err != nil {
+			if err := start(filepath.Join(loc, "unravis.exe")); err != nil {
 				l.Line("restart: could not start Unravis: " + err.Error())
 				r.Message += " Unravis could not be started again; open it from the Start menu."
 				failedToStart = true
