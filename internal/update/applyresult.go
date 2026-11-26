@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 )
 
 // ApplyResult is what a silent, unattended update run leaves behind (docs/auto-updater/SILENT-UPDATE.md). Nobody watches that run, so
@@ -26,10 +27,22 @@ func WriteApplyResult(dir string, r ApplyResult) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if len(r.Message) > 400 {
-		r.Message = r.Message[:400]
-	}
+	r.Message = cutMessage(r.Message, maxMessageBytes)
 	return writeJSON(filepath.Join(dir, ApplyResultName), r)
+}
+
+const maxMessageBytes = 400
+
+// cutMessage keeps at most max bytes of s, never ending in the middle of a character.
+func cutMessage(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	i := max
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i]
 }
 
 // ReadApplyResult reads the result in dir; (zero, false) when there is none or it is unreadable.

@@ -628,3 +628,19 @@ func CleanSource(s SourceTag) (SourceTag, error) {
 	s.ID, s.Created = 0, time.Time{}
 	return s, nil
 }
+
+// SweepSkips says whether a sweep must leave a case alone whatever its age: an archived case (kept or
+// freed) and one mid-move are never swept, and a Missing row has no folder to erase. Both stores and the
+// server's sweep after a case key is unlocked use this one rule.
+func SweepSkips(info CaseInfo) bool {
+	if info.Missing || info.Mark == MarkArchiving || info.Mark == MarkFreeing {
+		return true
+	}
+	return info.Archive != nil && (info.Archive.Active || info.Archive.Pending != nil)
+}
+
+// SweepDue says whether info is a case the sweep erases at now: closed more than Retention ago and not
+// skipped. A case whose key is locked has no Closed in its listing, so it is never due until it is unlocked.
+func SweepDue(info CaseInfo, now time.Time) bool {
+	return !SweepSkips(info) && info.Closed != nil && now.Sub(*info.Closed) > Retention
+}

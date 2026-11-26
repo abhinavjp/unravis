@@ -6,9 +6,18 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/blackbox"
 )
+
+// RV-LITE-1: the link is opened by hand, often on a slow first start, so it must outlive a slow start (the full app gives a
+// hand-opened link 10 minutes; the old 2 minutes could run out before the person got to the browser).
+func TestLaunchCodeOutlivesASlowFirstStart(t *testing.T) {
+	if codeLife < 5*time.Minute {
+		t.Fatalf("the one-time link lives only %s, too short for a slow first start", codeLife)
+	}
+}
 
 func TestParseRefusesBadInput(t *testing.T) {
 	for _, args := range [][]string{{"extra"}, {"--port", "70000"}, {"--port", "-1"}} {

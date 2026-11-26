@@ -553,3 +553,46 @@ func TestStoreHourFileHandleCanTruncate(t *testing.T) {
 		t.Fatalf("the open hour file cannot be truncated: %v", err)
 	}
 }
+
+// RV-BB-6: a manifest write that fails must not make readers wait. A write made
+// on the way does not pause at all (the next sample tries again); one that must
+// land retries once. The test blocks the manifest path and counts the pauses.
+func TestStoreManifestRetryDoesNotStallReaders(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	s := openT(t, dir, "r1", c)
+	_ = os.Remove(filepath.Join(dir, ManifestName))
+	if err := os.MkdirAll(filepath.Join(dir, ManifestName, "keep"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	var pauses []time.Duration
+	s.sleep = func(d time.Duration) { pauses = append(pauses, d) }
+
+	if err := s.Append(smp("r1", 1, t0), ""); err != nil {
+		t.Fatalf("append must still work: %v", err)
+	}
+	if len(pauses) != 0 {
+		t.Fatalf("a write on the way paused %d times while holding the lock, want 0", len(pauses))
+	}
+	if s.ManifestWritable() {
+		t.Fatal("writable should be false")
+	}
+
+	if err := s.EventDurable("x", "y"); err == nil {
+		t.Fatal("a write that must land should report the failure")
+	}
+	if len(pauses) != 1 || pauses[0] > 20*time.Millisecond {
+		t.Fatalf("a write that must land should pause once for at most 20 ms, got %v", pauses)
+	}
+
+	// Once the way is clear the next write lands and the flag recovers.
+	if err := os.RemoveAll(filepath.Join(dir, ManifestName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EventDurable("x", "y"); err != nil {
+		t.Fatalf("write after the blockage cleared: %v", err)
+	}
+	if !s.ManifestWritable() {
+		t.Fatal("writable should be true again")
+	}
+}
