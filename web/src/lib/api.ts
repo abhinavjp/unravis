@@ -3,6 +3,7 @@ import { signalIfAppLocked } from './lockSignal';
 import { configureClientLog, dropClientLog, reportAction, reportError } from './clientLog';
 import { noticeKeeperRefusal, type KeeperStatus } from './keeper';
 import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
+import { UNREACHABLE_CODE, UNREACHABLE_MESSAGE } from './copy/unreachableCopy';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
 const base = '/api';
@@ -118,8 +119,21 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
       reportError({ status: 0, code: TIMEOUT_CODE, message: failure.message });
       throw failure;
     }
-    throw cause;
+    // The browser could not reach the app at all (closed, updated, crashed, network down): one plain sentence, not "Failed to fetch".
+    throw networkFailure(cause) ?? cause;
   } finally { guard.done(); }
+}
+
+/**
+ * The shared error for a fetch that never got an answer. The browser reports that as a TypeError (the text differs by browser).
+ * An ApiError, a cancel or time limit (abort errors) and any other kind of error are not network failures and return null.
+ * The failure is logged like every ApiError, so the support log shows the page lost the app.
+ */
+function networkFailure(cause: unknown): ApiError | null {
+  if (cause instanceof ApiError || isAbortLike(cause) || !(cause instanceof TypeError)) return null;
+  const failure = new ApiError(UNREACHABLE_MESSAGE, UNREACHABLE_CODE, undefined, 0);
+  reportError({ status: 0, code: UNREACHABLE_CODE, message: failure.message });
+  return failure;
 }
 
 async function requestOnce<T>(path: string, init: RequestInit, signal: AbortSignal | undefined): Promise<T> {
@@ -261,11 +275,14 @@ export const api = {
   export: async (query: Query, apiKey: string, signal?: AbortSignal, state = '', order = '') => {
     if (!token) throw noSession();
     reportAction('analysis', 'export');
-    const response = await fetch(base + '/export', {
-      method: 'POST', credentials: 'same-origin', signal,
-      headers: { 'X-Audit-Token': token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, apiKey, cursor: '', limit: 100, state, ...(order ? { order } : {}) })
-    });
+    let response: Response;
+    try {
+      response = await fetch(base + '/export', {
+        method: 'POST', credentials: 'same-origin', signal,
+        headers: { 'X-Audit-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, apiKey, cursor: '', limit: 100, state, ...(order ? { order } : {}) })
+      });
+    } catch (cause) { throw networkFailure(cause) ?? cause; }
     const reqId = responseRequestId(response);
     if (response.status === 401) {
       reportError({ status: 401, code: 'no_session', message: NO_SESSION_MESSAGE, reqId });

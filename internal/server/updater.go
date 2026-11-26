@@ -57,6 +57,7 @@ type Updater struct {
 	dl          *update.Downloader
 	launch      Launcher
 	silent      Launcher // starts the setup program without a window (see updater_auto.go)
+	silentOpen  Launcher // the same, for Apply now: the new version also opens its page (nil: use silent)
 	canSilently func() bool
 	busy        func() bool
 	presence    Presence

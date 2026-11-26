@@ -602,6 +602,13 @@ func (r *runState) runInstance(ctx context.Context, job *Job, combo map[string]a
 	case <-ctx.Done():
 		return fin("cancelled", "cancelled before it started")
 	}
+	if ov.Exclusive != "" {
+		release, err := acquireExclusive(ctx, ov.Exclusive, func() { r.logf("[%s] waiting for the exclusive resource %q", key, ov.Exclusive) })
+		if err != nil {
+			return fin("cancelled", "cancelled before it started")
+		}
+		defer release()
+	}
 	if ctx.Err() != nil {
 		return fin("cancelled", "cancelled before it started")
 	}

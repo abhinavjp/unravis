@@ -1,6 +1,7 @@
 import { createInvestigationSnapshot, parseInvestigationSnapshot, type InvestigationSnapshot } from './investigation';
 import type { Query, RecentConnection, Source } from './types';
 import { reasonText } from './copy/importCopy';
+import { isUnreachableError } from './copy/unreachableCopy';
 import { parseStoredWindows, pickWindowFields, type WindowFields } from './tracing/windows';
 import { parseStoredSourceChoice, sourceChoiceOf, type SourceSelection, type StoredSourceChoice } from './tracing/sources';
 
@@ -367,7 +368,7 @@ export function classifyRestoreFailure(causes: readonly unknown[], hasLogin: boo
     const stage = stageOf(cause);
     if (stage === 'connection' || stage === 'tls') return true;
     if (stage) return false;
-    if (cause instanceof TypeError) return true;
+    if (cause instanceof TypeError || isUnreachableError(cause)) return true;
     const name = cause && typeof cause === 'object' && 'name' in cause ? String((cause as { name?: unknown }).name) : '';
     if (name === 'TimeoutError' || name === 'AbortError') return true;
     const status = statusOf(cause);

@@ -3,10 +3,12 @@ package localci
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -187,6 +189,38 @@ func TestMirrorFetchesEveryRef(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "$ git fetch") {
 		t.Fatalf("no transcript: %s", log.String())
+	}
+}
+
+// Two runs of one agent mirror at the same time (two slots). Without the per-mirror lock git answers the second with
+// "cannot lock ref ... is at X but expected Y" and the run ends in error.
+func TestMirrorInParallelNeverFailsOnARefLock(t *testing.T) {
+	o := newOrigin(t)
+	s := newStore(t)
+	ctx := context.Background()
+	if err := (&Checkout{Store: s}).Mirror(ctx, o.bare); err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 4; round++ {
+		writeT(t, o.work, "r.txt", fmt.Sprintf("round %d\n", round))
+		commitT(t, o.work, fmt.Sprintf("round %d", round))
+		gitT(t, o.work, "push", "-q", "origin", "develop")
+		var wg sync.WaitGroup
+		errs := make(chan error, 6)
+		for i := 0; i < 6; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs <- (&Checkout{Store: s}).Mirror(ctx, o.bare)
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
 	}
 }
 
