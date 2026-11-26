@@ -60,19 +60,7 @@ func Overlap(iv []Interval, ev []evidence.Event, tol Tolerance, qualifies func(e
 		}
 	}
 	sort.SliceStable(events, func(i, j int) bool { return events[i].Start.Before(events[j].Start) })
-	// prefixMaxEnd[i] is the latest End among events[0..i]; it lets the
-	// backward scan stop once nothing earlier can reach the interval.
-	prefixMaxEnd := make([]time.Time, len(events))
-	for i, e := range events {
-		end := e.End
-		if end.Before(e.Start) {
-			end = e.Start
-		}
-		if i > 0 && prefixMaxEnd[i-1].After(end) {
-			end = prefixMaxEnd[i-1]
-		}
-		prefixMaxEnd[i] = end
-	}
+	tree := newEndTree(events)
 
 	out := make([]Match, 0, len(iv))
 	for _, v := range iv {
@@ -81,19 +69,7 @@ func Overlap(iv []Interval, ev []evidence.Event, tol Tolerance, qualifies func(e
 			start, end = end, start
 		}
 		lo, hi := start.Add(-slack), end.Add(slack)
-		// First index whose Start is after hi.
-		cut := sort.Search(len(events), func(i int) bool { return events[i].Start.After(hi) })
-		var ids []string
-		for i := cut - 1; i >= 0 && !prefixMaxEnd[i].Before(lo); i-- {
-			e := events[i]
-			eEnd := e.End
-			if eEnd.Before(e.Start) {
-				eEnd = e.Start
-			}
-			if !eEnd.Before(lo) {
-				ids = append(ids, e.EvidenceID)
-			}
-		}
+		ids := tree.overlapping(lo, hi)
 		sort.Strings(ids)
 		ids = compact(ids)
 		m := Match{IntervalID: v.ID, Class: evidence.JoinNone}
@@ -122,6 +98,71 @@ func Overlap(iv []Interval, ev []evidence.Event, tol Tolerance, qualifies func(e
 		}
 	}
 	return out
+}
+
+// endTree answers "which events touch [lo, hi]" in O(log n + k), however long
+// any one event is. The events are sorted by Start and the tree is implicit:
+// the node of a range [l, r) is its middle element, and maxEnd[mid] is the
+// latest End inside that whole range. A range whose maxEnd is before lo, or
+// whose middle Start is after hi on the right side, is skipped.
+type endTree struct {
+	events []evidence.Event
+	ends   []time.Time // End of each event, never before its Start
+	maxEnd []time.Time // maxEnd[mid] = latest End in the range whose middle is mid
+}
+
+func newEndTree(events []evidence.Event) *endTree {
+	t := &endTree{events: events, ends: make([]time.Time, len(events)), maxEnd: make([]time.Time, len(events))}
+	for i, e := range events {
+		t.ends[i] = e.End
+		if e.End.Before(e.Start) {
+			t.ends[i] = e.Start
+		}
+	}
+	t.build(0, len(events))
+	return t
+}
+
+// build fills maxEnd for [l, r) and returns the latest End in it.
+func (t *endTree) build(l, r int) time.Time {
+	if l >= r {
+		return time.Time{}
+	}
+	mid := l + (r-l)/2
+	m := t.ends[mid]
+	if left := t.build(l, mid); left.After(m) {
+		m = left
+	}
+	if right := t.build(mid+1, r); right.After(m) {
+		m = right
+	}
+	t.maxEnd[mid] = m
+	return m
+}
+
+// overlapping returns the evidence IDs of the events with Start <= hi and
+// End >= lo, in no particular order.
+func (t *endTree) overlapping(lo, hi time.Time) []string {
+	var ids []string
+	t.collect(0, len(t.events), lo, hi, &ids)
+	return ids
+}
+
+func (t *endTree) collect(l, r int, lo, hi time.Time, ids *[]string) {
+	for l < r {
+		mid := l + (r-l)/2
+		if t.maxEnd[mid].Before(lo) {
+			return // nothing in this range reaches lo
+		}
+		t.collect(l, mid, lo, hi, ids)
+		if t.events[mid].Start.After(hi) {
+			return // this event and everything right of it starts too late
+		}
+		if !t.ends[mid].Before(lo) {
+			*ids = append(*ids, t.events[mid].EvidenceID)
+		}
+		l = mid + 1
+	}
 }
 
 func compact(s []string) []string {
