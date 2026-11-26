@@ -58,8 +58,14 @@ const (
 	GapGroupsNotRead = "Only the host figures, the start of each recorder run (sample 1 of a run) and the gaps of a Blackbox recording are read so far; " +
 		"its SQL, Redis, IIS, network, event and dump groups are not in the timeline yet."
 	GapNoHostName    = "A Blackbox recording holds no machine name; its events are filed under the host that was picked."
-	GapIntervalGuess = "The recording interval is taken from the spacing of the samples in this file; the file does not state it."
+	GapIntervalGuess = "The recording interval is taken from the spacing of the neighbouring samples in this file; the file does not state it."
+	GapFileEdges     = "Gaps are judged inside one file: a hole at the start or the end of a file, or a missing hourly file, is not shown as a gap."
+	GapTooMany       = "A file with more than 1000 gaps shows the first 1000 only."
 )
+
+// VolumeInstance names the one volume the recorder measures free space on (the volume its recordings are on). It is not a
+// drive letter and not "_Total", so a lane join cannot take it for another volume or for the whole host.
+const VolumeInstance = "recordings-volume"
 
 // maxGapEvents bounds the gap events of one file, so a recording of mostly holes cannot flood the timeline.
 const maxGapEvents = 1000
@@ -136,7 +142,7 @@ var figures = []figure{
 	{"Memory", "Committed Bytes", "", "bytes", 0, 0, func(l *line) *float64 { return l.MemCommit }},
 	{"PhysicalDisk", "Current Disk Queue Length", "_Total", "count", 0, 0, func(l *line) *float64 { return l.DiskQueue }},
 	{"PhysicalDisk", "Avg. Disk sec/Transfer", "_Total", "", 0, 0.001, func(l *line) *float64 { return l.DiskMs }},
-	{"LogicalDisk", "% Free Space", "", "percent", 100.5, 0, func(l *line) *float64 { return l.DiskFreePct }},
+	{"LogicalDisk", "% Free Space", VolumeInstance, "percent", 100.5, 0, func(l *line) *float64 { return l.DiskFreePct }},
 }
 
 // stamp is what the gap rule needs of an accepted sample.
@@ -215,12 +221,14 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 			acc.Reject(no, importer.ReasonBadTime)
 			continue
 		}
+		// The recorder wrote this sample, so it counts for the gap rule and for the run start even when a figure in it is
+		// not a valid number; only that sample's figures are then left out.
+		stamps = append(stamps, stamp{t: t, line: no, run: l.Run})
 		evs, reason := buildEvents(&l, t, no, opts, host)
 		if reason != "" {
 			acc.Reject(no, reason)
-			continue
+			evs = nil
 		}
-		stamps = append(stamps, stamp{t: t, line: no, run: l.Run})
 		if l.Seq == 1 { // sample 1 of a run: the recorder started here (a later hourly file of the same run does not)
 			e := wincsv.NewEvent(opts, Name, no, 100)
 			e.Kind, e.Host, e.Start, e.End = KindRunStart, host, t, t
@@ -249,36 +257,58 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 		return acc.Fail(textio.ErrEmpty)
 	}
 
-	// Gaps: more than LateIntervals intervals between two samples, the interval being the median spacing of the file.
+	// Gaps: more than LateIntervals intervals between two samples of a run, the interval being the one the neighbouring
+	// samples show, so a cadence the recorder widened on purpose is no gap; the first sample of a run is judged tighter
+	// (blackbox.RestartGapIntervals), as the recorder judges it.
 	sort.SliceStable(stamps, func(i, j int) bool { return stamps[i].t.Before(stamps[j].t) })
-	if iv, ok := interval(stamps); ok {
-		acc.Gap(GapIntervalGuess)
-		limit := time.Duration(LateIntervals) * iv
-		n := 0
-		for i := 1; i < len(stamps) && n < maxGapEvents; i++ {
-			d := stamps[i].t.Sub(stamps[i-1].t)
-			if d <= limit {
-				continue
-			}
-			e := wincsv.NewEvent(opts, Name, stamps[i].line, 200)
-			e.Kind, e.Host, e.Start, e.End = KindGap, host, stamps[i-1].t, stamps[i].t
-			ms := float64(d / time.Millisecond)
-			e.DurationMs = &ms
-			e.Severity, e.TZRule = "warning", clock.RuleUTCField
-			e.Attrs = map[string]string{"intervals": itoa(int64(d / iv))}
-			if !opts.Window.Overlaps(e.Start, e.End) {
-				dropped = true
-				continue
-			}
-			if err := acc.CheckEmit(1); err != nil {
-				return acc.Fail(err)
-			}
-			if err := emit(e); err != nil {
-				return acc.Fail(err)
-			}
-			acc.Emitted(e.Start)
-			n++
+	ivs := localIntervals(stamps)
+	n, capped, judged := 0, false, false
+	for i := 1; i < len(stamps); i++ {
+		d := stamps[i].t.Sub(stamps[i-1].t)
+		var iv, limit time.Duration
+		if stamps[i].run == stamps[i-1].run {
+			iv = ivs[i]
+			limit = time.Duration(LateIntervals) * iv
+		} else {
+			iv = priorInterval(stamps, ivs, i-1)
+			limit = iv * RestartGapIntervalsNum / RestartGapIntervalsDen
 		}
+		if iv <= 0 {
+			continue
+		}
+		judged = true
+		if d <= limit {
+			continue
+		}
+		if n >= maxGapEvents {
+			capped = true
+			break
+		}
+		e := wincsv.NewEvent(opts, Name, stamps[i].line, 200)
+		e.Kind, e.Host, e.Start, e.End = KindGap, host, stamps[i-1].t, stamps[i].t
+		ms := float64(d / time.Millisecond)
+		e.DurationMs = &ms
+		e.Severity, e.TZRule = "warning", clock.RuleUTCField
+		e.Attrs = map[string]string{"intervals": itoa(int64(d / iv))}
+		if !opts.Window.Overlaps(e.Start, e.End) {
+			dropped = true
+			continue
+		}
+		if err := acc.CheckEmit(1); err != nil {
+			return acc.Fail(err)
+		}
+		if err := emit(e); err != nil {
+			return acc.Fail(err)
+		}
+		acc.Emitted(e.Start)
+		n++
+	}
+	if judged {
+		acc.Gap(GapIntervalGuess)
+	}
+	acc.Gap(GapFileEdges)
+	if capped {
+		acc.Gap(GapTooMany)
 	}
 	if dropped {
 		acc.Gap(importer.GapOutsideWindow)
@@ -297,7 +327,7 @@ func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host str
 		}
 		v := *p
 		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || (f.max > 0 && v > f.max) {
-			return nil, importer.ReasonBadNumber
+			return nil, importer.ReasonBadNumber // the whole sample's figures are left out: a half-read sample misleads
 		}
 		if f.scale > 0 {
 			v *= f.scale
@@ -332,27 +362,60 @@ func parseTime(s string) (time.Time, bool) {
 	return t, true
 }
 
-// interval is the median spacing of consecutive samples of the same run (at least one second). ok is false when the file
-// holds too few samples to tell.
-func interval(s []stamp) (time.Duration, bool) {
-	var ds []time.Duration
+// neighbourSpan is how many spacings on each side of a pair are looked at to tell the interval there.
+const neighbourSpan = 4
+
+// RestartGapIntervalsNum/Den are blackbox.RestartGapIntervals (1.5) as a fraction (a test keeps them equal).
+const (
+	RestartGapIntervalsNum = 3
+	RestartGapIntervalsDen = 2
+)
+
+// localIntervals gives, for each sample i (i >= 1) that follows a sample of the same run, the interval the spacings around
+// it show: the upper median of the other spacings of that run within neighbourSpan pairs on each side. A single hole is
+// then judged against the cadence around it, and a cadence that changes for good is not taken for a hole. 0: no neighbour
+// spacing to judge by (or no same-run predecessor).
+func localIntervals(s []stamp) []time.Duration {
+	out := make([]time.Duration, len(s))
+	sp := make([]time.Duration, len(s)) // sp[i]: spacing from i-1 to i inside one run, else 0
 	for i := 1; i < len(s); i++ {
-		if s[i].run != s[i-1].run {
+		if s[i].run == s[i-1].run {
+			if d := s[i].t.Sub(s[i-1].t); d > 0 {
+				sp[i] = d
+			}
+		}
+	}
+	for i := 1; i < len(s); i++ {
+		if sp[i] == 0 {
 			continue
 		}
-		if d := s[i].t.Sub(s[i-1].t); d > 0 {
-			ds = append(ds, d)
+		var ds []time.Duration
+		for j := i - neighbourSpan; j <= i+neighbourSpan; j++ {
+			if j >= 1 && j < len(s) && j != i && sp[j] > 0 && s[j].run == s[i].run {
+				ds = append(ds, sp[j])
+			}
+		}
+		if len(ds) == 0 {
+			continue
+		}
+		sort.Slice(ds, func(a, b int) bool { return ds[a] < ds[b] })
+		m := ds[len(ds)/2]
+		if m < time.Second {
+			m = time.Second
+		}
+		out[i] = m
+	}
+	return out
+}
+
+// priorInterval is the interval the run that ends at sample i was ticking at: the last interval known at or before i.
+func priorInterval(s []stamp, ivs []time.Duration, i int) time.Duration {
+	for j := i; j >= 1 && s[j].run == s[i].run; j-- {
+		if ivs[j] > 0 {
+			return ivs[j]
 		}
 	}
-	if len(ds) < 2 {
-		return 0, false
-	}
-	sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
-	m := ds[len(ds)/2]
-	if m < time.Second {
-		m = time.Second
-	}
-	return m, true
+	return 0
 }
 
 func itoa(n int64) string {

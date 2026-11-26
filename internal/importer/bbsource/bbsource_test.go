@@ -167,6 +167,145 @@ func TestGapsAreSpansAfterThreeIntervals(t *testing.T) {
 	}
 }
 
+// run builds a recording from spacings: each entry is the time since the previous sample, in seconds.
+func run(id string, start time.Time, spacings ...int) (string, time.Time) {
+	var b strings.Builder
+	at := start
+	for i, d := range spacings {
+		at = at.Add(time.Duration(d) * time.Second)
+		b.WriteString(`{"v":1,"run":"` + id + `","seq":` + itoa(int64(i+1)) + `,"t":"` + at.Format(time.RFC3339) + `","cpu":1}` + "\n")
+	}
+	return b.String(), at
+}
+
+func gapsOf(evs []evidence.Event) (n int) {
+	for _, e := range evs {
+		if e.Kind == KindGap {
+			n++
+		}
+	}
+	return n
+}
+
+func rep(n, v int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = v
+	}
+	return out
+}
+
+var t0 = time.Date(2001, 9, 9, 1, 0, 0, 0, time.UTC)
+
+func TestAWidenedCadenceIsNoGap(t *testing.T) {
+	data, _ := run("r", t0, append(rep(40, 15), rep(20, 60)...)...)
+	evs, _, err := parse(t, data, importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := gapsOf(evs); n != 0 {
+		t.Errorf("%d gaps in a recording whose cadence widened once", n)
+	}
+}
+
+func TestAHoleAfterTwoSpacingsIsFound(t *testing.T) {
+	data, _ := run("r", t0, 15, 15, 3*3600)
+	evs, _, err := parse(t, data, importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := gapsOf(evs); n != 1 {
+		t.Errorf("%d gaps, want the 3 h hole", n)
+	}
+}
+
+func TestARestartIsJudgedAtOneAndAHalfIntervals(t *testing.T) {
+	a, end := run("a", t0, rep(10, 15)...)
+	b, _ := run("b", end.Add(21*time.Second), rep(10, 15)...) // first sample of b is 36 s after the last of a
+	evs, _, err := parse(t, a+b, importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := gapsOf(evs); n != 1 {
+		t.Errorf("%d gaps, want the 36 s restart", n)
+	}
+	b2, _ := run("b", end.Add(5*time.Second), rep(10, 15)...) // 20 s: a prompt restart
+	evs, _, _ = parse(t, a+b2, importer.Options{})
+	if n := gapsOf(evs); n != 0 {
+		t.Errorf("%d gaps for a prompt restart", n)
+	}
+}
+
+func TestASampleWithABadFigureStillCountsForGapsAndRunStart(t *testing.T) {
+	var b strings.Builder
+	at := t0
+	for i := 0; i < 20; i++ {
+		at = at.Add(15 * time.Second)
+		cpu := "1"
+		if i >= 8 && i <= 11 {
+			cpu = "-1"
+		}
+		b.WriteString(`{"v":1,"run":"r","seq":` + itoa(int64(i+1)) + `,"t":"` + at.Format(time.RFC3339) + `","cpu":` + cpu + `}` + "\n")
+	}
+	lenient := importer.Options{Limits: importer.Limits{MaxRejectFraction: 1}}
+	evs, _, err := parse(t, b.String(), lenient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := gapsOf(evs); n != 0 {
+		t.Errorf("%d false gaps where the recorder wrote samples", n)
+	}
+	one := `{"v":1,"run":"r","seq":1,"t":"2001-09-09T01:46:40Z","cpu":500}` + "\n" + good2
+	evs, _, _ = parse(t, one, lenient)
+	starts := 0
+	for _, e := range evs {
+		if e.Kind == KindRunStart {
+			starts++
+		}
+	}
+	if starts != 1 {
+		t.Errorf("%d run starts, want 1 although sample 1 had a bad figure", starts)
+	}
+}
+
+const good2 = `{"v":1,"run":"r","seq":2,"t":"2001-09-09T01:46:55Z","cpu":1}` + "\n"
+
+func TestGapCapAndEdgesAreSaid(t *testing.T) {
+	sp := []int{15, 15, 15}
+	for i := 0; i < maxGapEvents+5; i++ {
+		sp = append(sp, 600, 15, 15, 15)
+	}
+	data, _ := run("r", t0, sp...)
+	evs, rp, err := parse(t, data, importer.Options{Limits: importer.Limits{MaxRejectFraction: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := gapsOf(evs); n != maxGapEvents {
+		t.Errorf("%d gaps, want the cap %d", n, maxGapEvents)
+	}
+	if !contains(rp.KnownGaps, GapTooMany) || !contains(rp.KnownGaps, GapFileEdges) {
+		t.Errorf("known gaps %v", rp.KnownGaps)
+	}
+}
+
+func TestFreeSpaceIsNotTakenForAnotherVolume(t *testing.T) {
+	evs, _, err := parse(t, good, importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range evs {
+		if e.Attrs["counter"] == "% Free Space" && e.Attrs["instance"] != VolumeInstance {
+			t.Errorf("free space instance %q", e.Attrs["instance"])
+		}
+	}
+}
+
+func TestRestartFractionMatchesTheRecorder(t *testing.T) {
+	if float64(RestartGapIntervalsNum)/float64(RestartGapIntervalsDen) != blackbox.RestartGapIntervals {
+		t.Error("restart gap fraction differs from the recorder's")
+	}
+}
+
 func contains(l []string, s string) bool {
 	for _, x := range l {
 		if x == s {
