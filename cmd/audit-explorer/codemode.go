@@ -42,8 +42,9 @@ func mountCodeMode(getenv func(string) string, served http.Handler, token string
 		// file edited off and back on by hand does not bring an open command line back (the route closes it too, on a read and a save).
 		Settings: func() codemode.Settings {
 			s := files.Settings()
-			if !s.Enabled {
-				cliGate.Close()
+			if !s.Enabled && cliGate.CloseIfOpen() {
+				// One app-log line for the change, once (BL-371: each window change is one line); a window that was shut says nothing.
+				log.Print("Command line window: closed because code mode is off.")
 			}
 			return s
 		},
