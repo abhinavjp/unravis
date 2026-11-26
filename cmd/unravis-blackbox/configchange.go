@@ -132,11 +132,11 @@ const validateMaxBytes = 1 << 20
 // ordinary file on a local drive: no network path, device name, pipe, link or junction, and nothing larger than a
 // settings file. Every failure to read says the same sentence, so the answer tells nobody what exists on the disk.
 func validateFile(path string) (blackbox.Config, error) {
-	bad := fmt.Errorf("That file cannot be read as Blackbox settings. Give the full path of an ordinary settings file on this PC: %w", blackbox.ErrInvalidConfig)
+	bad := fmt.Errorf("That file cannot be read as Blackbox settings. Give the full path of an ordinary settings file on this PC: %w", blackbox.ErrInvalidConfig) //nolint:staticcheck // shown to the person as a sentence
 	if !validatePathAllowed(path) {
 		return blackbox.Config{}, bad
 	}
-	fi, err := os.Lstat(path)
+	fi, err := os.Lstat(path) //nolint:gosec // path rules checked above: absolute, fixed local drive, no link in any parent
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() > validateMaxBytes {
 		return blackbox.Config{}, bad
 	}
@@ -155,7 +155,7 @@ func validateFile(path string) (blackbox.Config, error) {
 	draft, err := blackbox.ParseConfigDraft(data)
 	if err != nil {
 		// Not settings at all (or an unknown field): no detail, so a non-settings file is not echoed back.
-		return blackbox.Config{}, fmt.Errorf("That file is not valid Blackbox settings: %w", blackbox.ErrInvalidConfig)
+		return blackbox.Config{}, fmt.Errorf("That file is not valid Blackbox settings: %w", blackbox.ErrInvalidConfig) //nolint:staticcheck // shown to the person as a sentence
 	}
 	if err := draft.Validate(); err != nil {
 		return blackbox.Config{}, fmt.Errorf("%s: %w", cleanText(err.Error(), 200), blackbox.ErrInvalidConfig)

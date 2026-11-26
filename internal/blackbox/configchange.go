@@ -758,7 +758,7 @@ func (m *Manager) History() (ConfigHistory, error) {
 	}
 	lines, problem, err := ReadAudit(dir)
 	if err != nil {
-		return ConfigHistory{}, errors.New("The change history could not be read. Run this as an administrator.")
+		return ConfigHistory{}, errors.New("The change history could not be read. Run this as an administrator") //nolint:staticcheck // shown to the person as a sentence
 	}
 	h := ConfigHistory{Verified: problem == "", Problem: problem}
 	if len(lines) > historyKeep {

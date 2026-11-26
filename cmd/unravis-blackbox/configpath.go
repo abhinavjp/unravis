@@ -24,7 +24,7 @@ func windowsPathOK(path string) bool {
 		return false
 	}
 	c := path[0]
-	if !(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z') {
+	if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') {
 		return false
 	}
 	rest := path[3:]
@@ -51,7 +51,7 @@ func windowsPathOK(path string) bool {
 func plainFolders(path string) bool {
 	dir := filepath.Dir(path)
 	for {
-		fi, err := os.Lstat(dir)
+		fi, err := os.Lstat(dir) //nolint:gosec // walks the parents of a path that already passed the string rules
 		if err != nil || fi.Mode().Type() != os.ModeDir {
 			return false
 		}

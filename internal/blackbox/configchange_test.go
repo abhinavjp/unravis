@@ -196,7 +196,7 @@ func TestAuditTamperingStopsChanges(t *testing.T) {
 		}
 	}
 	path := filepath.Join(g.changeDir(), auditFileName)
-	raw, _ := os.ReadFile(path)
+	raw, _ := os.ReadFile(path) //nolint:gosec // test file
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	cases := map[string]string{
 		"edited":  strings.Join([]string{strings.Replace(lines[0], "web.iis off", "web.iis on", 1), lines[1], lines[2]}, "\n"),
