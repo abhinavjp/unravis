@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"time"
 )
 
 // The groups of a sample that are read so far: the SQL host counters, the HTTP.sys request queues, the IIS worker
@@ -75,7 +76,12 @@ type tcpGroup struct {
 }
 
 // notes collects what one file's groups could not show, so the report can say so once.
-type notes struct{ cut, damaged, partial bool }
+type notes struct {
+	cut, damaged, partial bool
+	redisSeen             bool      // a sample had a Redis group
+	firstT                time.Time // the time of the first sample of the file
+	redis                 *redisState
+}
 
 // sqlSpec says how one SQL host figure is named. All of them are read from the same Windows counters the SQL Server
 // performance-counter importer reads.

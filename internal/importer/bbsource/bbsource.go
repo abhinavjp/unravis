@@ -5,7 +5,7 @@
 // What is read so far (docs/blackbox/WHOLE-STACK.md 4.7): the host figures every sample carries (CPU, memory, disk queue
 // and latency, free space of the volume the recordings are on), the SQL host counters, the HTTP.sys request queues, the IIS
 // worker figures and the TCP figures (groups.go), the start of each recorder run (sample 1 of a run), and the gaps (more
-// than three intervals without a sample, the recorder's own rule). The other groups (Redis, events, dumps, SQL logs ...)
+// than three intervals without a sample, the recorder's own rule). The other groups (events, dumps, SQL logs ...)
 // are not read yet and the report says so.
 //
 // Time: the recorder writes every sample time in UTC ("t", RuleUTCField). Nothing is converted and nothing is guessed.
@@ -56,11 +56,13 @@ const (
 
 // Fixed known-gap sentences. Each passes evidence.LintCausal.
 const (
-	GapGroupsNotRead = "Of a Blackbox recording the host figures, the SQL host counters, the HTTP request queues, the IIS worker figures, the TCP figures, " +
-		"the start of each recorder run (sample 1 of a run) and the gaps are read so far; its Redis, event log, dump, SQL log, process and other groups are not in the timeline yet."
-	GapGroupCut      = "A sample with more than 16 SQL instances or 64 HTTP queues or IIS workers shows the first of them only."
-	GapGroupDamaged  = "A group of a sample that could not be read is left out; the host figures of that sample are kept."
-	GapPartialSum    = "A TCP figure that the recorder marked as covering only some network adapters is left out, not shown as a machine-wide total."
+	GapGroupsNotRead = "Of a Blackbox recording the host figures, the SQL host counters, the HTTP request queues, the IIS worker figures, the TCP figures, the Redis INFO figures, slow commands and latency spikes, " +
+		"the start of each recorder run (sample 1 of a run) and the gaps are read so far; its event log, dump, SQL log, process and other groups are not in the timeline yet."
+	GapGroupCut     = "A sample with more than 16 SQL instances, 64 HTTP queues or IIS workers, 128 Redis slow commands or 32 Redis latency spikes shows the first of them only."
+	GapGroupDamaged = "A group of a sample that could not be read is left out; the host figures of that sample are kept."
+	GapPartialSum   = "A TCP figure that the recorder marked as covering only some network adapters is left out, not shown as a machine-wide total."
+	GapRedisEdges   = "Redis figures that need an earlier sample (a CPU rate, a restart read from the uptime) are not shown for the first sample of a file, " +
+		"and a slow command or latency spike from more than five minutes before the first sample of a file is left out of it (the file before it holds it)."
 	GapNoHostName    = "A Blackbox recording holds no machine name; its events are filed under the host that was picked."
 	GapIntervalGuess = "The recording interval is taken from the spacing of the neighbouring samples in this file; the file does not state it."
 	GapFileEdges     = "Gaps are judged inside one file: a hole at the start or the end of a file, or a missing hourly file, is not shown as a gap."
@@ -92,7 +94,8 @@ func (*imp) Name() string { return Name }
 // AllowedAttrs: the counter is named by object, counter and instance like a Windows counter, and a gap says how many
 // intervals it spans.
 func (*imp) AllowedAttrs() map[string]bool {
-	return map[string]bool{"object": true, "counter": true, "instance": true, "sqlinstance": true, "intervals": true}
+	return map[string]bool{"object": true, "counter": true, "instance": true, "sqlinstance": true, "intervals": true,
+		"metric": true, "role": true, "command": true, "id": true, "event": true}
 }
 
 func (*imp) DefaultLimits() importer.Limits {
@@ -139,6 +142,7 @@ type line struct {
 	HTTP    json.RawMessage `json:"http"`
 	IIS     json.RawMessage `json:"iis"`
 	TCP     json.RawMessage `json:"tcp"`
+	Redis   json.RawMessage `json:"redis"`
 }
 
 // figure is one number of a sample and how the timeline names it. The names are the Windows counter names, so a recording
@@ -242,6 +246,9 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 		// The recorder wrote this sample, so it counts for the gap rule and for the run start even when a figure in it is
 		// not a valid number; only that sample's figures are then left out.
 		stamps = append(stamps, stamp{t: t, line: no, run: l.Run})
+		if nt.firstT.IsZero() {
+			nt.firstT = t
+		}
 		evs, reason := buildEvents(&l, t, no, opts, host, &nt)
 		if reason != "" {
 			acc.Reject(no, reason)
@@ -337,6 +344,9 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 	if nt.partial {
 		acc.Gap(GapPartialSum)
 	}
+	if nt.redisSeen {
+		acc.Gap(GapRedisEdges)
+	}
 	if dropped {
 		acc.Gap(importer.GapOutsideWindow)
 	}
@@ -381,6 +391,9 @@ func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host str
 	}
 	for i, r := range rs {
 		add(r, len(figures)+1+i)
+	}
+	if len(l.Redis) > 0 {
+		evs = append(evs, redisEvents(l.Redis, t, no, opts, host, notes)...)
 	}
 	return evs, ""
 }
