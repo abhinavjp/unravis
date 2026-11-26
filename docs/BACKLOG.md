@@ -600,7 +600,7 @@ Checked and found sound (no item): the Blackbox self-update (zip name and size c
 - [ ] **BL-586** Local pipeline slice 7, cutover (CI only, releases untouched): workflow trigger PRs (`ci.yml` keeps its push trigger on master for the release manager), fallback command, optional buttons. Needs the owner's one branch-protection change on master (source of `build` to any source). Tick after real PRs into develop and master merged on the local gate.
 
 ## Remote Salt access (`tools/remote`, `docs/ops/REMOTE-SALT.md`, owner ask 2026-11-26)
-- [ ] **BL-601** Read-only remote Salt and log access over SSH (settings outside the repo, host-key pinning, read-only allowlist, audit log). Tick when `test.ping` and a log read worked against the real Salt master from this tool.
+- [x] **BL-601** Read-only remote Salt and log access over SSH (settings outside the repo, host-key pinning, read-only allowlist, audit log). Tick when `test.ping` and a log read worked against the real Salt master from this tool.
 
 ## CI reliability (analysis `docs/ci/CI-FAILURE-ANALYSIS-2026-11.md`, 2026-11-26)
 - [ ] **BL-590** Pre-push gate `tools/ci/prepush.sh`, Windows-risk scan `tools/ci/windows-risk.mjs`, PR template, thread gate and reviewer checklist (`docs/ci/THREAD-GATE.md`). Tick when three real pull requests from threads show the gate evidence and none of them went red on a cause the gate covers.

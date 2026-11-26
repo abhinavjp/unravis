@@ -76,10 +76,10 @@ try {
     Check 'salt-run refused' ($null -ne (Test-SaltRunCall 'state.orchestrate'))
 
     # ---- free-form cmd.run gate
-    $ok = @('tail -n 200 C:\ProgramData\Unravis\a.log', "Get-Content 'C:\ProgramData\Unravis\a.log' -Tail 50", 'cat /var/log/unravis/a.log', 'ls -la /var/log/unravis', 'Get-ChildItem C:\ProgramData\Unravis\*.log', 'tail -n 20 c:\programdata\unravis\a.log')
+    $ok = @('tail -n 200 C:\ProgramData\Unravis\a.log', 'Get-Content C:\ProgramData\Unravis\a.log -Tail 50', 'cat /var/log/unravis/a.log', 'ls -la /var/log/unravis', 'Get-ChildItem C:\ProgramData\Unravis\*.log', 'tail -n 20 c:\programdata\unravis\a.log')
     foreach ($c in $ok) { Check "cmd allowed: $c" ($null -eq (Test-ReadOnlyCommand $c $cfg)) }
     $bad = @('rm -rf /var/log/unravis', 'tail -f /var/log/unravis/a.log', 'tail -F /var/log/unravis/a.log', 'cat /etc/shadow', 'cat /var/log/unravis/a.log; whoami', 'cat /var/log/unravis/a.log | sh',
-        'cat /var/log/unravis/a.log && reboot', 'cat /var/log/unravis/a.log > /etc/x', 'cat $(whoami)', 'cat `id`', 'cat %COMSPEC%', 'cat /var/log/unravis/../../shadow', 'Get-Content -Path:C:\Windows\x',
+        'cat /var/log/unravis/a.log && reboot', 'cat /var/log/unravis/a.log > /etc/x', 'cat $(whoami)', 'cat `id`', 'cat %COMSPEC%', 'cat /var/log/unravis/../../shadow', 'Get-Content -Path:C:\Windows\x', 'tail -fn 5 /var/log/unravis/a.log', 'tail --follow /var/log/unravis/a.log', 'Get-Content -Wai C:\ProgramData\Unravis\a.log', 'tail -n x /var/log/unravis/a.log', "cat \'/var/log/unravis/a.log", 'cat /var/log/unravis/a\x.log',
         'Get-Content -Wait C:\ProgramData\Unravis\a.log', 'cat secrets.txt', 'type id_rsa', 'cat', 'echo hi', 'Remove-Item C:\ProgramData\Unravis\a.log', 'Set-Content C:\ProgramData\Unravis\a.log x',
         "cat '/var/log/unravis/a.log", 'cat "/var/log/unravis/a.log"', 'cat /var/log/unravis/a.log: x', 'cat /var/log/unravis/a.log #x', "cat /var/log/unravis/a`nwhoami", 'grep -r pw /var/log/unravis',
         'cat --file=/etc/shadow', 'cat /var/log/unravisx/a.log', 'powershell -c whoami', 'curl http://x', 'Get-Content C:\ProgramData\Unravis\a.log -Encoding utf8 -Delete')
@@ -122,7 +122,7 @@ try {
     Check 'recipe eventlog linux refused' (Throws { New-ReadRecipe -Recipe 'EventLog' -Os 'linux' -LogName 'Application' -Config $cfg })
     Check 'recipe eventlog name injection' (Throws { New-ReadRecipe -Recipe 'EventLog' -Os 'windows' -LogName "x'; calc; '" -Config $cfg })
     $t = New-ReadRecipe -Recipe 'EventLog' -Os 'windows' -LogName 'Application' -Lines 20 -Config $cfg
-    Check 'recipe eventlog' ($t.Cmd -eq "Get-WinEvent -LogName 'Application' -MaxEvents 20")
+    Check 'recipe eventlog' ($t.Cmd.StartsWith("Get-WinEvent -LogName 'Application' -MaxEvents 20") -and $t.Cmd.Contains('Out-String'))
 
     # ---- ssh argument list: no secret, host verified, own known_hosts
     $pwCfg = $cfg.PSObject.Copy(); $pwCfg.KeyPath = ''; $pwCfg.Password = 'FAKE-PASSWORD-123'
@@ -176,8 +176,14 @@ try {
         finally { $ErrorActionPreference = $prev }
         return @{ Code = $code; Out = $o }
     }
+    function RunLive([string[]]$a) {
+        $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { $o = & $ps -NoProfile -ExecutionPolicy Bypass -File $script1 @a 2>&1 | ForEach-Object { "$_" } | Out-String; $code = $LASTEXITCODE }
+        finally { $ErrorActionPreference = $prev }
+        return @{ Code = $code; Out = $o }
+    }
     $r = Run @('-Action', 'Salt', '-Target', 'web01', '-Fn', 'test.ping')
-    Check 'dry run ping' ($r.Code -eq 0 -and $r.Out.Contains("sudo -n salt --out=json --no-color --static -t 60 'web01' 'test.ping'") -and $r.Out.Contains('nothing was sent'))
+    Check 'dry run ping' ($r.Code -eq 0 -and $r.Out.Contains("sudo -n salt --out=json --no-color --static -t 45 'web01' 'test.ping'") -and $r.Out.Contains('nothing was sent'))
     Check 'dry run never shows password' (-not $r.Out.Contains('FAKE-PASSWORD-123'))
     $r = Run @('-Action', 'Salt', '-Target', 'web01', '-Fn', 'state.apply')
     Check 'script refuses state.apply' ($r.Code -ne 0 -and $r.Out.Contains('REFUSED'))
@@ -190,12 +196,20 @@ try {
     $r = Run @('-Action', 'LogTail', '-Target', 'web01', '-Path', 'C:\Windows\win.ini', '-Os', 'windows')
     Check 'script refuses path outside' ($r.Code -ne 0 -and $r.Out.Contains('REFUSED'))
     $r = Run @('-Action', 'WriteRequest', '-Target', 'web01', '-Fn', 'service.restart', '-Name', 'Unravis')
+    Check 'write request dry run saves nothing' ($r.Code -eq 0 -and $r.Out.Contains('nothing saved'))
+    $r = RunLive @('-Action', 'WriteRequest', '-Target', 'web01', '-Fn', 'service.restart', '-Name', 'Unravis')
     Check 'write request is not run' ($r.Code -eq 0 -and $r.Out.Contains('NOT RUN'))
     $hash = [regex]::Match($r.Out, '-Hash ([0-9a-f]{12})').Groups[1].Value
     $r = Run @('-Action', 'WriteApprove', '-Hash', $hash)
     Check 'write approve needs approval note' ($r.Code -ne 0 -and $r.Out.Contains('ApprovalNote is required'))
     $r = Run @('-Action', 'WriteApprove', '-Hash', $hash, '-ApprovalNote', 'test go')
     Check 'write approve dry run' ($r.Code -eq 0 -and $r.Out.Contains('CHANGING THE SERVER'))
+    $pf = Join-Path (Join-Path $priv 'pending') "$hash.json"
+    $orig = Get-Content -LiteralPath $pf -Raw
+    [System.IO.File]::WriteAllText($pf, $orig.Replace('Unravis', 'Other'))
+    $r = Run @('-Action', 'WriteApprove', '-Hash', $hash, '-ApprovalNote', 'test go')
+    Check 'write approve refuses an edited request' ($r.Code -ne 0 -and $r.Out.Contains('does not match'))
+    Check 'edited request is removed' (-not (Test-Path -LiteralPath $pf))
     $audit = Get-Content -LiteralPath (Join-Path $priv 'audit.log') -Raw
     Check 'audit records denials and runs' ($audit -match '"decision":"denied"' -and $audit -match '"decision":"dryrun"')
     Check 'audit never has the password' ($audit -notmatch 'FAKE-PASSWORD-123')

@@ -66,7 +66,7 @@ function Read-EnvFile {
         if ($i -lt 1) { throw "Bad line in the settings file (expected KEY=VALUE): a line has no '='." }
         $k = $line.Substring(0, $i).Trim().ToUpperInvariant()
         $v = $line.Substring($i + 1).Trim()
-        if ($k -notmatch '^[A-Z][A-Z0-9_]*$') { throw "Bad key name in the settings file: '$k'." }
+        if ($k -notmatch '^[A-Z][A-Z0-9_]*\z') { throw "Bad key name in the settings file: '$k'." }
         if ($v.Length -ge 2 -and (($v[0] -eq '"' -and $v[$v.Length - 1] -eq '"') -or ($v[0] -eq "'" -and $v[$v.Length - 1] -eq "'"))) { $v = $v.Substring(1, $v.Length - 2) }
         $map[$k] = $v
     }
@@ -92,12 +92,12 @@ function Get-RemoteConfig {
     function V([string]$k) { if ($Map.ContainsKey($k)) { return [string]$Map[$k] } else { return '' } }
     $h = V 'SALT_MASTER_HOST'
     if ($h -eq '') { throw 'SALT_MASTER_HOST is empty. Type the server IP or name in the settings file.' }
-    if ($h -notmatch '^([A-Za-z0-9]([A-Za-z0-9.\-]{0,251}[A-Za-z0-9])?|[0-9A-Fa-f:]{2,45})$') { throw 'SALT_MASTER_HOST must be an IP address or a DNS name (letters, digits, dots, dashes).' }
+    if ($h -notmatch '^([A-Za-z0-9]([A-Za-z0-9.\-]{0,251}[A-Za-z0-9])?|[0-9A-Fa-f:]{2,45})\z') { throw 'SALT_MASTER_HOST must be an IP address or a DNS name (letters, digits, dots, dashes).' }
     $port = 22
     if ((V 'SSH_PORT') -ne '') { if (-not [int]::TryParse((V 'SSH_PORT'), [ref]$port) -or $port -lt 1 -or $port -gt 65535) { throw 'SSH_PORT must be a number from 1 to 65535.' } }
     $user = V 'SSH_USER'
     if ($user -eq '') { throw 'SSH_USER is empty.' }
-    if ($user -notmatch '^[A-Za-z0-9_][A-Za-z0-9._@\-]{0,63}$') { throw 'SSH_USER has characters that are not allowed.' }
+    if ($user -notmatch '^[A-Za-z0-9_][A-Za-z0-9._@\-]{0,63}\z') { throw 'SSH_USER has characters that are not allowed.' }
     $pw = V 'SSH_PASSWORD'; $key = V 'SSH_KEY_PATH'
     if ($pw -ne '' -and $key -ne '') { throw 'Set SSH_PASSWORD or SSH_KEY_PATH, not both.' }
     if ($pw -eq '' -and $key -eq '') { throw 'Set SSH_PASSWORD or SSH_KEY_PATH.' }
@@ -107,9 +107,9 @@ function Get-RemoteConfig {
         if ($key -match '(?i)\.ppk$') { throw 'SSH_KEY_PATH is a PuTTY .ppk key. OpenSSH cannot use it: in PuTTYgen choose Conversions > Export OpenSSH key.' }
     }
     $fp = V 'SSH_HOST_KEY_FINGERPRINT'
-    if ($fp -ne '' -and $fp -notmatch '^SHA256:[A-Za-z0-9+/]{43}$') { throw 'SSH_HOST_KEY_FINGERPRINT must look like SHA256:xxxxxxxx (43 characters after the colon).' }
+    if ($fp -ne '' -and $fp -notmatch '^SHA256:[A-Za-z0-9+/]{43}\z') { throw 'SSH_HOST_KEY_FINGERPRINT must look like SHA256:xxxxxxxx (43 characters after the colon).' }
     $targets = Split-List (V 'SALT_MINION_TARGETS')
-    foreach ($t in $targets) { if ($t -notmatch '^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}$') { throw "SALT_MINION_TARGETS entry '$t' must be an exact minion id (no wildcards)." } }
+    foreach ($t in $targets) { if ($t -notmatch '^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}\z') { throw "SALT_MINION_TARGETS entry '$t' must be an exact minion id (no wildcards)." } }
     $logPaths = Split-List (V 'REMOTE_LOG_PATHS')
     foreach ($p in $logPaths) { if (-not (Test-PathCharset $p)) { throw "REMOTE_LOG_PATHS entry '$p' has characters that are not allowed (letters, digits, space, . : \ / _ - only)." } if ($p -match '\.\.') { throw "REMOTE_LOG_PATHS entry '$p' must not contain '..'." } }
     $mode = (V 'REMOTE_MODE').Trim().ToLowerInvariant()
@@ -123,9 +123,16 @@ function Get-RemoteConfig {
 
 # ---------------------------------------------------------------- redaction
 function Protect-Text {
-    param([string]$Text, [string[]]$Secrets = @())
+    param([string]$Text, [string[]]$Secrets = @(), [switch]$ExactOnly)
     if ($null -eq $Text) { return '' }
-    foreach ($s in $Secrets) { if ($s -and $s.Length -ge 1) { $Text = $Text.Replace($s, '[REDACTED]') } }
+    foreach ($s in $Secrets) {
+        if ($s -and $s.Length -ge 1) {
+            $Text = $Text.Replace($s, '[REDACTED]')
+            $js = (ConvertTo-Json -InputObject $s -Compress); $js = $js.Substring(1, $js.Length - 2)   # also the JSON-escaped form
+            if ($js -ne $s) { $Text = $Text.Replace($js, '[REDACTED]') }
+        }
+    }
+    if ($ExactOnly) { return $Text }
     $Text = [regex]::Replace($Text, '(?i)\b(password|passwd|pwd|secret|api[_-]?key|token|authorization)(\s*[=:]\s*)(bearer\s+)?[^\s,;"'']+', '$1$2[REDACTED]')
     return $Text
 }
@@ -146,7 +153,7 @@ function Write-Audit {
 }
 
 # ---------------------------------------------------------------- argument safety
-function Test-PathCharset { param([string]$Path) return ($Path -match '^[A-Za-z0-9_ .:\\/\-]{1,260}$') }
+function Test-PathCharset { param([string]$Path) return ($Path -match '^[A-Za-z0-9_ .:\\/\-]{1,260}\z') }
 
 function Test-YamlSafe {
     # Salt reads CLI arguments as YAML: "key: value" would become a dict and " #" starts a comment.
@@ -163,6 +170,8 @@ function Test-PathAllowed {
     if (-not $Allowed -or $Allowed.Count -eq 0) { return $false }
     if (-not (Test-PathCharsetWild $Path)) { return $false }
     if ($Path -match '\.\.') { return $false }
+    # A backslash is a path separator only on Windows (drive-letter) paths; on Linux it is a literal character that must not pass as a separator.
+    if ($Path -notmatch '^[A-Za-z]:' -and $Path.Contains('\')) { return $false }
     $norm = $Path.Replace('\', '/')
     $last = $norm.LastIndexOf('/')
     $dirPart = if ($last -ge 0) { $norm.Substring(0, $last) } else { '' }
@@ -177,17 +186,17 @@ function Test-PathAllowed {
     }
     return $false
 }
-function Test-PathCharsetWild { param([string]$Path) return ($Path -match '^[A-Za-z0-9_ .:\\/\-*?]{1,260}$') }
+function Test-PathCharsetWild { param([string]$Path) return ($Path -match '^[A-Za-z0-9_ .:\\/\-*?]{1,260}\z') }
 
 function Test-SafeWord {
     # A single plain word: service name, grain name, log name. Letters, digits and . _ - only.
     param([string]$Text, [int]$Max = 80)
-    return ($Text -match "^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,$($Max - 1)}$")
+    return ($Text -match "^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,$($Max - 1)}\z")
 }
 
 function Test-SafePattern {
     param([string]$Text)
-    if ($Text -notmatch '^[A-Za-z0-9_ .:\\/\-=,@\[\]*+?]{1,200}$') { return $false }
+    if ($Text -notmatch '^[A-Za-z0-9_ .:\\/\-=,@\[\]*+?]{1,200}\z') { return $false }
     return (Test-YamlSafe $Text)
 }
 
@@ -232,12 +241,13 @@ $script:ReadFns = @{
 }
 $script:RunFns = @('manage.up', 'manage.down', 'manage.status', 'jobs.active', 'jobs.list_jobs')
 $script:WriteFns = @('service.restart', 'service.start', 'service.stop')
-$script:ProtectedServices = '^(salt-.*|salt|sshd?|openssh.*|ssh-agent|cron|crond|dbus.*|networking|network.*|systemd.*|winrm|rpcss|dhcp|dnscache|eventlog)$'
+# Denylist of lockout/critical services; write mode is also limited to one named service per approved request.
+$script:ProtectedServices = '^(salt-.*|salt|sshd?|openssh.*|ssh-agent|cron|crond|dbus.*|networking|network.*|systemd.*|winrm|rpcss|dhcp|dnscache|eventlog|termservice|lanmanserver|netlogon|mpssvc|bfe|firewalld|ufw|nftables|iptables|xrdp|amazon-ssm-agent|w32time|samss|lsass|wuauserv)\z'
 
 function Test-SaltTarget {
     param([string]$Target, $Config)
     if (-not $Target) { return 'no target given' }
-    if ($Target -notmatch '^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}$') { return 'target must be one exact minion id (no wildcards, lists or compound matches)' }
+    if ($Target -notmatch '^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}\z') { return 'target must be one exact minion id (no wildcards, lists or compound matches)' }
     if ($Config.Targets.Count -eq 0) { return 'SALT_MINION_TARGETS is empty: run -Action Keys, then put the minion id in the settings file' }
     if ($Config.Targets -notcontains $Target) { return "target '$Target' is not in SALT_MINION_TARGETS" }
     return $null
@@ -261,7 +271,17 @@ function Test-SaltReadCall {
 }
 
 $script:PathCommands = @('tail', 'head', 'cat', 'type', 'get-content', 'ls', 'dir', 'get-childitem')
-$script:BannedFlags = '^-{1,2}(f|F|follow|wait|delete|exec|execdir|o|out|output|outfile)$'
+# Per command, the only options accepted (exact, case-insensitive). 'Num' lists the options whose next word is a number.
+$script:CmdFlags = @{
+    'tail'          = @{ Flags = @('-n', '-c'); Num = @('-n', '-c') }
+    'head'          = @{ Flags = @('-n', '-c'); Num = @('-n', '-c') }
+    'cat'           = @{ Flags = @(); Num = @() }
+    'type'          = @{ Flags = @(); Num = @() }
+    'get-content'   = @{ Flags = @('-tail', '-totalcount', '-raw'); Num = @('-tail', '-totalcount') }
+    'ls'            = @{ Flags = @('-l', '-a', '-la', '-al', '-r'); Num = @() }
+    'dir'           = @{ Flags = @('-name', '-recurse', '-file', '-force'); Num = @() }
+    'get-childitem' = @{ Flags = @('-name', '-recurse', '-file', '-force'); Num = @() }
+}
 
 function Test-ReadOnlyCommand {
     # Gate for a free-form cmd.run string. Returns $null when allowed, otherwise the reason it is refused.
@@ -269,7 +289,8 @@ function Test-ReadOnlyCommand {
     param([string]$Cmd, $Config)
     if ([string]::IsNullOrWhiteSpace($Cmd)) { return 'empty command' }
     if ($Cmd.Length -gt 400) { return 'command is too long' }
-    if ($Cmd -notmatch '^[A-Za-z0-9_ .:\\/\-=,@''*?]+$') { return 'command has characters that are not allowed (no quotes other than single, no | & ; < > $ ` % ^ ( ) { } or line breaks)' }
+    # No quotes at all: Salt may split the string like a shell (backslash-escapes, quotes) and a gate that reads it differently can be fooled.
+    if ($Cmd -notmatch '^[A-Za-z0-9_ .:\\/\-=,@*?]+\z') { return 'command has characters that are not allowed (no quotes, | & ; < > $ ` % ^ ( ) { } or line breaks; paths with spaces are not supported here)' }
     if (-not (Test-YamlSafe $Cmd)) { return 'command could be read as YAML (": " or " #"); rephrase it' }
     if ($Cmd -match '\.\.') { return "'..' is not allowed" }
     $w = Split-CommandWords $Cmd
@@ -278,15 +299,21 @@ function Test-ReadOnlyCommand {
     $first = $w[0].ToLowerInvariant()
     if ($script:PathCommands -notcontains $first) { return "'$($w[0])' is not on the read-only command list (tail, head, cat, type, Get-Content, ls, dir, Get-ChildItem)" }
     $paths = 0
+    $spec = $script:CmdFlags[$first]
+    $numNext = $false
     for ($i = 1; $i -lt $w.Count; $i++) {
         $t = $w[$i]
+        if ($numNext) {
+            $numNext = $false
+            if ($t -match '^[0-9]{1,6}\z') { continue }
+            return "the word after the option must be a number, got '$t'"
+        }
         if ($t.StartsWith('-')) {
-            if ($t -match '[/\\:=]') { return "option '$t' may hide a path or value; write it as a separate word" }
-            if ($t -match $script:BannedFlags) { return "option '$t' is not allowed (it follows, waits, deletes or writes)" }
-            if ($t -notmatch '^-{1,2}[A-Za-z][A-Za-z0-9\-]*$') { return "option '$t' is not understood" }
+            $tl = $t.ToLowerInvariant()
+            if ($spec.Flags -notcontains $tl) { return "option '$t' is not allowed for '$($w[0])' (allowed: $(if ($spec.Flags.Count) { $spec.Flags -join ' ' } else { 'none' }))" }
+            if ($spec.Num -contains $tl) { $numNext = $true }
             continue
         }
-        if ($t -match '^[0-9]+$') { continue }
         if (-not (Test-PathAllowed $t $Config.LogPaths)) { return "'$t' is not a number or a path under REMOTE_LOG_PATHS (REMOTE_LOG_PATHS must be set and list the folder)" }
         $paths++
     }
@@ -300,7 +327,7 @@ function Test-WriteCall {
     if ($Config.Mode -ne 'write') { return 'REMOTE_MODE is readonly; set REMOTE_MODE=write in the settings file to request changes' }
     if ($script:WriteFns -notcontains $Fn) { return "'$Fn' is not available even in write mode (only service.start, service.stop, service.restart)" }
     if (-not (Test-SafeWord $ServiceName)) { return 'service name is not a plain name' }
-    if ($ServiceName -match $script:ProtectedServices) { return "service '$ServiceName' is protected (it could cut off access); do it by hand" }
+    if ($ServiceName.ToLowerInvariant() -match $script:ProtectedServices) { return "service '$ServiceName' is protected (it could cut off access); do it by hand" }
     return $null
 }
 
@@ -318,7 +345,7 @@ function New-SaltRemoteCommand {
     if ($Config.UseSudo) { $parts.Add('sudo'); $parts.Add('-n') }
     $parts.Add($Tool)
     $parts.Add('--out=json'); $parts.Add('--no-color')
-    if ($Tool -ne 'salt-key') { $parts.Add('--static') }
+    if ($Tool -eq 'salt') { $parts.Add('--static') }
     if ($Tool -eq 'salt') { $parts.Add('-t'); $parts.Add([string]$TimeoutSec) }
     foreach ($x in $Words) { $parts.Add((ConvertTo-ShSingleQuoted $x)) }
     return ($parts -join ' ')
@@ -351,10 +378,10 @@ function New-ReadRecipe {
         }
         'EventLog' {
             if ($Os -ne 'windows') { throw 'EventLog is for Windows minions; use LogTail on Linux' }
-            if ($LogName -notmatch '^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,99}$') { throw 'LogName must be a plain event log name such as Application or System' }
+            if ($LogName -notmatch '^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,99}\z') { throw 'LogName must be a plain event log name such as Application or System' }
             if (-not (Test-YamlSafe $LogName)) { throw 'LogName could be read as YAML' }
             if ($Lines -gt 500) { throw 'EventLog Lines must be 1 to 500' }
-            return @{ Cmd = "Get-WinEvent -LogName '$LogName' -MaxEvents $Lines"; Kwargs = @('shell=powershell') }
+            return @{ Cmd = "Get-WinEvent -LogName '$LogName' -MaxEvents $Lines | Select-Object TimeCreated,Id,LevelDisplayName,ProviderName,Message | Format-List | Out-String -Width 4096"; Kwargs = @('shell=powershell') }
         }
     }
     throw "unknown recipe '$Recipe'"
@@ -385,6 +412,7 @@ function New-SshArgs {
     # The full ssh argument list. Never contains a secret. -F NUL ignores the user's own ~/.ssh/config.
     param($Config, [string]$RemoteCommand)
     $kh = (Get-KnownHostsPath).Replace('\', '/')
+    if ($kh -match '\s') { $kh = '"' + $kh + '"' }   # ssh splits this option on spaces unless it is quoted
     $a = New-Object System.Collections.Generic.List[string]
     $a.Add('-F'); $a.Add('NUL'); $a.Add('-T')
     foreach ($o in @('StrictHostKeyChecking=yes', "UserKnownHostsFile=$kh", 'GlobalKnownHostsFile=NUL', 'ConnectTimeout=15', 'ServerAliveInterval=15', 'ServerAliveCountMax=3',
@@ -393,7 +421,7 @@ function New-SshArgs {
         foreach ($o in @('BatchMode=yes', 'IdentitiesOnly=yes', 'PasswordAuthentication=no', 'KbdInteractiveAuthentication=no')) { $a.Add('-o'); $a.Add($o) }
         $a.Add('-i'); $a.Add($Config.KeyPath)
     } else {
-        foreach ($o in @('PreferredAuthentications=password,keyboard-interactive', 'PubkeyAuthentication=no')) { $a.Add('-o'); $a.Add($o) }
+        foreach ($o in @('PreferredAuthentications=password', 'KbdInteractiveAuthentication=no', 'PubkeyAuthentication=no')) { $a.Add('-o'); $a.Add($o) }
     }
     $a.Add('-p'); $a.Add([string]$Config.Port)
     $a.Add('-l'); $a.Add($Config.User)
@@ -419,18 +447,26 @@ function Invoke-Process {
     if ($null -ne $StdIn) { $p.StandardInput.Write($StdIn) }
     $p.StandardInput.Close()
     $timedOut = $false
-    if (-not $p.WaitForExit($TimeoutSec * 1000)) { $timedOut = $true; try { $p.Kill() } catch {} }
+    if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+        $timedOut = $true
+        # Kill the whole tree (ssh starts the askpass helper); a grandchild holding the pipe would otherwise stall the read.
+        try { & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /T /F /PID $p.Id 2>&1 | Out-Null } catch {}
+        try { $p.Kill() } catch {}
+    }
     else { $p.WaitForExit() }
-    $out = $outTask.Result; $err = $errTask.Result
+    $out = ''; $err = ''
+    if ($outTask.Wait(3000)) { $out = $outTask.Result }
+    if ($errTask.Wait(3000)) { $err = $errTask.Result }
     if ($out.Length -gt $MaxBytes) { $out = $out.Substring(0, $MaxBytes) + "`n[output cut at $MaxBytes characters]" }
     $code = if ($timedOut) { -1 } else { $p.ExitCode }
+    $p.Dispose()
     return @{ Exit = $code; Out = $out; Err = $err; TimedOut = $timedOut }
 }
 
 function Invoke-RemoteSsh {
     # Runs one remote command over ssh. Password sign-in goes through SSH_ASKPASS with the password in the child's
     # environment only, never on a command line. Output and errors are scrubbed of the password before they return.
-    param($Config, [string]$RemoteCommand, [int]$TimeoutSec = 60, [string]$SshExe = 'ssh.exe')
+    param($Config, [string]$RemoteCommand, [int]$TimeoutSec = 60, [string]$SshExe = (Join-Path $env:SystemRoot 'System32\OpenSSH\ssh.exe'))
     $args1 = New-SshArgs $Config $RemoteCommand
     $env1 = @{}
     if ($Config.Password) {
@@ -441,7 +477,27 @@ function Invoke-RemoteSsh {
     }
     $secrets = @($Config.Password) | Where-Object { $_ }
     $r = Invoke-Process -File $SshExe -Arguments $args1 -ExtraEnv $env1 -TimeoutSec $TimeoutSec
-    $r.Out = Protect-Text $r.Out $secrets
+    $r.Out = Protect-Text $r.Out $secrets -ExactOnly   # the generic password= pattern runs later, on parsed text (it would corrupt JSON)
     $r.Err = Protect-Text $r.Err $secrets
     return $r
+}
+
+function Get-ServerHostKeys {
+    # Reads the server's host key WITHOUT logging in. ssh-keyscan from Win32-OpenSSH 9.5 fails against servers that offer only newer
+    # key exchanges (choose_kex: unsupported KEX method), so ask ssh itself, authentication switched off, into a throwaway file that is
+    # deleted straight away. The key is only ever trusted by TrustHost, after it matches the fingerprint the owner pinned.
+    param($Config)
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('ur-hostkey-' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        $a = @('-F', 'NUL', '-T', '-o', 'BatchMode=yes', '-o', 'PreferredAuthentications=none', '-o', 'StrictHostKeyChecking=no',
+            ('-oUserKnownHostsFile=' + $(if ($tmp -match '\s') { '"' + $tmp.Replace('\', '/') + '"' } else { $tmp.Replace('\', '/') })), '-o', 'GlobalKnownHostsFile=NUL', '-o', 'ConnectTimeout=15',
+            '-o', 'ForwardAgent=no', '-o', 'ClearAllForwardings=yes', '-o', 'KexAlgorithms=curve25519-sha256',
+            '-p', [string]$Config.Port, '-l', $Config.User, '--', $Config.Host, 'exit')
+        $null = Invoke-Process -File (Join-Path $env:SystemRoot 'System32\OpenSSH\ssh.exe') -Arguments $a -TimeoutSec 30
+        if (-not (Test-Path -LiteralPath $tmp)) { throw "Could not read the server's host key (no reply from $($Config.Host):$($Config.Port))." }
+        $keys = @(Get-Content -LiteralPath $tmp | Where-Object { $_ -and -not $_.StartsWith('#') })
+        if ($keys.Count -eq 0) { throw "Could not read the server's host key." }
+        return ,$keys
+    }
+    finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
 }
