@@ -30,9 +30,8 @@ import (
 )
 
 const (
-	keyName   = "case.key"
-	dbName    = "case.db"
-	retention = 30 * 24 * time.Hour
+	keyName = "case.key"
+	dbName  = "case.db"
 
 	// Defaults for the size caps (storage decision, "Size caps").
 	defaultMaxFileBytes  = 2 << 30
@@ -1259,10 +1258,7 @@ func (s *Store) Sweep(ctx context.Context, now time.Time) ([]casestore.CaseID, e
 	var errs []error
 	for _, info := range infos {
 		pending := erasePending(filepath.Join(s.root, string(info.ID)))
-		if !pending && sweepSkips(info) {
-			continue
-		}
-		if !pending && (info.Closed == nil || now.Sub(*info.Closed) <= retention) {
+		if !pending && !casestore.SweepDue(info, now) {
 			continue
 		}
 		if err := s.Erase(ctx, info.ID); err != nil {

@@ -240,9 +240,9 @@ func (s *memStore) Sweep(ctx context.Context, now time.Time) ([]CaseID, error) {
 	var due []CaseID
 	for id, d := range s.cases {
 		d.mu.RLock()
-		a := d.info.Archive
-		skip := d.missing || d.info.Mark == MarkArchiving || d.info.Mark == MarkFreeing || a != nil && (a.Active || a.Pending != nil)
-		if c := d.info.Closed; !skip && c != nil && now.Sub(*c) > Retention {
+		info := d.info
+		info.Missing = info.Missing || d.missing
+		if SweepDue(info, now) {
 			due = append(due, id)
 		}
 		d.mu.RUnlock()
