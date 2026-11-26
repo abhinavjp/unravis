@@ -287,7 +287,7 @@ func newReportDoc(src reportSource) reportDoc {
 			for _, w := range src.Read.Warnings {
 				d.ReadNotes = append(d.ReadNotes, clipText(w, reportMaxText))
 			}
-			if src.Read.Truncated {
+			if src.Read.Truncated && !src.Read.Stalled {
 				d.ReadNotes = append(d.ReadNotes, "Some calls were not read because there were too many in the windows.")
 			}
 		}

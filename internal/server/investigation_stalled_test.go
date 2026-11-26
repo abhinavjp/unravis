@@ -119,6 +119,43 @@ func TestExportStopsOnAnEmptyPageWithACursor(t *testing.T) {
 	}
 }
 
+// The saved report names the cause of a cut read. A source that stalled must not be reported as "too many calls", which would
+// tell the reader to shorten the windows for a problem that is not the size of the read; a real limit still says so.
+func TestReportNamesTheCauseOfACutRead(t *testing.T) {
+	const tooMany = "there were too many in the windows"
+	first := okPage(invRows())
+	first.NextCursor = "more"
+	stalledPage := okPage(nil)
+	stalledPage.NextCursor = "still-more"
+	limited := first
+	limited.Truncated = true
+	for _, tc := range []struct {
+		name         string
+		pages        []audit.Page
+		wantTooMany  bool
+		wantSentence string
+	}{
+		{"stalled", []audit.Page{first, stalledPage}, false, investigationStalledText},
+		{"real limit", []audit.Page{limited, stalledPage}, true, "There are too many audit calls"},
+	} {
+		for _, format := range []string{"html", "csv"} {
+			// A fresh source per report: the fake repeats its last page once its pages run out, so a second run would not see the first page.
+			e := tagEnv(t, casestore.NewMemory(), &fakeRepository{requestPages: tc.pages})
+			id := e.newCase("cut")
+			out := reportOf(t, e.json(http.MethodPost, "/api/cases/"+id+"/report", fullReportRequest(format, "")))
+			if got := strings.Contains(out.Content, tooMany); got != tc.wantTooMany {
+				t.Errorf("%s %s: too-many-calls note present = %v, want %v", tc.name, format, got, tc.wantTooMany)
+			}
+			if !strings.Contains(out.Content, tc.wantSentence) {
+				t.Errorf("%s %s: report lacks %q", tc.name, format, tc.wantSentence)
+			}
+			if !strings.Contains(out.Content, reportWarnTruncated) {
+				t.Errorf("%s %s: report lacks the cut-read caution", tc.name, format)
+			}
+		}
+	}
+}
+
 // An empty last page with no cursor is a normal end: nothing is cut.
 func TestInvestigationEmptyLastPageIsNotCut(t *testing.T) {
 	first := okPage(invRows())

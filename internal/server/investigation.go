@@ -71,10 +71,13 @@ type investigationRequest struct {
 // investigationRead says what the run read, so a reader knows what the answer
 // stands on.
 type investigationRead struct {
-	Requests  int      `json:"requests"`
-	IISRows   int      `json:"iisRows"`
-	Truncated bool     `json:"truncated"`
-	Warnings  []string `json:"warnings"`
+	Requests  int  `json:"requests"`
+	IISRows   int  `json:"iisRows"`
+	Truncated bool `json:"truncated"`
+	// Stalled: the read was cut because a source said there was more and sent nothing, not because of the call limit. It tells the
+	// saved report which cause to name; the warning sentence carries the same cause on screen.
+	Stalled  bool     `json:"stalled,omitempty"`
+	Warnings []string `json:"warnings"`
 }
 
 type investigationAnswer struct {
@@ -258,6 +261,7 @@ func (h *handler) readInvestigationRanges(ctx context.Context, queries []audit.Q
 			return nil, one, "", err
 		}
 		read.Truncated = read.Truncated || one.Truncated
+		read.Stalled = read.Stalled || one.Stalled
 		read.Warnings = append(read.Warnings, one.Warnings...)
 		if status != investigate.AuditPresent {
 			read.Requests = 0
@@ -354,6 +358,7 @@ func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]
 	if read.Truncated {
 		status = investigate.AuditFailed
 		if stalled {
+			read.Stalled = true
 			read.Warnings = append(read.Warnings, investigationStalledText)
 		} else {
 			read.Warnings = append(read.Warnings, "There are too many audit calls in these windows to read in full, so none were used. Shorten the windows.")
