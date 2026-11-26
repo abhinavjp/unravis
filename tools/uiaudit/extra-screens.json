@@ -1476,6 +1476,278 @@
           "waitFor": "role=button[name=\"Stop all AI access\"s]"
         }
       ]
+    },
+    {
+      "id": "x-code-mode-popup",
+      "phase": "X",
+      "note": "Code mode settings popup, first step (code mode off): what it is, the three plain facts and the way to turn it off. Opened from the AI access drawer.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "click": "role=button[name=\"Open code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What code mode is\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-code-mode-result",
+      "phase": "X",
+      "note": "Code mode settings popup after switching it on through all steps: the Result step with the command line shut and the header badge. It turns code mode off again afterwards.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "click": "role=button[name=\"Open code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What code mode is\"]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Do you want to switch it on?\"]"
+        },
+        {
+          "click": "role=radio[name=/^Switch code mode on/]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"The command line\"]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Review and confirm\"]"
+        },
+        {
+          "click": "role=button[name=\"Turn on code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Code mode is on\"]"
+        }
+      ],
+      "after": [
+        {
+          "click": "role=button[name=\"Turn off code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Code mode is off\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-code-mode-badge",
+      "phase": "X",
+      "note": "The header badge while code mode is on (command line shut), with the popup closed. It turns code mode off again afterwards.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "click": "role=button[name=\"Open code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What code mode is\"]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Do you want to switch it on?\"]"
+        },
+        {
+          "click": "role=radio[name=/^Switch code mode on/]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"The command line\"]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Review and confirm\"]"
+        },
+        {
+          "click": "role=button[name=\"Turn on code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Code mode is on\"]"
+        },
+        {
+          "click": "role=button[name=\"Done\"s]"
+        },
+        {
+          "waitFor": "role=button[name=/^Code mode is on/]"
+        }
+      ],
+      "after": [
+        {
+          "click": "role=button[name=/^Code mode is on/]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Code mode is on\"]"
+        },
+        {
+          "click": "role=button[name=\"Turn off code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Code mode is off\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-code-mode-timed",
+      "phase": "X",
+      "note": "Code mode popup after opening the command line for a 5 minute window: the countdown on the Result step, read from the real settings. It turns code mode off again afterwards.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"AI access\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"AI access\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"AI access\"]"
+        },
+        {
+          "click": "role=button[name=\"Open code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What code mode is\"]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Do you want to switch it on?\"]"
+        },
+        {
+          "click": "role=radio[name=/^Switch code mode on/]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"The command line\"]"
+        },
+        {
+          "click": "role=radio[name=/^Open it for a set time/]"
+        },
+        {
+          "click": "role=button[name=\"5 min\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Review and confirm\"]"
+        },
+        {
+          "click": "role=button[name=\"Turn on code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Code mode is on\"]"
+        },
+        {
+          "waitFor": "role=button[name=\"Close the command line now\"s]"
+        }
+      ],
+      "after": [
+        {
+          "click": "role=button[name=\"Turn off code mode\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Code mode is off\"]"
+        }
+      ]
     }
   ]
 }
