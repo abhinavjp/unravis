@@ -1,12 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,9 +44,9 @@ type locFix struct {
 	sid string
 }
 
-func newLocFix(t *testing.T, tweak func(*DiscoverConfig)) *locFix {
+func newLocFix(t *testing.T, tweak func(*DiscoverConfig), opts ...Option) *locFix {
 	t.Helper()
-	f := newDiscFix(t, tweak)
+	f := newDiscFix(t, tweak, opts...)
 	scan, _ := f.scan()
 	rec, st := f.e.handler().disc.lookup(scan)
 	if st != scanFound {
@@ -573,9 +576,57 @@ func TestLocateDeadlineStopsTheWalkerBetweenSteps(t *testing.T) {
 
 func TestRunWithinReleasesTheSlotWhenTheWorkerEndsEvenOnPanic(t *testing.T) {
 	slots := make(chan struct{}, 1)
-	_, err := runWithin(context.Background(), slots, 30*time.Millisecond, func(context.Context) int { panic("boom") })
-	if err == nil {
-		t.Error("a panicking worker gave an answer")
+	var logged []any
+	onPanic := func(v any, _ []byte) { logged = append(logged, v) }
+	_, err := runWithin(context.Background(), slots, 30*time.Millisecond, onPanic, func(context.Context) int { panic("boom") })
+	if !errors.Is(err, errLocatePanicked) {
+		t.Errorf("a panicking worker gave %v, want errLocatePanicked (not a timeout)", err)
 	}
 	waitUntil(t, "slot release after panic", func() bool { return len(slots) == 0 })
+	if len(logged) != 1 || logged[0] != "boom" {
+		t.Errorf("onPanic saw %v, want the panic value once", logged)
+	}
+}
+
+// panicFS panics in Final once armed: a fault inside the locate worker.
+type panicFS struct {
+	discover.FS
+	armed atomic.Bool
+}
+
+func (p *panicFS) Final(path string) (string, bool, error) {
+	if p.armed.Load() {
+		panic("synthetic locate fault")
+	}
+	return p.FS.Final(path)
+}
+
+// A panic in the locate worker is logged (with its stack) and answered as an
+// internal error, not as a time-out (RV-SRV-5). The finding stays unchanged.
+func TestLocatePanicIsLoggedAndNotCalledATimeout(t *testing.T) {
+	var buf bytes.Buffer
+	pfs := &panicFS{}
+	f := newLocFix(t, func(c *DiscoverConfig) {
+		pfs.FS = c.Env.FS
+		c.Env.FS = pfs
+	}, WithLogger(bufLogger(&buf)))
+	before := f.finding()
+	pfs.armed.Store(true)
+
+	res := f.locate(locAppDir)
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("locate = %d %s, want 500", res.Code, res.Body)
+	}
+	if strings.Contains(res.Body.String(), locateTimedOut) || strings.Contains(res.Body.String(), "synthetic locate fault") || strings.Contains(res.Body.String(), `D:\`) {
+		t.Errorf("the answer calls it a timeout or leaks detail: %s", res.Body)
+	}
+	log := buf.String()
+	if n := strings.Count(log, "locate worker panicked"); n != 1 {
+		t.Errorf("log has %d locate panic entries, want 1:\n%s", n, log)
+	}
+	if !strings.Contains(log, "synthetic locate fault") || !strings.Contains(log, "stack=") || !strings.Contains(log, "error_class=internal") {
+		t.Errorf("the log entry lacks the panic value or stack:\n%s", log)
+	}
+	waitUntil(t, "the slot to come back", func() bool { return len(locateSlots) == 0 })
+	f.wantUnchanged(before)
 }
