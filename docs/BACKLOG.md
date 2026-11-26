@@ -154,6 +154,20 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
 - [ ] **BL-056** [Needs the audited app to write `_perfSqlMs`, `_perfRedisMs`, `_perfHttpMs`] Call detail breakdown bar and lead sentence. The live Brain Sandbox case has none of these fields, so the screen says "not recorded"; cannot be live-verified here. Latency-over-time switch and overlap highlight in Nearby calls stay deferred for the owner's go. (source: chat 2026-11-15)
 - [ ] **BL-201** Optional: bump Vite 8.3.5 to 8.3.8 with a regenerated dist, after the BL-031 gate has been green a while (hashed names change; the gate proves the result). Low urgency: the fix is for an exposed dev server and Unravis binds 127.0.0.1. Needs the owner's go. (source: BL-031 groom 2026-11-21)
 
+## Blackbox whole stack (owner ask 2026-11-26; plan `docs/blackbox/WHOLE-STACK.md`, prototype approved 2026-11-26 20:18 UTC; nothing ticked until it works on the real server)
+
+- [ ] **BL-690** B1 Collector catalogue and `collectors` map in blackbox.json (id, kind, title, load, rights; on/off and `everySec` per id; always-on items cannot be switched off; unknown ids refused) and `unravis-blackbox config show [--json]`. Built and unit-tested on Linux; tick when `config show` is read on a Windows host with the real service.
+- [ ] **BL-691** B2 Find why `aspnet` and `events` fail on BG-SRV-UK-01 (same as BL-604); read the recorder status file through Salt first.
+- [ ] **BL-692** B3 SQL detect, access check, `sql.auto` start on its own when access is OK, status words, grant text (Opus review). Needs the live SQL checks BL-141, BL-555.
+- [ ] **BL-693** B4 Redis collector inside the host recorder: local only, own RESP client with a fixed command allowlist, sealed password, slow command names only (Opus review).
+- [ ] **BL-694** B5 `config set|validate|history|rollback` with auto-rollback after 60 s unhealthy and a hash-chained audit file (Opus review).
+- [ ] **BL-695** B6 Remote tool `BlackboxConfig` write action and `LogPull` through Salt, request and approve gate (Opus review).
+- [ ] **BL-696** B7 `counters.extra` (built, unit-tested with a fake source; needs a live read on Windows), path-only collectors and `facts.json` (not built yet) (versions, services, certificate end dates, time sync, pending reboot).
+- [ ] **BL-697** B8 `bundle` (zip with manifest, facts and scrubbed tails) and auto-snapshot triggers.
+- [ ] **BL-698** B9 UI: the approved Place a Blackbox prototype with the new steps (Record rows, SQL step, Redis step) and the Blackbox page (Status, Settings changes, Bundle). Prototype: `/mnt/project-files/blackbox-everything/prototype.html`.
+- [ ] **BL-699** B10 Live proof on BG-SRV-UK-01 through Salt, read-only first (owner watches).
+- [ ] **BL-700** B11 `blackbox-source` reader: Blackbox files become timeline events with the same source names, UTC at write plus the host zone in each hourly file header, year inference for year-less logs (BL-614), gap spans as data.
+
 ## Auto-updater (spec drafted 2026-11-20; build waits for the owner's go; see `docs/auto-updater/SPEC.md`)
 
 - [ ] **BL-149** Auto-updater for Unravis and the Blackbox: signed manifest (ed25519), opt-in background check, verified download, hand-off to `unravis-setup --upgrade`, rollback, offline import. Slices U1 to U7 in the spec. Not started: All decisions answered (D1 to D14) as of 2026-11-20; D14 (pick a licence) is nachi's. Includes Blackbox self-update (U6) and Unravis Lite (U7).
