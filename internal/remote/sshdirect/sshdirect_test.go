@@ -39,6 +39,8 @@ type fakeServer struct {
 	pubKey   ssh.PublicKey
 	kiPrompt string // when set, only keyboard-interactive is offered, with this prompt
 	handler  func(cmd string) (out []byte, errText string, exit int)
+	onTCP    func(host string, port uint32) net.Conn // direct-tcpip; nil refuses
+	tcpSeen  []string
 
 	authAttempts atomic.Int32
 	secretSeen   atomic.Int32 // times a password or KI answer arrived
@@ -132,6 +134,35 @@ func (fs *fakeServer) serve(c net.Conn, cfg *ssh.ServerConfig) {
 	defer sc.Close()
 	go ssh.DiscardRequests(reqs)
 	for nc := range chans {
+		if nc.ChannelType() == "direct-tcpip" {
+			var p struct {
+				Host     string
+				Port     uint32
+				OrigHost string
+				OrigPort uint32
+			}
+			ssh.Unmarshal(nc.ExtraData(), &p)
+			fs.mu.Lock()
+			fs.tcpSeen = append(fs.tcpSeen, net.JoinHostPort(p.Host, strconv.Itoa(int(p.Port))))
+			fs.mu.Unlock()
+			if fs.onTCP == nil {
+				nc.Reject(ssh.Prohibited, "no")
+				continue
+			}
+			back := fs.onTCP(p.Host, p.Port)
+			if back == nil {
+				nc.Reject(ssh.ConnectionFailed, "refused")
+				continue
+			}
+			ch, _, err := nc.Accept()
+			if err != nil {
+				back.Close()
+				continue
+			}
+			go func() { io.Copy(ch, back); ch.CloseWrite() }()
+			go func() { io.Copy(back, ch); back.Close() }()
+			continue
+		}
 		if nc.ChannelType() != "session" {
 			nc.Reject(ssh.UnknownChannelType, "no")
 			continue
@@ -475,6 +506,75 @@ func TestWindowsScriptsAgainstARealPowerShell(t *testing.T) {
 		t.Fatal("a missing file opened")
 	}
 	if _, err := cl.Open(ctx(t), filepath.Join(dir, "..", "x.log"), 0); !errors.Is(err, transport.ErrNotAllowed) {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestDialTunnelReachesOnlyTheConfiguredAddress(t *testing.T) {
+	rec, srvSide := net.Pipe()
+	go func() {
+		buf := make([]byte, 4)
+		io.ReadFull(srvSide, buf)
+		srvSide.Write(append([]byte("echo:"), buf...))
+		srvSide.Close()
+	}()
+	fs := startServer(t, &fakeServer{password: "pw", onTCP: func(string, uint32) net.Conn { return rec }})
+	c := fs.cfg()
+	cl, err := Connect(ctx(t), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cl.DialTunnel(ctx(t)); !errors.Is(err, ErrNoTunnel) {
+		t.Fatalf("no tunnel configured: %v", err)
+	}
+	cl.Close()
+
+	c.Tunnel = "127.0.0.1:7790"
+	cl, err = Connect(ctx(t), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	conn, err := cl.DialTunnel(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Write([]byte("ping"))
+	got, _ := io.ReadAll(conn)
+	conn.Close()
+	if string(got) != "echo:ping" {
+		t.Fatalf("%q", got)
+	}
+	if seen := fs.tcpSeen; len(seen) != 1 || seen[0] != "127.0.0.1:7790" {
+		t.Fatalf("the server was asked to reach %v", seen)
+	}
+
+	for _, bad := range []string{"127.0.0.1", "127.0.0.1:0", "127.0.0.1:99999", "a b:80", "host';x:80", ""} {
+		c.Tunnel = bad
+		cl2, err := Connect(ctx(t), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cl2.DialTunnel(ctx(t)); err == nil {
+			t.Errorf("Tunnel %q was dialled", bad)
+		}
+		cl2.Close()
+	}
+	if len(fs.tcpSeen) != 1 {
+		t.Fatalf("a refused address still reached the server: %v", fs.tcpSeen)
+	}
+}
+
+func TestDialTunnelRefusedByTheServer(t *testing.T) {
+	fs := startServer(t, &fakeServer{password: "pw"}) // direct-tcpip prohibited
+	c := fs.cfg()
+	c.Tunnel = "127.0.0.1:7790"
+	cl, err := Connect(ctx(t), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	if _, err := cl.DialTunnel(ctx(t)); !errors.Is(err, ErrTunnelRefused) {
 		t.Fatalf("%v", err)
 	}
 }

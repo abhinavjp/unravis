@@ -25,11 +25,13 @@ import (
 
 // Errors shown to people.
 var (
-	ErrNoHostKey    = errors.New("This server's host key has not been pinned yet. Compare its fingerprint and pin it first.")
-	ErrSignIn       = errors.New("The server did not accept the sign-in.")
-	ErrUnreachable  = errors.New("Could not reach the server.")
-	ErrCommand      = errors.New("The server could not complete that request.")
-	ErrListTooLarge = errors.New("That folder holds too many files to list at once.")
+	ErrNoHostKey     = errors.New("This server's host key has not been pinned yet. Compare its fingerprint and pin it first.")
+	ErrSignIn        = errors.New("The server did not accept the sign-in.")
+	ErrNoTunnel      = errors.New("This server has no Blackbox address set.")
+	ErrTunnelRefused = errors.New("The server did not let this PC reach the Blackbox address. Check that the recorder is running there and which address it listens on.")
+	ErrUnreachable   = errors.New("Could not reach the server.")
+	ErrCommand       = errors.New("The server could not complete that request.")
+	ErrListTooLarge  = errors.New("That folder holds too many files to list at once.")
 )
 
 // HostKeyChanged means the server presented a key other than the pinned one. It is a hard stop: nothing was sent.
@@ -53,6 +55,7 @@ type Config struct {
 	Secret, Passphrase string
 	HostKey            string   // pinned SHA256 fingerprint
 	Allowed            []string // folders that may be read
+	Tunnel             string   // host:port, as the server sees it, that DialTunnel may reach (the Blackbox status address); empty means no tunnel
 	DialTimeout        time.Duration
 	Dial               func(ctx context.Context, network, addr string) (net.Conn, error) // tests and tunnels
 }
@@ -264,6 +267,58 @@ func Connect(ctx context.Context, c Config) (*Client, error) {
 
 // Close ends the connection.
 func (cl *Client) Close() error { return cl.conn.Close() }
+
+// TunnelTarget splits and checks the one address a tunnel may reach.
+func TunnelTarget(addr string) (host string, port int, err error) {
+	h, p, serr := net.SplitHostPort(addr)
+	if serr != nil {
+		return "", 0, errors.New("The Blackbox address must look like 127.0.0.1:7790.")
+	}
+	n, aerr := strconv.Atoi(p)
+	if aerr != nil {
+		return "", 0, errors.New("The Blackbox address must look like 127.0.0.1:7790.")
+	}
+	for _, r := range []string{grammar.Host(h), grammar.Port(n)} {
+		if r != "" {
+			return "", 0, errors.New(r)
+		}
+	}
+	return h, n, nil
+}
+
+// DialTunnel opens a connection from the server to the one address named in Config.Tunnel, through the signed-in connection.
+// It takes no address argument on purpose: a caller cannot use it to reach anything else on the server's network.
+func (cl *Client) DialTunnel(ctx context.Context) (net.Conn, error) {
+	if cl.cfg.Tunnel == "" {
+		return nil, ErrNoTunnel
+	}
+	if _, _, err := TunnelTarget(cl.cfg.Tunnel); err != nil {
+		return nil, err
+	}
+	type res struct {
+		c   net.Conn
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		c, err := cl.conn.Dial("tcp", cl.cfg.Tunnel)
+		ch <- res{c, err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return nil, ErrTunnelRefused
+		}
+		return r.c, nil
+	case <-ctx.Done():
+		go func() {
+			if r := <-ch; r.c != nil {
+				r.c.Close()
+			}
+		}()
+		return nil, ctx.Err()
+	}
+}
 
 // ---- commands ----
 
