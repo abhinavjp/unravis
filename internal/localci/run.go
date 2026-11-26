@@ -30,15 +30,15 @@ type RunOptions struct {
 	StateDir string // per-run folder: logs, run.json, artifacts
 	// LockDir, when set, makes an "exclusive" resource hold across processes (every queue item runs in its own process) by a lock file in it.
 	LockDir string
-	GitHub   map[string]any
-	Inputs   map[string]string
-	Vars     map[string]string
-	Env      []string // base process environment (KEY=VALUE), already scrubbed by the caller
-	Only     []string // run only these job ids; empty => all
-	Slots    int      // max jobs at once (default 2)
-	Redact   func(string) string
-	Log      io.Writer
-	Now      func() time.Time
+	GitHub  map[string]any
+	Inputs  map[string]string
+	Vars    map[string]string
+	Env     []string // base process environment (KEY=VALUE), already scrubbed by the caller
+	Only    []string // run only these job ids; empty => all
+	Slots   int      // max jobs at once (default 2)
+	Redact  func(string) string
+	Log     io.Writer
+	Now     func() time.Time
 	// DryRun resolves and prints the plan and runs nothing.
 	DryRun bool
 	// Progress, when set, is told when the plan is known and when each job instance starts and ends. Calls are

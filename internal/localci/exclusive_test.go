@@ -1,9 +1,9 @@
 package localci
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"context"
 	"sync"
 	"sync/atomic"
 	"testing"

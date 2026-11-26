@@ -60,7 +60,7 @@ func acquireExclusive(ctx context.Context, name, lockDir string, onWait func()) 
 func safeLockName(s string) string {
 	b := []byte(s)
 	for i, c := range b {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' && c != '_' && c != '.' {
 			b[i] = '_'
 		}
 	}
@@ -85,7 +85,7 @@ func lockFile(ctx context.Context, path string, onWait func()) (unlock func(), e
 			}
 			return func() {
 				// Only remove our own file: if it was judged stale and replaced, the new holder's stays.
-				if b, err := os.ReadFile(path); err == nil && string(b) == mine {
+				if b, err := readLock(path); err == nil && string(b) == mine {
 					_ = os.Remove(path)
 				}
 			}, nil
@@ -93,8 +93,8 @@ func lockFile(ctx context.Context, path string, onWait func()) (unlock func(), e
 		if !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
-		if b, rerr := os.ReadFile(path); rerr == nil && lockIsStale(string(b), time.Now()) {
-			if again, e := os.ReadFile(path); e == nil && string(again) == string(b) {
+		if b, rerr := readLock(path); rerr == nil && lockIsStale(string(b), time.Now()) {
+			if again, e := readLock(path); e == nil && string(again) == string(b) {
 				_ = os.Remove(path)
 				continue
 			}
@@ -126,4 +126,9 @@ func lockIsStale(content string, now time.Time) bool {
 		return true
 	}
 	return !processAlive(pid)
+}
+
+// readLock reads a lock file (a path under the store).
+func readLock(path string) ([]byte, error) {
+	return os.ReadFile(path) //nolint:gosec // path is under the store
 }
