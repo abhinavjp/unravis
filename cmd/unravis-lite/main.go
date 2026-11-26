@@ -132,6 +132,16 @@ func random(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
+// listenLocal listens on 127.0.0.1 only (IPv4, never 0.0.0.0 or ::). Port 0 picks a free one, so Lite never
+// clashes with the full app or the Blackbox service; a port that is taken is an error that names the port.
+func listenLocal(port int) (net.Listener, error) {
+	l, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)))
+	if err != nil {
+		return nil, fmt.Errorf("could not listen on 127.0.0.1 port %d (%s): %w", port, listenHint(port), err)
+	}
+	return l, nil
+}
+
 func run(args []string, stdout, stderr io.Writer) error {
 	o, err := parse(args, stderr)
 	if err != nil {
@@ -150,10 +160,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	ui, err := fs.Sub(uiFiles, "ui")
+	sub, err := fs.Sub(uiFiles, "ui")
 	if err != nil {
 		return err
 	}
+	ui := withInfo(sub)
 	token, err := random(32)
 	if err != nil {
 		return err
@@ -162,9 +173,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", fmt.Sprint(o.port)))
+	listener, err := listenLocal(o.port)
 	if err != nil {
-		return fmt.Errorf("could not listen on this PC: %w", err)
+		return err
 	}
 	srv := &http.Server{
 		Handler:           handler(loc, name, token, code, time.Now().Add(codeLife), ui),
@@ -212,4 +223,12 @@ func openInBrowser(url string) error {
 		return err
 	}
 	return cmd.Process.Release()
+}
+
+// listenHint says what to do about a failed listen; port 0 asks the system for any free port, so "use --port 0" would be no help there.
+func listenHint(port int) string {
+	if port == 0 {
+		return "the system could not give out a free port"
+	}
+	return "is another program using it? use --port 0 to pick a free one"
 }
