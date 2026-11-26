@@ -279,14 +279,13 @@ func (a *api) getSettings(w http.ResponseWriter) {
 }
 
 // closeBecauseOff shuts the command line (and records it, when it was open) at a moment when code mode was seen to be off or its file
-// damaged. Closing needs no disk and never fails.
-func (a *api) closeBecauseOff() {
-	if a.cliGate == nil {
-		return
+// damaged. Closing needs no disk and never fails. It reports whether the command line was open (and so is now shut by this call).
+func (a *api) closeBecauseOff() bool {
+	if !a.cliGate.CloseIfOpen() {
+		return false
 	}
-	before := cliStateOf(a.cliGate)
-	a.cliGate.Close()
-	logCLIChange(before, "closed", " because code mode is off", 0)
+	logCLIChange("open", "closed", " because code mode is off", 0)
+	return true
 }
 
 // settingsPatch holds only the switches the caller sent; the others stay as they are.
@@ -326,15 +325,19 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 	// Shutting needs no disk, so a request that shuts the command line (or leaves the no-time-limit state for a timed window) does it first:
 	// a failed read or save below must never leave the command line open that the caller asked to close. Opening still waits for the save.
 	closedNow := a.closeFirst(in)
-	notChanged := "Nothing was changed."
-	if closedNow {
-		notChanged = "The command line was shut; nothing else was changed."
+	notChanged := func() string {
+		if closedNow {
+			return "The command line was shut; nothing else was changed."
+		}
+		return "Nothing was changed."
 	}
 	// A damaged file reads as all off: the save below starts from that, which repairs it.
 	set, lerr := a.files.Load()
 	if lerr != nil && !errors.Is(lerr, settingsfile.ErrCorrupt) {
-		// A read that failed (not a file that cannot be trusted): saving would turn off switches the caller did not send.
-		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be read. "+notChanged)
+		// A read that failed (not a file that cannot be trusted): saving would turn off switches the caller did not send. What code mode
+		// says is not known, and the broker reads that as off, so the command line is shut here too.
+		closedNow = a.closeBecauseOff() || closedNow
+		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be read. "+notChanged())
 		return
 	}
 	// Code mode was on before this request only if the file was read and said so. A missing, damaged or "off" file counts as off, so a
@@ -351,7 +354,11 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 		set.KeepResults = *in.KeepResults
 	}
 	if err := a.files.Save(set); err != nil {
-		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be saved. "+notChanged)
+		if !wasOn {
+			// The file read as off or damaged, and it stays so: the command line must not stay open behind it.
+			closedNow = a.closeBecauseOff() || closedNow
+		}
+		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be saved. "+notChanged())
 		return
 	}
 	// The window follows the save, so a failed save leaves it as it was. Switching code mode off closes it too: the next time it is
