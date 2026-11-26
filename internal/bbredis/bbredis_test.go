@@ -62,7 +62,7 @@ func newFakeServer(t *testing.T, resp func(args []string) string) *fakeServer {
 		t.Fatal(err)
 	}
 	s := &fakeServer{ln: ln, got: make(chan []string, 64), resp: resp}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -78,7 +78,7 @@ func newFakeServer(t *testing.T, resp func(args []string) string) *fakeServer {
 func (s *fakeServer) port() int { return s.ln.Addr().(*net.TCPAddr).Port }
 
 func (s *fakeServer) serve(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	r := bufio.NewReader(c)
 	for {
 		line, err := r.ReadString('\n')
@@ -100,7 +100,7 @@ func (s *fakeServer) serve(c net.Conn) {
 			args = append(args, string(buf[:sz]))
 		}
 		s.got <- args
-		io.WriteString(c, s.resp(args))
+		_, _ = io.WriteString(c, s.resp(args))
 	}
 }
 
@@ -112,7 +112,7 @@ func dial(t *testing.T, s *fakeServer) *Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { c.Close() })
+	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
 

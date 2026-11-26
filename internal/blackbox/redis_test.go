@@ -43,7 +43,7 @@ func newRedisFake(t *testing.T) *redisFake {
 		t.Fatal(err)
 	}
 	f := &redisFake{ln: ln, authed: map[net.Conn]bool{}, unknown: map[string]bool{}, noperm: map[string]bool{}}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -69,7 +69,7 @@ func (f *redisFake) commands() [][]string {
 }
 
 func (f *redisFake) serve(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	r := bufio.NewReader(c)
 	for {
 		line, err := r.ReadString('\n')
@@ -132,7 +132,7 @@ func (f *redisFake) serve(c net.Conn) {
 		default:
 			resp = "-ERR no\r\n"
 		}
-		io.WriteString(c, resp)
+		_, _ = io.WriteString(c, resp)
 	}
 }
 
@@ -191,7 +191,7 @@ func TestRedisGroupReadsFiguresAndTheSlowerReadsOnePerSample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer g.(*redisGroup).Close()
+	defer func() { _ = g.(*redisGroup).Close() }()
 	got := collectN(t, g, 4)
 	first := got[0]
 	if first.State != RedisOK || first.Numbers["connected_clients"] != 7 || first.Numbers["instantaneous_ops_per_sec"] != 42 || first.Words["redis_version"] != "3.0.504" || first.Keys != 9 || first.Expires != 2 {
@@ -231,7 +231,7 @@ func TestRedisSlowCursorAndProfileDefaults(t *testing.T) {
 	newRedisFake(t)
 	cfg := redisTestConfig(t, "")
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
-	defer g.(*redisGroup).Close()
+	defer func() { _ = g.(*redisGroup).Close() }()
 	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
 	var slowSeen int
 	for i := 0; i < 12; i++ { // 3 minutes of 15 s samples: the slowlog is read three times
@@ -266,7 +266,7 @@ func TestRedisFirstArgumentOnlyWhenTicked(t *testing.T) {
 	cfg := redisTestConfig(t, "")
 	cfg.Redis.SlowArgs = true
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
-	defer g.(*redisGroup).Close()
+	defer func() { _ = g.(*redisGroup).Close() }()
 	var args []string
 	for _, s := range collectN(t, g, 3) {
 		for _, e := range s.Slow {
@@ -283,7 +283,7 @@ func TestRedisPasswordNeededSavedRefusedAndAccepted(t *testing.T) {
 	f.password = "s3cr3t"
 	cfg := redisTestConfig(t, "")
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
-	defer g.(*redisGroup).Close()
+	defer func() { _ = g.(*redisGroup).Close() }()
 	if s := collectN(t, g, 1)[0]; s.State != RedisPasswordNeeded || s.Numbers != nil {
 		t.Fatalf("no password saved: %+v", s)
 	}
@@ -310,7 +310,7 @@ func TestRedisOldServerThatDoesNotKnowACommandIsSkippedAndSaid(t *testing.T) {
 	f.unknown["LATENCY"] = true
 	cfg := redisTestConfig(t, RedisProfileEverything)
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
-	defer g.(*redisGroup).Close()
+	defer func() { _ = g.(*redisGroup).Close() }()
 	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
 	var last *RedisGroup
 	for i := 0; i < 12; i++ {
@@ -372,7 +372,7 @@ func TestRedisDownIsHeldAndNotDialledEverySample(t *testing.T) {
 	f := newRedisFake(t)
 	cfg := redisTestConfig(t, "")
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
-	defer g.(*redisGroup).Close()
+	defer func() { _ = g.(*redisGroup).Close() }()
 	if s := collectN(t, g, 1)[0]; s.State != RedisOK {
 		t.Fatal(s.State)
 	}
@@ -380,7 +380,7 @@ func TestRedisDownIsHeldAndNotDialledEverySample(t *testing.T) {
 	old := redisDial
 	redisDial = func(int, time.Duration) (*bbredis.Client, error) { dials++; return nil, errors.New("refused") }
 	defer func() { redisDial = old }()
-	f.ln.Close()
+	_ = f.ln.Close()
 	g.(*redisGroup).drop() // the connection died with the server
 	got := collectN(t, g, 6)
 	for i, s := range got {
@@ -402,7 +402,7 @@ func TestRedisRefusedPasswordIsNotRetriedUntilTheFileChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
-	defer g.(*redisGroup).Close()
+	defer func() { _ = g.(*redisGroup).Close() }()
 	for _, s := range collectN(t, g, 5) {
 		if s.State != RedisPasswordRefused {
 			t.Fatal(s.State)
@@ -441,7 +441,7 @@ func TestRedisPasswordIsNotSentToAnUntrustedListener(t *testing.T) {
 	bbredis.ListenerCheck = func(int) error { return bbredis.ErrUntrustedListener }
 	defer func() { bbredis.ListenerCheck = old }()
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
-	defer g.(*redisGroup).Close()
+	defer func() { _ = g.(*redisGroup).Close() }()
 	if s := collectN(t, g, 1)[0]; s.State != RedisNotTrusted {
 		t.Fatalf("state %s", s.State)
 	}
@@ -457,7 +457,7 @@ func TestRedisNoPermIsSaidAndNotARetryLoop(t *testing.T) {
 	f.noperm["CLIENT"] = true
 	cfg := redisTestConfig(t, RedisProfileEverything)
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
-	defer g.(*redisGroup).Close()
+	defer func() { _ = g.(*redisGroup).Close() }()
 	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
 	var last *RedisGroup
 	for i := 0; i < 12; i++ {
@@ -491,7 +491,7 @@ func TestRedisSlowerReadIsSkippedWhenLittleTimeIsLeft(t *testing.T) {
 	f.delay = 800 * time.Millisecond // INFO takes most of the 900 ms budget: nothing is left for the extra read
 	cfg := redisTestConfig(t, RedisProfileEverything)
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
-	defer g.(*redisGroup).Close()
+	defer func() { _ = g.(*redisGroup).Close() }()
 	v, _ := g.Collect(time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC), 15)
 	if s := v.(*RedisGroup); s.State != RedisOK && s.State != RedisDown {
 		t.Fatalf("state %s", s.State)
@@ -510,12 +510,12 @@ func TestRedisCloseWhileCollectingIsSafe(t *testing.T) {
 	g, _ := newRedisGroup(GroupDeps{Config: cfg})
 	done := make(chan struct{})
 	go func() {
-		g.Collect(time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC), 15)
+		_, _ = g.Collect(time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC), 15)
 		close(done)
 	}()
 	for i := 0; i < 400 && len(f.commands()) == 0; i++ { // wait until Collect is really talking to the server
 		time.Sleep(5 * time.Millisecond) // winok: polling a condition with a generous limit
 	}
-	g.(*redisGroup).Close()
+	_ = g.(*redisGroup).Close()
 	<-done
 }

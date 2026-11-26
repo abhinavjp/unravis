@@ -248,7 +248,7 @@ func errorWord(w string) string {
 	}
 	for i := 0; i < len(w); i++ {
 		c := w[i]
-		if !(c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
+		if (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' {
 			return "UNKNOWN"
 		}
 	}
