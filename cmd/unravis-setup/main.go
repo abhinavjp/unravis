@@ -102,9 +102,9 @@ func osEnv() env {
 
 type options struct {
 	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture, closeApp, reopen, recover, noRestart, withReleases bool
-	config, logPath, pipe, verify                                                                                                           string
-	expectSHA, expectVersion                                                                                                                string // --expect-sha256 / --expect-version: what the updater verified
-	parent                                                                                                                                  uint
+	config, logPath, pipe, verify                                                                                                                   string
+	expectSHA, expectVersion                                                                                                                        string // --expect-sha256 / --expect-version: what the updater verified
+	parent                                                                                                                                          uint
 }
 
 func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
