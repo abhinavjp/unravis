@@ -31,7 +31,7 @@ const (
 	investigationIISSource   = "iis-w3c"
 
 	// investigationStalledText is the warning when an audit source says there is more but sends an empty page, so the read stopped early.
-	investigationStalledText = "One audit source stopped answering before it finished, so none of its calls were used. Try again; if it keeps happening, check that source or shorten the windows."
+	investigationStalledText = "An audit source stopped sending calls before the end, so the read is incomplete and none of its calls were used. Shorten the windows to read less at a time; if it keeps happening, check that source."
 )
 
 // investigationAuditBudget and investigationCaseBudget split the request's

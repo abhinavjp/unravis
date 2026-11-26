@@ -46,7 +46,7 @@ const (
 	reportMaxText     = 2000
 
 	reportWarnStale     = "The windows or lists changed after the last run. This report holds the earlier run, as it was on screen."
-	reportWarnTruncated = "The read was cut short, so some calls are not in the figures. Run it again, or shorten the windows."
+	reportWarnTruncated = "The read was cut short, so some calls are not in the figures. Shorten the windows to read less at a time."
 )
 
 type reportRequest struct {

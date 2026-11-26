@@ -1000,6 +1000,11 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 		if page.NextCursor == "" {
 			break
 		}
+		if len(page.Rows) == 0 {
+			// A source that says there is more but sends nothing would make this loop ask forever: stop, and say the file is not whole.
+			truncated = true
+			break
+		}
 		cursor = page.NextCursor
 		if rows >= maxExportRows {
 			truncated = true
