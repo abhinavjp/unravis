@@ -165,7 +165,7 @@ func TestReclaimLeftoverClearsAReadOnlyPlaceholder(t *testing.T) {
 	dir := t.TempDir()
 	dst := filepath.Join(dir, "case"+CaseFileExt)
 	mustWrite(t, dst, nil, 5*time.Minute)
-	if err := os.Chmod(dst, 0o444); err != nil {
+	if err := os.Chmod(dst, 0o444); err != nil { // winok: on Windows this sets the read-only attribute, which is what is wanted here
 		t.Fatal(err)
 	}
 	if !reclaimLeftover(dst, time.Now()) {
