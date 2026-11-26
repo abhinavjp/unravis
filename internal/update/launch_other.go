@@ -31,3 +31,8 @@ func LaunchSilent(path, sha256hex, version string) error {
 func LaunchRecover(path string) error {
 	return errors.New("recovering a cut-off update works on Windows only")
 }
+
+// LaunchSilentReopen does not exist off Windows.
+func LaunchSilentReopen(path, sha256hex, version string) error {
+	return errors.New("installing an update works on Windows only")
+}

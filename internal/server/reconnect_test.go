@@ -424,9 +424,80 @@ func TestReconnectOnlyOpensTheNamedDatabasesAndStartupWaitsLongerAfterAFailure(t
 			t.Errorf("start-up cool-down is only %s", left)
 		}
 	}
+	// A person's attempt ignores the start-up failure and dials (RV-SRV-1); only a person's own failure holds the short cool-down.
 	h.reconnectSaved(context.Background(), time.Second, []string{"orders"})
-	if repo.addCount() != 2 {
-		t.Errorf("a failed link was dialled again inside its cool-down")
+	if repo.addCount() != 3 {
+		t.Errorf("a person's attempt did not dial past the start-up failure: %d adds", repo.addCount())
+	}
+	h.reconnectSaved(context.Background(), time.Second, []string{"orders"})
+	if repo.addCount() != 3 {
+		t.Errorf("a failed link was dialled again inside a person's cool-down")
+	}
+}
+
+// RV-SRV-1: a failure the start-up pass cached must not be replayed to a person who starts an attempt after fixing the cause.
+func TestAPersonsReconnectDialsEvenWhenTheStartupPassCachedAFailure(t *testing.T) {
+	repo := newReconnRepo()
+	repo.failFor["payroll"] = errors.New("dial tcp: refused")
+	saved := &reconnHistory{items: []history.Recent{savedRecent("saved-1", true)}, passwords: map[string]string{"saved-1": "pw"}}
+	h := reconnectHandler(t, repo, saved, &reconnLinks{links: []sourcelinks.Link{linkTo("saved-1", "payroll")}})
+
+	ReconnectSavedSources(context.Background(), h, time.Second)
+	if repo.addCount() != 1 || len(h.reconn.failed) != 1 {
+		t.Fatalf("start-up pass: %d adds, %d recorded failures", repo.addCount(), len(h.reconn.failed))
+	}
+	// The start-up pass keeps its cool-down: a second start-up pass does not dial the dead host again.
+	ReconnectSavedSources(context.Background(), h, time.Second)
+	if repo.addCount() != 1 {
+		t.Fatalf("the start-up pass dialled again inside its own cool-down: %d adds", repo.addCount())
+	}
+
+	// The person fixes the cause and presses Start tracing: the cached start-up failure is ignored and the link is dialled.
+	delete(repo.failFor, "payroll")
+	if failed := h.reconnectSaved(context.Background(), time.Second, nil); len(failed) != 0 || repo.addCount() != 2 || len(h.reconn.failed) != 0 {
+		t.Errorf("person's pass: %+v, %d adds, %d recorded failures", failed, repo.addCount(), len(h.reconn.failed))
+	}
+}
+
+// RV-SRV-1: the short cool-down still protects a dead host from a person pressing the button again at once, and a person's failure
+// replaces the start-up failure (so it is the person's own failure that the second press meets).
+func TestAPersonsOwnFailureKeepsTheShortCooldownAfterAStartupFailure(t *testing.T) {
+	repo := newReconnRepo()
+	repo.failFor["payroll"] = errors.New("dial tcp: refused")
+	saved := &reconnHistory{items: []history.Recent{savedRecent("saved-1", true)}, passwords: map[string]string{"saved-1": "pw"}}
+	h := reconnectHandler(t, repo, saved, &reconnLinks{links: []sourcelinks.Link{linkTo("saved-1", "payroll")}})
+
+	ReconnectSavedSources(context.Background(), h, time.Second)
+	first := h.reconnectSaved(context.Background(), time.Second, nil) // the cause is not fixed: it dials and fails again
+	if repo.addCount() != 2 || len(first) != 1 {
+		t.Fatalf("first press: %d adds, %+v", repo.addCount(), first)
+	}
+	second := h.reconnectSaved(context.Background(), time.Second, nil)
+	if repo.addCount() != 2 || len(second) != 1 || second[0].Reason != first[0].Reason {
+		t.Errorf("second press: %d adds, %+v (want the cached answer, no dial)", repo.addCount(), second)
+	}
+	for _, f := range h.reconn.failed {
+		if f.byStartup || time.Until(f.until) > reconnectCooldown {
+			t.Errorf("a person's failure is marked %+v; want the short cool-down", f)
+		}
+	}
+}
+
+// RV-SRV-1 through the route: the start-up pass fails, the cause is fixed, and Start tracing reopens the database.
+func TestStartTracingDialsAgainAfterTheStartupPassFailed(t *testing.T) {
+	repo := newReconnRepo()
+	repo.failFor["payroll"] = errors.New("dial tcp: refused")
+	saved := &reconnHistory{items: []history.Recent{savedRecent("saved-1", true)}, passwords: map[string]string{"saved-1": "pw"}}
+	e, id := reconnectTracingEnv(t, repo, saved, &reconnLinks{links: []sourcelinks.Link{linkTo("saved-1", "payroll")}})
+
+	ReconnectSavedSources(context.Background(), e.h, time.Second)
+	if repo.addCount() != 1 {
+		t.Fatalf("start-up pass: %d adds", repo.addCount())
+	}
+	delete(repo.failFor, "payroll")
+	out, _ := tracingPost(t, e, id, tracingBody(""))
+	if repo.addCount() != 2 || len(out.SavedNotConnected) != 0 || len(out.AuditSources) != 1 {
+		t.Errorf("%d adds, saved-not-connected %v, audit sources %+v", repo.addCount(), out.SavedNotConnected, out.AuditSources)
 	}
 }
 

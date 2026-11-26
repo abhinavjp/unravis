@@ -1,4 +1,5 @@
 import type { LintEntry } from './copylint';
+import { isUnreachableError } from './unreachableCopy';
 
 /**
  * What the page says when it cannot start, and the rule that picks the sentence. Pure: no DOM, no fetch.
@@ -34,7 +35,7 @@ function statusOf(cause: unknown): number | undefined {
 }
 
 /** A browser reports an unreachable server as a TypeError from fetch (the text differs by browser). An aborted request is not one. */
-function isNetworkError(cause: unknown): boolean {
+export function isNetworkError(cause: unknown): boolean {
   if (!(cause instanceof Error) || cause.name === 'AbortError') return false;
   if (statusOf(cause) !== undefined) return false;
   return cause.name === 'TypeError' || NETWORK_TEXT.test(cause.message);
@@ -50,7 +51,8 @@ export function classifyStartupFailure(input: { hadToken: boolean; cause: unknow
   const code = cause && typeof cause === 'object' ? (cause as { code?: unknown }).code : undefined;
   if (!hadToken && (code === 'no_session' || status === 401 || status === 403)) return { kind: 'noSession', message: STARTUP_TEXT.noSession, canRetry: false };
   if (hadToken && (status === 401 || status === 403 || code === 'no_session')) return { kind: 'sessionRefused', message: STARTUP_TEXT.sessionRefused, canRetry: false };
-  if (isNetworkError(cause)) return { kind: 'unreachable', message: STARTUP_TEXT.unreachable, canRetry: true };
+  // The shared request layer already turned a lost connection into one error with this code; the start screen keeps its own wording for it.
+  if (isUnreachableError(cause) || isNetworkError(cause)) return { kind: 'unreachable', message: STARTUP_TEXT.unreachable, canRetry: true };
   const own = cause instanceof Error ? cause.message.trim() : '';
   return { kind: 'other', message: own || STARTUP_TEXT.fallback, canRetry: true };
 }

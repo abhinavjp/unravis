@@ -158,6 +158,8 @@ func TestFlagErrorsExitTwoAndChangeNothing(t *testing.T) {
 		{"install"},
 		{"--no-such-flag"},
 		{"--close-app"}, // only for an update the app started
+		{"--reopen"},    // only with --close-app
+		{"--silent", "--upgrade", "--reopen", "--expect-sha256", strings.Repeat("a", 64), "--expect-version", "1.2.3"},
 		{"--silent", "--upgrade", "--close-app"},
 		{"--upgrade", "--close-app", "--expect-sha256", strings.Repeat("a", 64), "--expect-version", "1.2.3"},
 	} {
@@ -568,6 +570,32 @@ func TestAfterUnattendedStartsTheAppAndLeavesANote(t *testing.T) {
 		if !ok || got.Outcome != tc.want || got.From != "1.0.0" || got.To != "1.1.0" || !got.Restarted {
 			t.Errorf("%s: result %+v %v", tc.name, got, ok)
 		}
+	}
+}
+
+// Apply now (--reopen) opens the page again; the automatic apply (no --reopen) starts the tray only.
+func TestAfterUnattendedReopensThePageOnlyForApplyNow(t *testing.T) {
+	for _, reopen := range []bool{false, true} {
+		rg := newRig(t)
+		var tray, page int
+		rg.env.startBackground = func(string) error { tray++; return nil }
+		rg.env.startApp = func(string) error { page++; return nil }
+		old := &setup.Installed{Location: filepath.Join(rg.dirs.LocalAppData, "Programs", "Unravis"), Version: "1.0.0"}
+		l, _ := openLog(options{}, rg.env, rg.dirs.LocalAppData, false)
+		afterUnattended(options{expectVersion: "1.1.0", reopen: reopen}, rg.env, rg.dirs, old, setup.Result{Outcome: setup.OutcomeDone}, func(string, ...any) {}, l)
+		closeLog(l)
+		if reopen && (page != 1 || tray != 0) || !reopen && (page != 0 || tray != 1) {
+			t.Errorf("reopen=%v: page %d, tray %d", reopen, page, tray)
+		}
+	}
+}
+
+// The app only passes --reopen when the setup file contains this line of the flag's help text (internal/update reopenMarker).
+func TestHelpTextHasTheLineTheReopenLooksFor(t *testing.T) {
+	var out bytes.Buffer
+	_, _ = parseFlags([]string{"--help"}, osEnv(), &out)
+	if !strings.Contains(out.String(), "the person pressed Apply now") {
+		t.Fatalf("the --reopen help line changed; update reopenMarker in internal/update/reopen.go with it:\n%s", out.String())
 	}
 }
 
