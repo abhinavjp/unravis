@@ -101,6 +101,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	noClaims := fs.Bool("no-claims", false, "do not claim requests on the host (with more than one PC watching the repository, two of them may then run the same request)")
 	claimTTL := fs.Duration("claim-ttl", localci.DefaultLeaseTTL, "a claim its PC did not refresh for this long is taken over by another PC")
 	compareEvery := fs.Duration("compare-every", defaultCompareEvery, "how often the comparison with GitHub is saved for the Releases app's Overview (0 turns it off)")
+	cacheLimit := fs.Int64("cache-limit-gb", 8, "size the build cache is trimmed to, in GB (half of it for runs of code that is not the owner's); -1 never trims")
 	var wfFor, pushWf, protect, vars, labels, schedule, trustedBase, allowEnv, ctxFlag multiFlag
 	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
 	fs.Var(&pushWf, "push-workflow", "branch=file.yml: a workflow run when branch is pushed (repeatable; replaces the defaults)")
@@ -247,6 +248,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	var pauseMu sync.Mutex
 	agent := &localci.Agent{
 		Name: *name, Dir: store.Dir, Queue: queue, Slots: *slots, Labels: labels, Runner: runner,
+		CacheLimit: cacheLimitBytes(*cacheLimit),
 		Paused: func() bool {
 			why := pauseReason(pf, rdir, time.Now())
 			pauseMu.Lock()
@@ -426,4 +428,15 @@ func runnerFor(inProcess bool, store *localci.Store, host localci.Host, origin s
 		},
 	}
 	return er.Run
+}
+
+// cacheLimitBytes turns --cache-limit-gb into the agent's CacheLimit: a negative number turns trimming off.
+func cacheLimitBytes(gb int64) int64 {
+	if gb < 0 {
+		return -1
+	}
+	if gb == 0 {
+		return 0 // the agent's default
+	}
+	return gb << 30
 }

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -148,6 +149,9 @@ type Agent struct {
 	ClaimEvery time.Duration // between two looks at the queue, default 2 s
 	BeatEvery  time.Duration // between two heartbeats, default 10 s; an agent is dead after three missed ones
 	DoneKeep   time.Duration // finished requests older than this are deleted, default 14 days
+	// CacheLimit is the size the build cache is trimmed to (see Store.TrimCaches), once an hour and at start.
+	// Zero: DefaultCacheLimit. Negative: never trim.
+	CacheLimit int64
 	Now        func() time.Time
 	Log        io.Writer
 
@@ -160,6 +164,7 @@ type Agent struct {
 	dirty     bool
 	awake     bool
 	lastPrune time.Time
+	trimming  atomic.Bool
 	wake      chan struct{}
 	wg        sync.WaitGroup
 	logMu     sync.Mutex
@@ -339,7 +344,7 @@ func (a *Agent) tick(ctx context.Context) {
 	now := a.now()
 	if now.Sub(a.lastBeat) >= a.beatEvery() {
 		a.requeueStale(true)
-		a.prune(now)
+		a.prune(ctx, now)
 	}
 	a.statusTick()
 	a.claim(ctx)
@@ -535,7 +540,7 @@ func (a *Agent) requeueStale(self bool) {
 	}
 }
 
-func (a *Agent) prune(now time.Time) {
+func (a *Agent) prune(ctx context.Context, now time.Time) {
 	if now.Sub(a.lastPrune) < time.Hour {
 		return
 	}
@@ -543,6 +548,31 @@ func (a *Agent) prune(now time.Time) {
 	if n, err := a.Queue.Prune(now.Add(-a.doneKeep())); err == nil && n > 0 {
 		a.logf("removed %d old finished requests", n)
 	}
+	a.trimCaches(ctx, now)
+}
+
+// trimCaches cuts the build caches down to the limit in the background: walking tens of thousands of files must
+// not hold up the claiming of requests.
+func (a *Agent) trimCaches(ctx context.Context, now time.Time) {
+	limit := a.CacheLimit
+	if limit < 0 || a.Dir == "" || !a.trimming.CompareAndSwap(false, true) {
+		return
+	}
+	if limit == 0 {
+		limit = DefaultCacheLimit
+	}
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		defer a.trimming.Store(false)
+		freed, err := (&Store{Dir: a.Dir}).TrimCaches(ctx, limit, now)
+		if freed > 0 {
+			a.logf("build cache trimmed: freed %d MB (limit %d MB)", freed>>20, limit>>20)
+		}
+		if err != nil && ctx.Err() == nil {
+			a.logf("build cache trim: %v", err)
+		}
+	}()
 }
 
 func (a *Agent) keepAwake() {
