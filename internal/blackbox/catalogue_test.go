@@ -110,7 +110,7 @@ func TestCollectorsValidation(t *testing.T) {
 		{"off and slower", map[string]CollectorSetting{"host.tcp": {On: boolp(false)}, "host.dumps": {EverySec: 60}}, ""},
 		{"unknown id", map[string]CollectorSetting{"redis.slowlog": {On: boolp(true)}}, "not a known collector"},
 		{"always on cannot go off", map[string]CollectorSetting{"host.diskcpu": {On: boolp(false)}}, "cannot be switched off"},
-		{"always on may be slower", map[string]CollectorSetting{"host.diskcpu": {EverySec: 30}}, ""},
+		{"always on cannot be slowed", map[string]CollectorSetting{"host.diskcpu": {EverySec: 30}}, "cannot be slowed down"},
 		{"odd every", map[string]CollectorSetting{"host.tcp": {EverySec: 7}}, "must be 5, 15, 30"},
 		{"faster than the sample", map[string]CollectorSetting{"host.tcp": {EverySec: 5}}, "whole multiple"},
 		{"not a multiple", map[string]CollectorSetting{"host.tcp": {EverySec: 900 + 0}}, ""},
@@ -210,7 +210,7 @@ func TestBuildGroupsSkipsSwitchedOffCollectors(t *testing.T) {
 
 func TestEveryGroupRunsOncePerPeriodAndLeavesNoTrace(t *testing.T) {
 	inner := &stubGroup{name: "tcp"}
-	g := &everyGroup{inner: inner, every: time.Minute}
+	g := &everyGroup{inner: inner, every: time.Minute, slack: 7500 * time.Millisecond}
 	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
 	ran := 0
 	for i := 0; i < 8; i++ { // eight 15 s ticks = two minutes
@@ -225,7 +225,7 @@ func TestEveryGroupRunsOncePerPeriodAndLeavesNoTrace(t *testing.T) {
 		t.Errorf("ran %d times (inner %d), want 2", ran, inner.calls)
 	}
 	// A tick a little early still counts as the next period.
-	g2 := &everyGroup{inner: &stubGroup{name: "tcp"}, every: time.Minute}
+	g2 := &everyGroup{inner: &stubGroup{name: "tcp"}, every: time.Minute, slack: 7500 * time.Millisecond}
 	_, _ = g2.Collect(t0, 15)
 	if _, err := g2.Collect(t0.Add(58*time.Second), 15); err != nil {
 		t.Errorf("a tick 2 s early skipped a whole period: %v", err)
@@ -255,4 +255,77 @@ func TestBuildGroupsSlowsACollector(t *testing.T) {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+type flakyGroup struct {
+	fails int
+	calls int
+}
+
+func (g *flakyGroup) Name() string   { return "tcp" }
+func (g *flakyGroup) Optional() bool { return true }
+func (g *flakyGroup) Collect(time.Time, float64) (any, error) {
+	g.calls++
+	if g.calls <= g.fails {
+		return nil, errGroupUnavailable
+	}
+	return &VMGroup{}, nil
+}
+
+// A failed read does not use up the period: the next sample tries again.
+func TestEveryGroupRetriesAfterAFailedRead(t *testing.T) {
+	inner := &flakyGroup{fails: 2}
+	g := &everyGroup{inner: inner, every: time.Hour, slack: 7500 * time.Millisecond}
+	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	for i, wantErr := range []bool{true, true, false, true} {
+		_, err := g.Collect(t0.Add(time.Duration(i)*15*time.Second), 15)
+		if (err != nil) != wantErr {
+			t.Fatalf("tick %d: err=%v, wantErr=%v", i, err, wantErr)
+		}
+	}
+	if inner.calls != 3 {
+		t.Errorf("inner ran %d times, want 3 (two failures, one success, then quiet for the hour)", inner.calls)
+	}
+}
+
+// Tick times jitter by what earlier groups took; a late tick followed by an early one must not skip a period.
+func TestEveryGroupToleratesTickJitter(t *testing.T) {
+	inner := &stubGroup{name: "tcp"}
+	g := &everyGroup{inner: inner, every: time.Minute, slack: 7500 * time.Millisecond}
+	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	// First run late in its tick (+3 s), then ticks 60 s later but early in theirs (+0 s): 57 s apart.
+	_, _ = g.Collect(t0.Add(3*time.Second), 15)
+	for _, off := range []int{15, 30, 45} {
+		_, _ = g.Collect(t0.Add(time.Duration(off)*time.Second), 15)
+	}
+	if _, err := g.Collect(t0.Add(60*time.Second), 15); err != nil {
+		t.Errorf("a tick 57 s after the last run skipped the whole period: %v", err)
+	}
+	if inner.calls != 2 {
+		t.Errorf("inner ran %d times, want 2", inner.calls)
+	}
+}
+
+func TestEveryGroupRunsAfterAClockStepBack(t *testing.T) {
+	inner := &stubGroup{name: "tcp"}
+	g := &everyGroup{inner: inner, every: time.Hour, slack: 7500 * time.Millisecond}
+	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	_, _ = g.Collect(t0, 15)
+	if _, err := g.Collect(t0.Add(-time.Hour), 15); err != nil {
+		t.Errorf("the group stayed silent after the clock stepped back: %v", err)
+	}
+}
+
+func TestBuildGroupsNeverSlowsAnAlwaysOnGroup(t *testing.T) {
+	swapRegistry(t)
+	RegisterGroup("diskCpu", false, func(GroupDeps) (Group, error) { return &stubGroup{name: "diskCpu"}, nil })
+	cfg := testConfig(t)
+	cfg.Collectors = map[string]CollectorSetting{"host.diskcpu": {EverySec: 3600}} // not validated on purpose
+	gs := BuildGroups(GroupDeps{Config: cfg})
+	if len(gs) != 1 {
+		t.Fatalf("built %d groups", len(gs))
+	}
+	if _, wrapped := gs[0].(*everyGroup); wrapped {
+		t.Error("an always-on group was slowed down")
+	}
 }

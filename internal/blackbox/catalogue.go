@@ -43,6 +43,7 @@ type CollectorInfo struct {
 }
 
 var catalogue = []CollectorInfo{
+	{ID: "counters.extra", Kind: KindCounter, Title: "Extra Windows counters you add", Group: "extraCounters", Load: LoadLight},
 	{ID: "host.diskcpu", Kind: KindCounter, Title: "Processor, disk and network", Group: "diskCpu", Load: LoadLight, Always: true},
 	{ID: "host.mempressure", Kind: KindCounter, Title: "Memory pressure", Group: "memPressure", Load: LoadLight, Always: true},
 	{ID: "host.tcp", Kind: KindCounter, Title: "TCP connections and resets", Group: "tcp", Load: LoadLight},
@@ -110,6 +111,9 @@ func (c Config) validateCollectors() error {
 		if s.On != nil && !*s.On && info.Always {
 			return invalidf(`"collectors.%s" cannot be switched off: the recorder needs it`, id)
 		}
+		if s.EverySec != 0 && info.Always {
+			return invalidf(`"collectors.%s" cannot be slowed down: the recorder needs it every sample`, id)
+		}
 		if s.EverySec != 0 {
 			if !allowedEvery[s.EverySec] {
 				return invalidf(`"collectors.%s.everySec" must be 5, 15, 30, 60, 300, 900 or 3600`, id)
@@ -157,11 +161,16 @@ func (c Config) CollectorStates() []CollectorState {
 
 // everyGroup runs its inner group once per interval. In between it says "not applicable", which the tick treats as
 // "leave no trace": no Missing entry, no timing, no budget strike. The first sample always runs.
+//
+// A failed read does not use up the period: the next sample tries again, so the group's own retry rules still apply.
+// The time a group sees is the tick time plus whatever earlier groups took, so it jitters; slack (half a sample) keeps a
+// late tick followed by an early one from skipping a whole period.
 type everyGroup struct {
 	inner Group
 	every time.Duration
+	slack time.Duration
 	mu    sync.Mutex
-	last  time.Time
+	last  time.Time // last successful run
 }
 
 func (g *everyGroup) Name() string   { return g.inner.Name() }
@@ -170,16 +179,19 @@ func (g *everyGroup) Dormant() bool  { return dormantNow(g.inner) }
 
 func (g *everyGroup) Collect(now time.Time, dt float64) (any, error) {
 	g.mu.Lock()
-	// Half a sample of slack: a tick that arrives a little early must not skip a whole period.
-	due := g.last.IsZero() || now.Sub(g.last) >= g.every-g.every/20
-	if due {
-		g.last = now
-	}
+	// A clock that stepped back counts as due, so the group cannot stay silent until the clock catches up.
+	due := g.last.IsZero() || now.Before(g.last) || now.Sub(g.last) >= g.every-g.slack
 	g.mu.Unlock()
 	if !due {
 		return nil, errNotApplicable
 	}
-	return g.inner.Collect(now, dt)
+	v, err := g.inner.Collect(now, dt)
+	if err == nil {
+		g.mu.Lock()
+		g.last = now
+		g.mu.Unlock()
+	}
+	return v, err
 }
 
 func (g *everyGroup) Close() error {

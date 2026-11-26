@@ -162,7 +162,7 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
 - [ ] **BL-693** B4 Redis collector inside the host recorder: local only, own RESP client with a fixed command allowlist, sealed password, slow command names only (Opus review).
 - [ ] **BL-694** B5 `config set|validate|history|rollback` with auto-rollback after 60 s unhealthy and a hash-chained audit file (Opus review).
 - [ ] **BL-695** B6 Remote tool `BlackboxConfig` write action and `LogPull` through Salt, request and approve gate (Opus review).
-- [ ] **BL-696** B7 `counters.extra`, path-only collectors, `facts.json` (versions, services, certificate end dates, time sync, pending reboot).
+- [ ] **BL-696** B7 `counters.extra` (built, unit-tested with a fake source; needs a live read on Windows), path-only collectors and `facts.json` (not built yet) (versions, services, certificate end dates, time sync, pending reboot).
 - [ ] **BL-697** B8 `bundle` (zip with manifest, facts and scrubbed tails) and auto-snapshot triggers.
 - [ ] **BL-698** B9 UI: the approved Place a Blackbox prototype with the new steps (Record rows, SQL step, Redis step) and the Blackbox page (Status, Settings changes, Bundle). Prototype: `/mnt/project-files/blackbox-everything/prototype.html`.
 - [ ] **BL-699** B10 Live proof on BG-SRV-UK-01 through Salt, read-only first (owner watches).

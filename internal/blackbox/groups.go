@@ -143,8 +143,8 @@ func BuildGroups(d GroupDeps) []Group {
 		default:
 			built = g
 		}
-		if known && d.Config.CollectorEvery(info.ID) > time.Duration(d.Config.IntervalSeconds)*time.Second {
-			built = &everyGroup{inner: built, every: d.Config.CollectorEvery(info.ID)}
+		if base := time.Duration(d.Config.IntervalSeconds) * time.Second; known && !info.Always && d.Config.CollectorEvery(info.ID) > base {
+			built = &everyGroup{inner: built, every: d.Config.CollectorEvery(info.ID), slack: base / 2}
 		}
 		if tracker != nil {
 			built = &trackedGroup{name: name, tracker: tracker, inner: built}
@@ -372,6 +372,8 @@ func applyGroup(s *Sample, name string, v any) {
 		assignIf(&s.Dumps, v)
 	case "sqlLog":
 		assignIf(&s.SQLLog, v)
+	case "extraCounters":
+		assignIf(&s.ExtraCounters, v)
 	}
 }
 
