@@ -350,9 +350,10 @@ func isCaseFileTmp(name string) bool {
 }
 
 // isCaseFileAside reports whether name looks like a placeholder set aside by
-// reclaimLeftover.
+// reclaimLeftover. A build before the suffix was changed named them *.tmp, so the
+// prefix alone decides.
 func isCaseFileAside(name string) bool {
-	return strings.HasPrefix(name, caseFileAsidePrefix) && strings.HasSuffix(name, caseFileAsideSuffix)
+	return strings.HasPrefix(name, caseFileAsidePrefix)
 }
 
 // isOwnPlaceholder reports whether dst is still the empty regular file this save
@@ -497,7 +498,7 @@ func hasCaseFileTmp(dir, dst string) bool {
 	}
 	tag := caseFileTmpTag(dst)
 	for _, e := range entries {
-		if !e.Type().IsRegular() || !isCaseFileTmp(e.Name()) || !tmpBelongsTo(e.Name(), tag) {
+		if !e.Type().IsRegular() || !isCaseFileTmp(e.Name()) || isCaseFileAside(e.Name()) || !tmpBelongsTo(e.Name(), tag) {
 			continue
 		}
 		if _, busy := savesInFlight.Load(savePathKey(filepath.Join(dir, e.Name()))); !busy {

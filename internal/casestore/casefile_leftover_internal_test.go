@@ -187,11 +187,15 @@ func TestSweepNeverRemovesAsideFileWithContent(t *testing.T) {
 	mustWrite(t, filepath.Join(dir, "unravis-case-aside-aaaa.aside"), []byte("a case"), day)
 	mustWrite(t, filepath.Join(dir, "unravis-case-aside-bbbb.aside"), nil, day)
 	mustWrite(t, filepath.Join(dir, "unravis-case-aside-cccc.aside"), nil, 0)
+	// The name a first build used: still a set-aside file, never a temporary file.
+	mustWrite(t, filepath.Join(dir, "unravis-case-aside-dddd.tmp"), []byte("a case"), day)
+	mustWrite(t, filepath.Join(dir, "unravis-case-aside-eeee.tmp"), nil, day)
 	mustWrite(t, filepath.Join(dir, "unravis-case-xxxx.tmp"), []byte("half"), day)
 	sweepStaleCaseFileTmp(dir, time.Now())
 	for name, want := range map[string]bool{
 		"unravis-case-aside-aaaa.aside": true, "unravis-case-aside-bbbb.aside": false,
 		"unravis-case-aside-cccc.aside": true, "unravis-case-xxxx.tmp": false,
+		"unravis-case-aside-dddd.tmp": true, "unravis-case-aside-eeee.tmp": false,
 	} {
 		if exists(filepath.Join(dir, name)) != want {
 			t.Errorf("%s: present=%v, want %v", name, !want, want)
@@ -199,6 +203,10 @@ func TestSweepNeverRemovesAsideFileWithContent(t *testing.T) {
 	}
 	if isCaseFileTmp("unravis-case-aside-aaaa.aside") {
 		t.Error("a set-aside file looks like a temporary file")
+	}
+	if hasCaseFileTmp(dir, filepath.Join(dir, "case"+CaseFileExt)) {
+		// Only the half-written temporary file above counts, and it was swept.
+		t.Error("a set-aside file counts as another save's temporary file")
 	}
 }
 
@@ -347,7 +355,12 @@ func TestSecondProcessCannotTakeOverARunningSave(t *testing.T) {
 	src.Hold = func() (func(), error) {
 		// What a second copy of the app does: it does not know this process's
 		// claims, and sees an empty target with a temporary file beside it.
-		savesInFlight.Range(func(k, _ any) bool { savesInFlight.Delete(k); return true })
+		savesInFlight.Range(func(k, _ any) bool {
+			if p, ok := k.(string); ok && strings.HasPrefix(p, savePathKey(dir)) {
+				savesInFlight.Delete(k)
+			}
+			return true
+		})
 		if runtime.GOOS == "windows" && reclaimLeftover(dst, time.Now().Add(time.Hour)) {
 			t.Error("the placeholder of a running save was taken over")
 		}
