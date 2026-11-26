@@ -9,9 +9,21 @@ jobs:
         # build (only for this step: the install step above must build a binary that runs here).
         "Go - lint (only code changed since develop)":
           GOOS: linux
+    go:
+      # The Go tests start the desktop app (cmd/audit-explorer: ten concurrent starts, a killed owner, the shutdown rpc). It owns a
+      # per-user first-instance name, so the same tests in two jobs at once (two runs, or two jobs of one run) make the second
+      # one fail. Only the step that runs them takes turns; the job's other steps run side by side.
+      step-exclusive:
+        "Go - tests of the affected packages (Linux, compared with the baseline)": desktop-first-instance
   ci.yml:
     desktop-sidecar:
       # The sidecar tests start the desktop app, which owns a per-user first-instance name (a mutex). Two copies on one PC
       # fight over it (the two matrix legs, or two runs the agent has going, or the app the owner has open): the loser
       # exits 13. Hold the name for the whole job, so they take turns.
       exclusive: desktop-first-instance
+    go-tests:
+      step-exclusive:
+        "Go - tests (shard ${{ matrix.shard }} of 3)": desktop-first-instance
+    linux-gates:
+      step-exclusive:
+        "Go - tests (compared with the baseline)": desktop-first-instance

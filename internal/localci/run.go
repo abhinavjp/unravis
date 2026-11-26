@@ -838,6 +838,18 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 		finish()
 		return
 	}
+	// A step that names an exclusive resource in local-ci.yml waits for it first and holds it for the step only.
+	if res := r.o.Config.Override(r.file, in.job.ID).StepExclusive[st.Name]; res != "" {
+		release, lerr := acquireExclusive(ctx, res, r.o.LockDir, func() {
+			r.logf("[%s] step %d/%d %s: waiting for the exclusive resource %q", in.key, n, total, name, res)
+		})
+		if lerr != nil {
+			stepFail("cancelled while waiting for the exclusive resource " + res)
+			finish()
+			return
+		}
+		defer release()
+	}
 	// step environment and the other interpolated fields
 	stepEnv, err := interpEnv(st.Env, ec)
 	if extra := r.o.Config.Override(r.file, in.job.ID).StepEnv[st.Name]; len(extra) > 0 && err == nil {
