@@ -21,7 +21,8 @@ const updateManualMinGap = 5 * time.Second
 // updateCheckReply is the JSON body of the three endpoints.
 type updateCheckReply = UpdateStatus
 
-// updateCheckState holds one Updater per server, kept here because the handler struct lives in server.go.
+// updateCheckState holds one Updater per server. It is a field of the handler (handler.updateState), so it goes away with the
+// server instead of staying in a package-wide map.
 type updateCheckState struct {
 	mu      sync.Mutex
 	updater *Updater
@@ -29,11 +30,8 @@ type updateCheckState struct {
 	lastRun time.Time // a double click costs one check
 }
 
-var updateCheckStates sync.Map // *handler -> *updateCheckState
-
 func updateCheckStateFor(h *handler) *updateCheckState {
-	state, _ := updateCheckStates.LoadOrStore(h, &updateCheckState{})
-	return state.(*updateCheckState)
+	return &h.updateState
 }
 
 // WithUpdater attaches the update checker. Without it the update endpoints answer "dev" and check nothing.
