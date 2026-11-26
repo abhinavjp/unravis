@@ -82,8 +82,11 @@ func cmdRunItem(ctx context.Context, args []string, stdout, stderr io.Writer, en
 		var stop context.CancelFunc
 		ctx, stop = context.WithCancel(ctx)
 		defer stop()
+		// The reader is taken here, not inside the goroutine: the goroutine may start (or still be running) after a test has put
+		// the variable back, and reading a package variable from it would race with that write.
+		stdin := childStdin
 		go func() {
-			_, _ = io.Copy(io.Discard, childStdin)
+			_, _ = io.Copy(io.Discard, stdin)
 			stop()
 		}()
 	}

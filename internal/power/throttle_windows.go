@@ -50,7 +50,7 @@ func (t *windowsThrottler) apply(mode Mode) error {
 	var powerErr, priorityErr, memoryErr error
 	if !idle {
 		if eco {
-			powerErr = t.setInfo(processPowerThrottling, powerThrottlingVersion, executionSpeed|ignoreTimerResolution, 0)
+			powerErr = t.clearPowerThrottling()
 		}
 		if t.fallback {
 			priorityErr = t.setPriority(windows.NORMAL_PRIORITY_CLASS)
@@ -88,7 +88,7 @@ func (t *windowsThrottler) apply(mode Mode) error {
 
 	var rollbackErr error
 	if eco && powerApplied {
-		rollbackErr = t.setInfo(processPowerThrottling, powerThrottlingVersion, executionSpeed|ignoreTimerResolution, 0)
+		rollbackErr = t.clearPowerThrottling()
 	}
 	if t.fallback {
 		if err := t.setPriority(windows.NORMAL_PRIORITY_CLASS); err != nil {
@@ -99,6 +99,17 @@ func (t *windowsThrottler) apply(mode Mode) error {
 	}
 	rollbackErr = errors.Join(rollbackErr, t.setInfo(processMemoryPriority, memoryPriorityNormal, 0, 0))
 	return errors.Join(powerErr, priorityErr, memoryErr, rollbackErr)
+}
+
+// clearPowerThrottling turns EcoQoS off again. It mirrors the retry in apply: a build that rejects the ignore-timer-resolution
+// bit when throttling is switched on (Windows 10, Server 2022) rejects it when switching off too, and giving up there would
+// leave the process throttled with an error. The second call names only execution speed, the bit apply left set.
+func (t *windowsThrottler) clearPowerThrottling() error {
+	err := t.setInfo(processPowerThrottling, powerThrottlingVersion, executionSpeed|ignoreTimerResolution, 0)
+	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+		err = t.setInfo(processPowerThrottling, powerThrottlingVersion, executionSpeed, 0)
+	}
+	return err
 }
 
 func setProcessInformation(class, first, control, state uint32) error {

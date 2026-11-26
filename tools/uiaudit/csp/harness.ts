@@ -2,33 +2,43 @@
 import type { BrowserContext, Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { expandMacros, type Screen, type Step } from '../lib/steps';
 
 const repo = join(__dirname, '..', '..', '..');
 
 /** The exact policy of the desktop shell. */
 export const CSP: string = JSON.parse(readFileSync(join(repo, 'desktop', 'src-tauri', 'tauri.conf.json'), 'utf8')).app.security.csp;
 
-export interface Violation { directive: string; blocked: string; source: string; sample: string; page: string }
+export interface Violation { directive: string; blocked: string; source: string; sample: string; page: string; disposition?: string }
+
+/** BL-324 trials, off in the normal strict-CSP run: a second, report-only policy, and the freeze that Tauri's `freezePrototype` does at document start. */
+export interface Trial { reportOnly?: string; freezePrototype?: boolean }
 
 /**
  * Makes every page document of the context run under the desktop policy and collects what breaks it: `securitypolicyviolation` events (an init script in every
  * frame that lets scripts run) and the browser's own "Refused to ..." console lines (frames a sandbox keeps scripts out of).
  */
-export async function arm(context: BrowserContext, found: Violation[], consoleLines: string[]): Promise<void> {
+export async function arm(context: BrowserContext, found: Violation[], consoleLines: string[], trial: Trial = {}): Promise<void> {
   await context.exposeBinding('__cspViolation', (_src, v: Violation) => { found.push(v); });
   await context.addInitScript(() => {
     document.addEventListener('securitypolicyviolation', (e) => {
-      const v = { directive: e.effectiveDirective, blocked: e.blockedURI, source: e.sourceFile + ':' + e.lineNumber, sample: e.sample, page: location.href.replace(/#.*/, '') };
+      const v = { directive: e.effectiveDirective, blocked: e.blockedURI, source: e.sourceFile + ':' + e.lineNumber, sample: e.sample, page: location.href.replace(/#.*/, ''), disposition: e.disposition };
       (window as unknown as { __cspViolation: (v: unknown) => void }).__cspViolation(v);
     });
   });
+  if (trial.freezePrototype) {
+    // What Tauri does with `freezePrototype: true`: Object.prototype is frozen before any page script runs.
+    await context.addInitScript(() => { Object.freeze(Object.prototype); });
+  }
   await context.route('**/*', async (route) => {
     const request = route.request();
     if (request.resourceType() !== 'document') return route.continue();
     const response = await route.fetch();
-    await route.fulfill({ response, headers: { ...response.headers(), 'content-security-policy': CSP } });
+    const headers: Record<string, string> = { ...response.headers(), 'content-security-policy': CSP };
+    if (trial.reportOnly) headers['content-security-policy-report-only'] = trial.reportOnly;
+    await route.fulfill({ response, headers });
   });
-  context.on('console', (m) => { if (/Content Security Policy|Refused to (apply|load|execute|connect|create|frame|evaluate)/i.test(m.text())) consoleLines.push(m.text().slice(0, 400)); });
+  context.on('console', (m) => { if (/Content Security Policy|Refused to (apply|load|execute|connect|create|frame|evaluate)/i.test(m.text()) && !(trial.reportOnly && /Report Only/i.test(m.text()))) consoleLines.push(m.text().slice(0, 400)); });
 }
 
 /** Two animation frames: whatever the page queued before (a violation event, a canvas redraw) has run when this returns. A round trip, not a sleep. */
@@ -118,4 +128,14 @@ export async function hoverChart(page: Page, index: number, points: Array<[numbe
     if (best && !all) break; // one drawn tooltip is the proof; `all` keeps sweeping to find the biggest box
   }
   return { drawn: best !== null, box: best, height: rest.height, width: rest.width };
+}
+
+/** The screens of the full app that the CSP runs open: tools/screens/screens.json plus extra-screens.json (`UIAUDIT_ONLY=a,b` picks some). The other programs (setup window, Releases dashboard, Lite) are not shown in the desktop shell. */
+export function loadScreens(): Screen[] {
+  const root = join(__dirname, '..');
+  const base: Screen[] = JSON.parse(readFileSync(join(root, '..', 'screens', 'screens.json'), 'utf8')).screens;
+  const extraFile: { macros?: Record<string, Step[]>; screens: Screen[] } = JSON.parse(readFileSync(join(root, 'extra-screens.json'), 'utf8'));
+  const extra: Screen[] = extraFile.screens.map((s) => ({ ...s, steps: expandMacros(s.steps, extraFile.macros ?? {}), after: s.after && expandMacros(s.after, extraFile.macros ?? {}) }));
+  const only = (process.env.UIAUDIT_ONLY ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  return [...base, ...extra].filter((s) => !s.app && !s.retired && (!only.length || only.includes(s.id)));
 }

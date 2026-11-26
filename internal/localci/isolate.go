@@ -1,6 +1,8 @@
 package localci
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,12 +16,16 @@ const NoTokenPlaceholder = "ci-step-has-no-token" //nolint:gosec // G101: a fixe
 // reduced to what steps may see):
 //
 //   - a throw-away profile under homes/<runid>: USERPROFILE, HOME, APPDATA, LOCALAPPDATA, GH_CONFIG_DIR,
-//     XDG_*, TEMP and TMP point into it, so the owner's git, gh, npm and Go settings and credential files are
+//     and XDG_* point into it, so the owner's git, gh, npm and Go settings and credential files are
 //     not found where tools look first;
 //   - git without the owner's setup: a global config of the run (empty), no system config, an empty
 //     credential.helper, no prompt, no askpass, no ssh agent;
 //   - the persistent caches: GOCACHE, GOMODCACHE, GOPATH and the npm cache come from the store. A run whose
 //     code is not all the owner's (untrusted) gets caches of its own, apart from the owner's.
+//
+// TEMP and TMP point to a short folder of the run under the owner's temp folder, not into the profile: the
+// profile sits deep inside the store, and tests that build long paths under TEMP (the setup tests refuse a path
+// over 200 characters) failed on this PC while passing on GitHub's Windows runner, whose temp folder is short.
 //
 // GH_TOKEN and GITHUB_TOKEN are set to NoTokenPlaceholder: `gh` prefers them to the login it keeps in the
 // operating system's credential store, so a step that just calls `gh` does not get the owner's login.
@@ -38,13 +44,17 @@ func (s *Store) StepEnv(base []string, runID string, untrusted bool) (env []stri
 	_ = os.RemoveAll(home)
 	roaming := filepath.Join(home, "AppData", "Roaming")
 	local := filepath.Join(home, "AppData", "Local")
-	tmp := filepath.Join(home, "tmp")
-	for _, d := range []string{roaming, local, tmp, filepath.Join(home, "gh"), filepath.Join(home, "config"), filepath.Join(home, "cache"), filepath.Join(home, "data")} {
+	tmp := shortTempDir(base, runID)
+	_ = os.RemoveAll(tmp)
+	// Windows hands out "usual folders" (Desktop, Start Menu Programs and Startup, ...) by expanding %USERPROFILE% and
+	// refusing a path that does not exist, so a profile without them makes tools that ask Windows for one fail.
+	programs := filepath.Join(roaming, "Microsoft", "Windows", "Start Menu", "Programs")
+	for _, d := range []string{roaming, local, tmp, programs, filepath.Join(programs, "Startup"), filepath.Join(home, "Desktop"), filepath.Join(home, "gh"), filepath.Join(home, "config"), filepath.Join(home, "cache"), filepath.Join(home, "data")} {
 		if err := os.MkdirAll(d, 0o750); err != nil {
 			return nil, nil, err
 		}
 	}
-	cleanup = func() { _ = os.RemoveAll(home) }
+	cleanup = func() { _ = os.RemoveAll(home); _ = os.RemoveAll(tmp) }
 	gitconfig := filepath.Join(home, "gitconfig")
 	if err := os.WriteFile(gitconfig, nil, 0o600); err != nil {
 		cleanup()
@@ -95,6 +105,23 @@ func (s *Store) StepEnv(base []string, runID string, untrusted bool) (env []stri
 		env = append(env, kv[0]+"="+kv[1])
 	}
 	return env, cleanup, nil
+}
+
+// shortTempDir is a folder of the run directly under the owner's temp folder (TEMP or TMP from base, else the
+// operating system's), named from a hash of the run id so it is short and unique.
+func shortTempDir(base []string, runID string) string {
+	root := ""
+	for _, kv := range base {
+		if k, v, ok := splitKV(kv); ok && v != "" && (strings.EqualFold(k, "TEMP") || strings.EqualFold(k, "TMP")) {
+			root = v
+			break
+		}
+	}
+	if root == "" {
+		root = os.TempDir()
+	}
+	sum := sha256.Sum256([]byte(runID))
+	return filepath.Join(root, "uci-"+hex.EncodeToString(sum[:4]))
 }
 
 func cacheKV(env []string) [][2]string {

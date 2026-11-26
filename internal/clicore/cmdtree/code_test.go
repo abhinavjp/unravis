@@ -241,6 +241,7 @@ func TestCodeRunRefusalsGiveExitCodes(t *testing.T) {
 		"code_mode_off":           {"ENDPOINT_UNAVAILABLE", clicore.ExitDependency},
 		"sandbox_unavailable":     {"ENDPOINT_UNAVAILABLE", clicore.ExitDependency},
 		"denied":                  {"PERMISSION_DENIED", clicore.ExitDenied},
+		"cli_closed":              {"PERMISSION_DENIED", clicore.ExitDenied},
 		"no_case":                 {"NOT_FOUND", clicore.ExitGone},
 		clicore.CodeModeManyCases: {"INVALID_ARGUMENT", clicore.ExitUsage},
 		"busy":                    {"OWNER_BUSY", clicore.ExitDependency},

@@ -78,6 +78,10 @@ type BlackboxDeps struct {
 	// detection (Windows only). Tests give a fake.
 	DetectTargets func() bbTargetsDetection
 	Now           func() time.Time
+	// LocalNames lists the names and addresses this PC answers to, so an entry
+	// added by an address or a share still counts as the Blackbox on this PC.
+	// nil uses the real ones (blackbox.LocalNames).
+	LocalNames func() []string
 }
 
 // WithBlackbox attaches the Blackbox pages.
@@ -105,6 +109,13 @@ func newBlackboxHub(d BlackboxDeps) *blackboxHub {
 	b.probes.limit = 30
 	b.reveals.limit = 5
 	return b
+}
+
+func (b *blackboxHub) localNames() []string {
+	if b.deps.LocalNames != nil {
+		return b.deps.LocalNames()
+	}
+	return blackbox.LocalNames()
 }
 
 func (b *blackboxHub) now() time.Time {
@@ -496,6 +507,18 @@ func (h *handler) bbList(w http.ResponseWriter, r *http.Request) {
 		}(i)
 	}
 	wg.Wait()
+	// A read has just told which recorder an entry reaches: use it now, so an entry
+	// added by an address or a share is recognised on this very list.
+	for i := range items {
+		if f := items[i].Facts; f != nil {
+			if entries[i].RecorderHost == "" {
+				entries[i].RecorderHost = f.Host
+			}
+			if entries[i].RecorderName == "" {
+				entries[i].RecorderName = f.Name
+			}
+		}
+	}
 	pc := b.thisPCBlock(entries, found, scanErr)
 	b.markUpdate(&pc, items)
 	writeJSON(w, http.StatusOK, bbListAnswer{Items: items, ThisPC: pc, CanPack: b.deps.Program != nil}, maxResponseBytes)
@@ -525,6 +548,17 @@ func (b *blackboxHub) thisPCBlock(entries []bbsaved.Entry, found *blackbox.Local
 		if e.ThisPC {
 			t.Listed, t.ListID = true, e.ID
 			break
+		}
+	}
+	// An entry the person added by hand (its folder, an address of this PC, a share
+	// of this PC's recorder) stands for the Blackbox on this PC too.
+	if !t.Listed && found != nil && found.Installed {
+		local := b.localNames()
+		for _, e := range entries {
+			if loc, err := blackbox.ParseLocation(e.Location); err == nil && found.IsEntry(loc, e.RecorderHost, e.RecorderName, local) {
+				t.Listed, t.ListID = true, e.ID
+				break
+			}
 		}
 	}
 	switch {

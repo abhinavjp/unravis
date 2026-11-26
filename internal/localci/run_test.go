@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -1056,5 +1057,68 @@ jobs:
 	}
 	if got := stepLog(t, j.Steps[0]); !strings.Contains(got, "gh=["+NoTokenPlaceholder+"] github=[] other=[from-the-workflow]") {
 		t.Fatalf("only the placeholder survives the token strip:\n%s", got)
+	}
+}
+
+// Two jobs of one workflow must not share a checkout: one job's wipe of a folder (npm ci) cannot reach the other.
+func TestJobTreeGivesEachJobItsOwnCheckout(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: s
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: pwd > "$GITHUB_WORKSPACE/who-a.txt"; echo "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/ws-a"
+  b:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: test ! -e who-a.txt && echo "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/ws-b"
+`)
+	var made []string
+	var mu sync.Mutex
+	h.opts.JobTree = func(_ context.Context, name string) (string, func(), error) {
+		d := filepath.Join(t.TempDir(), name)
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			return "", nil, err
+		}
+		mu.Lock()
+		made = append(made, d)
+		mu.Unlock()
+		return d, func() { _ = os.RemoveAll(d) }, nil
+	}
+	res := h.run()
+	if res.Conclusion != "success" {
+		t.Fatalf("%s\n%s", res.Conclusion, h.log.String())
+	}
+	if len(made) != 2 {
+		t.Fatalf("want a tree per job, made %v", made)
+	}
+	if _, err := os.Stat(filepath.Join(h.work, "who-a.txt")); err == nil {
+		t.Fatal("job a wrote into the shared checkout")
+	}
+}
+
+func TestSingleJobKeepsTheRunCheckout(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: s
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo hi > in-run-checkout.txt
+`)
+	h.opts.JobTree = func(context.Context, string) (string, func(), error) {
+		t.Error("a one-job workflow needs no extra tree")
+		return "", nil, nil
+	}
+	if res := h.run(); res.Conclusion != "success" {
+		t.Fatal(res.Conclusion)
+	}
+	if _, err := os.Stat(filepath.Join(h.work, "in-run-checkout.txt")); err != nil {
+		t.Fatal(err)
 	}
 }

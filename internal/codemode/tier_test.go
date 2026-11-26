@@ -42,6 +42,24 @@ func tierRun(t *testing.T, tier string, identifiers bool, script fakeScript) (*e
 	return e, res
 }
 
+// scriptThatFinishes wraps a worker script so the test can wait until the script goroutine has stopped before it reads
+// what the script stored; the run ending does not order the script's last writes for the race detector.
+func scriptThatFinishes(fn func(w *fakeWorker)) (fakeScript, func(t *testing.T)) {
+	done := make(chan struct{})
+	script := func(w *fakeWorker) {
+		defer close(done)
+		fn(w)
+	}
+	return script, func(t *testing.T) {
+		t.Helper()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the worker script never finished")
+		}
+	}
+}
+
 func groupsOf(t *testing.T, raw json.RawMessage) []map[string]any {
 	t.Helper()
 	var env struct {
@@ -146,11 +164,13 @@ func TestTierLimitsTheToolsOfARun(t *testing.T) {
 	for _, tool := range evidenceOnly {
 		var answer json.RawMessage
 		var worker *fakeWorker
-		e, res := tierRun(t, mcpsrv.TierAggregate, false, func(w *fakeWorker) {
+		script, finished := scriptThatFinishes(func(w *fakeWorker) {
 			worker = w
 			answer, _ = w.Call(tool, map[string]any{"resultId": "x"})
 			w.done(1)
 		})
+		e, res := tierRun(t, mcpsrv.TierAggregate, false, script)
+		finished(t)
 		e.wantStatus(res, casestore.RunError, CodeBadFrame)
 		if len(answer) != 0 {
 			t.Errorf("%s: an aggregate run was answered: %.200s", tool, answer)
@@ -167,11 +187,13 @@ func TestTierLimitsTheToolsOfARun(t *testing.T) {
 	// An evidence run gets all ten, and its call goes to the host.
 	var worker *fakeWorker
 	var answer json.RawMessage
-	e, res := tierRun(t, mcpsrv.TierEvidence, false, func(w *fakeWorker) {
+	script, finished := scriptThatFinishes(func(w *fakeWorker) {
 		worker = w
 		answer, _ = w.Call("audit_get_activity", map[string]any{"sourceIds": []string{"demo-west"}, "start": demoNow.Add(-time.Hour), "end": demoNow})
 		w.done(1)
 	})
+	e, res := tierRun(t, mcpsrv.TierEvidence, false, script)
+	finished(t)
 	e.wantStatus(res, casestore.RunOK, "")
 	if len(worker.runMsg.Tools) != 10 || len(answer) == 0 {
 		t.Errorf("evidence run: tools %v answer %.200s", worker.runMsg.Tools, answer)

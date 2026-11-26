@@ -27,7 +27,12 @@ func touch(t *testing.T, p string) {
 }
 
 func TestAppProgramOnDisk(t *testing.T) {
-	root := t.TempDir()
+	// appProgram follows links to the real folder, so the expected paths start from the real temp folder too (the
+	// runner's TEMP is an 8.3 short name such as RUNNER~1)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	thin := filepath.Join(root, "a", "bin", "unravis.exe")
 	touch(t, thin)
 	touch(t, filepath.Join(root, "a", "unravis.exe"))
@@ -76,7 +81,8 @@ func TestInstallDirRule(t *testing.T) {
 		"/opt/unravis/bin/unravis.exe": "/opt/unravis", "/opt/unravis/BIN/unravis.exe": "/opt/unravis", "/opt/unravis/unravis.exe": "/opt/unravis",
 		"/Tools/unravis.exe": "/Tools",
 	} {
-		if got := clicore.InstallDir(in); got != want {
+		// the rule works on the path style of the platform, so the table is written with slashes and converted
+		if got := clicore.InstallDir(filepath.FromSlash(in)); got != filepath.FromSlash(want) {
 			t.Errorf("%s: %s", in, got)
 		}
 	}

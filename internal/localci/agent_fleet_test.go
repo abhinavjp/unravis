@@ -47,6 +47,7 @@ func TestTwoPCsRunAnItemOnce(t *testing.T) {
 	if runsB.Load() == 1 {
 		winner, loser, wreq, lreq = b, a, rb, ra
 	}
+	waitFor(t, "the other PC notes who is running it", func() bool { return strings.Contains(loser.get(lreq.ID).DeferNote, "running on PC m-") }) // under load the 150 ms above can pass before the note is written
 	if g := loser.get(lreq.ID); g.State != StateQueued || !strings.Contains(g.DeferNote, "running on PC m-") || g.Attempts != 0 {
 		t.Fatalf("the other PC keeps it queued with a plain note, not counting an attempt: %+v", g)
 	}

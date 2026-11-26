@@ -72,16 +72,21 @@ type rigOpts struct {
 	allowIdent bool
 	settingsIn string // folder of code-mode.json; default is a fresh temp folder
 	masterKey  *server.MasterKeySession
+	cliShut    bool // leave the command-line window closed (by default the rig opens it, so the tests of the routes and of the entrance need no extra step)
+	noGate     bool // build the broker and Install without a command-line gate
 }
 
 type rig struct {
-	t      *testing.T
-	h      http.Handler
-	store  casestore.Store
-	mount  *server.CodeMount
-	files  *settingsfile.Store
-	broker *codemode.Broker
-	ctx    context.Context
+	t           *testing.T
+	h           http.Handler
+	store       casestore.Store
+	mount       *server.CodeMount
+	files       *settingsfile.Store
+	broker      *codemode.Broker
+	spawnerUsed codemode.Spawner
+	gate        *codemode.CLIGate // nil when the rig was built with noGate
+	clock       *fakeClock        // the gate's clock
+	ctx         context.Context
 }
 
 func sealedStore(t *testing.T) casestore.Store {
@@ -103,7 +108,7 @@ func newRig(t *testing.T, o rigOpts) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &rig{t: t, store: o.store, mount: server.NewCodeMount(), ctx: context.Background()}
+	r := &rig{t: t, spawnerUsed: o.spawner, store: o.store, mount: server.NewCodeMount(), ctx: context.Background()}
 	opts := []server.Option{server.WithCases(o.store, hostMap, importer.NewRegistry())}
 	if o.masterKey != nil {
 		opts = append(opts, server.WithMasterKey(o.masterKey))
@@ -117,19 +122,28 @@ func newRig(t *testing.T, o rigOpts) *rig {
 		dir = t.TempDir()
 	}
 	r.files = settingsfile.New(dir)
-	b, err := codemode.New(codemode.Config{
+	cfg := codemode.Config{
 		Spawner:          o.spawner,
 		Hosts:            codemode.DashboardHosts(r.h, testToken),
 		Cases:            Resolver(r.mount),
 		Settings:         r.files.Settings,
 		AllowIdentifiers: o.allowIdent,
-	})
+	}
+	if !o.noGate {
+		r.clock = &fakeClock{t: time.Date(2026, 11, 25, 9, 0, 0, 0, time.UTC)}
+		r.gate = codemode.NewCLIGate(r.clock.now)
+		if !o.cliShut {
+			r.gate.Open(time.Hour)
+		}
+		cfg.Authorize = r.gate.Authorize
+	}
+	b, err := codemode.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r.broker = b
 	if !o.noInstall && !o.noMount {
-		Install(Options{Mount: r.mount, Broker: b, Settings: r.files, AllowIdentifiers: o.allowIdent})
+		Install(Options{Mount: r.mount, Broker: b, Settings: r.files, AllowIdentifiers: o.allowIdent, CLIGate: r.gate})
 	}
 	return r
 }
@@ -932,6 +946,7 @@ func TestStatusMap(t *testing.T) {
 	for code, want := range map[string]int{
 		codemode.CodeModeOff:            http.StatusForbidden,
 		codemode.CodeDenied:             http.StatusForbidden,
+		codemode.CodeCLIClosed:          http.StatusForbidden,
 		codemode.CodeNoCase:             http.StatusConflict,
 		codemode.CodeBusy:               http.StatusTooManyRequests,
 		codemode.CodeSourceTooLarge:     http.StatusRequestEntityTooLarge,

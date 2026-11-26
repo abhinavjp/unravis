@@ -385,7 +385,7 @@ func TestJSONLClosedPipeStopsQuietly(t *testing.T) {
 	o := p.owner(t)
 	var errb bytes.Buffer
 	code := Run(context.Background(), streamArgs("--limit", "3"), IO{In: strings.NewReader(""), Out: &epipeWriter{}, Err: &errb,
-		Getenv: func(string) string { return "" }, Exe: func() (string, error) { return "/opt/unravis/bin/unravis.exe", nil }, Attach: o.attacher().Attach})
+		Getenv: func(string) string { return "" }, Exe: func() (string, error) { return testExe, nil }, Attach: o.attacher().Attach})
 	if code != clicore.ExitStopped || errb.Len() != 0 || len(p.calls) != 2 {
 		t.Errorf("code %d, stderr %q, calls %d", code, errb.String(), len(p.calls))
 	}
@@ -632,7 +632,7 @@ func TestJSONLLimitsAtTheEdgeAndTimesAndWrites(t *testing.T) {
 	var errb bytes.Buffer
 	w := &failAt{at: 2}
 	code := Run(context.Background(), streamArgs("--limit", "3"), IO{In: strings.NewReader(""), Out: w, Err: &errb,
-		Getenv: func(string) string { return "" }, Exe: func() (string, error) { return "/opt/unravis/bin/unravis.exe", nil }, Attach: p.owner(t).attacher().Attach})
+		Getenv: func(string) string { return "" }, Exe: func() (string, error) { return testExe, nil }, Attach: p.owner(t).attacher().Attach})
 	if code != clicore.ExitStopped || errb.Len() != 0 || w.n != 2 {
 		t.Errorf("code %d, stderr %q, writes %d", code, errb.String(), w.n)
 	}
@@ -679,7 +679,7 @@ func runBlockedWrite(t *testing.T, p *pager, at int, args ...string) result {
 	finished := make(chan int, 1)
 	go func() {
 		finished <- Run(context.Background(), args, IO{In: strings.NewReader(""), Out: w, Err: &errb,
-			Getenv: func(string) string { return "" }, Exe: func() (string, error) { return "/opt/unravis/bin/unravis.exe", nil }, Attach: o.attacher().Attach})
+			Getenv: func(string) string { return "" }, Exe: func() (string, error) { return testExe, nil }, Attach: o.attacher().Attach})
 	}()
 	select {
 	case <-w.started:
@@ -704,15 +704,17 @@ func runBlockedWrite(t *testing.T, p *pager, at int, args ...string) result {
 }
 
 func TestJSONAndJSONLBlockedWritesHonorTimeout(t *testing.T) {
+	// The timeout covers the attach and the query before the first write, so it must be long enough for a slow or busy PC to reach the
+	// blocked write; it is still far below the 2 s the helper waits for the command to end.
 	for _, tc := range []struct {
 		name string
 		p    *pager
 		at   int
 		args []string
 	}{
-		{"jsonl first page", newPager(1), 1, streamArgs("--timeout", "50ms")},
-		{"jsonl complete", newPager(0), 2, streamArgs("--timeout", "50ms")},
-		{"json", newPager(1), 1, []string{"audit", "requests", "--result-id", "r", "--api-key", "k", "--json", "--timeout", "50ms"}},
+		{"jsonl first page", newPager(1), 1, streamArgs("--timeout", "400ms")},
+		{"jsonl complete", newPager(0), 2, streamArgs("--timeout", "400ms")},
+		{"json", newPager(1), 1, []string{"audit", "requests", "--result-id", "r", "--api-key", "k", "--json", "--timeout", "400ms"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := runBlockedWrite(t, tc.p, tc.at, tc.args...)

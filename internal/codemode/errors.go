@@ -30,6 +30,7 @@ const (
 	CodeAuditFailed         = "audit_failed"
 	CodeBadRequest          = "bad_request"
 	CodeInternal            = "internal_error"
+	CodeCLIClosed           = "cli_closed"
 )
 
 // Refusal is a request the broker refuses before it writes anything to the audit record (spec 3.5 step 1). A run that was accepted
@@ -68,4 +69,5 @@ var plain = map[string]string{
 	CodeBadRequest:          "The request is not valid.",
 	CodeInternal:            "The app hit an internal problem and stopped the run. The app is unaffected.",
 	CodeSyntaxError:         "The script could not be read.",
+	CodeCLIClosed:           "The command line is not allowed to run scripts right now. Allow it in the app's code-mode settings.",
 }

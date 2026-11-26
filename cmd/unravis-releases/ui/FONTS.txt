@@ -1,0 +1,4 @@
+Fonts bundled with Homestretch (Latin subset, WOFF2), from the Fontsource packages.
+All are licensed under the SIL Open Font License 1.1 (https://openfontlicense.org).
+
+Instrument Sans, JetBrains Mono, Geist, Geist Mono, Inter, Hanken Grotesk, Newsreader, IBM Plex Sans, IBM Plex Mono, DM Mono.
