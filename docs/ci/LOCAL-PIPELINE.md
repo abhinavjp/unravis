@@ -147,6 +147,7 @@ Backlog items and the checklist live in [../BACKLOG.md](../BACKLOG.md); an item 
 - Windows-host runs of `ubuntu` jobs: the `go-race` job needs a C compiler on Windows; if the PC has none, that job is `skip` with the reason shown until one is installed.
 - macOS entries of `desktop-sidecar` cannot run on a Windows PC; they stay on GitHub as a manual job and are listed as not run locally.
 - Disk: worktree plus caches about 3 to 6 GB per active run; the agent prunes work areas older than 24 h and caches over a size limit.
+  Housekeeping on the developer PC (session scratch, merged worktrees, Temp probes, Go cache) is separate: `tools/maint/Housekeeping.ps1` (CLAUDE.md, BL-597). It never touches the agent's work areas or caches.
 
 ## Future work (not in scope now)
 
