@@ -222,7 +222,7 @@ func overlapBrute(iv []Interval, ev []evidence.Event, tol Tolerance, q func(evid
 // the same matches, classes and candidate order as the brute-force reading
 // (RV-DAT-2: the lookup no longer depends on one long event).
 func TestOverlapTreeMatchesBruteForceWithLongEvents(t *testing.T) {
-	rng := rand.New(rand.NewSource(7))
+	rng := rand.New(rand.NewSource(7)) //nolint:gosec // G404: seeded, reproducible test data
 	for round := 0; round < 200; round++ {
 		var events []evidence.Event
 		n := rng.Intn(80)
