@@ -60,3 +60,8 @@ Thumbs.db
 /tools/uiaudit/test-results-tt/
 /.csp-demo.exe
 /tools/uiaudit/width-report/
+
+# Remote Salt tool: settings live outside the repo; never commit one
+/tools/remote/*.env
+/tools/remote/.env
+/.unravis-remote/
