@@ -162,21 +162,21 @@ type Agent struct {
 	Now       func() time.Time
 	Log       io.Writer
 
-	mu        sync.Mutex
-	jobs      map[string]*agentJob
-	draining  bool
-	started   time.Time
-	lastBeat  time.Time
-	lastState string
-	dirty     bool
-	awake     bool
-	lastPrune time.Time
+	mu          sync.Mutex
+	jobs        map[string]*agentJob
+	draining    bool
+	started     time.Time
+	lastBeat    time.Time
+	lastState   string
+	dirty       bool
+	awake       bool
+	lastPrune   time.Time
 	lastLowTrim time.Time
-	trimming  atomic.Bool
-	lowDisk   atomic.Bool
-	wake     chan struct{}
-	wg        sync.WaitGroup
-	logMu     sync.Mutex
+	trimming    atomic.Bool
+	lowDisk     atomic.Bool
+	wake        chan struct{}
+	wg          sync.WaitGroup
+	logMu       sync.Mutex
 }
 
 type agentJob struct {
