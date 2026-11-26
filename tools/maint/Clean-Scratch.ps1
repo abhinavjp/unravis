@@ -25,6 +25,11 @@
 
   With -Apply the process list must be readable (this script's own process must appear in it) or the run aborts.
 
+  Known limits: a session that is open but idle (no process names it, no file open, not its working directory) and untouched for
+  a day cannot be told from an abandoned one and may be deleted; a session folder is re-creatable scratch, so that is accepted.
+  A process running elevated may hide its command line from a non-elevated run; the rename step still protects any open folder.
+  When one session id has several project folders they are renamed together and rolled back together if any one fails.
+
   Never touched: anything outside the root, the repo, D:\secret, user data. A root that is not exactly <x>\Temp\claude is refused.
 
 .PARAMETER Apply            Really delete. Without it the script only reports.
@@ -99,7 +104,7 @@ function Get-RunningLines {
 
 function Format-Size { param([double]$Bytes) '{0:N2} GB' -f ($Bytes / 1GB) }
 
-function Get-BaseName { param([string]$Name) return ($Name -replace '\.deleting$', '') }
+function Get-BaseName { param([string]$Name) return ($Name -replace '\.deleting2?$', '') }
 
 # Test-CloneAtRisk: a reason string when a clone (a `.git` folder) holds work that exists nowhere else or git cannot say; else $null.
 function Test-CloneAtRisk {
@@ -110,12 +115,14 @@ function Test-CloneAtRisk {
         return 'other worktrees depend on this clone'
     }
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return 'a clone, and git is not available to check it' }
-    $st = & git --no-optional-locks -c safe.directory='*' -C $repo status --porcelain 2>$null
+    # fsmonitor off: a scratch repo's own config must not make this unattended run execute a command.
+    $st = & git --no-optional-locks -c core.fsmonitor=false -C $repo status --porcelain --untracked-files=all 2>$null
     if ($LASTEXITCODE -ne 0) { return 'a clone that git could not check' }
     if ($st) { return 'a clone with uncommitted changes' }
-    $un = & git --no-optional-locks -c safe.directory='*' -C $repo log --branches --not --remotes -n 1 --format=%H 2>$null
+    # --all covers branches, tags, stash and a detached HEAD.
+    $un = & git --no-optional-locks -c core.fsmonitor=false -C $repo log --all --not --remotes -n 1 --format=%H 2>$null
     if ($LASTEXITCODE -ne 0) { return 'a clone that git could not check' }
-    if ($un) { return 'a clone with unpushed commits' }
+    if ($un) { return 'a clone with unpushed commits, tags or a stash' }
     return $null
 }
 
@@ -124,10 +131,11 @@ function Get-SessionVerdict {
     param([IO.DirectoryInfo]$Dir, [datetime]$Cutoff, [string[]]$Running, [bool]$WithWorktrees)
     $v = [ordered]@{ Path = $Dir.FullName; Id = (Get-BaseName $Dir.Name); Bytes = 0L; Delete = $false; Why = '' }
     if ($Dir.Attributes -band [IO.FileAttributes]::ReparsePoint) { $v.Why = 'is a link'; return [pscustomobject]$v }
+    if ($Dir.Name -match '[. ]$') { $v.Why = 'name ends in a dot or space (Windows may treat it as another folder)'; return [pscustomobject]$v }
     $newest = $Dir.LastWriteTimeUtc
     if ($Dir.CreationTimeUtc -gt $newest) { $newest = $Dir.CreationTimeUtc }
     $bytes = 0L
-    $gitFile = $false
+    $gitFiles = @()
     $gitDirs = @()
     $errs = $null
     $entries = Get-ChildItem -LiteralPath $Dir.FullName -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable errs
@@ -140,13 +148,14 @@ function Get-SessionVerdict {
             if ($e.Name -eq '.git') { $gitDirs += $e.FullName }
         } else {
             $bytes += $e.Length
-            if ($e.Name -eq '.git') { $gitFile = $true }
+            if ($e.Name -eq '.git') { $gitFiles += $e.FullName }
         }
     }
     $v.Bytes = $bytes
     if ($newest -ge $Cutoff) { $v.Why = 'written recently (' + $newest.ToString('yyyy-MM-dd HH:mm') + ' UTC)'; return [pscustomobject]$v }
-    if ($gitFile -and -not $WithWorktrees) { $v.Why = 'holds a git worktree'; return [pscustomobject]$v }
-    foreach ($g in $gitDirs) {
+    if ($gitFiles.Count -gt 0 -and -not $WithWorktrees) { $v.Why = 'holds a git worktree'; return [pscustomobject]$v }
+    # A linked worktree (.git file) is only deleted with -IncludeWorktrees, and then only when it holds nothing unsaved.
+    foreach ($g in @($gitDirs) + @($gitFiles)) {
         $risk = Test-CloneAtRisk -GitDir $g
         if ($risk) { $v.Why = $risk + ' (' + $g + ')'; return [pscustomobject]$v }
     }
@@ -174,48 +183,84 @@ function Invoke-ScratchClean {
     $freed = 0L; $would = 0L; $kept = 0; $failed = 0
 
     $verdicts = @()
-    foreach ($proj in Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue) {
+    $rootErrs = $null
+    $projs = @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue -ErrorVariable rootErrs)
+    $listFailed = [bool]($rootErrs -and $rootErrs.Count -gt 0)
+    foreach ($proj in $projs) {
         if ($proj.Attributes -band [IO.FileAttributes]::ReparsePoint) { Write-Host "keep  $($proj.FullName): is a link"; $kept++; continue }
-        foreach ($sess in Get-ChildItem -LiteralPath $proj.FullName -Directory -Force -ErrorAction SilentlyContinue) {
+        $projErrs = $null
+        $sessions = @(Get-ChildItem -LiteralPath $proj.FullName -Directory -Force -ErrorAction SilentlyContinue -ErrorVariable projErrs)
+        if ($projErrs -and $projErrs.Count -gt 0) { $listFailed = $true }
+        foreach ($sess in $sessions) {
             $verdicts += Get-SessionVerdict -Dir $sess -Cutoff $cutoff -Running $Running -WithWorktrees $WithWorktrees
         }
+    }
+    # A folder that could not be listed may hold the twin of a session that must stay, so nothing is deleted this run.
+    if ($listFailed) {
+        Write-Host 'could not list every project folder: keeping everything this run'
+        foreach ($v in $verdicts) { $v.Delete = $false; $v.Why = 'the folder tree could not be listed completely' }
     }
     # One session id can have folders under several projects: if any of them must stay, they all stay.
     $mustKeep = @{}
     foreach ($v in $verdicts) { if (-not $v.Delete) { $mustKeep[$v.Id.ToLowerInvariant()] = $true } }
 
+    $groups = [ordered]@{}
     foreach ($v in $verdicts) {
         if ($v.Delete -and $mustKeep.ContainsKey($v.Id.ToLowerInvariant())) { $v.Delete = $false; $v.Why = 'the same session id is kept under another project' }
         if (-not $v.Delete) { $kept++; Write-Host ("keep  {0}  [{1}]  {2}" -f $v.Path, (Format-Size $v.Bytes), $v.Why); continue }
         if (-not (Test-Inside -Root $root -Child $v.Path -Depth 2)) { $kept++; Write-Host "keep  $($v.Path): outside the expected depth"; continue }
         if (-not $DoApply) { $would += $v.Bytes; Write-Host ("would delete  {0}  [{1}]  {2}" -f $v.Path, (Format-Size $v.Bytes), $v.Why); continue }
+        $k = $v.Id.ToLowerInvariant()
+        if (-not $groups.Contains($k)) { $groups[$k] = New-Object System.Collections.ArrayList }
+        [void]$groups[$k].Add($v)
+    }
 
-        # Rename first: Windows refuses while a process has a file open inside, or has the folder as its working directory.
-        $parent = Split-Path -Parent $v.Path
-        $orig = Split-Path -Leaf $v.Path
-        $tmpName = (Get-BaseName $orig) + '.deleting'
-        $tmpPath = Join-Path $parent $tmpName
-        if ($orig -ne $tmpName) {
-            if (Test-Path -LiteralPath $tmpPath) { $kept++; Write-Host "keep  $($v.Path): $tmpName already exists"; continue }
+    # Apply, one session id (all its project folders) at a time: rename every member first, re-check every member, and only then
+    # delete. If any step fails for any member, every member is renamed back and the whole group stays.
+    foreach ($k in @($groups.Keys)) {
+        $moved = @()
+        $problem = $null
+        foreach ($v in $groups[$k]) {
+            $parent = Split-Path -Parent $v.Path
+            $orig = Split-Path -Leaf $v.Path
+            # Always a real rename, also for a leftover from a crashed run: Windows refuses it while a process has a file open inside
+            # or has the folder as its working directory, which is the in-use probe.
+            $tmpName = if ($orig -match '\.deleting$') { (Get-BaseName $orig) + '.deleting2' } else { (Get-BaseName $orig) + '.deleting' }
+            $tmpPath = Join-Path $parent $tmpName
+            if (Test-Path -LiteralPath $tmpPath) { $problem = "$($v.Path): $tmpName already exists"; break }
             try { Rename-Item -LiteralPath $v.Path -NewName $tmpName -ErrorAction Stop }
-            catch { $kept++; Write-Host ("keep  {0}: in use (cannot be renamed): {1}" -f $v.Path, $_.Exception.Message); continue }
+            catch { $problem = ("{0}: in use (cannot be renamed): {1}" -f $v.Path, $_.Exception.Message); break }
+            $moved += [pscustomobject]@{ V = $v; Orig = $orig; Tmp = $tmpPath }
         }
-        # Check again on the renamed folder with a fresh process list; undo the rename if anything changed.
-        $again = $null
-        try { $again = Get-SessionVerdict -Dir (Get-Item -LiteralPath $tmpPath -Force) -Cutoff $cutoff -Running (Get-FreshRunning $Running) -WithWorktrees $WithWorktrees }
-        catch { $again = $null }
-        if (-not $again -or -not $again.Delete) {
-            $why = if ($again) { $again.Why } else { 'could not re-check' }
-            if ($orig -ne $tmpName) { try { Rename-Item -LiteralPath $tmpPath -NewName $orig -ErrorAction Stop } catch { Write-Host "warning: could not rename $tmpPath back to $orig" } }
-            $kept++; Write-Host ("keep  {0}: changed while checking: {1}" -f $v.Path, $why); continue
+        if (-not $problem) {
+            foreach ($m in $moved) {
+                $again = $null
+                try { $again = Get-SessionVerdict -Dir (Get-Item -LiteralPath $m.Tmp -Force) -Cutoff $cutoff -Running (Get-FreshRunning $Running) -WithWorktrees $WithWorktrees }
+                catch { $again = $null }
+                if (-not $again -or -not $again.Delete) {
+                    $problem = ("{0}: changed while checking: {1}" -f $m.V.Path, $(if ($again) { $again.Why } else { 'could not re-check' }))
+                    break
+                }
+            }
         }
-        try {
-            Remove-Item -LiteralPath $tmpPath -Recurse -Force -ErrorAction Stop
-            $freed += $v.Bytes; Write-Host ("deleted  {0}  [{1}]" -f $v.Path, (Format-Size $v.Bytes))
-        } catch {
-            $failed++; Write-Host ("not fully deleted (left as {0}, the next run retries): {1}" -f $tmpPath, $_.Exception.Message)
-            $left = (Get-ChildItem -LiteralPath $tmpPath -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
-            $freed += [math]::Max(0L, $v.Bytes - [long]$left)
+        if ($problem) {
+            foreach ($m in $moved) {
+                try { Rename-Item -LiteralPath $m.Tmp -NewName $m.Orig -ErrorAction Stop }
+                catch { $failed++; Write-Host "warning: could not rename $($m.Tmp) back to $($m.Orig): the next run re-checks it" }
+            }
+            $kept += $groups[$k].Count
+            Write-Host "keep  session $k (all of its folders): $problem"
+            continue
+        }
+        foreach ($m in $moved) {
+            try {
+                Remove-Item -LiteralPath $m.Tmp -Recurse -Force -ErrorAction Stop
+                $freed += $m.V.Bytes; Write-Host ("deleted  {0}  [{1}]" -f $m.V.Path, (Format-Size $m.V.Bytes))
+            } catch {
+                $failed++; Write-Host ("not fully deleted (left as {0}, the next run retries): {1}" -f $m.Tmp, $_.Exception.Message)
+                $left = (Get-ChildItem -LiteralPath $m.Tmp -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+                $freed += [math]::Max(0L, $m.V.Bytes - [long]$left)
+            }
         }
     }
     return [pscustomobject]@{ FreedBytes = $freed; WouldFreeBytes = $would; Kept = $kept; Failed = $failed }
@@ -243,7 +288,9 @@ function Invoke-GoCacheClean {
     $busy = $Running | Where-Object { $_ -match '(?i)(^|[\\"\s])(go|compile|asm|cgo)(\.exe)?("|\s|$)' }
     if ($busy) { Write-Host 'go cache: a Go build is running, skipped'; return $out }
     if (-not $DoApply) { Write-Host ("would clean the go cache {0} [{1}]" -f $full, (Format-Size $bytes)); $out.WouldFreeBytes = $bytes; return $out }
-    & go clean -cache
+    Push-Location -LiteralPath $env:USERPROFILE
+    $oldTc2 = $env:GOTOOLCHAIN; $env:GOTOOLCHAIN = 'local'
+    try { & go clean -cache } finally { $env:GOTOOLCHAIN = $oldTc2; Pop-Location }
     if ($LASTEXITCODE -ne 0) { Write-Host "go cache: go clean failed (exit $LASTEXITCODE)" }
     $after = [long](Get-ChildItem -LiteralPath $full -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
     $out.FreedBytes = [math]::Max(0L, $bytes - $after)

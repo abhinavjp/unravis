@@ -91,7 +91,7 @@ try {
     Check ($r.FreedBytes -ge 2048) 'apply reports freed bytes'
 
     $r = Run-Clean $true $running $true
-    Check (-not (Test-Path -LiteralPath $withWt)) 'worktree folder is deleted with -IncludeWorktrees'
+    Check (Test-Path -LiteralPath $withWt) 'a dangling worktree file (git cannot check it) is kept even with -IncludeWorktrees'
     Check (Test-Path -LiteralPath $inUse) 'in-use folder still kept with -IncludeWorktrees'
 
     # ---- in use by full path
@@ -112,6 +112,42 @@ try {
     $twinB = New-Sess 'twin-id' $now.AddHours(-1) $proj2
     $null = Run-Clean $true
     Check ((Test-Path -LiteralPath $twinA) -and (Test-Path -LiteralPath $twinB)) 'a session id kept under one project is kept under all'
+
+    # ---- a leftover .deleting folder from a crashed run is retried
+    $tag = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $left = New-Sess "cl-$tag.deleting" $old
+    $null = Run-Clean $true
+    Check (-not (Test-Path -LiteralPath $left)) 'an old .deleting leftover is deleted'
+    Check (-not (Test-Path -LiteralPath ($left + '2'))) 'no .deleting2 leftover'
+    $leftBusy = New-Sess "cb-$tag.deleting" $old
+    $fsl = [IO.File]::Open((Join-Path $leftBusy 'scratchpad\a.bin'), 'Open', 'Read', 'None')
+    try {
+        $null = Run-Clean $true
+        Check (Test-Path -LiteralPath (Join-Path $leftBusy 'scratchpad\a.bin')) 'a .deleting leftover with an open file is kept (real rename probe)'
+    } finally { $fsl.Dispose() }
+    $null = Run-Clean $true
+    Check (-not (Test-Path -LiteralPath $leftBusy)) 'the leftover is deleted once nothing holds it'
+
+    # ---- same id under two projects, one member in use: nothing of the group is deleted, everything is renamed back
+    $gA = New-Sess "gi-$tag" $old $proj
+    $gB = New-Sess "gi-$tag" $old $proj2
+    $fsg = [IO.File]::Open((Join-Path $gB 'scratchpad\a.bin'), 'Open', 'Read', 'None')
+    try {
+        $null = Run-Clean $true
+        Check ((Test-Path -LiteralPath (Join-Path $gA 'scratchpad\a.bin')) -and (Test-Path -LiteralPath (Join-Path $gB 'scratchpad\a.bin'))) 'a twin group with one open file is kept whole'
+        Check (-not (Test-Path -LiteralPath "$gA.deleting") -and -not (Test-Path -LiteralPath "$gB.deleting")) 'the group rename is rolled back'
+    } finally { $fsg.Dispose() }
+    $null = Run-Clean $true
+    Check ((-not (Test-Path -LiteralPath $gA)) -and (-not (Test-Path -LiteralPath $gB))) 'the twin group is deleted together once free'
+
+    # ---- a name ending in a dot is kept
+    $dotName = '\\?\' + (Join-Path $proj "dt-$tag.")
+    [void][IO.Directory]::CreateDirectory($dotName)
+    $dotted = $true
+    try { $dd = [IO.DirectoryInfo]::new($dotName); $dd.CreationTimeUtc = $old; $dd.LastWriteTimeUtc = $old } catch { $dotted = $false }
+    $null = Run-Clean $true
+    Check ([IO.Directory]::Exists($dotName)) 'a folder name ending in a dot is kept'
+    try { [IO.Directory]::Delete($dotName, $true) } catch { }
 
     # ---- links
     $outside = Join-Path $base 'outside-data'
@@ -143,6 +179,18 @@ try {
     if ($LASTEXITCODE -eq 0) { $denied += $locked }
     $null = Run-Clean $true
     Check (Test-Path -LiteralPath $unread) 'a folder with an unreadable part is kept'
+
+    # ---- a project folder that cannot be listed: nothing is deleted this run
+    $listOld = New-Sess 'list-old' $old
+    $proj3 = Join-Path $root 'proj3'
+    New-Item -ItemType Directory -Force -Path (Join-Path $proj3 'x') | Out-Null
+    $d3 = & icacls $proj3 /deny "$($env:USERNAME):(RD)" 2>&1
+    Check ($LASTEXITCODE -eq 0) 'could deny listing on a project folder'
+    $null = Run-Clean $true
+    Check (Test-Path -LiteralPath $listOld) 'an unlistable project folder keeps everything this run'
+    & icacls $proj3 /remove:d "$($env:USERNAME)" 2>&1 | Out-Null
+    $null = Run-Clean $true
+    Check (-not (Test-Path -LiteralPath $listOld)) 'after the folder is readable again the old session is deleted'
 
     # ---- an open file handle blocks the rename, nothing is half deleted
     $held = New-Sess 'held-open' $old
@@ -187,6 +235,24 @@ try {
         Invoke-G clone -q $bare (Join-Path $wtClone 'repo')
         Invoke-G -C (Join-Path $wtClone 'repo') worktree add -q (Join-Path $base 'linked-wt') -b side
         Set-All $wtClone $old
+        $stashClone = Join-Path $proj 'clone-stash'
+        New-Item -ItemType Directory -Force -Path $stashClone | Out-Null
+        Invoke-G clone -q $bare (Join-Path $stashClone 'repo')
+        Set-Content -LiteralPath (Join-Path $stashClone 'repo\f.txt') -Value 'stashed work'
+        Invoke-G -C (Join-Path $stashClone 'repo') stash -q
+        Set-All $stashClone $old
+        # A real linked worktree, as its own session folder (its main repo lives elsewhere).
+        $mainRepo = Join-Path $base 'mainrepo'
+        Invoke-G clone -q $bare $mainRepo
+        $wtClean = Join-Path $proj 'wt-clean'
+        New-Item -ItemType Directory -Force -Path $wtClean | Out-Null
+        Invoke-G -C $mainRepo worktree add -q (Join-Path $wtClean 'tree') -b wtclean
+        Set-All $wtClean $old
+        $wtDirty = Join-Path $proj 'wt-dirty'
+        New-Item -ItemType Directory -Force -Path $wtDirty | Out-Null
+        Invoke-G -C $mainRepo worktree add -q (Join-Path $wtDirty 'tree') -b wtdirty
+        Set-Content -LiteralPath (Join-Path $wtDirty 'tree\f.txt') -Value 'dirty'
+        Set-All $wtDirty $old
 
         $null = Run-Clean $true
         if (Test-Path -LiteralPath $cleanClone) { Show-Log }
@@ -194,6 +260,13 @@ try {
         Check (Test-Path -LiteralPath $dirtyClone) 'a clone with uncommitted changes is kept'
         Check (Test-Path -LiteralPath $aheadClone) 'a clone with unpushed commits is kept'
         Check (Test-Path -LiteralPath $wtClone) 'a clone that other worktrees depend on is kept'
+        Check (Test-Path -LiteralPath $stashClone) 'a clone whose only unsaved work is a stash is kept'
+        Check (Test-Path -LiteralPath $wtClean) 'a linked worktree is kept by default'
+        $null = Run-Clean $true @() $true
+        if (Test-Path -LiteralPath $wtClean) { Show-Log }
+        Check (-not (Test-Path -LiteralPath $wtClean)) 'a clean linked worktree is deleted with -IncludeWorktrees'
+        Check (Test-Path -LiteralPath $wtDirty) 'a dirty linked worktree is kept even with -IncludeWorktrees'
+        Check (Test-Path -LiteralPath $stashClone) 'the stash clone is still kept with -IncludeWorktrees'
 
         # The remote is gone: a clone of it can no longer prove its commits exist elsewhere only if it has local-only branches; a clone
         # whose remote-tracking refs still match has nothing unpushed, so it is deleted. A clone with no commits beyond remotes is safe.
