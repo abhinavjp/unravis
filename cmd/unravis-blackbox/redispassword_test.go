@@ -266,3 +266,145 @@ func TestSQLStatusSaysWhereItStandsAndPrintsTheGrantOnlyWhenNeeded(t *testing.T)
 		t.Errorf("sql-status changed the service: %v", svc.calls)
 	}
 }
+
+func installedRig(t *testing.T) *rig {
+	t.Helper()
+	r := newRig(t)
+	cfg := blackbox.Default()
+	cfg.Name = "box-1"
+	cfg.Folder = filepath.Join(r.dir, "rec")
+	cfg.LogPaths = []string{r.dir}
+	src := filepath.Join(r.dir, "src.json")
+	if err := blackbox.SaveConfig(src, cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	if c, out, errs := r.do("install", "--config", src, "--json"); c != 0 {
+		t.Fatalf("install: %d %s %s", c, out, errs)
+	}
+	return r
+}
+
+func TestConfigSetValidateHistoryRollbackThroughTheCLI(t *testing.T) {
+	r := installedRig(t)
+	if c, out, errs := r.do("config", "set", "web.iis", "off", "--json"); c != 0 || !strings.Contains(out, `"ok":true`) {
+		t.Fatalf("set: %d %s %s", c, out, errs)
+	}
+	if c, out, errs := r.do("config", "set", "--every", "5m", "--json"); c != exitUsage && c != exitFail {
+		t.Fatalf("set with no collector: %d %s %s", c, out, errs)
+	}
+	if c, out, _ := r.do("config", "set", "web.iis", "--every", "5m", "--json"); c != 0 || !strings.Contains(out, "every 300") {
+		t.Fatalf("set --every: %d %s", c, out)
+	}
+	if c, out, _ := r.do("config", "set", "counters.extra", "add", `\Memory\Available MBytes`, "--json"); c != 0 {
+		t.Fatalf("counter add: %d %s", c, out)
+	}
+	c, out, _ := r.do("config", "history", "--json")
+	if c != 0 || !strings.Contains(out, `"verified":true`) || strings.Count(out, `"seq"`) != 3 {
+		t.Fatalf("history: %d %s", c, out)
+	}
+	if c, out, _ := r.do("config", "rollback", "--json"); c != 0 || !strings.Contains(out, `"ok":true`) {
+		t.Fatalf("rollback: %d %s", c, out)
+	}
+	// Refusals carry a fixed reason.
+	for _, args := range [][]string{
+		{"config", "set", "nope.none", "off", "--json"},
+		{"config", "set", "host.diskcpu", "off", "--json"},
+		{"config", "set", "web.iis", "maybe", "--json"},
+		{"config", "set", "counters.extra", "add", `\\server\Process(*)\x`, "--json"},
+		{"config", "set", "web.iis", "on", "--every", "7", "--json"},
+		{"config", "set", "web.iis", "on", "--every", "soon", "--json"},
+	} {
+		c, out, _ := r.do(args...)
+		if c != exitFail || !strings.Contains(out, `"ok":false`) {
+			t.Errorf("%v: %d %s", args, c, out)
+		}
+	}
+	// validate: a good file, a bad one, a missing one. None of them changes anything.
+	good := filepath.Join(r.dir, "good.json")
+	cfg := blackbox.Default()
+	cfg.Name, cfg.Folder, cfg.LogPaths = "x", filepath.Join(r.dir, "rec2"), []string{r.dir}
+	if err := blackbox.SaveConfig(good, cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	if c, out, _ := r.do("config", "validate", good, "--json"); c != 0 || !strings.Contains(out, `"valid":true`) {
+		t.Errorf("validate good: %d %s", c, out)
+	}
+	bad := filepath.Join(r.dir, "bad.json")
+	_ = os.WriteFile(bad, []byte(`{"name":"x","collectors":{"nope.none":{"on":false}}}`), 0o600)
+	if c, _, _ := r.do("config", "validate", bad); c != exitFail {
+		t.Errorf("validate bad: %d", c)
+	}
+	if c, _, _ := r.do("config", "validate", filepath.Join(r.dir, "missing.json")); c != exitFail {
+		t.Errorf("validate missing: %d", c)
+	}
+	// Not an administrator: set and rollback are refused; history and validate still work.
+	r.env.admin = false
+	if c, out, _ := r.do("config", "set", "web.iis", "off", "--json"); c != exitFail || !strings.Contains(out, "no-admin") {
+		t.Errorf("non-admin set: %d %s", c, out)
+	}
+	if c, _, _ := r.do("config", "history"); c != 0 {
+		t.Errorf("non-admin history: %d", c)
+	}
+	if c, _, _ := r.do("config"); c != exitUsage {
+		t.Errorf("bare config: %d", c)
+	}
+	if c, _, _ := r.do("config", "run", "ls"); c != exitUsage {
+		t.Errorf("unknown config verb: %d", c)
+	}
+}
+
+func TestConfigVerbsTakeOnlyTheirOwnFlagsAndValidateOpensOnlyOrdinaryFiles(t *testing.T) {
+	r := installedRig(t)
+	victim := filepath.Join(r.dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"config", "history", "--answer-file", victim},
+		{"config", "rollback", "--folder", r.dir},
+		{"config", "set", "web.iis", "off", "--port", "9999"},
+		{"config", "validate", victim, "--config", victim},
+	} {
+		if c, _, _ := r.do(args...); c != exitUsage {
+			t.Errorf("%v: %d (a flag the verb does not name must be refused)", args, c)
+		}
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "keep me" { //nolint:gosec // test file
+		t.Fatalf("--answer-file overwrote a file: %q", b)
+	}
+	// validate: only a full path to an ordinary small file.
+	big := filepath.Join(r.dir, "big.json")
+	if err := os.WriteFile(big, append([]byte(`{"name":"`), make([]byte, 2<<20)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(r.dir, "link.json")
+	_ = os.Symlink(victim, link)
+	notSettings := filepath.Join(r.dir, "other.json")
+	_ = os.WriteFile(notSettings, []byte(`{"secretKeyName":"x"}`), 0o600)
+	for _, p := range []string{"relative.json", r.dir, big, link, notSettings, `\\host\share\x.json`, "//host/share/x.json", filepath.Join(r.dir, "none.json")} {
+		c, out, errs := r.do("config", "validate", p, "--json")
+		if c != exitFail {
+			t.Errorf("%q: %d %s %s", p, c, out, errs)
+		}
+		if strings.Contains(out, "secretKeyName") || strings.Contains(out, r.dir) {
+			t.Errorf("%q: the answer echoes the file or the path: %s", p, out)
+		}
+	}
+}
+
+func TestWindowsPathRulesForValidate(t *testing.T) {
+	good := []string{`C:\ProgramData\x.json`, `d:/data/x.json`, `E:\a b\c.json`} // winok: string rule only, no filesystem
+	bad := []string{`\??\UNC\host\share\x.json`, `\\host\share\x.json`, `\\?\C:\x.json`, `\\.\pipe\x`, `C:x.json`, `\x.json`, `C:`, `C:\`,
+		`C:\a.json:stream`, `C:\a\..\b.json`, `C:\CON`, `C:\dir\nul.json`, `C:\dir\COM1.txt`, `C:\dir\aux `, `C:\x\?.json`, "C:\\x\x00.json", `1:\x.json`, // winok: string rule only, no filesystem
+		`//host/share/x.json`, `C:\LPT9`, `C:\CONIN$`} // winok: string rule only, no filesystem
+	for _, p := range good {
+		if !windowsPathOK(p) {
+			t.Errorf("%q was refused", p)
+		}
+	}
+	for _, p := range bad {
+		if windowsPathOK(p) {
+			t.Errorf("%q was accepted", p)
+		}
+	}
+}
