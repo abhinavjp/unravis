@@ -84,6 +84,10 @@ func (u *Updater) EnableSilentApply(launch Launcher, canSilently func() bool, bu
 	u.silent, u.canSilently, u.busy = launch, canSilently, busy
 }
 
+// EnableSilentReopen sets the launcher used when a person presses Apply now: like the silent one, but the new version also opens
+// its page in the browser. The automatic apply keeps the plain silent launcher (nobody is there to look at a new tab).
+func (u *Updater) EnableSilentReopen(launch Launcher) { u.silentOpen = launch }
+
 // Presence is the tracker the page pings.
 func (u *Updater) Presence() *Presence { return &u.presence }
 
@@ -237,7 +241,7 @@ func (u *Updater) autoStep() {
 	u.auto.mu.Lock()
 	u.auto.failedByAuto = true
 	u.auto.mu.Unlock()
-	err := u.Install()
+	err := u.install(false)
 	u.auto.mu.Lock()
 	switch {
 	case errors.Is(err, errRecheckOffline), errors.Is(err, errRecheckRefused):
