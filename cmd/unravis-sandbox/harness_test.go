@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -116,6 +117,9 @@ func (w *worker) kill() {
 	}
 }
 
+// errNoFrame is what next returns (wrapped) when no frame arrived in time; it is the only error that is not a real read failure.
+var errNoFrame = errors.New("no frame")
+
 // next returns the next frame the worker sent, or an error when it closed its pipe or took longer than wait.
 func (w *worker) next(wait time.Duration) ([]byte, error) {
 	select {
@@ -125,7 +129,7 @@ func (w *worker) next(wait time.Duration) ([]byte, error) {
 		}
 		return in.data, in.err
 	case <-time.After(wait):
-		return nil, fmt.Errorf("no frame within %v", wait)
+		return nil, fmt.Errorf("%w within %v", errNoFrame, wait)
 	}
 }
 
@@ -260,7 +264,7 @@ func runScenario(t *testing.T, sc scenario) outcome {
 		}
 		data, err := w.next(wait)
 		if err != nil {
-			if len(waiting) > 0 && err != io.EOF {
+			if len(waiting) > 0 && errors.Is(err, errNoFrame) {
 				// nothing more arrives: answer what is waiting
 				for _, h := range waiting {
 					reply(h)

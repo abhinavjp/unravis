@@ -222,8 +222,11 @@ func TestOneRunThenExit(t *testing.T) {
 	var dones []wire.Done
 	for {
 		data, err := w.next(frameWait)
-		if err != nil {
+		if err == io.EOF {
 			break
+		}
+		if err != nil {
+			t.Fatalf("reading the worker's frames: %v (stderr %q)", err, w.stderr.String())
 		}
 		typ, _ := wire.PeekType(data)
 		if typ != wire.TypeDone {

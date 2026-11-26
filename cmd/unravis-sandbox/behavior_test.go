@@ -373,6 +373,9 @@ func TestEscapeAttempts(t *testing.T) {
 				V       string
 				Name    string
 			}
+			if strings.Contains(string(o.doneRaw), "canary-5c1f0e77") {
+				t.Fatalf("the environment leaked: %s", o.doneRaw)
+			}
 			if !o.done.OK {
 				// A syntax error of the attempt itself ends the run as script_error, which is also a refusal.
 				if o.done.Error.Code != "script_error" {
@@ -383,9 +386,6 @@ func TestEscapeAttempts(t *testing.T) {
 			o.resultJSON(t, &r)
 			if r.Escaped {
 				t.Fatalf("the attempt worked: %s", o.doneRaw)
-			}
-			if strings.Contains(string(o.doneRaw), "canary-5c1f0e77") {
-				t.Fatalf("the environment leaked: %s", o.doneRaw)
 			}
 		})
 	}
