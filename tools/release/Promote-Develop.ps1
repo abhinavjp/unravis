@@ -21,7 +21,7 @@
   The release manager (Release.ps1) then cuts from master as before; its "CI green on master" wait is on the push run of the merge commit.
 
 .PARAMETER UpTo       Promote develop up to this commit (full or short sha). Default: the tip of develop.
-.PARAMETER DryRun     Do steps 1 to 3 and print the plan. Creates nothing.
+.PARAMETER DryRun     Do steps 0 to 3 and print the plan. Creates nothing.
 .PARAMETER NoMerge    Open the pull request and stop (the check runs; merge it yourself or run again).
 .PARAMETER WaitMinutes  The lock is held with merges on hold: wait this long (checks every 30 s) instead of refusing. Default 0.
 .PARAMETER CiWaitMinutes  How long to wait for `build`. Default 45.

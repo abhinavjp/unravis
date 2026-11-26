@@ -142,14 +142,14 @@ func TestHoldLiftAndActivity(t *testing.T) {
 		t.Fatalf("list --all --json: exit %d, %+v, %v", code, list, err)
 	}
 
-	// activity: the add (actor claude, owner sam) and the lift (actor ui from the env, lifter pat)
+	// activity: the add (actor claude, run by pat for owner sam) and the lift (actor ui from the env, lifter pat)
 	code, out, _ = cli(t, nil, "activity", "--json", "--state-dir", dir)
 	var act activityJSON
 	if err := json.Unmarshal([]byte(out), &act); err != nil || code != exitOK || len(act.Entries) != 2 {
 		t.Fatalf("activity --json: exit %d, %+v, %v", code, act, err)
 	}
 	a, l := act.Entries[0], act.Entries[1]
-	if a.Actor != activitylog.ActorClaude || a.Person != "sam" || a.Action != "hold.add" || !strings.HasPrefix(a.Target, h.ID) || a.Reason != "release review" {
+	if a.Actor != activitylog.ActorClaude || a.Person != "pat" || a.Action != "hold.add" || !strings.HasPrefix(a.Target, h.ID) || !strings.Contains(a.Target, "owner sam") || a.Reason != "release review" {
 		t.Errorf("add entry = %+v", a)
 	}
 	if l.Actor != activitylog.ActorUI || l.Person != "pat" || l.Action != "hold.lift" || l.Reason != "review done" {

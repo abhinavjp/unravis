@@ -206,8 +206,13 @@ func cmdHoldAdd(args []string, stdout, stderr io.Writer, environ []string) int {
 		_, _ = fmt.Fprintf(stdout, "hold %s added: Promote is held for %s from %s until %s.\n  owner: %s\n  reason: %s\n  lift it early with: unravis-ci hold lift %s --reason \"...\"\n",
 			h.ID, projectText(h.Project), whenText(h.Start), whenText(h.End), h.Owner, h.Reason, h.ID)
 	}
-	return logActivity("hold add", dir, activitylog.Entry{Time: now, Actor: act, Person: h.Owner, Action: "hold.add",
-		Target: h.ID + " " + h.Project, Reason: h.Reason}, stderr)
+	// The entry names who ran the command; the owner (who may be someone else, --owner) goes in the target.
+	runner := userOf(environ)
+	if runner == "" {
+		runner = h.Owner
+	}
+	return logActivity("hold add", dir, activitylog.Entry{Time: now, Actor: act, Person: runner, Action: "hold.add",
+		Target: h.ID + " " + h.Project + " (owner " + h.Owner + ")", Reason: h.Reason}, stderr)
 }
 
 // ---------------------------------------------------------------- lift
