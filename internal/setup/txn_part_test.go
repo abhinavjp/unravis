@@ -13,7 +13,7 @@ func TestKeepCopyReplacesAStalePartFromAKilledRun(t *testing.T) {
 	tx := newTestTxn(t, e.sys)
 	dir := t.TempDir()
 	tx.backups = filepath.Join(dir, "backups")
-	if err := os.MkdirAll(tx.backups, 0o755); err != nil {
+	if err := os.MkdirAll(tx.backups, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	src := filepath.Join(dir, "x")
@@ -45,7 +45,7 @@ func TestKeepCopyRefusesANonFileAtThePartName(t *testing.T) {
 	dir := t.TempDir()
 	tx.backups = filepath.Join(dir, "backups")
 	inTheWay := filepath.Join(tx.backups, "1-x.part")
-	if err := os.MkdirAll(inTheWay, 0o755); err != nil { // a folder; a link would be refused the same way (Lstat, not Stat)
+	if err := os.MkdirAll(inTheWay, 0o750); err != nil { // a folder; a link would be refused the same way (Lstat, not Stat)
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(inTheWay, "keep.txt"), []byte("not setup's"), 0o600); err != nil {
@@ -69,7 +69,7 @@ func TestKeepCopyWithNoStalePartStillCopies(t *testing.T) {
 	tx := newTestTxn(t, e.sys)
 	dir := t.TempDir()
 	tx.backups = filepath.Join(dir, "backups")
-	if err := os.MkdirAll(tx.backups, 0o755); err != nil { // already there, so the run's working-folder list is not needed
+	if err := os.MkdirAll(tx.backups, 0o750); err != nil { // already there, so the run's working-folder list is not needed
 		t.Fatal(err)
 	}
 	src := filepath.Join(dir, "x")
