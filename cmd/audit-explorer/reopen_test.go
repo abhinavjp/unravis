@@ -177,6 +177,70 @@ func TestReopenDoesNotBlockOnAModalWarning(t *testing.T) {
 	close(release)
 }
 
+// A request that failed must not start the gap: the warning says "try again", and the person's next click has to be tried.
+func TestReopenFailedAttemptsDoNotStartTheGap(t *testing.T) {
+	f := newFakeReopen()
+	f.rearmOK = false
+	f.r.Reopen()
+	f.waitWarn(t)
+	f.mu.Lock()
+	f.rearmOK = true
+	f.mu.Unlock()
+	f.r.Reopen() // no time has passed
+	if len(f.rearmCodes) != 2 || len(f.opened) != 1 {
+		t.Fatalf("after a failed rearm, an immediate retry: rearm calls %d, opens %d, want 2 and 1", len(f.rearmCodes), len(f.opened))
+	}
+
+	g := newFakeReopen()
+	g.codeErr = errors.New("rand failed")
+	g.r.Reopen()
+	g.waitWarn(t)
+	g.mu.Lock()
+	g.codeErr = nil
+	g.mu.Unlock()
+	g.r.Reopen()
+	if len(g.opened) != 1 {
+		t.Fatalf("after a failed code, an immediate retry opened %d times, want 1", len(g.opened))
+	}
+
+	h := newFakeReopen()
+	h.openErr = errors.New("no browser")
+	h.r.Reopen()
+	h.waitWarn(t)
+	h.mu.Lock()
+	h.openErr = nil
+	h.mu.Unlock()
+	h.r.Reopen()
+	if len(h.opened) != 2 {
+		t.Fatalf("after a failed open, an immediate retry tried %d times, want 2", len(h.opened))
+	}
+	h.r.Reopen() // this one worked, so the gap now applies
+	if len(h.opened) != 2 {
+		t.Fatalf("a request right after a success opened again: %d", len(h.opened))
+	}
+}
+
+// Two requests at the same moment open the browser once.
+func TestReopenDropsARequestWhileAnotherIsBeingServed(t *testing.T) {
+	f := newFakeReopen()
+	inRearm := make(chan struct{})
+	release := make(chan struct{})
+	f.r.rearm = func(string, time.Time) bool {
+		close(inRearm)
+		<-release
+		return true
+	}
+	done := make(chan struct{})
+	go func() { f.r.Reopen(); close(done) }()
+	<-inRearm
+	f.r.Reopen() // dropped: the first is still in progress
+	close(release)
+	<-done
+	if len(f.opened) != 1 {
+		t.Fatalf("opened %d times, want 1", len(f.opened))
+	}
+}
+
 func TestReopenShowsOneWarningAtATime(t *testing.T) {
 	f := newFakeReopen()
 	var mu sync.Mutex
