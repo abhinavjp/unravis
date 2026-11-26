@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -182,16 +183,18 @@ func (h *handler) updateSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "Update checks are not available in this build.")
 		return
 	}
-	in := u.currentSettings() // a body that leaves a field out keeps the current value
+	// A body that leaves a field out keeps the current value. It is read before the lock is taken, so a slow client cannot hold it.
+	var in SettingsPatch
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if _, err := cleanUpdaterSettings(in, defaultUpdateMinutes(u.channel)); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	saved, err := u.SetSettings(in)
+	saved, err := u.PatchSettings(in)
 	if err != nil {
+		var bad errSettingsInvalid
+		if errors.As(err, &bad) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

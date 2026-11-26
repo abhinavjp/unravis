@@ -607,6 +607,7 @@ func parseManifest(b []byte) (Manifest, *ReadError) {
 	if m.Format < 1 {
 		return Manifest{}, readErr(ReadBadData, "That folder has a manifest.json that is not a Blackbox manifest.", nil)
 	}
+	m.resolvePaused()
 	return m, nil
 }
 
