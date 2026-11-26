@@ -44,6 +44,21 @@ func TestAllowedIsAnAllowlist(t *testing.T) {
 	}
 }
 
+// The full app's routes are all closed in Lite, for every method.
+func TestLiteRefusesTheFullAppRoutes(t *testing.T) {
+	routes := []string{
+		"/api/sources", "/api/analyze", "/api/requests", "/api/payload", "/api/records/x",
+		"/api/blackbox/bb-other/series", "/api/blackbox/add", "/api/mcp", "/api/code/run", "/api/settings",
+	}
+	for _, p := range routes {
+		for _, m := range []string{"GET", "POST", "PUT", "DELETE"} {
+			if Allowed(m, p) {
+				t.Errorf("%s %s should be refused", m, p)
+			}
+		}
+	}
+}
+
 // fakeCollector gives the real recorder one reading per tick.
 type fakeCollector struct{}
 
