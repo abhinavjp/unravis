@@ -7,6 +7,7 @@
   import { visiblePoll } from '../lib/visibility';
   import Drawer from './Drawer.svelte';
   import McpApprovalCard from './McpApprovalCard.svelte';
+  import CodeModeEntry from './CodeModeEntry.svelte';
 
   // AI access (BL-347): the person's side of MCP. The list of hosts that asked, the approval card of each waiting host, the approved
   // hosts with revoke and renew, the ended ones, and the one global Stop. The host's own words are plain text everywhere; there is no
@@ -130,6 +131,7 @@
 
 <Drawer title={T.title} titleId="mcp-title" intro={T.intro} closeLabel={T.closeLabel} class="mcp-drawer" focusTitle bind:element {onClose}>
   <div class="mcp-body" data-testid="mcp-panel">
+    <CodeModeEntry />
     {#if loading}
       <p class="field-note" role="status">{T.loading}</p>
     {:else if loadError && !list}

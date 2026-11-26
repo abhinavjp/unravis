@@ -44,6 +44,7 @@ import { createViewHistory, describeView, parseViewHash, type View } from './way
 import { hourWindowQuery, type RollupWindow } from './rollup';
 import { backTarget, planBack, planInvestigation, rootOf, type TrailEntry } from './promote';
 import { zoomView } from './zoomView.svelte';
+import { codeUi } from './codeModeUi.svelte';
 import { keeperPreview, keeperUnreadable, onKeeperPreview, onKeeperRefusal } from './keeper';
 
 let info = $state<Info | null>(null);
@@ -2012,7 +2013,7 @@ export const panels = {
   get connectionTab() { return connectionTab; }, set connectionTab(value) { connectionTab = value; },
   get drawerElement() { return drawerElement; }, set drawerElement(value) { drawerElement = value; },
   get coverage() { return coverageSource; },
-  get modalOpen() { return connectionsOpen || glossaryOpen || sidePanel != null || importPopup != null || coverageSource != null; }
+  get modalOpen() { return codeUi.open || connectionsOpen || glossaryOpen || sidePanel != null || importPopup != null || coverageSource != null; }
 };
 
 // The Connections drawer form, recent connections and source profile changes.
