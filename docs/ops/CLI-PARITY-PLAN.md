@@ -173,6 +173,7 @@ Order is by value and risk. Every item is one branch, one pull request to `devel
 | OPS-13 | Investigation timeline from the CLI and code mode (`timeline show`, lanes with the reason text from OPS-F2) | Sonnet | OPS-F2 | no |
 | OPS-14 | Blackbox panel read parity: events, series, dumps from the CLI | Sonnet | OPS-05 | no |
 | OPS-15 | Settings parity: update settings, glossary, code mode settings and grants (`grant.*`, `code.replay` commands that the matrix already lists) | Sonnet | OPS-01 | for grants only |
+| OPS-16 | `ops server list|add|test|pull`: a thin group over the shared `internal/remote` layer proposed by the Servers thread (docs/remote/SERVERS-DESIGN.md). Same functions as the Servers screen and code mode; write verbs gated like OPS-07. Remote events go into the OPS-09 hash-chained audit with remote fields, not a second log | Sonnet | OPS-02, OPS-09 | **yes** |
 | OPS-F1 | Redis log could not be read: confirm, reproduce, explain, fix (section 6) | Sonnet | none | no |
 | OPS-F2 | IIS file missing from the investigation timeline: confirm, reproduce, show the reason (section 6) | Sonnet | none | no |
 | OPS-S1 | Decide the SYSTEM versus owner question (4.1) | Opus | none | is the review |
