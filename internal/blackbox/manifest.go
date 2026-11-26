@@ -80,7 +80,13 @@ const (
 	EventCollectRecovered    = "collect-recovered"
 	EventWriteStillFailing   = "write-still-failing"
 	EventWriteRecovered      = "write-recovered"
-	EventSettingsRestart     = "settings-applied"
+	// The host read (RV-BB-1): a round whose CPU, memory, disk, network and process
+	// read was slow still records the groups, and these events say so, the same way
+	// as the failure events above (first, still, recovered).
+	EventHostSlow        = "host-slow"
+	EventHostStillSlow   = "host-still-slow"
+	EventHostRecovered   = "host-recovered"
+	EventSettingsRestart = "settings-applied"
 	// EventRestart is written at every start that follows an earlier run. The
 	// detail is a fixed code: "after-stop" (the earlier run stopped cleanly) or
 	// "after-crash" (it did not). It is recorded even when the hole is too short

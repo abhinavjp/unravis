@@ -4,6 +4,7 @@
   import { VALIDATION_MESSAGE, takeLaunchTarget } from './lib/api';
   import { WAIT_TEXT } from './lib/copy/waitCopy';
   import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeImportPopup, closeSidePanel, onWindowKey, openSidePanel, openCaseHome, openCaseImport, openTracing, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
+  import { codeUi } from './lib/codeModeUi.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import UpdateBanner from './components/UpdateBanner.svelte';
   import { checkWhatsNewOnStart, openWhatsNew, startUpdateWatch, updates, whatsNew } from './lib/updateState.svelte';
@@ -31,6 +32,7 @@
   const PatternsPanel = lazyComponent(() => import('./components/PatternsPanel.svelte'));
   const LedgerPanel = lazyComponent(() => import('./components/LedgerPanel.svelte'));
   const ExportPanel = lazyComponent(() => import('./components/ExportPanel.svelte'));
+  const CodeModePopup = lazyComponent(() => import('./components/CodeModePopup.svelte'));
   const ImportPopup = lazyComponent(() => import('./lib/components/importPopup/ImportPopup.svelte'));
   const BlackboxPanel = lazyComponent(() => import('./components/BlackboxPanel.svelte'));
   const McpAccessPanel = lazyComponent(() => import('./components/McpAccessPanel.svelte'));
@@ -157,6 +159,7 @@
     {#if panels.sidePanel === 'mcp'}<McpAccessPanel onClose={closeSidePanel} />{/if}
     {#if panels.sidePanel === 'updates'}<UpdatesPanel onClose={closeSidePanel} />{/if}
     {#if whatsNew.open}<WhatsNewDialog current={installedVersion} />{/if}
+    {#if codeUi.open}<CodeModePopup />{/if}
 
     <main id="main-content" tabindex="-1" class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
       <div class="stage-inner">

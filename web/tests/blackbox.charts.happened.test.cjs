@@ -282,6 +282,25 @@ test('every button in the view has words or a label, and every control has a hin
   }
 });
 
+test('a slow reading of the PC gets plain titles and details, and hostile detail text is dropped', () => {
+  const { items } = h.happenedItems(base({
+    markers: [
+      { t: '2026-11-18T06:00:00Z', kind: 'host-slow', detail: 'host-slow' },
+      { t: '2026-11-18T06:10:00Z', kind: 'host-still-slow', detail: 'code=host-busy rounds=3' },
+      { t: '2026-11-18T06:20:00Z', kind: 'host-recovered', detail: 'rounds=11 seconds=3300' },
+      { t: '2026-11-18T06:30:00Z', kind: 'host-still-slow', detail: 'code=<img src=x onerror=alert(1)> rounds=3' }
+    ]
+  }));
+  const byT = (iso) => items.find((i) => i.t === Date.parse(iso));
+  assert.equal(byT('2026-11-18T06:00:00Z').title, 'Reading this PC was slow');
+  assert.equal(byT('2026-11-18T06:10:00Z').title, 'Reading this PC is still slow');
+  assert.equal(byT('2026-11-18T06:10:00Z').detail, 'Latest cause: an earlier reading of this PC was still running. 3 rounds had no reading of this PC since the last note.');
+  assert.equal(byT('2026-11-18T06:20:00Z').title, 'Reading this PC is back to normal');
+  assert.equal(byT('2026-11-18T06:20:00Z').detail, 'It was slow for 11 rounds over 55 min, then was back to normal.');
+  assert.equal(byT('2026-11-18T06:30:00Z').detail, '', 'a detail that is not a fixed code is not repeated');
+  for (const i of items) assert.ok(!/^Recorder note: /.test(i.title), 'known kinds are not shown as unknown notes');
+});
+
 test('the repeat and recovered notes of a failing recorder get plain titles and details, and hostile detail text is dropped', () => {
   const { items } = h.happenedItems(base({
     markers: [

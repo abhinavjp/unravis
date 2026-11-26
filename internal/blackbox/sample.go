@@ -63,6 +63,37 @@ type Sample struct {
 	Missing []string `json:"missing,omitempty"`
 }
 
+// MissingHostSlow and MissingHostBusy are the Missing words for a round whose host read
+// (CPU, memory, disk, network, processes) did not finish in its budget, or was still
+// running from an earlier round. The sample then holds only the group readings.
+const (
+	MissingHostSlow = "host: slow"
+	MissingHostBusy = "host: busy"
+)
+
+// hostBusyWord says the host read of this sample was skipped because an earlier
+// read was still running (not because this one ran over its budget).
+func hostBusyWord(s Sample) bool {
+	for _, m := range s.Missing {
+		if m == MissingHostBusy {
+			return true
+		}
+	}
+	return false
+}
+
+// HostSkipped says the host read of this sample did not come in time. Every host
+// reading of such a sample is absent, which is not the same as 0: a reader draws it
+// as a gap in the host lines, never as 0 percent CPU.
+func (s Sample) HostSkipped() bool {
+	for _, m := range s.Missing {
+		if m == MissingHostSlow || m == MissingHostBusy {
+			return true
+		}
+	}
+	return false
+}
+
 // ProcRow is one process in a sample. CPUSec is cumulative so a reader can
 // recompute the change; CPUPct is the change over the last interval as percent
 // of the whole machine.

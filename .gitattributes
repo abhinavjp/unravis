@@ -35,6 +35,9 @@
 # The favicon is copied into the build as a file (its name carries a hash of its bytes), so a CRLF checkout
 # would build a different file name than an LF one. Found on the windows runner by check-dist (rc promotion, Nov 2026).
 /web/src/brand/favicon.svg text eol=lf
+# The What's new notes are copied into the build as a file (web/public/releases/notes.json), so a CRLF checkout builds CRLF bytes and
+# check-dist on the windows runner reports it as differing from the committed LF file (first rc promotion carrying it, Nov 2026).
+/web/public/releases/notes.json text eol=lf
 # Built output: byte for byte on any checkout, never converted.
 /web/dist/** -text
 /cmd/unravis-setup/ui/** -text
