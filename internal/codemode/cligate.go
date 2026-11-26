@@ -9,12 +9,20 @@ import (
 // The command-line window (BL-371, owner ruling 2026-11-25): "unravis code run" is off unless the app has opened a window for it.
 // Code mode alone does not let a program on the PC run scripts through the owner pipe; the person at the app has to say "allow the
 // command line for N minutes". The window lives in memory only: it is closed when the app starts, when it ends, and when the person
-// closes it. It is never written to code-mode.json, so no file edit and no restart of a script can turn it on.
+// closes it. It is never written to code-mode.json, so no file edit can turn it on, and an app start finds it shut.
 //
 // "No time limit" (owner ruling 2026-11-26, prototype v2) is a second open state of the same gate, not a long window: it has no end, and
 // it is held in memory only in exactly the same way. A new gate is closed, so the person must confirm it again after every app start;
 // the settings route closes it when code mode is switched off or a timed window is set. It never shows as an end time (OpenUntil stays
 // closed while it is on), and nothing about it is written to code-mode.json.
+//
+// Limits (Opus review of PR 339), stated so nobody reads the gate as more than it is:
+//   - The gate is closed whenever code mode is seen to be off: a settings read by the route or by a run, and a save that switches code mode
+//     on from off. Editing code-mode.json to off and back to on with no run, no GET and no PUT in between, by a program running as the same
+//     user, leaves an open gate open. That is the same class as the next point and is not closed here.
+//   - Any holder of the session token (the app's page, the command line itself, any same-user program that can read the session token) can open
+//     the gate through PUT /api/code/settings. The consent step is a guard against a program that only reaches the owner pipe, not a
+//     boundary against the same user.
 //
 // The gate is the broker's Authorize hook (Config.Authorize), so it runs on every path to Run, after the on/off switch and before any
 // identifier, case or record work: nothing is recorded for a refused run. Only the surface "cli" is held by it. The app's own page

@@ -319,3 +319,86 @@ func TestACloseRequestStillClosesWhenTheSettingsCannotBeSaved(t *testing.T) {
 		}
 	}
 }
+
+// Review F1: code mode that was off before a PUT (file missing, damaged or saying off) and is switched on by that PUT must not bring back
+// an open command line from before, unless the same PUT opens it. The file is edited by hand here, so no route saw it go off.
+func TestSwitchingCodeModeOnAfterTheFileWentOffDoesNotRestoreTheCommandLine(t *testing.T) {
+	for name, edit := range map[string]func(path string){
+		"file deleted":     func(p string) { _ = os.Remove(p) },
+		"file says off":    func(p string) { _ = os.WriteFile(p, []byte(`{"enabled":false}`), 0o600) },
+		"file is damaged":  func(p string) { _ = os.WriteFile(p, []byte(`{not json`), 0o600) },
+		"file has the key": func(p string) { _ = os.WriteFile(p, []byte(`{"enabled":true,"cliUnlimited":true}`), 0o600) },
+	} {
+		for _, open := range []string{`{"cliUnlimited":true}`, `{"cliMinutes":30}`} {
+			dir := t.TempDir()
+			r := newRig(t, rigOpts{spawner: &spawn{}, cliShut: true, settingsIn: dir})
+			r.newCase("A")
+			r.enable()
+			if res := r.setCLI(open); res.Code != http.StatusOK || !r.gate.Allows() {
+				t.Fatalf("%s %s: not open: %d", name, open, res.Code)
+			}
+			edit(filepath.Join(dir, settingsfile.FileName))
+			// No GET and no run in between: only the PUT that switches code mode on again.
+			if res := r.setCLI(`{"enabled":true}`); res.Code != http.StatusOK {
+				t.Fatalf("%s %s: enable = %d %s", name, open, res.Code, res.Body)
+			}
+			if s := r.settings(); s.CLIUnlimited || s.CLIOpenUntil != "" {
+				t.Fatalf("%s %s: the command line came back: %+v", name, open, s)
+			}
+			if _, err := cliOf(t, r).Run(context.Background(), clisrv.CodeRunInput{Code: "1"}); refusalOf(t, err) != codemode.CodeCLIClosed {
+				t.Fatalf("%s %s: run: %v", name, open, err)
+			}
+		}
+	}
+	// A PUT that switches code mode on and opens the command line in the same request is the person's choice, and opens it.
+	dir := t.TempDir()
+	r := newRig(t, rigOpts{spawner: &spawn{}, cliShut: true, settingsIn: dir})
+	r.enable()
+	r.setCLI(`{"cliUnlimited":true}`)
+	_ = os.Remove(filepath.Join(dir, settingsfile.FileName))
+	if res := r.setCLI(`{"enabled":true,"cliMinutes":5}`); res.Code != http.StatusOK || r.settings().CLIOpenUntil == "" || r.settings().CLIUnlimited {
+		t.Fatalf("enable and open together: %d %s", res.Code, res.Body)
+	}
+	// A PUT while code mode was already on leaves the command line as it is.
+	r.setCLI(`{"cliUnlimited":true}`)
+	r.setCLI(`{"keepResults":true}`)
+	if !r.settings().CLIUnlimited {
+		t.Fatal("an unrelated PUT with code mode already on closed it")
+	}
+}
+
+// Review F2 layer 1, the route: a read of the settings that finds code mode off or damaged shuts the command line, so the answer is never
+// "off" with an open command line, and switching it back on by editing the file does not bring the command line back.
+func TestReadingTheSettingsWhileCodeModeIsOffShutsTheCommandLine(t *testing.T) {
+	for name, body := range map[string]string{"off": `{"enabled":false}`, "damaged": `{not json`} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, settingsfile.FileName)
+		r := newRig(t, rigOpts{spawner: &spawn{}, cliShut: true, settingsIn: dir})
+		r.newCase("A")
+		r.enable()
+		r.setCLI(`{"cliUnlimited":true}`)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		s := r.settings()
+		if s.Enabled || s.CLIUnlimited || s.CLIOpenUntil != "" || s.Damaged != (name == "damaged") {
+			t.Fatalf("%s: %+v", name, s)
+		}
+		if err := os.WriteFile(path, []byte(`{"enabled":true}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if s := r.settings(); !s.Enabled || s.CLIUnlimited {
+			t.Fatalf("%s, back on: %+v", name, s)
+		}
+		if _, err := cliOf(t, r).Run(context.Background(), clisrv.CodeRunInput{Code: "1"}); refusalOf(t, err) != codemode.CodeCLIClosed {
+			t.Fatalf("%s, back on: run: %v", name, err)
+		}
+	}
+	// Code mode on: a read leaves the command line alone.
+	r := newRig(t, rigOpts{spawner: &spawn{}, cliShut: true})
+	r.enable()
+	r.setCLI(`{"cliUnlimited":true}`)
+	if !r.settings().CLIUnlimited {
+		t.Fatal("a read closed the command line while code mode was on")
+	}
+}

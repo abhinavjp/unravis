@@ -266,8 +266,27 @@ func (a *api) settingsReply(set codemode.Settings, damaged bool) settingsDTO {
 }
 
 func (a *api) getSettings(w http.ResponseWriter) {
+	// Under the same lock as a PUT, so the read of the file and the state of the gate are one moment. A read that finds code mode off or
+	// the file damaged shuts the command line (the answer is never "off" or "damaged" together with an open command line), so editing
+	// the file back to "on" does not bring an open command line back.
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
 	set, err := a.files.Load()
+	if err != nil || !set.Enabled {
+		a.closeBecauseOff()
+	}
 	reply(w, http.StatusOK, a.settingsReply(set, err != nil))
+}
+
+// closeBecauseOff shuts the command line (and records it, when it was open) at a moment when code mode was seen to be off or its file
+// damaged. Closing needs no disk and never fails.
+func (a *api) closeBecauseOff() {
+	if a.cliGate == nil {
+		return
+	}
+	before := cliStateOf(a.cliGate)
+	a.cliGate.Close()
+	logCLIChange(before, "closed", " because code mode is off", 0)
 }
 
 // settingsPatch holds only the switches the caller sent; the others stay as they are.
@@ -318,6 +337,10 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be read. "+notChanged)
 		return
 	}
+	// Code mode was on before this request only if the file was read and said so. A missing, damaged or "off" file counts as off, so a
+	// request that switches it on does not bring back a command line that was open before it went off (the file may have been edited by
+	// hand, with no request or run in between to shut the gate).
+	wasOn := lerr == nil && set.Enabled
 	if in.Enabled != nil {
 		set.Enabled = *in.Enabled
 	}
@@ -346,7 +369,8 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 		case in.CLIMinutes != nil:
 			a.cliGate.Open(time.Duration(*in.CLIMinutes) * time.Minute)
 			logCLIChange(before, cliStateOf(a.cliGate), "", *in.CLIMinutes)
-		case in.CLIUnlimited != nil:
+		case in.CLIUnlimited != nil, !wasOn:
+			// "No time limit" off, or code mode just switched on from off without opening the command line in the same request.
 			a.cliGate.Close()
 			logCLIChange(before, cliStateOf(a.cliGate), "", 0)
 		}
