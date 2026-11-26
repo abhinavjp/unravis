@@ -123,6 +123,7 @@ func (s *session) start() (uint64, error) {
 
 var (
 	errOutOfMemory = errors.New("the engine is out of memory")
+	errEngineTime  = errors.New("the engine ran out of time")
 	errRunEnded    = errors.New("the run ended inside the engine")
 )
 
@@ -231,6 +232,9 @@ func (s *session) afterTrap(err error) (wire.Done, error) {
 	switch {
 	case h.fatalCode == fatalOOM, errors.Is(err, errOutOfMemory):
 		return s.failure(codeOOM, "the script used more memory than it is allowed")
+	case errors.Is(err, errEngineTime):
+		// The broker's done codes have no wall code for a worker to send; this is the nearest: the script ran more than it is allowed.
+		return s.failure(codeTicks, "the script ran longer than the engine is allowed to run")
 	case h.fatalCode == fatalTicks:
 		return s.failure(codeTicks, "the script ran more steps than it is allowed")
 	case strings.Contains(err.Error(), "stack overflow"):

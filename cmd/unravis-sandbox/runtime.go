@@ -34,6 +34,11 @@ const (
 	maxCallBytes    = 1 << 20
 	maxLogBytes     = 1 << 20
 	maxToolCount    = 64
+	// Engine time: the worker stops the engine after this long in total (waits for host calls do not count). Built-ins such as
+	// Array.prototype.join on a huge array-like poll no tick, so only a deadline stops them.
+	defaultEngineMs = 125_000
+	minEngineMs     = 50
+	maxEngineMs     = 300_000
 	maxToolName     = 64
 	maxQueuedBytes  = 4 << 20 // argument bytes waiting for an in-flight slot
 	maxLogLines     = 2000
@@ -79,6 +84,7 @@ type params struct {
 	logBytes   int
 	maxCalls   int
 	inFlight   int
+	engineTime time.Duration
 }
 
 // checkRun validates the run frame. Anything out of range is a protocol violation: the broker builds these numbers, so a bad one is a
@@ -107,6 +113,8 @@ func checkRun(run wire.Run) (params, *privacy.ScriptClock, *privacy.Rand, error)
 		return p, nil, nil, violation("maxCalls out of range")
 	case l.InFlight < 1 || l.InFlight > maxInFlight:
 		return p, nil, nil, violation("inFlight out of range")
+	case l.EngineMs != 0 && (l.EngineMs < minEngineMs || l.EngineMs > maxEngineMs):
+		return p, nil, nil, violation("engineMs out of range")
 	case len(run.Tools) > maxToolCount:
 		return p, nil, nil, violation("too many tools")
 	}
@@ -131,6 +139,10 @@ func checkRun(run wire.Run) (params, *privacy.ScriptClock, *privacy.Rand, error)
 		logBytes:   l.LogBytes,
 		maxCalls:   l.MaxCalls,
 		inFlight:   l.InFlight,
+		engineTime: time.Duration(l.EngineMs) * time.Millisecond,
+	}
+	if p.engineTime == 0 {
+		p.engineTime = defaultEngineMs * time.Millisecond
 	}
 	var mode privacy.ClockMode
 	switch run.Clock.Mode {
@@ -319,6 +331,8 @@ type engine struct {
 	rt  wazero.Runtime
 	mod api.Module
 	h   *host
+	// spent is the engine time used so far; call stops the engine when it reaches h.p.engineTime.
+	spent time.Duration
 
 	fInit, fRun, fRet, fPump, fAlloc, fFree, fReport api.Function
 }
@@ -334,7 +348,7 @@ var _ io.Reader = zeroReader{}
 
 // newEngine compiles and starts the module with no capability beyond the imports above.
 func newEngine(ctx context.Context, h *host) (*engine, error) {
-	cfg := wazero.NewRuntimeConfigInterpreter().WithMemoryLimitPages(h.p.memPages)
+	cfg := wazero.NewRuntimeConfigInterpreter().WithMemoryLimitPages(h.p.memPages).WithCloseOnContextDone(true)
 	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
 	e := &engine{rt: rt, h: h}
 
@@ -389,8 +403,20 @@ func (e *engine) close(ctx context.Context) { _ = e.rt.Close(ctx) }
 
 // call runs one export. The error is wazero's (a trap, or the exit that host_fatal raised).
 func (e *engine) call(ctx context.Context, f api.Function, args ...uint64) (uint64, error) {
-	res, err := f.Call(ctx, args...)
+	left := e.h.p.engineTime - e.spent
+	if left <= 0 {
+		return 0, errEngineTime
+	}
+	cctx, cancel := context.WithTimeout(ctx, left)
+	start := time.Now()
+	res, err := f.Call(cctx, args...)
+	e.spent += time.Since(start)
+	timedOut := cctx.Err() != nil
+	cancel()
 	if err != nil {
+		if timedOut {
+			return 0, errEngineTime
+		}
 		return 0, err
 	}
 	if len(res) == 0 {

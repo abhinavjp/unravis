@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/codemode/wire"
 )
@@ -135,6 +136,35 @@ func TestLimitsDistinctCodes(t *testing.T) {
 		o.wantClean(t)
 		if !o.done.OK || len(o.done.Logs) != 7 || !strings.HasPrefix(o.done.Logs[0], "a 1 ") {
 			t.Fatalf("done %+v", o.done)
+		}
+	})
+}
+
+// Built-ins that poll no tick (join, reverse, copyWithin on a huge array-like) and regexp backtracking at the spec's tick count are
+// stopped by the engine-time deadline, and the worker still answers with a done frame and exits 0.
+func TestEngineTimeDeadline(t *testing.T) {
+	l := bigTicks()
+	l.EngineMs = 600
+	for name, js := range map[string]string{
+		"join":       `return Array.prototype.join.call({length: 2 ** 53 - 1}, "");`,
+		"reverse":    `Array.prototype.reverse.call({length: 2 ** 53 - 1}); return 1;`,
+		"copyWithin": `Array.prototype.copyWithin.call({length: 2 ** 53 - 1}, 0, 1); return 1;`,
+		"regexp":     `return /(a+)+$/.test("a".repeat(40) + "!");`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			start := time.Now()
+			o := runScenario(t, scenario{js: js, limits: l})
+			o.wantFail(t, "ticks")
+			if d := time.Since(start); d > 20*time.Second {
+				t.Fatalf("took %v", d)
+			}
+		})
+	}
+	t.Run("out of range is refused", func(t *testing.T) {
+		bad := bigTicks()
+		bad.EngineMs = 10
+		if _, _, _, err := checkRun(wire.Run{JS: "return 1;", Limits: bad}); err == nil {
+			t.Fatal("engineMs 10 accepted")
 		}
 	})
 }

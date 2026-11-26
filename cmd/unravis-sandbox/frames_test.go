@@ -81,6 +81,9 @@ func TestFrameTooLargeRefused(t *testing.T) {
 		if !o.done.OK && o.done.Error.Code != "output_too_large" {
 			t.Fatalf("done %+v", o.done.Error)
 		}
+		if len(o.done.Logs) != 0 || !o.done.LogsTruncated {
+			t.Fatalf("the logs must go first and say so: %d lines, truncated %v", len(o.done.Logs), o.done.LogsTruncated)
+		}
 		if len(o.doneRaw) > wire.MaxFrame {
 			t.Fatalf("done frame of %d bytes", len(o.doneRaw))
 		}
