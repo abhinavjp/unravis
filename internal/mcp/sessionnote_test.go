@@ -58,7 +58,7 @@ func TestBridgeStaysNotRunningWithoutANote(t *testing.T) {
 // A note left by a dashboard that is gone must not be believed, and is removed.
 func TestBridgeIgnoresANoteOfAGoneDashboard(t *testing.T) {
 	isolatedTemp(t)
-	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd := exec.Command(os.Args[0], "-test.run=^$") //nolint:gosec // this test binary itself, started once to get a process id that is gone
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
 	}

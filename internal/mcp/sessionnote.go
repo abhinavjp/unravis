@@ -100,7 +100,7 @@ func sessionFailureNote(sessionPath string) (string, bool) {
 		return "", false
 	}
 	path := sessionNotePath(sessionPath)
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // the name is built here from a hash of the session path, inside the temporary folder
 	if err != nil {
 		return "", false
 	}
