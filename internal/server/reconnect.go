@@ -28,7 +28,9 @@ const (
 	// reconnectCooldown is how long a link that failed for a Start tracing is left alone, so pressing Start tracing again at once does
 	// not dial a dead host again. A link that failed in the start-up pass waits longer: nobody is looking at it yet.
 	reconnectCooldown = 20 * time.Second
-	startupCooldown   = 2 * time.Minute
+	// startupCooldown is how long the start-up pass leaves a link it failed on. Only the start-up pass honours it: an attempt a person
+	// starts ignores a failure cached by the start-up pass and dials, and honours only reconnectCooldown set by a person's own attempt.
+	startupCooldown = 2 * time.Minute
 	// tracingReconnectBudget is the most Start tracing spends reopening saved databases.
 	tracingReconnectBudget = 12 * time.Second
 	// StartupReconnectBudget is the most the start-up pass spends.
@@ -74,6 +76,9 @@ type reconnectFail struct {
 	reason string
 	action string
 	until  time.Time // the link is left alone until then
+	// byStartup is true when the start-up pass made this failure. A person who starts an attempt does not honour it: nobody was looking
+	// when it was cached, and the cause may be fixed by now.
+	byStartup bool
 }
 
 type reconnectState struct {
@@ -395,6 +400,8 @@ func (h *handler) reconnectPass(ctx context.Context, budget time.Duration, only 
 	if h.links == nil || h.history == nil || h.demo || h.repo == nil || h.reconn.gate == nil {
 		return nil
 	}
+	// The start-up pass is the one caller that uses startupCooldown; every other caller is a person pressing a button.
+	byStartup := cooldown == startupCooldown
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	select {
@@ -423,7 +430,7 @@ func (h *handler) reconnectPass(ctx context.Context, budget time.Duration, only 
 	}
 	recents, err := h.history.List()
 	if err != nil {
-		return h.recordFailures(missing, reconnectWhy(err), cooldown)
+		return h.recordFailures(missing, reconnectWhy(err), cooldown, byStartup)
 	}
 	byID := make(map[string]history.Recent, len(recents))
 	for _, rec := range recents {
@@ -446,7 +453,7 @@ func (h *handler) reconnectPass(ctx context.Context, budget time.Duration, only 
 			continue // no stored password: nothing automatic, the lane keeps its Connect button
 		}
 		key := linkKey(l)
-		if prior, again := h.recentFailure(key); again {
+		if prior, again := h.recentFailure(key, byStartup); again {
 			out = append(out, tracingReconnectFail{Name: l.Database, Reason: prior.reason, Action: prior.action})
 			continue
 		}
@@ -473,7 +480,7 @@ func (h *handler) reconnectPass(ctx context.Context, budget time.Duration, only 
 			continue
 		}
 		why := reconnectWhy(err)
-		h.setFailure(key, why, cooldown)
+		h.setFailure(key, why, cooldown, byStartup)
 		out = append(out, tracingReconnectFail{Name: l.Database, Reason: why.reason, Action: why.action})
 	}
 	if opened {
@@ -551,20 +558,26 @@ func (h *handler) openSavedLink(ctx context.Context, l sourcelinks.Link, rec his
 
 var errNoStoredPassword = errors.New("no stored password")
 
-func (h *handler) recentFailure(key string) (reconnectFail, bool) {
+// recentFailure returns the cached failure of a link that is still inside its cool-down. The start-up pass honours every cached failure;
+// a person's attempt (forStartup false) skips one the start-up pass cached, so pressing Start tracing after fixing the cause dials.
+func (h *handler) recentFailure(key string, forStartup bool) (reconnectFail, bool) {
 	h.reconn.mu.Lock()
 	defer h.reconn.mu.Unlock()
 	f, ok := h.reconn.failed[key]
+	if ok && f.byStartup && !forStartup {
+		return f, false
+	}
 	return f, ok && time.Now().Before(f.until)
 }
 
-func (h *handler) setFailure(key string, why reconnectFail, cooldown time.Duration) {
+func (h *handler) setFailure(key string, why reconnectFail, cooldown time.Duration, byStartup bool) {
 	h.reconn.mu.Lock()
 	defer h.reconn.mu.Unlock()
 	if h.reconn.failed == nil {
 		h.reconn.failed = map[string]reconnectFail{}
 	}
 	why.until = time.Now().Add(cooldown)
+	why.byStartup = byStartup
 	h.reconn.failed[key] = why
 }
 
@@ -575,10 +588,10 @@ func (h *handler) clearFailure(key string) {
 }
 
 // recordFailures marks every link as failed for the same reason: the saved connections could not be listed at all.
-func (h *handler) recordFailures(links []sourcelinks.Link, why reconnectFail, cooldown time.Duration) []tracingReconnectFail {
+func (h *handler) recordFailures(links []sourcelinks.Link, why reconnectFail, cooldown time.Duration, byStartup bool) []tracingReconnectFail {
 	out := make([]tracingReconnectFail, 0, len(links))
 	for _, l := range links {
-		h.setFailure(linkKey(l), why, cooldown)
+		h.setFailure(linkKey(l), why, cooldown, byStartup)
 		out = append(out, tracingReconnectFail{Name: l.Database, Reason: why.reason, Action: why.action})
 	}
 	return out
