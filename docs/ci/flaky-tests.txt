@@ -1,0 +1,8 @@
+# Quarantine of flaky and host-dependent Go tests (docs/ci/THREAD-GATE.md section 3).
+# Read by tools/ci/compare-go-failures.mjs. One line per test:
+#   <package>.<Test> <BL-id> until=<YYYY-MM-DD> <reason>
+# - <package>.<Test> is the name the compare prints as "NEW FAILURE" (subtests as <package>.<Test>/<sub>).
+# - <BL-id> is the docs/BACKLOG.md item that fixes it; that item names the owner.
+# - until= is the last day of the quarantine, at most one release (about 2 weeks) away. After it the test fails the gate
+#   again, so fix it (clock injection, wait on a condition, t.TempDir(); never a longer timeout) or renew with a reason.
+# Never for a real race or regression. A quarantined test that passes again: delete its line.

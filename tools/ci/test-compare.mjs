@@ -21,3 +21,12 @@ assert.equal(r.status, 1); assert.match(r.stdout, /NEW FAILURE p\/b\.TestBrandNe
 r = runOS('win32');
 assert.equal(r.status, 0, r.stdout); assert.match(r.stdout, /Windows host: comparing with .*baseline\.windows\.txt/);
 console.log('compare-go-failures: ok');
+// Quarantine: a listed failure is reported, not new; an expired, id-less or malformed line quarantines nothing.
+const runQ = (file, today = '2026-11-26') => spawnSync('node', [path.join(here, 'compare-go-failures.mjs'), '--json', fx('go-test-new-failure.json'), '--baseline', fx('baseline.txt'), '--quarantine', fx(file), '--today', today], { encoding: 'utf8' });
+r = runQ('quarantine.txt');
+assert.equal(r.status, 0, r.stdout); assert.match(r.stdout, /quarantined failure \(BL-593, until 2026-12-10\): p\/b\.TestBrandNew/); assert.match(r.stdout, /0 new/);
+r = runQ('quarantine.txt', '2026-12-11');
+assert.equal(r.status, 1); assert.match(r.stdout, /NEW FAILURE p\/b\.TestBrandNew/);
+r = runQ('quarantine-bad.txt');
+assert.equal(r.status, 1); assert.match(r.stdout, /ended on 2026-11-01/); assert.match(r.stdout, /not a valid quarantine line/); assert.match(r.stdout, /NEW FAILURE p\/b\.TestBrandNew/);
+console.log('quarantine: ok');
