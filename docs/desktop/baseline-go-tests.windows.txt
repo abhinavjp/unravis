@@ -33,5 +33,4 @@ api-audit-explorer/internal/setup.TestRecoverJournalOnRealNTFS
 api-audit-explorer/internal/setup.TestRecoverJournalOnRealNTFSRefusesWhatIsNotProven
 api-audit-explorer/internal/setup.TestSetSDDLStillWorksOnAFolder
 api-audit-explorer/internal/setup.TestTheRealJournalWriterMakesAFileTheRealReaderAccepts
-api-audit-explorer/internal/update.TestSilentNoUAC
 api-audit-explorer/internal/pipesec.TestOtherLogonDenied
