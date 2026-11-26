@@ -204,7 +204,7 @@ func TestSweepNeverRemovesAsideFileWithContent(t *testing.T) {
 	if isCaseFileTmp("unravis-case-aside-aaaa.aside") {
 		t.Error("a set-aside file looks like a temporary file")
 	}
-	if hasCaseFileTmp(dir, filepath.Join(dir, "case"+CaseFileExt)) {
+	if hasFreshCaseFileTmp(dir, filepath.Join(dir, "case"+CaseFileExt), time.Now()) {
 		// Only the half-written temporary file above counts, and it was swept.
 		t.Error("a set-aside file counts as another save's temporary file")
 	}
@@ -221,7 +221,7 @@ func TestTmpOfAnotherTargetDoesNotMakeAPlaceholderALeftover(t *testing.T) {
 	}
 	mustWrite(t, dst, nil, 0)
 	mustWrite(t, filepath.Join(dir, "unravis-case-"+caseFileTmpTag(other)+"-123456.tmp"), []byte("being written"), 0)
-	if hasCaseFileTmp(dir, dst) {
+	if hasFreshCaseFileTmp(dir, dst, time.Now()) {
 		t.Fatal("the other target's temporary file counts for this one")
 	}
 	if err := leftoverSave(leftoverSource(t), dst); !errors.Is(err, ErrCaseFileExists) {
@@ -232,12 +232,12 @@ func TestTmpOfAnotherTargetDoesNotMakeAPlaceholderALeftover(t *testing.T) {
 	}
 	// The same name's own tmp, and a tmp from before tags existed, still count.
 	mustWrite(t, filepath.Join(dir, "unravis-case-"+caseFileTmpTag(dst)+"-777.tmp"), []byte("x"), 0)
-	if !hasCaseFileTmp(dir, dst) {
+	if !hasFreshCaseFileTmp(dir, dst, time.Now()) {
 		t.Fatal("this target's own temporary file does not count")
 	}
 	legacy := t.TempDir()
 	mustWrite(t, filepath.Join(legacy, "unravis-case-123456.tmp"), []byte("x"), 0)
-	if !hasCaseFileTmp(legacy, dst) {
+	if !hasFreshCaseFileTmp(legacy, dst, time.Now()) {
 		t.Fatal("an untagged temporary file does not count")
 	}
 }
@@ -451,4 +451,37 @@ func mustOpenCaseFile(t *testing.T, path string) {
 		t.Fatalf("the saved file does not open: %v", err)
 	}
 	_ = cf.Close()
+}
+
+// A placeholder that is old but has a temporary file of the same target that was
+// written to a moment ago belongs to a save that is running (for example on
+// another PC that shares the folder): it is not a left-over. A fresh placeholder
+// with a fresh temporary file is not one either.
+func TestFreshTmpOrFreshPlaceholderIsNeverReclaimed(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		placeholderAge time.Duration
+		tmpAge         time.Duration
+	}{
+		{"old placeholder, fresh temporary file", 5 * time.Minute, 0},
+		{"fresh placeholder, fresh temporary file", 0, 0},
+		{"fresh placeholder, old temporary file", 0, 5 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			dst := filepath.Join(dir, "case"+CaseFileExt)
+			mustWrite(t, dst, nil, tc.placeholderAge)
+			tmp := filepath.Join(dir, "unravis-case-"+caseFileTmpTag(dst)+"-4242.tmp")
+			mustWrite(t, tmp, []byte("being written"), tc.tmpAge)
+			if err := leftoverSave(leftoverSource(t), dst); !errors.Is(err, ErrCaseFileExists) {
+				t.Fatalf("save: %v, want ErrCaseFileExists", err)
+			}
+			if fi, err := os.Stat(dst); err != nil || fi.Size() != 0 {
+				t.Fatalf("the placeholder was changed: %v %v", fi, err)
+			}
+			if !exists(tmp) {
+				t.Fatal("the temporary file was removed")
+			}
+		})
+	}
 }

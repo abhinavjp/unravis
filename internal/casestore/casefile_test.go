@@ -847,12 +847,11 @@ func TestCaseFileSaveRecoversFromCrashAtEveryStep(t *testing.T) {
 	steps := []struct {
 		name string
 		tmp  []byte // nil: no temporary file yet
-		old  bool   // the placeholder is older than a minute
 	}{
-		{"died after the placeholder was made", nil, true},
-		{"died after the temporary file was made", []byte{}, false},
-		{"died while writing the temporary file", wholeBytes[:len(wholeBytes)/2], false},
-		{"died before the finished file was moved into place", wholeBytes, false},
+		{"died after the placeholder was made", nil},
+		{"died after the temporary file was made", []byte{}},
+		{"died while writing the temporary file", wholeBytes[:len(wholeBytes)/2]},
+		{"died before the finished file was moved into place", wholeBytes},
 	}
 	for _, st := range steps {
 		t.Run(st.name, func(t *testing.T) {
@@ -861,14 +860,18 @@ func TestCaseFileSaveRecoversFromCrashAtEveryStep(t *testing.T) {
 			if err := os.WriteFile(dst, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if st.old {
-				past := time.Now().Add(-2 * time.Minute)
-				if err := os.Chtimes(dst, past, past); err != nil {
-					t.Fatal(err)
-				}
+			// The crash was more than a minute ago: a running save touches its
+			// placeholder every few seconds, so only then is it a left-over.
+			past := time.Now().Add(-2 * time.Minute)
+			if err := os.Chtimes(dst, past, past); err != nil {
+				t.Fatal(err)
 			}
 			if st.tmp != nil {
-				if err := os.WriteFile(filepath.Join(dir, "unravis-case-123456.tmp"), st.tmp, 0o600); err != nil {
+				tmpPath := filepath.Join(dir, "unravis-case-123456.tmp")
+				if err := os.WriteFile(tmpPath, st.tmp, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(tmpPath, past, past); err != nil {
 					t.Fatal(err)
 				}
 			}

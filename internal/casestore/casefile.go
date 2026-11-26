@@ -296,7 +296,7 @@ const (
 	// the next save in the same folder removes it.
 	caseFileStaleTmpAge = 24 * time.Hour
 	// caseFileLeftoverAge is how old an empty target must be to count as the
-	// placeholder of a save that died, when no temporary file says so.
+	// placeholder of a save that died.
 	caseFileLeftoverAge = time.Minute
 	// caseFileTagLen is the length of the target tag in a temporary file's name.
 	caseFileTagLen = 8
@@ -434,9 +434,10 @@ var leftoverRaceHook func(aside string)
 // reclaimLeftover clears dst when it is the 0-byte placeholder of a save that
 // died, and reports whether dst is now free. It never removes a file with
 // content: dst must be a regular file of size 0 (the caller holds the claim on
-// it, so no save of this process is using it), and either as old as
-// caseFileLeftoverAge or accompanied by a temporary file of a save of the same
-// target in the same folder. The file is first renamed to a private name
+// it, so no save of this process is using it), at least as old as
+// caseFileLeftoverAge (a running save refreshes its placeholder far more often,
+// so a live one, here or on another PC, never gets that old), and with no
+// temporary file of a save of the same target that was written to lately. The file is first renamed to a private name
 // (atomic), and only if it is still the same empty file is it removed. If it is
 // not (something wrote into it, or a finished case was moved into dst in
 // between), it is put back under its old name and dst is reported as taken; if
@@ -450,7 +451,7 @@ func reclaimLeftover(dst string, now time.Time) bool {
 	// Load the file's identity now: after the rename the path no longer finds it.
 	_ = os.SameFile(fi, fi)
 	dir := filepath.Dir(dst)
-	if now.Sub(fi.ModTime()) < caseFileLeftoverAge && !hasCaseFileTmp(dir, dst) {
+	if now.Sub(fi.ModTime()) < caseFileLeftoverAge || hasFreshCaseFileTmp(dir, dst, now) {
 		return false
 	}
 	var suffix [6]byte
@@ -489,9 +490,10 @@ func restoreAside(aside, dst string) {
 	}
 }
 
-// hasCaseFileTmp reports whether dir holds a temporary file that may belong to a
-// save of dst that is not running in this process.
-func hasCaseFileTmp(dir, dst string) bool {
+// hasFreshCaseFileTmp reports whether dir holds a temporary file that may belong
+// to a save of dst that is running outside this process: it is not in flight
+// here and was written to within caseFileLeftoverAge.
+func hasFreshCaseFileTmp(dir, dst string, now time.Time) bool {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
@@ -501,7 +503,12 @@ func hasCaseFileTmp(dir, dst string) bool {
 		if !e.Type().IsRegular() || !isCaseFileTmp(e.Name()) || isCaseFileAside(e.Name()) || !tmpBelongsTo(e.Name(), tag) {
 			continue
 		}
-		if _, busy := savesInFlight.Load(savePathKey(filepath.Join(dir, e.Name()))); !busy {
+		if _, busy := savesInFlight.Load(savePathKey(filepath.Join(dir, e.Name()))); busy {
+			continue
+		}
+		// A temporary file still being written is a running save, here or on
+		// another PC that shares the folder.
+		if info, err := e.Info(); err != nil || now.Sub(info.ModTime()) < caseFileLeftoverAge {
 			return true
 		}
 	}
