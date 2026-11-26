@@ -285,3 +285,34 @@ func TestStateOverALiveStatusServer(t *testing.T) {
 		t.Fatalf("%+v", si)
 	}
 }
+
+// W-04 / RV-BB-1: while the host read is slow the recorder is still running, so the state stays Running, but the tone is a
+// warning and the detail says in plain words that the PC's own lines have gaps. A recovered event, or a restart, clears it.
+func TestRunningSaysWhenTheHostReadIsSlow(t *testing.T) {
+	now := t0.Add(2 * time.Hour)
+	fresh := now.Add(-5 * time.Second)
+	with := func(kinds ...string) StateInfo {
+		m := stManifest(fresh, func(m *Manifest) {
+			for i, k := range kinds {
+				m.Events = append(m.Events, Event{T: fresh.Add(-time.Duration(len(kinds)-i) * time.Minute), Kind: k})
+			}
+		})
+		return derive(stReading(m, now, nil), nil)
+	}
+	si := with(EventHostSlow)
+	if si.State != SRunning || si.Tone != ToneWarn || si.Readiness != WordPartlyReady || !strings.Contains(si.Detail, HostSlowSentence) {
+		t.Fatalf("a slow host read must show as a warning inside Running: %+v", si)
+	}
+	if si := with(EventHostSlow, EventHostStillSlow); !strings.Contains(si.Detail, HostSlowSentence) {
+		t.Fatalf("still slow: %+v", si)
+	}
+	for name, kinds := range map[string][]string{
+		"recovered": {EventHostSlow, EventHostRecovered},
+		"restarted": {EventHostSlow, EventRestart},
+		"never":     nil,
+	} {
+		if si := with(kinds...); si.Tone != ToneGood || strings.Contains(si.Detail, HostSlowSentence) {
+			t.Errorf("%s: the warning must be gone: %+v", name, si)
+		}
+	}
+}

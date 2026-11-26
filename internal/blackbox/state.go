@@ -179,8 +179,17 @@ func DeriveState(in StateInput) StateInfo {
 	if r.Status == nil {
 		detail += " The clock was not compared: a folder or share has no second clock."
 	}
+	if hostSlowNow(m) {
+		// The recorder is running and writing samples, but its read of this PC
+		// (CPU, memory, disk, network) keeps running over its time limit (RV-BB-1).
+		// Those lines have gaps; everything else is still recorded.
+		return with(info(SRunning, ToneWarn, WordPartlyReady, detail+" "+HostSlowSentence))
+	}
 	return with(info(SRunning, ToneGood, WordReady, detail))
 }
+
+// HostSlowSentence says, in plain words, that reading the PC itself is slow.
+const HostSlowSentence = "Reading this PC's own CPU, memory, disk and network is slow right now, so those lines have gaps. The other readings are still recorded."
 
 // errState maps a failed read to its state.
 func errState(err error) StateInfo {
@@ -220,6 +229,21 @@ func pausedForDisk(m Manifest) bool {
 		case EventPausedDiskLow:
 			return true
 		case EventResumed:
+			return false
+		}
+	}
+	return false
+}
+
+// hostSlowNow is true when the newest host event of the current run says the host
+// read is slow (and no recovered event followed). A restart ends it: a run that
+// died in the middle of a slow stretch must not leave the warning on for ever.
+func hostSlowNow(m Manifest) bool {
+	for i := len(m.Events) - 1; i >= 0; i-- {
+		switch m.Events[i].Kind {
+		case EventHostSlow, EventHostStillSlow:
+			return true
+		case EventHostRecovered, EventRestart:
 			return false
 		}
 	}

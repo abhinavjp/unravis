@@ -1612,6 +1612,11 @@ type hostRead struct {
 func hostSamples(in []blackbox.Sample) []investigate.HostSample {
 	out := make([]investigate.HostSample, 0, len(in))
 	for _, s := range in {
+		// A round whose host read was slow holds no host reading. Leaving it out lets the host lane see the hole (and call it a gap),
+		// instead of a recording that looks whole and says "the host was quiet" about minutes nobody read.
+		if s.HostSkipped() {
+			continue
+		}
 		hs := investigate.HostSample{T: s.T.UTC()}
 		if s.CPU != nil {
 			v := *s.CPU

@@ -1169,6 +1169,29 @@ func TestHostSamplesDisk(t *testing.T) {
 	}
 }
 
+// W-04 / RV-BB-1: a round whose host read was slow has no host reading, so the host lane must see a hole there, not a quiet host.
+func TestHostSamplesLeaveOutRoundsWhoseHostReadWasSlow(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	cpu := 4.0
+	var in []blackbox.Sample
+	for i := 0; i < 40; i++ { // 30 s cadence, 20 minutes; minutes 5..14 have no host reading
+		s := blackbox.Sample{T: t0.Add(time.Duration(i) * 30 * time.Second), CPU: &cpu}
+		if i >= 10 && i < 30 {
+			s = blackbox.Sample{T: s.T, Missing: []string{blackbox.MissingHostSlow}}
+		}
+		in = append(in, s)
+	}
+	got := hostSamples(in)
+	if len(got) != 20 {
+		t.Fatalf("hostSamples kept %d samples, want the 20 that read the host", len(got))
+	}
+	w := investigate.Window{Start: t0, End: t0.Add(20 * time.Minute)}
+	gaps := investigate.HostGaps(investigate.HostInput{IntervalSeconds: 30, Samples: got}, w, "incident", 5)
+	if len(gaps) != 1 || gaps[0].Minutes < 9 {
+		t.Fatalf("the slow stretch must read as one gap of about 10 minutes, got %+v", gaps)
+	}
+}
+
 /* ---------------------------------------- wizard targets (BBX-1-10) */
 
 // The route table guard (TestRouteTableCoversEveryRoute) wants a row for every
