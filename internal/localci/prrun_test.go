@@ -46,6 +46,10 @@ func (f *fakeHost) PushHistory(_ context.Context, _, headRef string) (PushHistor
 		who = f.pr.Author
 	}
 	events := append([]PushEvent{{After: f.pr.HeadSHA, Type: "push", Actor: who}}, f.older...)
+	if !f.cut {
+		// a complete history ends with the creation of the branch, by the author of the pull request
+		events = append(events, PushEvent{After: strings.Repeat("d", 40), Type: "branch_creation", Actor: f.pr.Author})
+	}
 	return PushHistory{Events: events, Complete: !f.cut}, nil
 }
 
@@ -372,6 +376,18 @@ func TestRunPROwnerLoginsPushedBySomebodyElseRunsTheBaseDefinition(t *testing.T)
 			h.pusher = "acme"
 			h.older = []PushEvent{{After: strings.Repeat("c", 40), Type: "push", Actor: "alice"}}
 		},
+		"a collaborator merged a pull request into the branch": func(h *fakeHost) {
+			h.pusher = "acme"
+			h.older = []PushEvent{{After: strings.Repeat("c", 40), Type: "pr_merge", Actor: "alice"}}
+		},
+		"a collaborator merged through the merge queue": func(h *fakeHost) {
+			h.pusher = "acme"
+			h.older = []PushEvent{{After: strings.Repeat("c", 40), Type: "merge_queue_merge", Actor: "alice"}}
+		},
+		"a kind of record that is not known": func(h *fakeHost) {
+			h.pusher = "acme"
+			h.older = []PushEvent{{After: strings.Repeat("c", 40), Type: "new_kind", Actor: "acme"}}
+		},
 		"the push history may be cut off": func(h *fakeHost) { h.pusher = "acme"; h.cut = true },
 		"the owner pushed other people's commits": func(h *fakeHost) {
 			h.commits = []PRCommit{{SHA: strings.Repeat("a", 40), AuthorLogin: "alice", CommitterLogin: "alice"}}
@@ -425,10 +441,11 @@ func TestRunPRTrustOwnerBranchStillChecksWhoPushed(t *testing.T) {
 	o := newOrigin(t)
 	noLogin := []PRCommit{{SHA: strings.Repeat("a", 40), AuthorLogin: "", CommitterLogin: ""}}
 	for name, h := range map[string]*fakeHost{
-		"another pusher":  {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, pusher: "alice"},
-		"an older pusher": {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, older: []PushEvent{{After: strings.Repeat("c", 40), Type: "push", Actor: "alice"}}},
-		"lookup failed":   {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, pusherErr: errors.New("gh: 502")},
-		"history cut off": {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, cut: true},
+		"another pusher":             {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, pusher: "alice"},
+		"an older pusher":            {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, older: []PushEvent{{After: strings.Repeat("c", 40), Type: "push", Actor: "alice"}}},
+		"lookup failed":              {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, pusherErr: errors.New("gh: 502")},
+		"history cut off":            {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, cut: true},
+		"a merge by another account": {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, older: []PushEvent{{After: strings.Repeat("c", 40), Type: "pr_merge", Actor: "alice"}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			opts, console := prOptions(t, o, h)

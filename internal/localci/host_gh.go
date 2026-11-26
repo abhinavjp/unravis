@@ -138,16 +138,14 @@ func (h *GHHost) PushHistory(ctx context.Context, repo, headRef string) (PushHis
 	if err != nil {
 		return PushHistory{}, err
 	}
-	return PushHistory{Events: events, Complete: historyComplete(events, ghPushListMax)}, nil
+	return PushHistory{Events: events, Complete: historyComplete(events)}, nil
 }
 
-// historyComplete reports whether events (newest first, as many as the host would give for a full page of
-// pageMax) show the whole life of the branch: the page is not full, or its oldest record is the branch's creation.
-func historyComplete(events []PushEvent, pageMax int) bool {
-	if len(events) < pageMax {
-		return true
-	}
-	return events[len(events)-1].Type == "branch_creation"
+// historyComplete reports whether events (newest first) show the whole life of the branch: the oldest record is
+// the branch's creation. A short page is no proof (the feed may hold less than it has, or a branch may predate
+// it), and a full page that has not reached the creation may be cut off, so both are incomplete.
+func historyComplete(events []PushEvent) bool {
+	return len(events) > 0 && events[len(events)-1].Type == kindBranchCreation
 }
 
 // parsePushEvents reads the tab separated lines HeadPusher asks gh for, newest first. A line that is not three

@@ -64,21 +64,36 @@ type PushEvent struct {
 	Actor string
 }
 
-// pushKinds are the records that put a commit on a branch. Other records (a branch deleted, a pull request
-// merged into it) say nothing about who pushed a branch's head.
-var pushKinds = map[string]bool{"push": true, "force_push": true, "branch_creation": true}
+// Kinds of record in the host's activity feed of a branch. Every kind except a deletion can put a commit on the
+// branch (a pull request merged into it, or a merge queue, lands the merger's chosen commits there with the
+// merging service as committer, so the commit logins cannot show who did it), so every one of them must name the
+// owner. A kind this code does not know is not trusted: a new kind of change must not default to harmless.
+const (
+	kindBranchCreation = "branch_creation"
+	kindBranchDeletion = "branch_deletion"
+)
+
+var ownerOnlyKinds = map[string]bool{
+	"push": true, "force_push": true, kindBranchCreation: true, "pr_merge": true, "merge_queue_merge": true,
+}
 
 // PushHistory is the answer of Host.PushHistory: the push records of one branch, newest first.
 type PushHistory struct {
 	Events []PushEvent
-	// Complete is true when the list reaches back to the creation of the branch, so no older push is missing.
+	// Complete is true when the list reaches back to the creation of the branch, so no older record is missing.
 	Complete bool
 }
 
-// AllPushesByOwner reports whether every push record of the branch names owner, and the head commit headSHA is
-// one of them. Only the records of a push kind count (see pushKinds). It fails closed, with a reason: a history
-// that may be cut off, a push by anybody else (an empty actor too), or no record of the head. Looking only at
-// who pushed the head would let the owner vouch for a collaborator's earlier push by pushing on top of it.
+// AllPushesByOwner reports whether every record of the branch except a deletion names owner as the actor, the
+// oldest record is the owner creating the branch, and the head commit headSHA is one of the records. It fails
+// closed, with a reason: a history that may be cut off or does not start at a branch creation, any record by
+// anybody else (an empty actor too), a kind of record this code does not know, or no record of the head. Looking
+// only at who pushed the head would let the owner vouch for a collaborator's earlier push by pushing on top of
+// it, and looking only at pushes would let a collaborator's pull request merge (web-flow is its committer) pass.
+//
+// A branch that was deleted and made again keeps the records of its earlier life in the feed, and they must name
+// the owner too. The new branch starts at a commit the owner chose when creating it: that creation record names
+// the owner, who vouches for the commit it started from, like any commit the owner builds on.
 func AllPushesByOwner(owner, headSHA string, hist PushHistory) (bool, string) {
 	owner, headSHA = strings.TrimSpace(owner), strings.TrimSpace(headSHA)
 	if owner == "" {
@@ -92,14 +107,17 @@ func AllPushesByOwner(owner, headSHA string, hist PushHistory) (bool, string) {
 	}
 	sawHead := false
 	for _, e := range hist.Events {
-		if !pushKinds[e.Type] {
-			continue
+		if e.Type == kindBranchDeletion {
+			continue // removes the branch, puts no commit on it; a later creation record is judged on its own
+		}
+		if !ownerOnlyKinds[e.Type] {
+			return false, fmt.Sprintf("the host's record of the branch has a kind of change %q that is not known", e.Type)
 		}
 		if actor := strings.TrimSpace(e.Actor); !strings.EqualFold(actor, owner) {
 			if actor == "" {
-				return false, "a push to the branch names no account"
+				return false, "a change of the branch names no account"
 			}
-			return false, fmt.Sprintf("the branch was pushed to by %s, not only by %s", actor, owner)
+			return false, fmt.Sprintf("the branch was changed by %s, not only by %s", actor, owner)
 		}
 		if strings.EqualFold(strings.TrimSpace(e.After), headSHA) {
 			sawHead = true
@@ -107,6 +125,9 @@ func AllPushesByOwner(owner, headSHA string, hist PushHistory) (bool, string) {
 	}
 	if !sawHead {
 		return false, "the host has no record of who pushed the head commit"
+	}
+	if oldest := hist.Events[len(hist.Events)-1]; oldest.Type != kindBranchCreation {
+		return false, "the host's record of the branch does not start at its creation"
 	}
 	return true, ""
 }
