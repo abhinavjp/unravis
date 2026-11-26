@@ -102,6 +102,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	claimTTL := fs.Duration("claim-ttl", localci.DefaultLeaseTTL, "a claim its PC did not refresh for this long is taken over by another PC")
 	compareEvery := fs.Duration("compare-every", defaultCompareEvery, "how often the comparison with GitHub is saved for the Releases app's Overview (0 turns it off)")
 	cacheLimit := fs.Int64("cache-limit-gb", 8, "size the build cache is trimmed to, in GB (half of it for runs of code that is not the owner's); -1 never trims")
+	minFree := fs.Int64("min-free-gb", 10, "the agent claims no request while the drive of the store has less free space than this, in GB (a full disk makes tests fail for the wrong reason); -1 never checks")
 	var wfFor, pushWf, protect, vars, labels, schedule, trustedBase, allowEnv, ctxFlag multiFlag
 	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
 	fs.Var(&pushWf, "push-workflow", "branch=file.yml: a workflow run when branch is pushed (repeatable; replaces the defaults)")
@@ -249,6 +250,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	agent := &localci.Agent{
 		Name: *name, Dir: store.Dir, Queue: queue, Slots: *slots, Labels: labels, Runner: runner,
 		CacheLimit: cacheLimitBytes(*cacheLimit),
+		MinFree:    cacheLimitBytes(*minFree),
 		Paused: func() bool {
 			why := pauseReason(pf, rdir, time.Now())
 			pauseMu.Lock()
