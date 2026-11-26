@@ -181,6 +181,10 @@ func TestCollectorStatesCoverCatalogue(t *testing.T) {
 			if !s.On || s.EverySec != 60 {
 				t.Errorf("web.iis: %+v", s)
 			}
+		case "paths.files", "host.facts":
+			if !s.On || s.EverySec != 3600 {
+				t.Errorf("%s should be on every 3600 s by default, got %+v", s.ID, s)
+			}
 		default:
 			if !s.On || s.EverySec != 15 {
 				t.Errorf("%s should be on every 15 s, got %+v", s.ID, s)
