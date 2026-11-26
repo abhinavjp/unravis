@@ -266,3 +266,89 @@ func TestSQLStatusSaysWhereItStandsAndPrintsTheGrantOnlyWhenNeeded(t *testing.T)
 		t.Errorf("sql-status changed the service: %v", svc.calls)
 	}
 }
+
+func installedRig(t *testing.T) *rig {
+	t.Helper()
+	r := newRig(t)
+	cfg := blackbox.Default()
+	cfg.Name = "box-1"
+	cfg.Folder = filepath.Join(r.dir, "rec")
+	cfg.LogPaths = []string{r.dir}
+	src := filepath.Join(r.dir, "src.json")
+	if err := blackbox.SaveConfig(src, cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	if c, out, errs := r.do("install", "--config", src, "--json"); c != 0 {
+		t.Fatalf("install: %d %s %s", c, out, errs)
+	}
+	return r
+}
+
+func TestConfigSetValidateHistoryRollbackThroughTheCLI(t *testing.T) {
+	r := installedRig(t)
+	if c, out, errs := r.do("config", "set", "web.iis", "off", "--json"); c != 0 || !strings.Contains(out, `"ok":true`) {
+		t.Fatalf("set: %d %s %s", c, out, errs)
+	}
+	if c, out, errs := r.do("config", "set", "--every", "5m", "--json"); c != exitUsage && c != exitFail {
+		t.Fatalf("set with no collector: %d %s %s", c, out, errs)
+	}
+	if c, out, _ := r.do("config", "set", "web.iis", "--every", "5m", "--json"); c != 0 || !strings.Contains(out, "every 300") {
+		t.Fatalf("set --every: %d %s", c, out)
+	}
+	if c, out, _ := r.do("config", "set", "counters.extra", "add", `\Memory\Available MBytes`, "--json"); c != 0 {
+		t.Fatalf("counter add: %d %s", c, out)
+	}
+	c, out, _ := r.do("config", "history", "--json")
+	if c != 0 || !strings.Contains(out, `"verified":true`) || strings.Count(out, `"seq"`) != 3 {
+		t.Fatalf("history: %d %s", c, out)
+	}
+	if c, out, _ := r.do("config", "rollback", "--json"); c != 0 || !strings.Contains(out, `"ok":true`) {
+		t.Fatalf("rollback: %d %s", c, out)
+	}
+	// Refusals carry a fixed reason.
+	for _, args := range [][]string{
+		{"config", "set", "nope.none", "off", "--json"},
+		{"config", "set", "host.diskcpu", "off", "--json"},
+		{"config", "set", "web.iis", "maybe", "--json"},
+		{"config", "set", "counters.extra", "add", `\\server\Process(*)\x`, "--json"},
+		{"config", "set", "web.iis", "on", "--every", "7", "--json"},
+		{"config", "set", "web.iis", "on", "--every", "soon", "--json"},
+	} {
+		c, out, _ := r.do(args...)
+		if c != exitFail || !strings.Contains(out, `"ok":false`) {
+			t.Errorf("%v: %d %s", args, c, out)
+		}
+	}
+	// validate: a good file, a bad one, a missing one. None of them changes anything.
+	good := filepath.Join(r.dir, "good.json")
+	cfg := blackbox.Default()
+	cfg.Name, cfg.Folder, cfg.LogPaths = "x", filepath.Join(r.dir, "rec2"), []string{r.dir}
+	if err := blackbox.SaveConfig(good, cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	if c, out, _ := r.do("config", "validate", good, "--json"); c != 0 || !strings.Contains(out, `"valid":true`) {
+		t.Errorf("validate good: %d %s", c, out)
+	}
+	bad := filepath.Join(r.dir, "bad.json")
+	_ = os.WriteFile(bad, []byte(`{"name":"x","collectors":{"nope.none":{"on":false}}}`), 0o600)
+	if c, _, _ := r.do("config", "validate", bad); c != exitFail {
+		t.Errorf("validate bad: %d", c)
+	}
+	if c, _, _ := r.do("config", "validate", filepath.Join(r.dir, "missing.json")); c != exitFail {
+		t.Errorf("validate missing: %d", c)
+	}
+	// Not an administrator: set and rollback are refused; history and validate still work.
+	r.env.admin = false
+	if c, out, _ := r.do("config", "set", "web.iis", "off", "--json"); c != exitFail || !strings.Contains(out, "no-admin") {
+		t.Errorf("non-admin set: %d %s", c, out)
+	}
+	if c, _, _ := r.do("config", "history"); c != 0 {
+		t.Errorf("non-admin history: %d", c)
+	}
+	if c, _, _ := r.do("config"); c != exitUsage {
+		t.Errorf("bare config: %d", c)
+	}
+	if c, _, _ := r.do("config", "run", "ls"); c != exitUsage {
+		t.Errorf("unknown config verb: %d", c)
+	}
+}
