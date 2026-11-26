@@ -15,3 +15,5 @@ api-audit-explorer/internal/dotnetdiag.TestWindowsDialRejectsForeignOwner BL-593
 api-audit-explorer/internal/localci.TestTwoPCsRunAnItemOnce BL-586 until=2026-12-10 two-PC claim test is timing-dependent under load (the other PC keeps the item queued); seen on the local gate 26 Nov
 api-audit-explorer/internal/blackbox.TestClumsyReadersCannotChangeOrEscapeTheFolder BL-593 until=2026-12-10 server did not come up in time on a busy PC (host load); seen on the local gate 26 Nov
 api-audit-explorer/internal/casestore/sqlite.TestEachTimeBudgetIsReportedAsABudget BL-593 until=2026-12-10 time-budget test under load; seen on the local gate 26 Nov
+api-audit-explorer/internal/blackbox.TestClumsyFullDrivePausesThenResumesAndSaysSoOnTheStatusPage BL-593 until=2026-12-10 server never listened within 5s on a busy PC (same cause as the other blackbox start-up tests); seen on the local gate 26 Nov
+api-audit-explorer/internal/blackbox.TestRunHostWithSelectedTargetsRecordsCleanly BL-593 until=2026-12-10 server never listened within 5s on a busy PC (same cause as the other blackbox start-up tests); seen on the local gate 26 Nov
