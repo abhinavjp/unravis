@@ -150,6 +150,78 @@ func TestClientLogValidation(t *testing.T) {
 	}
 }
 
+// The batch form is as strict as the single form: an unknown field in an entry or beside "entries", or text after the JSON, is refused
+// and nothing is logged (RV-SEC-5).
+func TestClientLogBatchRefusesUnknownFieldsAndTrailingData(t *testing.T) {
+	cases := map[string]string{
+		"unknown field in a batch entry": `{"entries":[{"kind":"nav","screen":"cases","evil":"x"}]}`,
+		"unknown field beside entries":   `{"entries":[{"kind":"nav","screen":"cases"}],"evil":"x"}`,
+		"text after a batch":             `{"entries":[{"kind":"nav","screen":"cases"}]} {"entries":[]}`,
+		"text after a single entry":      `{"kind":"nav","screen":"cases"} x`,
+	}
+	for name, body := range cases {
+		var buf bytes.Buffer
+		h := New(&fakeRepository{}, nil, testToken, false, WithLogger(bufLogger(&buf)))
+		if code := serve(h, newTestRequest(http.MethodPost, "/api/client-log", body, true)).Code; code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", name, code)
+		}
+		if strings.Contains(buf.String(), "client log") {
+			t.Errorf("%s: a refused body was still logged:\n%s", name, buf.String())
+		}
+	}
+	// What the web client sends (clientLog.ts) still passes.
+	var buf bytes.Buffer
+	h := New(&fakeRepository{}, nil, testToken, false, WithLogger(bufLogger(&buf)))
+	ok := `{"entries":[{"kind":"error","screen":"app","code":"http_500","stage":"run","message":"m","reqId":"abc"},{"kind":"nav","screen":"cases"}]}`
+	if code := serve(h, newTestRequest(http.MethodPost, "/api/client-log", ok, true)).Code; code != http.StatusNoContent {
+		t.Errorf("a normal batch = %d, want 204", code)
+	}
+}
+
+// screen, action, code, stage and reqId pass through the log scrubber like the message does. A secret that starts inside the length cap
+// and runs past it must not leave a readable piece behind (RV-SEC-5).
+func TestClientLogScrubsEveryTextField(t *testing.T) {
+	var buf bytes.Buffer
+	h := New(&fakeRepository{}, nil, testToken, false, WithLogger(bufLogger(&buf)))
+	const conn = "Server=db1;User Id=sa;Password=Hunter2Secret;"
+	straddle := strings.Repeat("a", 50) + "password=Tr0ub4dorSecret"
+	entry := func(kind string) string {
+		return `{"kind":"` + kind + `","screen":"` + conn + `","action":"` + conn + `","code":"` + straddle + `","stage":"` + conn + `","reqId":"password=ReqSecret9","message":"m"}`
+	}
+	body := `{"entries":[` + entry("action") + `,` + entry("error") + `]}`
+	if res := serve(h, newTestRequest(http.MethodPost, "/api/client-log", body, true)); res.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "client log") {
+		t.Fatalf("nothing was logged:\n%s", out)
+	}
+	// "Tr0ub" is what a plain 64-byte cut leaves of the straddling secret.
+	for _, leak := range []string{"Hunter2Secret", "Hunter2", "Tr0ub", "ReqSecret9"} {
+		if strings.Contains(out, leak) {
+			t.Errorf("the log holds %q:\n%s", leak, out)
+		}
+	}
+}
+
+// Values the web client really sends (screen names, action names, step numbers, error codes, request ids) are not changed by the
+// scrubber, so the journey log still reads the same.
+func TestClientLogKeepsRealisticFieldValues(t *testing.T) {
+	var buf bytes.Buffer
+	h := New(&fakeRepository{}, nil, testToken, false, WithLogger(bufLogger(&buf)))
+	body := `{"entries":[{"kind":"action","screen":"guided","action":"step_reached","stage":"3"},` +
+		`{"kind":"error","screen":"app","code":"unhandled_rejection","stage":"connect","reqId":"3f9a1c0b","message":"m"}]}`
+	if res := serve(h, newTestRequest(http.MethodPost, "/api/client-log", body, true)); res.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body)
+	}
+	out := buf.String()
+	for _, want := range []string{"screen=guided", "action=step_reached", "stage=3", "code=unhandled_rejection", "stage=connect", "ui_req_id=3f9a1c0b"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the log lost %q:\n%s", want, out)
+		}
+	}
+}
+
 // Accepted UI entries land in the log with src=ui; the message is sanitized
 // and truncated to 300 characters server-side.
 func TestClientLogWritesSanitizedEntries(t *testing.T) {

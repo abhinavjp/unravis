@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ const (
 	floodEnv      = "UNRAVIS_PIPESEC_REFUSAL_FLOOD"
 	floodConnects = 1000 // refused connects per flooding process
 	floodProcs    = 4
+	floodThreads  = 8 // connecting goroutines per process: floodProcs*floodThreads must exceed DefaultMaxInstances
 )
 
 // TestRefusalFloodHelper is the client side of TestRefusedPeerFloodStillServesLegitClient. Run by itself it does nothing; the parent test
@@ -33,22 +35,33 @@ func TestRefusalFloodHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// floodThreads goroutines in each of floodProcs processes: more connectors at once than the pool has instances (DefaultMaxInstances),
+	// so every instance can be busy refusing at the same moment.
 	deadline := time.Now().Add(60 * time.Second) // winok: a give-up limit for a helper process, not a proof of ordering
-	for n := 0; n < floodConnects; {
-		if time.Now().After(deadline) {
-			t.Fatalf("only %d of %d connects went through", n, floodConnects)
-		}
-		h, err := windows.CreateFile(namep, clientAccess, 0, nil, windows.OPEN_EXISTING, 0, 0)
-		if err != nil { // every instance is busy for the moment
-			time.Sleep(time.Millisecond) // winok: a pause between retries, nothing waits on its length
-			continue
-		}
-		_ = windows.CloseHandle(h)
-		n++
+	var wg sync.WaitGroup
+	for range floodThreads {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < floodConnects/floodThreads; {
+				if time.Now().After(deadline) {
+					t.Errorf("only %d of %d connects went through", n, floodConnects/floodThreads)
+					return
+				}
+				h, err := windows.CreateFile(namep, clientAccess, 0, nil, windows.OPEN_EXISTING, 0, 0)
+				if err != nil { // every instance is busy for the moment
+					time.Sleep(time.Millisecond) // winok: a pause between retries, nothing waits on its length
+					continue
+				}
+				_ = windows.CloseHandle(h)
+				n++
+			}
+		}()
 	}
+	wg.Wait()
 }
 
-// TestRefusedPeerFloodStillServesLegitClient (RV-SEC-6): four processes the policy refuses connect 1,000 times each, in a loop; a peer
+// TestRefusedPeerFloodStillServesLegitClient (RV-SEC-6): four processes the policy refuses connect 1,000 times each, from 8 goroutines each (32 connectors against the 16-instance pool); a peer
 // the policy allows must still be served, each round trip inside one second, and the refusals are counted. The review item asked
 // whether a refused peer can keep the listener from serving a legitimate one; on the listener as it is, it cannot, so this test guards that.
 func TestRefusedPeerFloodStillServesLegitClient(t *testing.T) {
