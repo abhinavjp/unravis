@@ -214,7 +214,7 @@ func (d *DiagLog) writeLocked(s string) (becameStuck bool) {
 // write tries the rotation again once a minute (RV-BB-12).
 func (d *DiagLog) rotateLocked() {
 	if d.f != nil {
-		d.f.Close()
+		_ = d.f.Close()
 		d.f = nil
 	}
 	cur := filepath.Join(d.dir, DiagFileName)
