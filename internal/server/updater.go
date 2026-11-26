@@ -57,6 +57,7 @@ type Updater struct {
 	dl          *update.Downloader
 	launch      Launcher
 	silent      Launcher // starts the setup program without a window (see updater_auto.go)
+	silentOpen  Launcher // the same, for Apply now: the new version also opens its page (nil: use silent)
 	canSilently func() bool
 	busy        func() bool
 	presence    Presence
@@ -69,7 +70,9 @@ type Updater struct {
 	auto        autoState
 	resultDir   string // where the setup program leaves the result of an unattended update
 	inst        installState
-	saveMu      sync.Mutex // one settings save at a time
+	clock       func() time.Time // nil: the real clock; a test sets it to move time without sleeping
+	setupAlive  func() bool      // nil in production: the time limit alone decides (see expireStaleLaunch)
+	saveMu      sync.Mutex       // one settings save at a time
 	rnd         *rand.Rand
 }
 
@@ -213,17 +216,16 @@ type UpdateNotice struct {
 // Status is the last known answer plus the settings. It makes no network call.
 func (u *Updater) Status() UpdateStatus {
 	// The result file is read before the lock is taken: a slow disk must not hold up the check loop and the minute tick.
-	var lastRes *update.ApplyResult
-	if u.resultDir != "" {
-		if r, ok := update.ReadApplyResult(u.resultDir); ok {
-			lastRes = &r
-		}
-	}
+	lastRes := u.readApplyResult()
+	u.expireStaleLaunch(lastRes) // a "launched" that never got a result becomes "ready" again (RV-SUP-1)
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	st := UpdateStatus{Status: "none", Current: version.Version, Channel: u.channel, Auto: u.settings.Auto, IntervalMinutes: u.settings.IntervalMinutes, ApplyAuto: u.settings.ApplyAuto, InUse: u.InUse()}
 	if lastRes != nil {
 		st.Result = &UpdateNotice{Outcome: lastRes.Outcome, From: lastRes.From, To: lastRes.To, Message: lastRes.Message}
+	}
+	if n := u.launchTimeoutNote(lastRes); n != nil {
+		st.Result = n // newer than an earlier run's note on disk: it is about the launch that just timed out
 	}
 	if u.channel == "" {
 		st.Status = "dev"

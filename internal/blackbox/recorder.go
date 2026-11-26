@@ -32,6 +32,10 @@ const (
 	// clockJumpSeconds: when the wall clock moves this much more (or less) than
 	// the steady clock between two ticks, it is recorded as an event.
 	clockJumpSeconds = 2.0
+	// failureEventEvery is the least time between two events of one failure
+	// kind (collect or write), so a long outage or a flapping one stays a few
+	// lines in the 200-event window.
+	failureEventEvery = 15 * time.Minute
 )
 
 // Fixed event codes (C10): events never carry err.Error(), driver text, file
@@ -40,6 +44,8 @@ const (
 	codeCollectFailed      = "collect-failed"
 	codeWriteFailed        = "write-failed"
 	codeHousekeepingFailed = "housekeeping-failed"
+	codeHostSlow           = "host-slow"
+	codeHostBusy           = "host-busy"
 )
 
 // eventCode maps a failure to a fixed event code: a known cause gets a
@@ -113,6 +119,9 @@ type Recorder struct {
 	freeKnown  bool
 	writeOK    bool
 	collectOK  bool
+	collectF   failureTrack // tick goroutine only
+	writeF     failureTrack // tick goroutine only
+	hostF      failureTrack // slow host reads; tick goroutine only
 
 	lastTickWall time.Time
 	lastTickMono time.Duration
@@ -353,13 +362,24 @@ func (r *Recorder) Tick(now time.Time) {
 	}
 	if err != nil {
 		rd.Err = diagErrCode(err)
-		if r.collectOK {
-			r.event(EventCollectFailed, eventCode(err))
-		}
+		r.failureEvent(&r.collectF, now, eventCode(err), EventCollectFailed, EventCollectStillFailing)
 		r.collectOK = false
 		return
 	}
 	r.collectOK = true
+	r.recoveredEvent(&r.collectF, now, EventCollectRecovered)
+	if s.HostSkipped() {
+		// The groups were read but the host was not: the sample is kept, its host
+		// fields are absent (a gap in the host lines, never 0), and this says why.
+		code := codeHostSlow
+		if hostBusyWord(s) {
+			code = codeHostBusy
+		}
+		rd.Err = code
+		r.failureEvent(&r.hostF, now, code, EventHostSlow, EventHostStillSlow)
+	} else {
+		r.recoveredEvent(&r.hostF, now, EventHostRecovered)
+	}
 
 	r.mu.Lock()
 	r.seq++
@@ -383,18 +403,15 @@ func (r *Recorder) Tick(now time.Time) {
 	appendDur = time.Since(appendStart)
 	if err != nil {
 		r.mu.Lock()
-		first := r.writeOK
 		r.writeOK = false
 		r.forceHK = true // a full disk is the usual reason: free some space now
 		r.mu.Unlock()
 		rd.Err = "write-failed"
-		if first {
-			code := eventCode(err)
-			if code == codeCollectFailed {
-				code = codeWriteFailed
-			}
-			r.event(EventWriteFailed, code)
+		code := eventCode(err)
+		if code == codeCollectFailed {
+			code = codeWriteFailed
 		}
+		r.failureEvent(&r.writeF, now, code, EventWriteFailed, EventWriteStillFailing)
 		return
 	}
 	// The sample is durably accepted: only now may the event read cursor
@@ -406,6 +423,61 @@ func (r *Recorder) Tick(now time.Time) {
 	r.resumedFlag = false
 	r.lastSample = now
 	r.mu.Unlock()
+	r.recoveredEvent(&r.writeF, now, EventWriteRecovered)
+}
+
+// failureTrack follows one kind of failure (collect or write) across rounds:
+// since when it fails, how many rounds failed, and when it last raised an event.
+// Tick goroutine only.
+type failureTrack struct {
+	failing   bool
+	announced bool // an event for this outage was raised, so a recovered event is owed
+	start     time.Time
+	lastEvent time.Time
+	total     int // failed rounds of this outage
+	since     int // failed rounds since the last event of this outage
+}
+
+// failureEvent notes one failed round. The first failure raises `first` (the
+// fixed code as detail, as before). While the failure goes on, `again` is raised
+// at most once per failureEventEvery with the newest code and the number of
+// rounds that failed since the last event. A failure that starts within
+// failureEventEvery of the kind's last event raises nothing yet; the next due
+// event carries it.
+func (r *Recorder) failureEvent(f *failureTrack, now time.Time, code, first, again string) {
+	if !f.failing {
+		*f = failureTrack{failing: true, start: now, lastEvent: f.lastEvent}
+	}
+	f.total++
+	f.since++
+	if d := now.Sub(f.lastEvent); !f.lastEvent.IsZero() && d >= 0 && d < failureEventEvery {
+		return
+	}
+	if f.announced {
+		r.event(again, fmt.Sprintf("code=%s rounds=%d", code, f.since))
+	} else {
+		r.event(first, code)
+		f.announced = true
+	}
+	f.lastEvent, f.since = now, 0
+}
+
+// recoveredEvent closes an outage that was announced: the total failed rounds
+// and how long it lasted. An outage that raised no event (a quick flap inside
+// failureEventEvery of the last one) closes silently.
+func (r *Recorder) recoveredEvent(f *failureTrack, now time.Time, kind string) {
+	if !f.failing {
+		return
+	}
+	if f.announced {
+		secs := int(now.Sub(f.start) / time.Second)
+		if secs < 0 {
+			secs = 0
+		}
+		r.event(kind, fmt.Sprintf("rounds=%d seconds=%d", f.total, secs))
+		f.lastEvent = now
+	}
+	*f = failureTrack{lastEvent: f.lastEvent}
 }
 
 // feedBudget measures the Blackbox's own cost and advances the budget one

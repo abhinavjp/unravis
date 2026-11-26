@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/tools/maint/Housekeeping.ps1\" -Event stop >/dev/null 2>&1; exit 0",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/tools/maint/Housekeeping.ps1\" -Event sessionend >/dev/null 2>&1; exit 0",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{"Action":"run","Package":"p/c","Test":"TestCleanupAndMore"}
+{"Action":"output","Package":"p/c","Test":"TestCleanupAndMore","Output":"    a_test.go:9: wanted 1, got 2\n"}
+{"Action":"output","Package":"p/c","Test":"TestCleanupAndMore","Output":"    testing.go:1231: TempDir RemoveAll cleanup: remove C:/x/001: The directory is not empty.\n"}
+{"Action":"output","Package":"p/c","Test":"TestCleanupAndMore","Output":"--- FAIL: TestCleanupAndMore (0.01s)\n"}
+{"Action":"fail","Package":"p/c","Test":"TestCleanupAndMore","Elapsed":0.01}
+{"Action":"fail","Package":"p/c","Elapsed":0.02}

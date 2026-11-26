@@ -11,7 +11,7 @@
   import { BBC_TEXT as T } from '../lib/copy/blackboxChartsCopy';
   import { sqlNote } from '../lib/blackboxSqlNames';
   import {
-    PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapRanges, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
+    PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapsForLine, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
     alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own, niceBinaryMax, biggestPlotted, settleWidth,
     type SeriesAnswer, type SeriesLine, type SeriesPoint, type SeriesUnit, type WindowPreset
   } from '../lib/blackboxSeries';
@@ -307,7 +307,7 @@
       s.keys.forEach((k, j) => {
         const d = byKey.get(k)!;
         const c = colourOf.get(k);
-        const cd = chartData(d.points, gapRanges(a.gaps), log);
+        const cd = chartData(d.points, gapsForLine(a, k), log);
         hiddenNow += cd.hidden;
         series.push({
           type: 'line', name: d.title, id: k, xAxisIndex: i, yAxisIndex: i, data: cd.data, connectNulls: false, showSymbol: cd.data.length < 40, symbolSize: 4,

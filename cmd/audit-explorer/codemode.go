@@ -36,9 +36,18 @@ func mountCodeMode(getenv func(string) string, served http.Handler, token string
 	// broker's Authorize hook, so it holds on every path to Run, and the settings route (cliMinutes) is the only thing that opens it.
 	cliGate := codemode.NewCLIGate(nil)
 	broker, err := codemode.New(codemode.Config{
-		Hosts:     codemode.DashboardHosts(served, token),
-		Cases:     codeapi.Resolver(mount),
-		Settings:  files.Settings,
+		Hosts: codemode.DashboardHosts(served, token),
+		Cases: codeapi.Resolver(mount),
+		// Every run reads the settings first; a read that finds code mode off (or the file unreadable) shuts the command line, so a
+		// file edited off and back on by hand does not bring an open command line back (the route closes it too, on a read and a save).
+		Settings: func() codemode.Settings {
+			s := files.Settings()
+			if !s.Enabled && cliGate.CloseIfOpen() {
+				// One app-log line for the change, once (BL-371: each window change is one line); a window that was shut says nothing.
+				log.Print("Command line window: closed because code mode is off.")
+			}
+			return s
+		},
 		Authorize: cliGate.Authorize,
 	})
 	if err != nil {

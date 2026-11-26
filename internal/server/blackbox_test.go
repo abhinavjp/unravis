@@ -1169,6 +1169,69 @@ func TestHostSamplesDisk(t *testing.T) {
 	}
 }
 
+// W-04 / RV-BB-1: a round whose host read was slow has no host reading, so the host lane must see a hole there, not a quiet host.
+func TestHostSamplesLeaveOutRoundsWhoseHostReadWasSlow(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	cpu := 4.0
+	var in []blackbox.Sample
+	for i := 0; i < 40; i++ { // 30 s cadence, 20 minutes; minutes 5..14 have no host reading
+		s := blackbox.Sample{T: t0.Add(time.Duration(i) * 30 * time.Second), CPU: &cpu}
+		if i >= 10 && i < 30 {
+			s = blackbox.Sample{T: s.T, Missing: []string{blackbox.MissingHostSlow}}
+		}
+		in = append(in, s)
+	}
+	got := hostSamples(in)
+	if len(got) != 20 {
+		t.Fatalf("hostSamples kept %d samples, want the 20 that read the host", len(got))
+	}
+	w := investigate.Window{Start: t0, End: t0.Add(20 * time.Minute)}
+	gaps := investigate.HostGaps(investigate.HostInput{IntervalSeconds: 30, Samples: got}, w, "incident", 5)
+	if len(gaps) != 1 || gaps[0].Minutes < 9 {
+		t.Fatalf("the slow stretch must read as one gap of about 10 minutes, got %+v", gaps)
+	}
+}
+
+// W-04 / RV-BB-1: the status of a Blackbox reads its newest samples, and when more than half of the newest 20 lost their host
+// read the state is a warning inside Running. A recorder whose host read is fine stays plain Ready.
+func TestStatusWarnsWhenMostNewSamplesLostTheirHostRead(t *testing.T) {
+	start := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	record := func(skip func(i int) bool) bbLook {
+		t.Helper()
+		last := start
+		st, err := blackbox.OpenStore(t.TempDir(), blackbox.StoreOptions{Name: "pc", IntervalSeconds: 15, RunID: "r1", Now: func() time.Time { return last }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close("test-end") }()
+		cpu := 5.0
+		for i := 0; i < 24; i++ {
+			last = start.Add(time.Duration(i) * 15 * time.Second)
+			smp := blackbox.Sample{V: 1, Run: "r1", Seq: uint64(i + 1), T: last, CPU: &cpu}
+			if skip(i) {
+				smp = blackbox.Sample{V: 1, Run: "r1", Seq: uint64(i + 1), T: last, Missing: []string{blackbox.MissingHostSlow}}
+			}
+			if err := st.Append(smp, ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		loc, err := blackbox.ParseLocation(st.Dir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		hub := newBlackboxHub(BlackboxDeps{Now: func() time.Time { return last.Add(5 * time.Second) }})
+		return hub.lookAt(t.Context(), blackbox.NewFolderSource(loc), true)
+	}
+	slow := record(func(i int) bool { return i >= 8 }) // the newest 16 of 24 lost the host read
+	if slow.State.State != blackbox.SRunning || slow.State.Tone != blackbox.ToneWarn || !strings.Contains(slow.State.Detail, blackbox.HostSlowSentence) {
+		t.Fatalf("a PC whose host read keeps being skipped must warn: %+v", slow.State)
+	}
+	fine := record(func(i int) bool { return i == 23 }) // one slow round only
+	if fine.State.Tone != blackbox.ToneGood || strings.Contains(fine.State.Detail, blackbox.HostSlowSentence) {
+		t.Fatalf("one slow round must not warn: %+v", fine.State)
+	}
+}
+
 /* ---------------------------------------- wizard targets (BBX-1-10) */
 
 // The route table guard (TestRouteTableCoversEveryRoute) wants a row for every

@@ -189,7 +189,7 @@ func DiagnoseLate(text string, now time.Time, base int) DiagReport {
 
 	if n := errs["host-slow"] + errs["host-busy"]; n > 0 {
 		add("host-slow", true, "Reading the PC itself was too slow.",
-			fmt.Sprintf("%d round(s) gave up because the basic read (CPU, memory, disk, network, process list) took longer than %d seconds, so no sample was written. Usual causes: antivirus scanning the Blackbox, a very busy PC, or thousands of processes.", n, int(hostBudget/time.Second)))
+			fmt.Sprintf("In %d round(s) the basic read (CPU, memory, disk, network, process list) ran out of time or was still running from the round before. The counter groups were still read, so the sample was kept, but the CPU, memory, disk and network lines have a gap there (a round where no group could be read was dropped). The Blackbox waits longer when this keeps happening, up to four times its usual %d seconds and never more than half the interval. Usual causes: antivirus scanning the Blackbox, a very busy PC, or thousands of processes.", n, int(hostBudget/time.Second)))
 	}
 	if n := errs["write-failed"] + errs["disk-full"]; n > 0 {
 		add("write-failed", true, "Writing a sample to the recordings drive failed.",

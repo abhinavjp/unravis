@@ -245,6 +245,10 @@ type settingsDTO struct {
 	// CLIOpenUntil is when the window that lets the command line run scripts ends (RFC 3339, UTC); empty while it is closed. The window
 	// is not a setting: it is kept in memory, so it is closed whenever the app starts.
 	CLIOpenUntil string `json:"cliOpenUntil"`
+	// CLIUnlimited is true while the command line is allowed with no end ("no time limit"). Always present, false when it is not on. Like
+	// the window it is kept in memory only: it is false whenever the app starts or code mode is switched off, and while it is true
+	// cliOpenUntil stays empty.
+	CLIUnlimited bool `json:"cliUnlimited"`
 	// Damaged is true when code-mode.json cannot be read or trusted: code mode is then off until the settings are saved again.
 	Damaged bool `json:"damaged"`
 }
@@ -252,16 +256,36 @@ type settingsDTO struct {
 func (a *api) settingsReply(set codemode.Settings, damaged bool) settingsDTO {
 	d := settingsDTO{Enabled: set.Enabled, AllowDegraded: set.AllowDegraded, KeepResults: set.KeepResults, AllowIdentifiers: a.allowIdentifiers, Damaged: damaged}
 	if a.cliGate != nil {
-		if until, open := a.cliGate.OpenUntil(); open {
+		until, open, unlimited := a.cliGate.Snapshot()
+		if open {
 			d.CLIOpenUntil = until.UTC().Format(time.RFC3339)
 		}
+		d.CLIUnlimited = unlimited
 	}
 	return d
 }
 
 func (a *api) getSettings(w http.ResponseWriter) {
+	// Under the same lock as a PUT, so the read of the file and the state of the gate are one moment. A read that finds code mode off or
+	// the file damaged shuts the command line (the answer is never "off" or "damaged" together with an open command line), so editing
+	// the file back to "on" does not bring an open command line back.
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
 	set, err := a.files.Load()
+	if err != nil || !set.Enabled {
+		a.closeBecauseOff()
+	}
 	reply(w, http.StatusOK, a.settingsReply(set, err != nil))
+}
+
+// closeBecauseOff shuts the command line (and records it, when it was open) at a moment when code mode was seen to be off or its file
+// damaged. Closing needs no disk and never fails. It reports whether the command line was open (and so is now shut by this call).
+func (a *api) closeBecauseOff() bool {
+	if !a.cliGate.CloseIfOpen() {
+		return false
+	}
+	logCLIChange("open", "closed", " because code mode is off", 0)
+	return true
 }
 
 // settingsPatch holds only the switches the caller sent; the others stay as they are.
@@ -271,6 +295,10 @@ type settingsPatch struct {
 	KeepResults   *bool `json:"keepResults"`
 	// CLIMinutes opens the window that lets the command line run scripts: 1 to 60 minutes from now, or 0 to close it. Not saved to disk.
 	CLIMinutes *int `json:"cliMinutes"`
+	// CLIUnlimited true allows the command line with no end (until it is closed, code mode goes off, or the app stops). It cannot be sent
+	// with cliMinutes above 0. False closes the command line (unless cliMinutes above 0 opens a timed window in the same request). Not
+	// saved to disk.
+	CLIUnlimited *bool `json:"cliUnlimited"`
 }
 
 func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
@@ -282,15 +310,40 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, codeBadRequest, "The command line can be allowed for 1 to 60 minutes, or 0 to close it.")
 		return
 	}
+	if in.CLIUnlimited != nil && *in.CLIUnlimited {
+		if a.cliGate == nil {
+			fail(w, http.StatusBadRequest, codeBadRequest, "The command line cannot be allowed in this build.")
+			return
+		}
+		if in.CLIMinutes != nil && *in.CLIMinutes > 0 {
+			fail(w, http.StatusBadRequest, codeBadRequest, "Choose either a number of minutes or no time limit, not both.")
+			return
+		}
+	}
 	a.settingsMu.Lock()
 	defer a.settingsMu.Unlock()
+	// Shutting needs no disk, so a request that shuts the command line (or leaves the no-time-limit state for a timed window) does it first:
+	// a failed read or save below must never leave the command line open that the caller asked to close. Opening still waits for the save.
+	closedNow := a.closeFirst(in)
+	notChanged := func() string {
+		if closedNow {
+			return "The command line was shut; nothing else was changed."
+		}
+		return "Nothing was changed."
+	}
 	// A damaged file reads as all off: the save below starts from that, which repairs it.
 	set, lerr := a.files.Load()
 	if lerr != nil && !errors.Is(lerr, settingsfile.ErrCorrupt) {
-		// A read that failed (not a file that cannot be trusted): saving would turn off switches the caller did not send.
-		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be read. Nothing was changed.")
+		// A read that failed (not a file that cannot be trusted): saving would turn off switches the caller did not send. What code mode
+		// says is not known, and the broker reads that as off, so the command line is shut here too.
+		closedNow = a.closeBecauseOff() || closedNow
+		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be read. "+notChanged())
 		return
 	}
+	// Code mode was on before this request only if the file was read and said so. A missing, damaged or "off" file counts as off, so a
+	// request that switches it on does not bring back a command line that was open before it went off (the file may have been edited by
+	// hand, with no request or run in between to shut the gate).
+	wasOn := lerr == nil && set.Enabled
 	if in.Enabled != nil {
 		set.Enabled = *in.Enabled
 	}
@@ -301,21 +354,91 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 		set.KeepResults = *in.KeepResults
 	}
 	if err := a.files.Save(set); err != nil {
-		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be saved. Nothing was changed.")
+		if !wasOn {
+			// The file read as off or damaged, and it stays so: the command line must not stay open behind it.
+			closedNow = a.closeBecauseOff() || closedNow
+		}
+		fail(w, http.StatusInternalServerError, codemode.CodeInternal, "The settings could not be saved. "+notChanged())
 		return
 	}
 	// The window follows the save, so a failed save leaves it as it was. Switching code mode off closes it too: the next time it is
-	// switched on, the command line starts shut again.
+	// switched on, the command line starts shut again. The no-time-limit state follows the same rules (and a timed window replaces it).
+	// Every case that is not a clear "open" closes: an unlimited request while code mode is off, or a window of 0 minutes, ends shut.
 	if a.cliGate != nil {
+		before := cliStateOf(a.cliGate)
 		switch {
 		case !set.Enabled:
 			a.cliGate.Close()
+			logCLIChange(before, cliStateOf(a.cliGate), " because code mode is off", 0)
+		case in.CLIUnlimited != nil && *in.CLIUnlimited:
+			a.cliGate.OpenUnlimited()
+			logCLIChange(before, cliStateOf(a.cliGate), "", 0)
 		case in.CLIMinutes != nil:
 			a.cliGate.Open(time.Duration(*in.CLIMinutes) * time.Minute)
+			logCLIChange(before, cliStateOf(a.cliGate), "", *in.CLIMinutes)
+		case in.CLIUnlimited != nil, !wasOn:
+			// "No time limit" off, or code mode just switched on from off without opening the command line in the same request.
+			a.cliGate.Close()
+			logCLIChange(before, cliStateOf(a.cliGate), "", 0)
 		}
 	}
 	log.Printf("Code mode settings were saved.")
 	reply(w, http.StatusOK, a.settingsReply(set, false))
+}
+
+// closeFirst shuts the command line before the settings are read or saved when the request asks to close it: code mode off, "no time
+// limit" off, a window of 0 minutes, or a timed window replacing the no-time-limit state (the state that has no end must not outlive a
+// failed request to leave it). It reports whether the gate was open and is now shut. The caller holds settingsMu.
+func (a *api) closeFirst(in settingsPatch) bool {
+	if a.cliGate == nil {
+		return false
+	}
+	closes := (in.Enabled != nil && !*in.Enabled) ||
+		(in.CLIUnlimited != nil && !*in.CLIUnlimited) ||
+		(in.CLIMinutes != nil && (*in.CLIMinutes == 0 || a.cliGate.Unlimited()) && (in.CLIUnlimited == nil || !*in.CLIUnlimited))
+	if !closes {
+		return false
+	}
+	before := cliStateOf(a.cliGate)
+	a.cliGate.Close()
+	if before == "closed" {
+		return false
+	}
+	if in.Enabled != nil && !*in.Enabled {
+		log.Printf("Command line window: closed because code mode is off.")
+	} else {
+		log.Printf("Command line window: closed.")
+	}
+	return true
+}
+
+// cliStateOf names what the gate allows now: "closed", "timed" or "unlimited".
+func cliStateOf(g *codemode.CLIGate) string {
+	switch {
+	case g.Unlimited():
+		return "unlimited"
+	case g.Allows():
+		return "timed"
+	}
+	return "closed"
+}
+
+// logCLIChange is the record of a change to the command-line window (BL-371), one line in the app's log: opened for a time, opened with no
+// time limit, or closed, and whether code mode going off was the reason. It holds no case, record or script text. It is called only when
+// a request acted on the gate. A timed window that is opened again is a change (the end moves), so every "timed" result is recorded; a
+// request that left the gate shut when it was already shut is not. The window running out by itself is not a settings change and is not
+// recorded here.
+func logCLIChange(before, after, why string, minutes int) {
+	switch after {
+	case "unlimited":
+		log.Printf("Command line window: opened with no time limit.")
+	case "timed":
+		log.Printf("Command line window: opened for %d minutes.", minutes)
+	default:
+		if before != "closed" {
+			log.Printf("Command line window: closed%s.", why)
+		}
+	}
 }
 
 /* ----------------------------------------------------------------- run */
