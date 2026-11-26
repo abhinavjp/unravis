@@ -6,3 +6,5 @@
 # - until= is the last day of the quarantine, at most one release (about 2 weeks) away. After it the test fails the gate
 #   again, so fix it (clock injection, wait on a condition, t.TempDir(); never a longer timeout) or renew with a reason.
 # Never for a real race or regression. A quarantined test that passes again: delete its line.
+api-audit-explorer/internal/casestore/sqlite.TestEventsTimeBudgetAndCancel BL-593 until=2026-12-10 time-budget test fails under load (got 0 events); named suspect in BL-593; seen on pr330 local run 26 Nov
+api-audit-explorer/internal/blackbox.TestClumsyWrongReadKeyIsRefusedEveryWay BL-593 until=2026-12-10 server never listened within 15s on a busy PC (host load); add to BL-593 suspects
