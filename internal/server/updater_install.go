@@ -66,6 +66,7 @@ var (
 	errRecheckHeld    = errors.New("The publisher has put this update on hold. Nothing was started.")
 	errRecheckOffline = errors.New("Could not reach the update feed to confirm this update is still safe. Nothing was started; it will try again.")
 	errRecheckRefused = errors.New("The update feed's answer did not pass its checks, so this update was not started.")
+	errStarting       = errors.New("The update is already starting. Give it a few seconds; Unravis closes and starts again by itself.") //nolint:staticcheck // ST1005: shown to the person as a sentence
 	errFileChange     = errors.New("The downloaded file changed after it was checked. It was not started. Download it again.")
 )
 
@@ -184,7 +185,10 @@ func failText(err error) string {
 
 // Install starts the installer for the downloaded file. The person pressed the button; nothing else calls this. It may be pressed
 // again after "launched" (the person closed the installer window without updating).
-func (u *Updater) Install() error {
+func (u *Updater) Install() error { return u.install(true) }
+
+// install is Install; byPerson is false for the automatic apply, which must not open a browser page afterwards.
+func (u *Updater) install(byPerson bool) error {
 	if !u.CanInstall() {
 		return errNoInstall
 	}
@@ -200,6 +204,10 @@ func (u *Updater) Install() error {
 	if (u.inst.info.State != "ready" && u.inst.info.State != "launched") || u.inst.m == nil || !sameSetup(u.inst.m, m) {
 		u.inst.mu.Unlock()
 		return errNotReady
+	}
+	if u.silent != nil && u.inst.info.State == "launched" && time.Since(u.inst.launchedAt) < startingGrace {
+		u.inst.mu.Unlock()
+		return errStarting // a second setup now could start the app twice
 	}
 	u.inst.busy = true
 	gen := u.inst.gen
@@ -230,6 +238,9 @@ func (u *Updater) Install() error {
 	launch := u.launch
 	if u.silent != nil {
 		launch = u.silent // no window: the setup program quits this app, updates and starts it again
+		if byPerson && u.silentOpen != nil {
+			launch = u.silentOpen // and opens the new page, so the page the person pressed the button on is not left behind
+		}
 	}
 	if err := launch(got.Path, got.SHA256, m.Version); err != nil {
 		u.setInstall(gen, InstallInfo{State: "failed", Version: m.Version, Error: failText(err)})
@@ -249,6 +260,9 @@ func (u *Updater) setInstall(gen int, info InstallInfo) {
 		u.inst.info = info
 	}
 }
+
+// startingGrace is how long after a silent setup launch another press is refused (no window to close, so no "closed it without updating" case): the first setup is still closing the app.
+const startingGrace = 20 * time.Second
 
 // recheckTimeout bounds the last look at the feed before a setup is started.
 const recheckTimeout = 45 * time.Second

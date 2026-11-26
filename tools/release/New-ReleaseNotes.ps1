@@ -14,6 +14,9 @@
   (no "-" in it) is compared with the previous stable tag, so v1.0.0 lists everything since v0.9.0
   even when release candidates lie in between; a prerelease tag is compared with the nearest tag.
 
+  A "Highlights" section (plain-word notes with their screenshots, from web/public/releases/notes.json at
+  the tag) comes before "What changed" when that file has an entry for this version.
+
   Works in Windows PowerShell 5.1 and PowerShell 7. A tag with no earlier tag is not an error.
 
   The notes end with "Not yet verified on a clean PC." unless the environment variable
@@ -34,6 +37,10 @@
 .PARAMETER RepoRoot
   Git working tree to read the log from (default: two levels up from this script).
 
+.PARAMETER Repository
+  owner/name on GitHub, used to link the What's new pictures (default: GITHUB_REPOSITORY, else the origin remote).
+  Without one the Highlights keep their words and leave the pictures out.
+
 .PARAMETER Signed
   Pass this switch when the run signed the binaries (the SIGNPATH secret was set), so the notes
   point at Get-AuthenticodeSignature instead of the SmartScreen "Run anyway" steps.
@@ -44,6 +51,7 @@ param(
     [string]$TemplatePath,
     [Parameter(Mandatory)] [string]$OutFile,
     [string]$RepoRoot,
+    [string]$Repository,
     [switch]$Signed
 )
 
@@ -121,6 +129,62 @@ if ($env:CLEAN_VM_VERIFIED -ne 'true') {
     $signingNote = $signingNote.TrimEnd() + "`n`nNot yet verified on a clean PC."
 }
 
+# Highlights: the plain-word notes for this version that the app shows in its "What's new" window, read from
+# web/public/releases/notes.json as it is at the tag (so the release page and the app say the same thing).
+# No entry, no file or an unreadable file means no Highlights section; the release still gets its full change list.
+function Get-RepoSlug {
+    if ($Repository) { return $Repository }
+    if ($env:GITHUB_REPOSITORY) { return $env:GITHUB_REPOSITORY }
+    $remote = @(Invoke-Git @('remote', 'get-url', 'origin')) | Select-Object -First 1
+    if ($remote -and ($remote -match 'github\.com[:/]([A-Za-z0-9._-]+/[A-Za-z0-9._-]+?)(\.git)?/?$')) { return $Matches[1] }
+    return ''
+}
+
+# One picture as Markdown, or '' when its path is not a plain /whatsnew/ path (the same rule the app applies).
+function Get-PictureMarkdown {
+    param([string]$Path, [string]$Alt, [string]$Slug)
+    if (-not $Slug -or -not $Path) { return '' }
+    if ($Path -notmatch '^/whatsnew/[A-Za-z0-9._/-]+$' -or $Path.Contains('..') -or $Path.Contains('//')) { return '' }
+    $altText = ($Alt -replace '[\[\]|\r\n]', ' ').Trim()
+    return '![{0}](https://github.com/{1}/blob/{2}/web/public{3}?raw=true)' -f $altText, $Slug, $Tag, $Path
+}
+
+# Words from a note file as one plain line (no line breaks, so a note cannot start a new section on the page).
+function Get-OneLine([string]$s) { return ($s -replace '\s+', ' ').Trim() }
+
+function Get-HighlightsMarkdown {
+    $json = @(Invoke-Git @('show', "${Tag}:web/public/releases/notes.json")) -join "`n"
+    if (-not $json.Trim()) { return '' }
+    try { $notes = $json | ConvertFrom-Json } catch { Write-Warning "web/public/releases/notes.json is not valid JSON at $Tag; the release notes have no Highlights."; return '' }
+    $entry = @($notes.releases) | Where-Object { $_ -and ([string]$_.version).TrimStart('v') -eq $Version } | Select-Object -First 1
+    if (-not $entry -or -not @($entry.highlights).Count) { return '' }
+    $slug = Get-RepoSlug
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('## Highlights')
+    if ($entry.headline) { $lines.Add(''); $lines.Add("**$(Get-OneLine $entry.headline)**") }
+    $lines.Add('')
+    foreach ($h in @($entry.highlights)) {
+        if (-not $h.text) { continue }
+        $label = if ($h.label) { "**$(Get-OneLine $h.label).** " } else { '' }
+        $lines.Add("- $label$(Get-OneLine $h.text)")
+        $after = Get-PictureMarkdown $h.image $h.alt $slug
+        $before = Get-PictureMarkdown $h.before $h.alt $slug
+        if ($after -and $before) {
+            $lines.Add('')
+            $lines.Add('  | Before | After |')
+            $lines.Add('  | --- | --- |')
+            $lines.Add("  | $before | $after |")
+        } elseif ($after) {
+            $lines.Add('')
+            $lines.Add("  $after")
+        }
+        if ($after) { $lines.Add('') }
+    }
+    return (($lines -join "`n").TrimEnd() + "`n`n")
+}
+
+$highlights = Get-HighlightsMarkdown
+
 $date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 
 $text = Get-Content -LiteralPath $TemplatePath -Raw
@@ -129,6 +193,8 @@ $text = $text.Replace('{{DATE}}', $date)
 $text = $text.Replace('{{WHAT_CHANGED}}', $whatChanged)
 $text = $text.Replace('{{PREVIOUS_TAG}}', $previousTagText)
 $text = $text.Replace('{{SIGNING_NOTE}}', $signingNote)
+# Last, so words written in a note can never be taken for one of the placeholders above.
+$text = $text.Replace('{{HIGHLIGHTS}}', $highlights)
 
 # Written without a byte order mark (Set-Content -Encoding utf8 adds one in Windows PowerShell 5.1).
 $outPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutFile)

@@ -35,7 +35,7 @@ function statusOf(cause: unknown): number | undefined {
 }
 
 /** A browser reports an unreachable server as a TypeError from fetch (the text differs by browser). An aborted request is not one. */
-function isNetworkError(cause: unknown): boolean {
+export function isNetworkError(cause: unknown): boolean {
   if (!(cause instanceof Error) || cause.name === 'AbortError') return false;
   if (statusOf(cause) !== undefined) return false;
   return cause.name === 'TypeError' || NETWORK_TEXT.test(cause.message);

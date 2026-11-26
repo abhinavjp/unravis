@@ -767,3 +767,149 @@ func TestNoErrorTextInManifest(t *testing.T) {
 	fixedEvents(t, m, EventWriteFailed, "write-failed")
 	fixedEvents(t, m, EventHousekeeping, "housekeeping-failed")
 }
+
+// eventsOfKinds lists the events whose kind is one of kinds, oldest first.
+func eventsOfKinds(m Manifest, kinds ...string) []Event {
+	var out []Event
+	for _, e := range m.Events {
+		for _, k := range kinds {
+			if e.Kind == k {
+				out = append(out, e)
+			}
+		}
+	}
+	return out
+}
+
+// swapFailWriter fails writes with *err while it is set, so a test can change
+// the cause in the middle of an outage.
+type swapFailWriter struct {
+	*os.File
+	err *error
+}
+
+func (w swapFailWriter) Write(b []byte) (int, error) {
+	if *w.err != nil {
+		return 0, *w.err
+	}
+	return w.File.Write(b)
+}
+
+// outageRig is one failure kind seen from the outside: fail(err) makes the next
+// rounds fail with err, heal() lets them work again.
+type outageRig struct {
+	first, again, recovered string
+	fail                    func(err error)
+	heal                    func()
+}
+
+func collectOutage(g *rig) outageRig {
+	return outageRig{
+		first: EventCollectFailed, again: EventCollectStillFailing, recovered: EventCollectRecovered,
+		fail: func(err error) { g.col.mu.Lock(); g.col.err = err; g.col.mu.Unlock() },
+		heal: func() { g.col.mu.Lock(); g.col.err = nil; g.col.mu.Unlock() },
+	}
+}
+
+func writeOutage(g *rig) outageRig {
+	var cause error
+	g.s.wrapFile = func(f *os.File) recFile { return swapFailWriter{File: f, err: &cause} }
+	return outageRig{
+		first: EventWriteFailed, again: EventWriteStillFailing, recovered: EventWriteRecovered,
+		fail: func(err error) { cause = err },
+		heal: func() { cause = nil },
+	}
+}
+
+var outageKinds = []struct {
+	name string
+	make func(g *rig) outageRig
+}{{"collect", collectOutage}, {"write", writeOutage}}
+
+// TestFailureRepeatsEvery15MinutesAndRecoveredEventCloses: a failure that lasts
+// 55 minutes (rounds every 5 minutes) raises the first event, one still-failing
+// event per 15 minutes with the newest code and the rounds since the last event,
+// and one recovered event with the total rounds and how long it lasted (W-03).
+func TestFailureRepeatsEvery15MinutesAndRecoveredEventCloses(t *testing.T) {
+	for _, k := range outageKinds {
+		t.Run(k.name, func(t *testing.T) {
+			g := newRig(t, nil)
+			t0 := g.clk.t
+			o := k.make(g)
+			errA := errors.New(secretEventText)
+			errB := errors.New("There is not enough space on the disk.")
+			o.fail(errA)
+			g.r.Tick(g.clk.t) // t+0: first failure
+			for i := 1; i <= 10; i++ {
+				if i == 6 { // t+30: the cause changes
+					o.fail(errB)
+				}
+				g.tick(5 * time.Minute)
+			}
+			o.heal()
+			g.tick(5 * time.Minute) // t+55: works again
+
+			codeA := k.name + "-failed"
+			got := eventsOfKinds(g.s.Manifest(), o.first, o.again, o.recovered)
+			want := []struct {
+				at     time.Duration
+				kind   string
+				detail string
+			}{
+				{0, o.first, codeA},
+				{15 * time.Minute, o.again, "code=" + codeA + " rounds=3"},
+				{30 * time.Minute, o.again, "code=disk-full rounds=3"},
+				{45 * time.Minute, o.again, "code=disk-full rounds=3"},
+				{55 * time.Minute, o.recovered, "rounds=11 seconds=3300"},
+			}
+			if len(got) != len(want) {
+				t.Fatalf("%d events, want %d: %+v", len(got), len(want), got)
+			}
+			for i, w := range want {
+				if got[i].Kind != w.kind || got[i].Detail != w.detail || !got[i].T.Equal(t0.Add(w.at)) {
+					t.Fatalf("event %d = %s %q at +%s, want %s %q at +%s", i, got[i].Kind, got[i].Detail, got[i].T.Sub(t0), w.kind, w.detail, w.at)
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(g.s.Dir(), ManifestName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), "secret driver text") {
+				t.Fatal("manifest leaks the error text")
+			}
+		})
+	}
+}
+
+// TestFailureFlappingStaysUnderOneEventPer15Minutes: a failure that comes and
+// goes every minute does not write a failed and a recovered event each time.
+func TestFailureFlappingStaysUnderOneEventPer15Minutes(t *testing.T) {
+	for _, k := range outageKinds {
+		t.Run(k.name, func(t *testing.T) {
+			g := newRig(t, nil)
+			t0 := g.clk.t
+			o := k.make(g)
+			boom := errors.New(secretEventText)
+			count := func() int {
+				return len(eventsOfKinds(g.s.Manifest(), o.first, o.again, o.recovered))
+			}
+			o.fail(boom)
+			g.r.Tick(g.clk.t) // +0: first event
+			o.heal()
+			g.tick(time.Minute) // +1: recovered event
+			o.fail(boom)
+			g.tick(time.Minute) // +2: inside 15 minutes of the last event: nothing
+			o.heal()
+			g.tick(time.Minute) // +3: that outage raised nothing, so it closes silently
+			if n := count(); n != 2 {
+				t.Fatalf("%d events after a quick flap, want 2 (first, recovered)", n)
+			}
+			o.fail(boom)
+			g.tick(17 * time.Minute) // +20: more than 15 minutes since +1
+			ev := eventsOfKinds(g.s.Manifest(), o.first, o.again, o.recovered)
+			if len(ev) != 3 || ev[2].Kind != o.first || !ev[2].T.Equal(t0.Add(20*time.Minute)) {
+				t.Fatalf("after the quiet 15 minutes: %+v", ev)
+			}
+		})
+	}
+}

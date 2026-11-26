@@ -281,3 +281,28 @@ test('every button in the view has words or a label, and every control has a hin
     assert.ok(/aria-label=|title=/.test(attrs) || /bbc-field/.test(v), 'unlabelled field: ' + attrs);
   }
 });
+
+test('the repeat and recovered notes of a failing recorder get plain titles and details, and hostile detail text is dropped', () => {
+  const { items } = h.happenedItems(base({
+    markers: [
+      { t: '2026-11-18T06:10:00Z', kind: 'collect-still-failing', detail: 'code=disk-full rounds=3' },
+      { t: '2026-11-18T06:20:00Z', kind: 'collect-recovered', detail: 'rounds=11 seconds=3300' },
+      { t: '2026-11-18T06:30:00Z', kind: 'write-still-failing', detail: 'code=write-failed rounds=1' },
+      { t: '2026-11-18T06:40:00Z', kind: 'write-recovered', detail: 'rounds=<img src=x onerror=alert(1)> seconds=5' }
+    ]
+  }));
+  const byT = (iso) => items.find((i) => i.t === Date.parse(iso));
+  const a = byT('2026-11-18T06:10:00Z'), b = byT('2026-11-18T06:20:00Z'), c = byT('2026-11-18T06:30:00Z'), d = byT('2026-11-18T06:40:00Z');
+  assert.equal(a.title, 'Readings are still failing');
+  assert.equal(a.detail, 'Latest cause: the drive is full. 3 rounds failed since the last note.');
+  assert.equal(b.title, 'Readings work again');
+  assert.equal(b.detail, 'It failed for 11 rounds over 55 min, then worked again.');
+  assert.equal(c.title, 'Samples still cannot be saved');
+  assert.equal(c.tone, 'bad');
+  assert.equal(c.detail, 'Latest cause: the sample could not be written. 1 round failed since the last note.');
+  assert.equal(d.title, 'Samples are being saved again');
+  assert.equal(d.detail, '');
+  for (const i of items) assert.ok(!/^Recorder note: /.test(i.title), 'known kinds are not shown as unknown notes');
+  assert.equal(h.failureDetail('collect-recovered', undefined), '');
+  assert.equal(h.failureDetail('housekeeping', 'rounds=1 seconds=1'), '');
+});
