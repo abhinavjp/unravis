@@ -60,7 +60,7 @@ func redisCheck(port int, password string) error {
 	if err != nil {
 		return errRedisUnreachable
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_, perr := c.Do("PING")
 	switch {
 	case perr == nil:

@@ -165,7 +165,7 @@ func miniRedis(t *testing.T, pingAnswer string) (port int, words func() []string
 				return
 			}
 			go func() {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				authed := false
 				r := bufio.NewReader(c)
 				for {
