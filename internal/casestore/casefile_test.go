@@ -840,7 +840,7 @@ func TestCaseFileSaveRecoversFromCrashAtEveryStep(t *testing.T) {
 	if _, err := cfExport(t, src, info, whole, cfPass); err != nil {
 		t.Fatal(err)
 	}
-	wholeBytes, err := os.ReadFile(whole)
+	wholeBytes, err := os.ReadFile(whole) //nolint:gosec // G304: a test path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -925,7 +925,7 @@ func TestCaseFileSaveNeverReplacesFileWithContent(t *testing.T) {
 	if _, err := cfExport(t, src, info, dst, cfPass); !errors.Is(err, casestore.ErrCaseFileExists) {
 		t.Fatalf("non-empty target: %v, want ErrCaseFileExists", err)
 	}
-	if got, err := os.ReadFile(dst); err != nil || !bytes.Equal(got, content) {
+	if got, err := os.ReadFile(dst); err != nil || !bytes.Equal(got, content) { //nolint:gosec // G304: a test path
 		t.Fatalf("existing file changed: %q %v", got, err)
 	}
 }

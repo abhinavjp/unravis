@@ -193,7 +193,7 @@ func WriteCaseFile(ctx context.Context, dst string, src CaseFileSource, pass []b
 	// and only such a placeholder, once, so the person can save again.
 	hold, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil && errors.Is(err, os.ErrExist) && reclaimLeftover(dst, time.Now()) {
-		hold, err = os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		hold, err = os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: the folder and name were chosen by the person
 	}
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {

@@ -31,7 +31,7 @@ func TestReclaimLeftoverNeverDeletesContentWrittenInTheGap(t *testing.T) {
 	if reclaimLeftover(dst, time.Now()) {
 		t.Fatal("reported the target free although it got content")
 	}
-	got, err := os.ReadFile(dst)
+	got, err := os.ReadFile(dst) //nolint:gosec // G304: a test path
 	if err != nil || !bytes.Equal(got, content) {
 		t.Fatalf("content lost: %q %v", got, err)
 	}
