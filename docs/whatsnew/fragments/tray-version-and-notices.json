@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "highlights": [
+    {
+      "label": "Tray",
+      "text": "The Unravis icon near the clock now shows which version you have and whether an update is waiting. A small dot appears only when something needs you, and a pop-up tells you once when Unravis has been updated."
+    }
+  ],
+  "changes": [
+    "Right-click the Unravis tray icon to check for updates, restart into a ready update, or see what is new."
+  ]
+}
