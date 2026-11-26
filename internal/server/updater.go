@@ -135,14 +135,48 @@ func cleanUpdaterSettings(s UpdaterSettings, def int) (UpdaterSettings, error) {
 	return s, nil
 }
 
+// errSettingsInvalid marks a refusal that is the person's input, not a failure to save (the screen answers 400, not 500).
+type errSettingsInvalid struct{ error }
+
+// SettingsPatch is a change to the settings: a field left nil keeps its current value.
+type SettingsPatch struct {
+	Auto            *bool `json:"auto"`
+	IntervalMinutes *int  `json:"intervalMinutes"`
+	ApplyAuto       *bool `json:"applyAuto"`
+}
+
+func (p SettingsPatch) applyTo(s UpdaterSettings) UpdaterSettings {
+	if p.Auto != nil {
+		s.Auto = *p.Auto
+	}
+	if p.IntervalMinutes != nil {
+		s.IntervalMinutes = *p.IntervalMinutes
+	}
+	if p.ApplyAuto != nil {
+		s.ApplyAuto = *p.ApplyAuto
+	}
+	return s
+}
+
 // SetSettings validates, saves and applies new settings. A failed save is an error: the person sees that the choice was not kept.
 func (u *Updater) SetSettings(s UpdaterSettings) (UpdaterSettings, error) {
-	s, err := cleanUpdaterSettings(s, defaultUpdateMinutes(u.channel))
-	if err != nil {
-		return s, err
-	}
+	return u.change(func(UpdaterSettings) UpdaterSettings { return s })
+}
+
+// PatchSettings merges a partial change into the current settings and saves the result. The read, the merge and the write happen under
+// one lock, so two requests that change different fields both keep their change.
+func (u *Updater) PatchSettings(p SettingsPatch) (UpdaterSettings, error) {
+	return u.change(p.applyTo)
+}
+
+// change reads the current settings, builds the new ones with next, validates, saves and applies them, all under saveMu.
+func (u *Updater) change(next func(UpdaterSettings) UpdaterSettings) (UpdaterSettings, error) {
 	u.saveMu.Lock()
 	defer u.saveMu.Unlock()
+	s, err := cleanUpdaterSettings(next(u.currentSettings()), defaultUpdateMinutes(u.channel))
+	if err != nil {
+		return s, errSettingsInvalid{err}
+	}
 	b, _ := json.Marshal(s)
 	if err := os.MkdirAll(u.dir, 0o700); err != nil {
 		return s, errors.New("could not save the update settings")
