@@ -17,8 +17,9 @@ import (
 // closed while it is on), and nothing about it is written to code-mode.json.
 //
 // Limits (Opus review of PR 339), stated so nobody reads the gate as more than it is:
-//   - The gate is closed whenever code mode is seen to be off: a settings read by the route or by a run, and a save that switches code mode
-//     on from off. Editing code-mode.json to off and back to on with no run, no GET and no PUT in between, by a program running as the same
+//   - The gate is closed whenever code mode is seen to be off: a settings read by the route, by a run, or by the MCP entrance (unravis_types
+//     and unravis_execute check the switch through the same settings hook), and a save that switches code mode on from off. Editing
+//     code-mode.json to off and back to on with no run, no MCP call, no GET and no PUT in between, by a program running as the same
 //     user, leaves an open gate open. That is the same class as the next point and is not closed here.
 //   - Any holder of the session token (the app's page, the command line itself, any same-user program that can read the session token) can open
 //     the gate through PUT /api/code/settings. The consent step is a guard against a program that only reaches the owner pipe, not a
@@ -83,6 +84,21 @@ func (g *CLIGate) Unlimited() bool {
 
 // Close ends the window, and the no-time-limit state, now.
 func (g *CLIGate) Close() { g.Open(0) }
+
+// CloseIfOpen closes the gate like Close and reports whether it was open (a timed window that had not ended, or the no-time-limit state)
+// at that moment, in one step, so a caller that records "the window was closed" records it once however many callers race. A nil gate
+// was never open.
+func (g *CLIGate) CloseIfOpen() bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	was := g.unlimited || (!g.until.IsZero() && g.now().Before(g.until))
+	g.unlimited = false
+	g.until = time.Time{}
+	return was
+}
 
 // OpenUntil reports when the timed window ends, or false when it is closed or has run out. It is also false while the no-time-limit
 // state is on (that state has no end): ask Unlimited, or Allows, for "can the command line run now".
