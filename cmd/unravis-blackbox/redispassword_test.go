@@ -242,3 +242,27 @@ func TestRedisCheckSendsThePasswordOnlyWhereItIsAskedForAndTrusted(t *testing.T)
 		t.Fatalf("commands %v", w)
 	}
 }
+
+func TestSQLStatusSaysWhereItStandsAndPrintsTheGrantOnlyWhenNeeded(t *testing.T) {
+	r, path, _ := redisRig(t, "")
+	svc := &memSvc{}
+	r.d.sqlMgr = &blackbox.SQLManager{Svc: svc, Env: r.env}
+	c, out, errs := r.do("sql-status", "--config", path, "--json")
+	if c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	if !strings.Contains(out, `"state":"not-installed"`) || strings.Contains(out, "CREATE LOGIN") {
+		t.Fatalf("not installed: %s", out)
+	}
+	svc.state = blackbox.SvcStopped
+	c, out, _ = r.do("sql-status", "--config", path)
+	if c != 0 || !strings.Contains(out, "enable-sql") || !strings.Contains(out, "CREATE LOGIN") {
+		t.Fatalf("stopped: %d %s", c, out)
+	}
+	if c, _, _ := r.do("sql-status", "--config", filepath.Join(r.dir, "none.json")); c != exitFail {
+		t.Error("a missing settings file did not fail")
+	}
+	if len(svc.calls) != 0 {
+		t.Errorf("sql-status changed the service: %v", svc.calls)
+	}
+}

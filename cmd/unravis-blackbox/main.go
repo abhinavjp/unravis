@@ -60,6 +60,10 @@ Commands that change the service (run as administrator):
   enable-sql  Activate the installed SQL service after the owner grant:
               confirms the installed settings and folder, clears the
               persisted off latch (owner-only) and starts the service.
+  sql-status  Read-only: say in plain words where SQL recording stands (not
+              installed, needs the grant, working, turned off) and the one
+              next step. Prints the grant text when that is the next step.
+              Never connects to SQL and never starts anything.
   set-sql-login    Save one SQL login (or a server on another machine) sealed
               inside the locked SQL folder. Reads {"server","user","password",
               "trustServerCertificate"} from --login-stdin, or from
@@ -549,6 +553,23 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		extra := map[string]any{"serviceRemoved": res.ServiceRemoved, "recordingsDeleted": res.RecordingsDeleted, "filesDeleted": res.FilesDeleted, "sqlServiceRemoved": res.SQLServiceRemoved}
 		if res.SQLNote != "" {
 			extra["note"] = res.SQLNote
+		}
+		return ans.ok(text, extra)
+	case "sql-status":
+		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
+		if err != nil {
+			return ans.fail(err)
+		}
+		st, serr := d.sqlMgr.Svc.State(blackbox.SQLServiceName)
+		w := blackbox.DescribeSQL(st, serr, blackbox.ReadSQLStatus(cfg.Folder, d.now()))
+		text := w.Say
+		if w.Next != "" {
+			text += "\nNext: unravis-blackbox " + w.Next
+		}
+		extra := map[string]any{"sql": w}
+		if w.ShowGrant {
+			text += "\n\nRun this grant in SSMS as an admin (the Blackbox never runs it for you):\n" + grantScript
+			extra["grantScript"] = grantScript
 		}
 		return ans.ok(text, extra)
 	case "config-show":
