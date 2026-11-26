@@ -113,13 +113,50 @@ func TestRedisDownGivesNoFigures(t *testing.T) {
 	}
 }
 
-func TestRedisBadNumberLeavesOutTheSampleFigures(t *testing.T) {
-	data := redisSample(1, "2001-09-09T01:47:00Z", `{"state":"ok","numbers":{"used_memory":-5}}`)
-	evs, rep, err := parse(t, data+good2, importer.Options{Limits: importer.Limits{MaxRejectFraction: 1}})
+func TestRedisBadReadingsCostOnlyThemselves(t *testing.T) {
+	g := `{"state":"ok","numbers":{"used_memory":-5,"connected_clients":4},` +
+		`"slow":[{"id":5,"t":1000000100,"usec":2000,"cmd":"get"},{"id":6,"t":0,"usec":1,"cmd":"get"}],` +
+		`"latency":[{"event":"fork","t":1000000090,"ms":-1},{"event":"command","t":1000000091,"ms":7}]}`
+	evs, rep, err := parse(t, redisSample(1, "2001-09-09T01:47:00Z", g)+good2, importer.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Rejected != 1 || len(ofKind(evs, KindRedisMetric)) != 0 {
-		t.Errorf("rejected %d", rep.Rejected)
+	if len(metric(evs, "used_memory")) != 0 || len(metric(evs, "connected_clients")) != 1 {
+		t.Error("only the bad figure is left out")
+	}
+	if len(ofKind(evs, KindSlowCommand)) != 1 || len(ofKind(evs, KindLatencySpike)) != 1 {
+		t.Errorf("good neighbours of a bad entry were lost: %d slow, %d latency", len(ofKind(evs, KindSlowCommand)), len(ofKind(evs, KindLatencySpike)))
+	}
+	if !contains(rep.KnownGaps, GapGroupDamaged) || !contains(rep.KnownGaps, GapRedisEdges) {
+		t.Errorf("known gaps %v", rep.KnownGaps)
+	}
+}
+
+func TestRedisEntriesFromBeforeTheFileBelongToTheFileBefore(t *testing.T) {
+	// The file starts at 01:47:00 (unix 1000000020); a spike 10 minutes before it was read in the file before.
+	g := `{"state":"ok","latency":[{"event":"fork","t":1000000020,"ms":1}],"slow":[{"id":1,"t":1000000020,"usec":10,"cmd":"get"}]}`
+	old := `{"state":"ok","latency":[{"event":"fork","t":999999300,"ms":9}],"slow":[{"id":0,"t":999999300,"usec":10,"cmd":"get"}]}`
+	evs, _, err := parse(t, redisSample(1, "2001-09-09T01:47:00Z", old+"")+redisSample(2, "2001-09-09T01:47:15Z", g), importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ofKind(evs, KindLatencySpike)) != 1 || len(ofKind(evs, KindSlowCommand)) != 1 {
+		t.Errorf("%d latency, %d slow", len(ofKind(evs, KindLatencySpike)), len(ofKind(evs, KindSlowCommand)))
+	}
+}
+
+func TestRedisRestartHasNoCPURateAcrossIt(t *testing.T) {
+	a := `{"state":"ok","numbers":{"uptime_in_seconds":5000,"used_cpu_user":0.5}}`
+	b := `{"state":"ok","numbers":{"uptime_in_seconds":10,"used_cpu_user":30}}`
+	evs, _, err := parse(t, redisSample(1, "2001-09-09T01:47:00Z", a)+redisSample(2, "2001-09-09T01:47:15Z", b), importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metric(evs, "used_cpu_user")) != 0 {
+		t.Error("a CPU rate was computed across a restart")
+	}
+	st := ofKind(evs, KindRedisStart)
+	if len(st) != 1 || st[0].Severity != "info" {
+		t.Errorf("redis start %+v", st)
 	}
 }

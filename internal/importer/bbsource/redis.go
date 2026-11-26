@@ -82,13 +82,24 @@ func newRedisState() *redisState {
 
 var redisMetrics = redis.InfoMetrics()
 
-// redisEvents makes the events of the Redis group of one sample. ok is false when a number in it is not valid.
-func redisEvents(raw json.RawMessage, t time.Time, no int64, opts importer.Options, host string, nt *notes) (evs []evidence.Event, ok bool) {
+// seenCap bounds the maps that keep what was already read, so a damaged file cannot grow them without limit.
+const seenCap = 100000
+
+// beforeFileMargin: a slow command or a latency spike that ended more than this before the first sample of a file belongs to
+// the file before it (the recorder reads the Redis latency list every minute and re-reads its slow ring after a restart),
+// so it is left out of this one and is not shown twice.
+const beforeFileMargin = 5 * time.Minute
+
+// redisEvents makes the events of the Redis group of one sample. A figure, slow command or latency spike that is not a
+// valid reading is left out by itself and the report says so; it never costs the rest of the sample.
+func redisEvents(raw json.RawMessage, t time.Time, no int64, opts importer.Options, host string, nt *notes) []evidence.Event {
+	var evs []evidence.Event
 	var g redisGroup
 	if json.Unmarshal(raw, &g) != nil {
 		nt.damaged = true
-		return nil, true
+		return nil
 	}
+	nt.redisSeen = true
 	st := nt.redis
 	if st == nil {
 		st = newRedisState()
@@ -103,14 +114,23 @@ func redisEvents(raw json.RawMessage, t time.Time, no int64, opts importer.Optio
 	role := redis.CanonicalRole(g.Words["role"])
 	if g.State == "ok" {
 		dt := t.Sub(st.prevT).Seconds()
+		// A restart is read from the uptime going down; the CPU rate across it is not a reading.
+		restarted := false
+		var up float64
+		haveUp := false
+		if u, have := g.Numbers["uptime_in_seconds"]; have && validNumber(u) && u <= maxRedisUptime {
+			up, haveUp = u, true
+			restarted = st.haveUp && up < st.prevUp
+		}
 		cpuNow := map[string]float64{}
 		for i, m := range redisMetrics {
 			v, have := g.Numbers[m.Key]
 			if !have {
 				continue
 			}
-			if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > m.Max {
-				return nil, false
+			if !validNumber(v) || v > m.Max {
+				nt.damaged = true
+				continue
 			}
 			attrs := map[string]string{"metric": m.Key}
 			if role != "" {
@@ -119,7 +139,7 @@ func redisEvents(raw json.RawMessage, t time.Time, no int64, opts importer.Optio
 			if m.CPU {
 				cpuNow[m.Key] = v
 				prev, had := st.prevCPU[m.Key]
-				if !had || dt <= 0 || v < prev {
+				if !had || restarted || dt <= 0 || v < prev {
 					continue // the first reading, or a counter that started again: no rate
 				}
 				rate := (v - prev) / dt * 100
@@ -137,15 +157,15 @@ func redisEvents(raw json.RawMessage, t time.Time, no int64, opts importer.Optio
 			evs = append(evs, e)
 		}
 		st.prevCPU, st.prevT = cpuNow, t
-		if up, have := g.Numbers["uptime_in_seconds"]; have && up >= 0 && up <= maxRedisUptime {
-			if st.haveUp && up < st.prevUp {
+		if haveUp {
+			if restarted {
 				at := t.Add(-time.Duration(up * float64(time.Second)))
 				attrs := map[string]string{}
 				if role != "" {
 					attrs["role"] = role
 				}
 				e := mk(KindRedisStart, idxRedisStart, attrs)
-				e.Start, e.End = at, at
+				e.Start, e.End, e.Severity = at, at, "info"
 				evs = append(evs, e)
 			}
 			st.prevUp, st.haveUp = up, true
@@ -157,17 +177,26 @@ func redisEvents(raw json.RawMessage, t time.Time, no int64, opts importer.Optio
 	}
 	for i, s := range slow {
 		if s.ID < 0 || s.Usec < 0 || s.Usec > maxSlowUsec || s.Unix <= 0 {
-			return nil, false
+			nt.damaged = true
+			continue
+		}
+		end := time.Unix(s.Unix, 0).UTC()
+		if !wincsv.SaneTime(end) {
+			nt.damaged = true
+			continue
+		}
+		if end.Before(nt.firstT.Add(-beforeFileMargin)) {
+			continue // the file before this one holds it
 		}
 		key := [3]int64{s.ID, s.Unix, s.Usec}
 		if _, dup := st.slowSeen[key]; dup {
 			continue // the same entry, seen in an earlier sample
 		}
-		end := time.Unix(s.Unix, 0).UTC()
-		if !wincsv.SaneTime(end) {
-			return nil, false
+		if len(st.slowSeen) < seenCap {
+			st.slowSeen[key] = struct{}{}
+		} else {
+			nt.cut = true
 		}
-		st.slowSeen[key] = struct{}{}
 		d := float64(s.Usec) / 1000
 		e := mk(KindSlowCommand, idxRedisSlow+i, map[string]string{"command": redis.CanonicalCommand(s.Cmd), "id": itoa(s.ID)})
 		e.Start, e.End, e.DurationMs, e.Unit, e.Severity = end.Add(-time.Duration(s.Usec)*time.Microsecond), end, &d, "ms", "info"
@@ -179,22 +208,31 @@ func redisEvents(raw json.RawMessage, t time.Time, no int64, opts importer.Optio
 	}
 	for i, l := range lat {
 		if l.Last < 0 || l.Last > 1e9 || l.Unix <= 0 {
-			return nil, false
+			nt.damaged = true
+			continue
+		}
+		at := time.Unix(l.Unix, 0).UTC()
+		if !wincsv.SaneTime(at) {
+			nt.damaged = true
+			continue
+		}
+		if at.Before(nt.firstT.Add(-beforeFileMargin)) {
+			continue
 		}
 		ev := redis.CanonicalLatencyEvent(l.Event)
 		key := latKey{ev, l.Unix, l.Last}
 		if _, dup := st.latSeen[key]; dup {
 			continue
 		}
-		at := time.Unix(l.Unix, 0).UTC()
-		if !wincsv.SaneTime(at) {
-			return nil, false
+		if len(st.latSeen) < seenCap {
+			st.latSeen[key] = struct{}{}
+		} else {
+			nt.cut = true
 		}
-		st.latSeen[key] = struct{}{}
 		v := float64(l.Last)
 		e := mk(KindLatencySpike, idxRedisLatency+i, map[string]string{"event": ev})
 		e.Start, e.End, e.Value, e.Unit = at, at, &v, "ms"
 		evs = append(evs, e)
 	}
-	return evs, true
+	return evs
 }

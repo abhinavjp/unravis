@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"time"
 )
 
 // The groups of a sample that are read so far: the SQL host counters, the HTTP.sys request queues, the IIS worker
@@ -77,6 +78,8 @@ type tcpGroup struct {
 // notes collects what one file's groups could not show, so the report can say so once.
 type notes struct {
 	cut, damaged, partial bool
+	redisSeen             bool      // a sample had a Redis group
+	firstT                time.Time // the time of the first sample of the file
 	redis                 *redisState
 }
 
