@@ -572,17 +572,28 @@ func (r *Recorder) housekeep(now time.Time) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	fresh, freshPct := false, 0.0
 	if res.DiskKnown {
 		r.freePct, r.freeKnown = res.FreePercent, true
+		fresh, freshPct = true, res.FreePercent
 	} else if r.o.Disk != nil {
 		if info, derr := r.o.Disk.Free(r.o.Store.Dir()); derr == nil {
 			r.freePct, r.freeKnown = info.FreePercent(), true
+			fresh, freshPct = true, info.FreePercent()
 		}
 	}
 	// A pass that could not remove everything says nothing about whether the
 	// disk is still full, unless the free space was read fresh after it. With
 	// no fresh reading, or after a failed pass, the pause state stays as it is.
 	if err != nil || (res.Incomplete() && !res.DiskKnown) {
+		// One exception: a recorder that is paused (maybe seeded as paused by a
+		// restart) must not stay paused only because this pass failed. A fresh
+		// successful reading with enough free space is proof the drive is fine.
+		if r.paused && fresh && freshPct >= float64(r.o.Config.MinFreePercent) {
+			r.paused = false
+			r.resumedFlag = true
+			r.event(EventResumed, fmt.Sprintf("free space %.1f%%", freshPct))
+		}
 		return
 	}
 	switch {
