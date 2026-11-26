@@ -6,7 +6,8 @@
   import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeImportPopup, closeSidePanel, onWindowKey, openCaseHome, openCaseImport, openTracing, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import UpdateBanner from './components/UpdateBanner.svelte';
-  import { startUpdateWatch } from './lib/updateState.svelte';
+  import { checkWhatsNewOnStart, startUpdateWatch, updates, whatsNew } from './lib/updateState.svelte';
+  import { loadNotes, normalizeVersion, parseableVersion } from './lib/updateNotes';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
   import { zoomView } from './lib/zoomView.svelte';
@@ -33,6 +34,8 @@
   const ImportPopup = lazyComponent(() => import('./lib/components/importPopup/ImportPopup.svelte'));
   const BlackboxPanel = lazyComponent(() => import('./components/BlackboxPanel.svelte'));
   const McpAccessPanel = lazyComponent(() => import('./components/McpAccessPanel.svelte'));
+  const UpdatesPanel = lazyComponent(() => import('./components/UpdatesPanel.svelte'));
+  const WhatsNewDialog = lazyComponent(() => import('./components/WhatsNewDialog.svelte'));
   const CaseHome = lazyComponent(() => import('./lib/components/CaseHome.svelte'));
   const analysisViews = [
     () => import('./components/Pulse.svelte'), () => import('./components/RollupView.svelte'), () => import('./components/WhereView.svelte'), () => import('./components/EvidenceView.svelte'),
@@ -50,6 +53,15 @@
   const info = $derived(app.info);
   // Read the update status once the app is up, then every ten minutes. It is a local call; the program's own timer does the checking.
   $effect(() => { if (info) return startUpdateWatch(); });
+  // After an update the tour opens once, but only when the bundled notes know the installed version. A missing notes file keeps it quiet.
+  const installedVersion = $derived(updates.reply?.current ?? '');
+  $effect(() => {
+    const current = installedVersion;
+    if (!info || !parseableVersion(current)) return;
+    let live = true;
+    void loadNotes().then((all) => { if (live && all.some((r) => normalizeVersion(r.version) === normalizeVersion(current))) checkWhatsNewOnStart(current); });
+    return () => { live = false; };
+  });
   const analysis = $derived(results.analysis);
   const loading = $derived(results.loading);
   const depth = $derived(navigation.depth);
@@ -135,6 +147,8 @@
     {#if panels.importPopup}<ImportPopup caseId={panels.importPopup.caseId} caseTitle={panels.importPopup.caseTitle} query={scope.query} {zone} retryServerName={panels.importPopup.retryServerName} onClose={() => void closeImportPopup()} onOpenTimeline={openTimeline} />{/if}
     {#if panels.sidePanel === 'blackbox'}<BlackboxPanel onClose={closeSidePanel} />{/if}
     {#if panels.sidePanel === 'mcp'}<McpAccessPanel onClose={closeSidePanel} />{/if}
+    {#if panels.sidePanel === 'updates'}<UpdatesPanel onClose={closeSidePanel} />{/if}
+    {#if whatsNew.open}<WhatsNewDialog current={installedVersion} />{/if}
 
     <main id="main-content" tabindex="-1" class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
       <div class="stage-inner">

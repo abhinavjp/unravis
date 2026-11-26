@@ -228,7 +228,7 @@ let querySnapshot = '';
 let connectionsOpen = $state(false);
 let glossaryOpen = $state(false);
 // P2-lite drawers: incident patterns and the hypothesis ledger.
-let sidePanel = $state<'patterns' | 'ledger' | 'export' | 'blackbox' | 'mcp' | null>(null);
+let sidePanel = $state<'patterns' | 'ledger' | 'export' | 'blackbox' | 'mcp' | 'updates' | null>(null);
 let sidePanelReturnFocus: HTMLElement | null = null;
 // The "Import files" popup, centred over the page. It is not a side panel, but `panels.sidePanel` still reads 'import' while it is open
 // (see `panels`), so the pages that look at it (the timeline) keep working. Case home no longer waits for the close: it re-reads when an add succeeds (`caseAdded.svelte.ts`).
@@ -1523,7 +1523,7 @@ export async function closeSidePanel() {
   sidePanelReturnFocus = null;
 }
 // 'import' is no longer a side panel: the header's Import button and the older callers that still ask for it get the popup.
-export function openSidePanel(which: 'patterns' | 'ledger' | 'export' | 'import' | 'blackbox' | 'mcp') {
+export function openSidePanel(which: 'patterns' | 'ledger' | 'export' | 'import' | 'blackbox' | 'mcp' | 'updates') {
   if (which === 'import') { showImportPopup(null); return; }
   if (importPopup) return;
   sidePanelReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
