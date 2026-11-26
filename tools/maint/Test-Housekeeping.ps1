@@ -49,6 +49,7 @@ function New-Session {
 }
 function Run { param([bool]$Apply, [string[]]$Running = @(), [string[]]$Protect = @()) Invoke-HousekeepingRun -Repo $repo -DoApply $Apply -Clock $clock -TempRoot $temp -ProjectsRoot $projects -ScratchRoots @($scratch) -Running $Running -Protect $Protect -GoCacheLimitGB 0 6>$null }
 
+$pw0 = (Get-Command pwsh).Source
 try {
     # ---- a real repository with a remote, develop and master, and registered worktrees
     New-Item -ItemType Directory -Force -Path $claude, $projects, $scratch | Out-Null
@@ -134,6 +135,41 @@ try {
     Check (Test-Path $wtF) 'a failed fetch keeps the worktree'
     G $repo remote set-url origin $origin | Out-Null
 
+    # ---- ignored files are in no branch: a worktree holding one is kept, one holding only rebuildable folders goes
+    Add-Content -LiteralPath (Join-Path $repo '.git\info\exclude') -Value @('secret.local', 'node_modules/')
+    $wtIgn = Join-Path $scratch 'wt-ignored'; G $repo worktree add -q -b b-ign $wtIgn | Out-Null
+    Set-Content -LiteralPath (Join-Path $wtIgn 'secret.local') -Value 'customer extract'; Set-Worktree-Time $wtIgn $now.AddDays(-2)
+    $wtNm = Join-Path $scratch 'wt-nodemod'; G $repo worktree add -q -b b-nm $wtNm | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $wtNm 'node_modules') | Out-Null; Set-Content -LiteralPath (Join-Path $wtNm 'node_modules\x.js') -Value '1'; Set-Worktree-Time $wtNm $now.AddDays(-2)
+    $null = Run $true $running
+    Check ((Test-Path (Join-Path $wtIgn 'secret.local'))) 'worktree holding an ignored file is kept'
+    Check (-not (Test-Path $wtNm)) 'worktree holding only node_modules is removed'
+
+    # ---- a worktree that is some process's working directory cannot be renamed, so it stays
+    $wtCwd = Join-Path $scratch 'wt-cwd'; G $repo worktree add -q -b b-cwd $wtCwd | Out-Null; Set-Worktree-Time $wtCwd $now.AddDays(-2)
+    $holder = Start-Process -FilePath $pw0 -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -WorkingDirectory $wtCwd -PassThru -WindowStyle Hidden
+    try {
+        Start-Sleep -Milliseconds 1500
+        $null = Run $true $running
+        Check (Test-Path $wtCwd) 'worktree that is a process working directory is kept'
+    } finally { try { $holder.Kill() } catch { }; $holder.WaitForExit(5000) | Out-Null }
+
+    # ---- a worktree inside a live Claude session folder is kept
+    $liveWt = Join-Path $claude 'hashD\jjjjjjjj-livewt\wt'; New-Item -ItemType Directory -Force -Path (Split-Path $liveWt) | Out-Null
+    G $repo worktree add -q -b b-livewt $liveWt | Out-Null; Set-Worktree-Time $liveWt $now.AddDays(-2)
+    $lf = Join-Path $projectDir 'jjjjjjjj-livewt.jsonl'; Set-Content -LiteralPath $lf -Value '{}'; (Get-Item -LiteralPath $lf).LastWriteTimeUtc = $clock.AddMinutes(-10)
+    $null = Run $true $running
+    Check (Test-Path $liveWt) 'worktree of a session with a recent transcript is kept'
+
+    # ---- prune only touches folders that are gone from our own roots
+    $wtGone = Join-Path $base 'gone-wt'; G $repo worktree add -q -b b-gone $wtGone | Out-Null
+    $wtGoneMoved = $wtGone + '-moved'; Move-Item -LiteralPath $wtGone -Destination $wtGoneMoved
+    $wtPr = Join-Path $scratch 'wt-prune'; G $repo worktree add -q -b b-pr $wtPr | Out-Null; Set-Worktree-Time $wtPr $now.AddDays(-2)
+    $null = Run $true $running
+    Check (-not (Test-Path $wtPr)) 'a merged worktree is removed in the same run'
+    Check (((G $repo worktree list --porcelain) -join ' ') -match 'gone-wt') 'a missing worktree outside the roots keeps its registration'
+    Move-Item -LiteralPath $wtGoneMoved -Destination $wtGone
+
     # ---- owner filter edge cases
     $script:ProcessLinesOverride = $null
     Check ([bool](Get-OwnerVerdict -Id 'x' -OwnerDirs @() -IdleMinutes 5 -Clock $clock)) 'an empty owner list keeps every session'
@@ -180,6 +216,9 @@ try {
         $e2eSess2 = New-Session 'hashC' 'hhhhhhhh-e2e2' $true $now.AddDays(-3) $now.AddDays(-3)
         $o = & $pw -NoProfile -NonInteractive -File $hk -Event manual -DryRun -Repo $repo 2>&1
         Check ((Test-Path $e2eSess2) -and (($o -join ' ') -match 'dry run')) 'script -DryRun deletes nothing and says so'
+        Remove-Item -LiteralPath (Join-Path $state 'housekeeping.state') -ErrorAction SilentlyContinue
+        $null = & $pw -NoProfile -NonInteractive -File $hk -Event periodic -DryRun -Repo $repo 2>&1
+        Check ((Test-Path $e2eSess2) -and ((Get-Content -LiteralPath (Join-Path $state 'housekeeping.log') -Raw) -match 'periodic dry run')) '-DryRun is honoured for a periodic run too'
 
         # log cap
         1..800 | ForEach-Object { Add-LogLine -Dir $state -Line ('line ' + $_ + ' ' + ('x' * 60)) }

@@ -134,13 +134,20 @@ function Invoke-TempPatternClean {
 
 # Get-WorktreeKeepReason: why a registered worktree must stay, or $null when it may be removed (before the fetch/merged check).
 function Get-WorktreeKeepReason {
-    param([string]$Path, [string[]]$Running, [datetime]$Clock, [int]$AgeHours, [string[]]$Roots, [string[]]$Protect)
+    param([string]$Path, [string[]]$Running, [datetime]$Clock, [int]$AgeHours, [string[]]$Roots, [string[]]$Protect, [string[]]$OwnerDirs = $null, [int]$IdleMinutes = 120)
     if (-not (Test-UnderAny -Path $Path -Roots $Roots)) { return 'outside the scratch folders' }
     foreach ($p in $Protect) { if ($p -and ([IO.Path]::GetFullPath($p).TrimEnd('\') -ieq $Path)) { return 'the main checkout or the checkout in use' } }
     $it = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     if (-not $it) { return $null }
     if ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) { return 'is a link' }
-    foreach ($line in $Running) { if ($line.IndexOf($Path, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return 'a running process names it' } }
+    $fwd = $Path.Replace("\", "/")
+    foreach ($line in $Running) { if ($line.IndexOf($Path, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or $line.IndexOf($fwd, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return 'a running process names it' } }
+    # A worktree inside a Claude session folder follows that session: a recently written transcript means it may be in use.
+    $sm = [regex]::Match($Path, '(?i)\\Temp\\claude\\[^\\]+\\([^\\]+)(\\|$)')
+    if ($sm.Success -and $null -ne $OwnerDirs) {
+        $ov = Get-OwnerVerdict -Id $sm.Groups[1].Value -OwnerDirs $OwnerDirs -IdleMinutes $IdleMinutes -Clock $Clock
+        if ($ov -like 'its transcript changed*') { return 'its Claude session may be alive' }
+    }
     $newest = $it.LastWriteTimeUtc
     $gitFile = Join-Path $Path '.git'
     $adminDir = $null
@@ -158,6 +165,14 @@ function Get-WorktreeKeepReason {
     $st = Get-GitLines -Dir $Path -GitArgs @('status', '--porcelain', '--untracked-files=all')
     if ($null -eq $st) { return 'git could not check it' }
     if ($st.Count -gt 0) { return 'uncommitted or untracked files' }
+    # Ignored files (customer extracts, local settings, probe scripts) are in no branch: only rebuildable folders may be ignored.
+    $ig = Get-GitLines -Dir $Path -GitArgs @('status', '--porcelain', '--ignored=traditional', '--untracked-files=normal')
+    if ($null -eq $ig) { return 'git could not check it' }
+    foreach ($l in $ig) {
+        if ($l -notmatch '^!! (.+)$') { continue }
+        $rel = $Matches[1].Trim('"')
+        if ($rel -notmatch '(^|/)(node_modules|dist|\.cache|\.vite|coverage)/$') { return 'ignored files that are in no branch (' + $rel + ')' }
+    }
     return $null
 }
 
@@ -174,20 +189,24 @@ function Test-ContainedInRemoteMain {
 
 # Invoke-WorktreeClean: removes merged, clean, idle registered worktrees of the repository. Never forced, never deletes a branch.
 function Invoke-WorktreeClean {
-    param([string]$Repo, [string[]]$Worktrees, [bool]$DoApply, [datetime]$Clock, [string[]]$Running, [string[]]$Roots, [string[]]$Protect, [int]$AgeHours = 24)
+    param([string]$Repo, [string[]]$Worktrees, [bool]$DoApply, [datetime]$Clock, [string[]]$Running, [string[]]$Roots, [string[]]$Protect, [int]$AgeHours = 24, [string[]]$OwnerDirs = $null, [int]$IdleMinutes = 120)
     $r = [pscustomobject]@{ Removed = 0; WouldRemove = 0; Kept = 0; Pruned = $false }
     $cands = @()
     foreach ($w in @($Worktrees | Select-Object -Skip 1)) {
-        $why = Get-WorktreeKeepReason -Path $w -Running $Running -Clock $Clock -AgeHours $AgeHours -Roots $Roots -Protect (@($Repo) + $Protect)
+        $why = Get-WorktreeKeepReason -Path $w -Running $Running -Clock $Clock -AgeHours $AgeHours -Roots $Roots -Protect (@($Repo) + $Protect) -OwnerDirs $OwnerDirs -IdleMinutes $IdleMinutes
         if ($why) { $r.Kept++; Write-Host "keep  worktree $w : $why"; continue }
         $cands += $w
     }
     if ($cands.Count -eq 0) { return $r }
     $fetched = $false
     if ($DoApply) {
-        $env:GIT_TERMINAL_PROMPT = '0'
-        & git --no-optional-locks -C $Repo fetch --quiet --no-tags origin '+refs/heads/develop:refs/remotes/origin/develop' '+refs/heads/master:refs/remotes/origin/master' 2>$null
-        $fetched = ($LASTEXITCODE -eq 0)
+        $env:GIT_TERMINAL_PROMPT = '0'; $env:GCM_INTERACTIVE = 'never'; $env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes'
+        # A hard time limit: a stalled network or a credential prompt must not hold the lock for ever.
+        try {
+            $fa = @('--no-optional-locks', '-C', ('"{0}"' -f $Repo), 'fetch', '--quiet', '--no-tags', 'origin', '+refs/heads/develop:refs/remotes/origin/develop', '+refs/heads/master:refs/remotes/origin/master')
+            $fp = Start-Process -FilePath 'git' -ArgumentList $fa -PassThru -WindowStyle Hidden
+            if ($fp.WaitForExit(120000)) { $fetched = ($fp.ExitCode -eq 0) } else { try { & taskkill /PID $fp.Id /T /F 2>&1 | Out-Null } catch { } }
+        } catch { $fetched = $false }
         if (-not $fetched) { Write-Host 'could not fetch origin: no worktree is removed this run' }
     }
     foreach ($w in $cands) {
@@ -195,10 +214,22 @@ function Invoke-WorktreeClean {
         if ($DoApply -and -not $fetched) { $r.Kept++; continue }
         if (-not (Test-ContainedInRemoteMain -Path $w)) { $r.Kept++; Write-Host "keep  worktree $w : its commits are not in origin/develop or origin/master"; continue }
         if (-not $DoApply) { $r.WouldRemove++; Write-Host "would remove worktree $w (clean, idle, merged; refs not refreshed in a dry run)"; continue }
+        # Rename probe: a folder that is some process's working directory cannot be renamed, so it stays.
+        $leaf = Split-Path -Leaf $w
+        $probeName = $leaf + '.removing'
+        if (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $w) $probeName)) { $r.Kept++; Write-Host "keep  worktree $w : a .removing folder is in the way"; continue }
+        try { Rename-Item -LiteralPath $w -NewName $probeName -ErrorAction Stop } catch { $r.Kept++; Write-Host "keep  worktree $w : in use (cannot be renamed)"; continue }
+        try { Rename-Item -LiteralPath (Join-Path (Split-Path -Parent $w) $probeName) -NewName $leaf -ErrorAction Stop } catch { $r.Kept++; Write-Host "keep  worktree $w : could not be renamed back, left as $probeName"; continue }
         & git --no-optional-locks -C $Repo worktree remove -- $w 2>$null
         if ($LASTEXITCODE -eq 0) { $r.Removed++; Write-Host "removed worktree $w" } else { $r.Kept++; Write-Host "keep  worktree $w : git refused to remove it" }
     }
-    if ($DoApply) { & git --no-optional-locks -C $Repo worktree prune 2>$null; $r.Pruned = ($LASTEXITCODE -eq 0) }
+    # Prune only when every worktree whose folder is gone lies under the roots: a worktree on an unplugged drive keeps its registration.
+    if ($DoApply) {
+        $gone = @($Worktrees | Select-Object -Skip 1 | Where-Object { -not (Test-Path -LiteralPath $_) })
+        $onlyOurs = $true
+        foreach ($g in $gone) { if (-not (Test-UnderAny -Path $g -Roots $Roots)) { $onlyOurs = $false } }
+        if ($onlyOurs) { & git --no-optional-locks -C $Repo worktree prune 2>$null; $r.Pruned = ($LASTEXITCODE -eq 0) }
+    }
     return $r
 }
 
@@ -209,14 +240,16 @@ function Invoke-HousekeepingRun {
         [string[]]$ScratchRoots, [string[]]$Running, [string[]]$Protect = @(),
         [int]$IdleMinutes = 120, [int]$AgeDays = 1, [double]$GoCacheLimitGB = 3
     )
-    $out = [ordered]@{ ScratchFreed = 0L; ScratchWould = 0L; ScratchKept = 0; WtRemoved = 0; WtWould = 0; WtKept = 0; TempFreed = 0L; TempWould = 0L; GoFreed = 0L; GoWould = 0L; Note = '' }
+    $out = [ordered]@{ ScratchFreed = 0L; ScratchWould = 0L; ScratchKept = 0; WtRemoved = 0; WtWould = 0; WtKept = 0; TempFreed = 0L; TempWould = 0L; GoFreed = 0L; GoWould = 0L; Note = ''; Err = '' }
     $wts = Get-RepoWorktrees -Repo $Repo
     if (-not $wts) { $out.Note = 'git could not list the worktrees: nothing done'; return [pscustomobject]$out }
     $owners = @(Get-OwnerDirs -Worktrees $wts -ProjectsRoot $ProjectsRoot)
     $s = Invoke-ScratchClean -RootPath (Join-Path $TempRoot 'claude') -DoApply $DoApply -AgeDays $AgeDays -Clock $Clock -Running $Running -WithWorktrees $false -OwnerDirs $owners -IdleMinutes $IdleMinutes
     $out.ScratchFreed = $s.FreedBytes; $out.ScratchWould = $s.WouldFreeBytes; $out.ScratchKept = $s.Kept
-    $w = Invoke-WorktreeClean -Repo $Repo -Worktrees $wts -DoApply $DoApply -Clock $Clock -Running $Running -Roots (@($ScratchRoots) + (Join-Path $TempRoot 'claude')) -Protect $Protect
-    $out.WtRemoved = $w.Removed; $out.WtWould = $w.WouldRemove; $out.WtKept = $w.Kept
+    try {
+        $w = Invoke-WorktreeClean -Repo $Repo -Worktrees $wts -DoApply $DoApply -Clock $Clock -Running $Running -Roots (@($ScratchRoots) + (Join-Path $TempRoot 'claude')) -Protect $Protect -OwnerDirs $owners -IdleMinutes $IdleMinutes
+        $out.WtRemoved = $w.Removed; $out.WtWould = $w.WouldRemove; $out.WtKept = $w.Kept
+    } catch { $out.Err = 'worktree step failed: ' + ($_.Exception.Message -replace '\s+', ' ') }
     $t = Invoke-TempPatternClean -TempRoot $TempRoot -DoApply $DoApply -AgeDays $AgeDays -Clock $Clock -Running $Running
     $out.TempFreed = $t.FreedBytes; $out.TempWould = $t.WouldFreeBytes
     $g = Invoke-GoCacheClean -DoApply $DoApply -LimitGB $GoCacheLimitGB -Running $Running
@@ -227,10 +260,11 @@ function Invoke-HousekeepingRun {
 function Format-RunLine {
     param([string]$Ev, [bool]$DoApply, $R)
     if ($R.Note) { return ('{0:yyyy-MM-ddTHH:mmZ} {1} {2}' -f [datetime]::UtcNow, $Ev, $R.Note) }
+    $e = if ($R.Err) { '; ' + $R.Err } else { '' }
     if ($DoApply) {
-        return ('{0:yyyy-MM-ddTHH:mmZ} {1} apply: scratch {2} kept {3}; worktrees removed {4} kept {5}; temp {6}; go {7}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchFreed), $R.ScratchKept, $R.WtRemoved, $R.WtKept, (Format-Size $R.TempFreed), (Format-Size $R.GoFreed))
+        return (('{0:yyyy-MM-ddTHH:mmZ} {1} apply: scratch {2} kept {3}; worktrees removed {4} kept {5}; temp {6}; go {7}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchFreed), $R.ScratchKept, $R.WtRemoved, $R.WtKept, (Format-Size $R.TempFreed), (Format-Size $R.GoFreed)) + $e)
     }
-    return ('{0:yyyy-MM-ddTHH:mmZ} {1} dry run: scratch {2} would go; worktrees {3} would go; temp {4}; go {5}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchWould), $R.WtWould, (Format-Size $R.TempWould), (Format-Size $R.GoWould))
+    return (('{0:yyyy-MM-ddTHH:mmZ} {1} dry run: scratch {2} would go; worktrees {3} would go; temp {4}; go {5}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchWould), $R.WtWould, (Format-Size $R.TempWould), (Format-Size $R.GoWould)) + $e)
 }
 
 # Add-LogLine: one line per run; over the cap the file is cut to its last 100 lines.
@@ -291,15 +325,16 @@ if ($MyInvocation.InvocationName -ne '.') {
         $stateFile = Join-Path $dir 'housekeeping.state'
         $mins = Get-ThrottleMinutes $Event
         if (-not $Worker -and $mins -gt 0 -and (Test-Path -LiteralPath $stateFile)) {
-            if (((Get-Date) - (Get-Item -LiteralPath $stateFile).LastWriteTime).TotalMinutes -lt $mins) { exit 0 }
+            $age = ((Get-Date) - (Get-Item -LiteralPath $stateFile).LastWriteTime).TotalMinutes
+            if ($age -ge 0 -and $age -lt $mins) { exit 0 }   # a stamp in the future (clock change) does not throttle
         }
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
         if ($isHook -and -not $Worker) {
             # Claim the slot, start the real work hidden in the background and return at once.
-            Set-Content -LiteralPath $stateFile -Value ([datetime]::UtcNow.ToString('o'))
-            $a = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Event', $Event, '-Worker')
-            if ($Repo) { $a += @('-Repo', $Repo) }
+            $a = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $PSCommandPath), '-Event', $Event, '-Worker')
+            if ($Repo) { $a += @('-Repo', ('"{0}"' -f $Repo)) }
             Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList $a -WindowStyle Hidden | Out-Null
+            Set-Content -LiteralPath $stateFile -Value ([datetime]::UtcNow.ToString('o'))   # claimed only once the worker really started
             exit 0
         }
 
@@ -311,7 +346,7 @@ if ($MyInvocation.InvocationName -ne '.') {
             . (Join-Path $PSScriptRoot 'Clean-Scratch.ps1')
             $repoFolder = Get-RepoFolder -Explicit $Repo -Dir $dir
             if (-not $repoFolder) { Add-LogLine -Dir $dir -Line ('{0:yyyy-MM-ddTHH:mmZ} {1} no repository found' -f [datetime]::UtcNow, $Event); exit 0 }
-            $doApply = -not ($DryRun -and $Event -eq 'manual')
+            $doApply = -not $DryRun   # -DryRun wins for every event
             $running = @(Get-RunningLines)   # throws when the list cannot be trusted: then nothing is deleted
             $protect = @($PSScriptRoot | ForEach-Object { (Get-GitLines -Dir $_ -GitArgs @('rev-parse', '--show-toplevel')) } | Where-Object { $_ })
             $protect += (Get-Location).Path
@@ -326,7 +361,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         } finally { if ($lock) { $lock.Dispose() } }
     } catch {
         try { Add-LogLine -Dir (Get-StateDir) -Line ('{0:yyyy-MM-ddTHH:mmZ} {1} error: {2}' -f [datetime]::UtcNow, $Event, ($_.Exception.Message -replace '\s+', ' ')) } catch { }
-        if (-not $alwaysZero) { Write-Host "error: $($_.Exception.Message)" }
+        if (-not $alwaysZero) { Write-Host "error: $($_.Exception.Message)"; exit 1 }
     }
     exit 0
 }
