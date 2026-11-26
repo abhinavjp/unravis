@@ -2,7 +2,8 @@
   Filled in by tools/release/New-ReleaseNotes.ps1 from a tag, the plain git log since the
   previous tag, and whether SIGNPATH was set for this run. A person edits the result before
   publishing the draft (see installer-and-releases.md section 9, "Release notes").
-  The "What changed" list also gets a collapsed "Build and test changes" block for "CI:" commits;
+  A "Highlights" section (plain-word notes and screenshots from the app's What's new file) is added in front of
+  "What changed" when the tag has notes for this version; "What changed" stays the full list. It also gets a collapsed "Build and test changes" block for "CI:" commits;
   the signing note ends with a clean-PC warning line unless CLEAN_VM_VERIFIED is true.
   (Do not write the double-brace placeholder names in this comment: the generator replaces them everywhere.)
 -->
@@ -10,7 +11,7 @@
 
 Released {{DATE}}.
 
-## What changed
+{{HIGHLIGHTS}}## What changed
 {{WHAT_CHANGED}}
 
 ## Upgrade notes

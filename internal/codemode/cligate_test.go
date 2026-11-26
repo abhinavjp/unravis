@@ -127,7 +127,9 @@ func TestCLIGateIsSafeForConcurrentUse(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {
-				switch (i + j) % 4 {
+				switch (i + j) % 5 {
+				case 4:
+					g.OpenUnlimited()
 				case 0:
 					g.Open(time.Minute)
 				case 1:
@@ -142,4 +144,90 @@ func TestCLIGateIsSafeForConcurrentUse(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// "No time limit": a second open state of the same gate. It allows the command line with no end, has no end time to report, and is
+// replaced or closed by every other call. A new gate is closed, which is what makes it need a fresh confirmation after an app start.
+func TestCLIGateUnlimitedAllowsTheCommandLineWithNoEnd(t *testing.T) {
+	g, clk := newGate()
+	cli := RunRequest{Surface: "cli"}
+	if g.Unlimited() || g.Allows() {
+		t.Fatal("a new gate is open")
+	}
+	g.OpenUnlimited()
+	if !g.Unlimited() || !g.Allows() {
+		t.Fatal("unlimited did not open the gate")
+	}
+	if _, open := g.OpenUntil(); open {
+		t.Fatal("unlimited reports an end time")
+	}
+	for _, d := range []time.Duration{time.Minute, 61 * time.Minute, 24 * time.Hour, 30 * 24 * time.Hour} {
+		clk.add(d)
+		if err := g.Authorize(context.Background(), cli); err != nil {
+			t.Fatalf("unlimited after %v: %v", d, err)
+		}
+	}
+	// Only the command line is judged, as for a timed window.
+	if err := g.Authorize(context.Background(), RunRequest{Surface: "ui"}); err != nil {
+		t.Fatalf("ui: %v", err)
+	}
+}
+
+// A restart is a new gate: nothing carries the state over, so the person has to say it again.
+func TestCLIGateUnlimitedDoesNotSurviveANewGate(t *testing.T) {
+	g, _ := newGate()
+	g.OpenUnlimited()
+	g2, _ := newGate()
+	if g2.Unlimited() || g2.Allows() {
+		t.Fatal("a new gate starts open")
+	}
+	if err := g2.Authorize(context.Background(), RunRequest{Surface: "cli"}); !cliRefused(err) {
+		t.Fatalf("new gate, cli run: %v", err)
+	}
+}
+
+func TestCLIGateAnyOtherCallEndsUnlimited(t *testing.T) {
+	cli := RunRequest{Surface: "cli"}
+	// Close.
+	g, _ := newGate()
+	g.OpenUnlimited()
+	g.Close()
+	if g.Unlimited() || g.Allows() || !cliRefused(g.Authorize(context.Background(), cli)) {
+		t.Fatal("close left it open")
+	}
+	// A timed window replaces it, and then ends on time.
+	g, clk := newGate()
+	g.OpenUnlimited()
+	end := g.Open(5 * time.Minute)
+	if g.Unlimited() {
+		t.Fatal("a timed window left unlimited on")
+	}
+	if got, open := g.OpenUntil(); !open || !got.Equal(end) {
+		t.Fatalf("timed window: %v %v", got, open)
+	}
+	clk.add(5 * time.Minute)
+	if !cliRefused(g.Authorize(context.Background(), cli)) {
+		t.Fatal("the timed window that replaced unlimited did not end")
+	}
+	// A zero window closes it.
+	g, _ = newGate()
+	g.OpenUnlimited()
+	g.Open(0)
+	if g.Unlimited() || g.Allows() {
+		t.Fatal("a zero window left it open")
+	}
+	// Unlimited replaces a timed window and clears its end.
+	g, _ = newGate()
+	g.Open(5 * time.Minute)
+	g.OpenUnlimited()
+	if _, open := g.OpenUntil(); open || !g.Unlimited() {
+		t.Fatal("unlimited kept the timed end")
+	}
+}
+
+func TestNilCLIGateDoesNotAllow(t *testing.T) {
+	var g *CLIGate
+	if g.Allows() {
+		t.Fatal("nil gate allows")
+	}
 }

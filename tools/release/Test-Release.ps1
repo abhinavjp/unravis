@@ -110,7 +110,7 @@ function New-TestRepo {
 
 # Runs New-ReleaseNotes.ps1 in its own process under the given host and returns the exit code, its output and the notes text.
 function Invoke-NotesOn {
-    param([string]$HostPath, [string]$Repo, [string]$Tag, [switch]$Signed)
+    param([string]$HostPath, [string]$Repo, [string]$Tag, [switch]$Signed, [string]$Repository = '')
     $leaf = (Split-Path -Leaf $Repo) + '-' + $Tag + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
     $notes = Join-Path $root "$leaf.notes.md"
     $stdout = Join-Path $root "$leaf.child.out.txt"
@@ -119,6 +119,7 @@ function Invoke-NotesOn {
         '-Tag', $Tag, '-Version', $Tag.Substring(1), '-TemplatePath', ('"' + $templateFile + '"'),
         '-OutFile', ('"' + $notes + '"'), '-RepoRoot', ('"' + $Repo + '"'))
     if ($Signed) { $argumentList += '-Signed' }
+    if ($Repository) { $argumentList += @('-Repository', $Repository) }
     $proc = Start-Process -FilePath $HostPath -ArgumentList $argumentList -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     $text = ''
     if (Test-Path -LiteralPath $notes) { $text = [System.IO.File]::ReadAllText($notes) }
@@ -238,8 +239,52 @@ try {
     Add-TestCommit $firstRepo 'Add the thing'
     Invoke-TestGit $firstRepo @('tag', 'v0.1.0')
 
+    # A tag that carries web/public/releases/notes.json with an entry for its version gets a Highlights section.
+    $hiRepo = New-TestRepo 'notes-highlights'
+    Add-TestCommit $hiRepo 'Add the base'
+    Invoke-TestGit $hiRepo @('tag', 'v1.2.9')
+    $notesDir = Join-Path $hiRepo 'web\public\releases'
+    New-Item -ItemType Directory -Force -Path $notesDir | Out-Null
+    $notesJson = @'
+{ "schema": 1, "releases": [
+  { "version": "1.3.0", "date": "2026-11-27", "headline": "A clearer charts screen", "changes": ["x"],
+    "highlights": [
+      { "text": "Charts now explain themselves in plain words.", "label": "Charts", "image": "/whatsnew/rc99/charts.jpg", "alt": "The charts screen" },
+      { "text": "The slow-call list reads better.", "image": "/whatsnew/rc99/slow-after.jpg", "before": "/whatsnew/rc99/slow-before.jpg", "alt": "Slow calls" },
+      { "text": "Fixed a crash when the file is empty." },
+      { "text": "A path that must not become a link.", "image": "/whatsnew/../secret.jpg" }
+    ] },
+  { "version": "1.2.9", "date": "2026-11-01", "headline": "Older", "changes": ["y"], "highlights": [{ "text": "Older note." }] }
+] }
+'@
+    [System.IO.File]::WriteAllText((Join-Path $notesDir 'notes.json'), $notesJson)
+    Invoke-TestGit $hiRepo @('add', '-A')
+    Invoke-TestGit $hiRepo @('commit', '-m', 'Add the notes for 1.3.0')
+    Invoke-TestGit $hiRepo @('tag', 'v1.3.0')
+    Add-TestCommit $hiRepo 'Add something with no notes entry'
+    Invoke-TestGit $hiRepo @('tag', 'v1.3.1')
+
     foreach ($h in $hosts.Keys) {
         $hp = $hosts[$h]
+
+        $r = Invoke-NotesOn $hp $hiRepo 'v1.3.0' -Repository 'example/unravis'
+        Assert-That "notes [$h] highlights: exits 0 and every placeholder is filled" (($r.Code -eq 0) -and ($r.Notes -notmatch '\{\{')) "(exit $($r.Code)) $($r.Log)"
+        $hiAt = $r.Notes.IndexOf('## Highlights')
+        $whatAtHi = $r.Notes.IndexOf('## What changed')
+        Assert-That "notes [$h] highlights: section comes before 'What changed' and has the headline" (($hiAt -ge 0) -and ($whatAtHi -gt $hiAt) -and ($r.Notes -match '\*\*A clearer charts screen\*\*')) $r.Notes
+        Assert-That "notes [$h] highlights: label, plain note and a picture link at the tag" (($r.Notes -match '- \*\*Charts\.\*\* Charts now explain themselves') -and ($r.Notes -match '- Fixed a crash when the file is empty\.') -and ($r.Notes -match '!\[The charts screen\]\(https://github\.com/example/unravis/blob/v1\.3\.0/web/public/whatsnew/rc99/charts\.jpg\?raw=true\)')) $r.Notes
+        Assert-That "notes [$h] highlights: before and after sit side by side" (($r.Notes -match '\| Before \| After \|') -and ($r.Notes -match 'slow-before\.jpg\?raw=true\) \| !\[Slow calls\]\(.*slow-after\.jpg')) $r.Notes
+        Assert-That "notes [$h] highlights: an unsafe picture path keeps its words and loses the picture" (($r.Notes -match 'A path that must not become a link\.') -and ($r.Notes -notmatch 'secret\.jpg')) $r.Notes
+        Assert-That "notes [$h] highlights: other versions' notes are not mixed in" ($r.Notes -notmatch 'Older note') $r.Notes
+        $savedRepoEnv = $env:GITHUB_REPOSITORY
+        Remove-Item Env:GITHUB_REPOSITORY -ErrorAction SilentlyContinue
+        $r = Invoke-NotesOn $hp $hiRepo 'v1.3.0'
+        if ($null -ne $savedRepoEnv) { $env:GITHUB_REPOSITORY = $savedRepoEnv }
+        Assert-That "notes [$h] highlights: with no GitHub name known the words stay and the pictures are left out" (($r.Code -eq 0) -and ($r.Notes -match 'Charts now explain themselves') -and ($r.Notes -notmatch 'charts\.jpg')) $r.Notes
+        $r = Invoke-NotesOn $hp $hiRepo 'v1.3.1'
+        Assert-That "notes [$h] highlights: no entry for the version means no section" (($r.Code -eq 0) -and ($r.Notes -notmatch '## Highlights') -and ($r.Notes -match '## What changed')) $r.Notes
+        $r = Invoke-NotesOn $hp $hiRepo 'v1.2.9'
+        Assert-That "notes [$h] highlights: no notes file at the tag means no section" (($r.Code -eq 0) -and ($r.Notes -notmatch '## Highlights')) $r.Notes
 
         $r = Invoke-NotesOn $hp $firstRepo 'v0.1.0'
         Assert-That "notes [$h] first tag (no earlier tag): exits 0" ($r.Code -eq 0) "(exit $($r.Code)) $($r.Log)"
