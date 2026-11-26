@@ -151,6 +151,11 @@ func TestRedisPasswordIsNotACommandLineArgument(t *testing.T) {
 // miniRedis answers PING with the given line and records every command word it receives.
 func miniRedis(t *testing.T, pingAnswer string) (port int, words func() []string) {
 	t.Helper()
+	// The fake is this test program, which is not an installed service: on Windows the real check would refuse it.
+	// Tests of the refusal set their own stub.
+	oldCheck := bbredis.ListenerCheck
+	bbredis.ListenerCheck = func(int) error { return nil }
+	t.Cleanup(func() { bbredis.ListenerCheck = oldCheck })
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
