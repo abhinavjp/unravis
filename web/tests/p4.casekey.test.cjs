@@ -93,6 +93,18 @@ test('the key ending sticker is shown only for four hex digits', () => {
   assert.equal(caseKey.parseCaseKeyStatus(null), null);
 });
 
+test('an unlock that erased the case (past its 30-day keep time) is read as such and the card says so, not "case not found"', () => {
+  const caseKey = loadTypeScript('src/lib/caseKey.ts');
+  assert.deepEqual({ ...caseKey.parseCaseKeyStatus({ ownKey: false, locked: false, ending: '', status: 'erased-expired' }) }, { ownKey: false, locked: false, status: 'erased-expired' });
+  assert.equal(caseKey.parseCaseKeyStatus({ ownKey: true, locked: false, status: 'something-else' }).status, undefined, 'only the one known status is read');
+  const copy = loadTypeScript('src/lib/copy/caseKeyCopy.ts');
+  assert.equal(copy.CASE_KEY_TEXT.erasedExpired, 'This case was past its 30-day keep time, so it was erased when it unlocked.');
+  const card = read('src/components/CaseKeyCard.svelte');
+  assert.match(card, /opened\.status === 'erased-expired'/);
+  assert.match(card, /\{#if erased\}\s*<p class="note" role="status">\{CASE_KEY_TEXT\.erasedExpired\}<\/p>/);
+  assert.match(read('src/lib/components/CaseHome.svelte'), /<CaseKeyCard [^>]*onErased=\{erasedDone\}/, 'the page gives the case up only when the person leaves the card');
+});
+
 test('a failed key call is reduced to a small set of kinds', () => {
   const kind = (e) => caseKey.caseKeyFailureOf(e).kind;
   assert.equal(kind({ status: 401, reason: 'wrong-case-key' }), 'wrong-key');

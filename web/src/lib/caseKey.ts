@@ -5,17 +5,21 @@ import { MAX_PASSPHRASE_BYTES, MIN_PASSPHRASE_CHARS, byteCount, charCount, keysM
  * button off and pick a sentence. Nothing here stores, logs or returns a key.
  */
 
-export interface CaseKeyStatus { ownKey: boolean; locked: boolean; ending?: string }
+export interface CaseKeyStatus { ownKey: boolean; locked: boolean; ending?: string; status?: 'erased-expired' }
 
 const ENDING = /^[0-9a-f]{4}$/i;
 
 /** Reads the status body. Anything that is not an object with a boolean `ownKey` is refused. The ending is kept only when it is four hex digits. */
 export function parseCaseKeyStatus(raw: unknown): CaseKeyStatus | null {
   if (!raw || typeof raw !== 'object') return null;
-  const b = raw as { ownKey?: unknown; locked?: unknown; ending?: unknown };
+  const b = raw as { ownKey?: unknown; locked?: unknown; ending?: unknown; status?: unknown };
   if (typeof b.ownKey !== 'boolean') return null;
   const ending = typeof b.ending === 'string' && ENDING.test(b.ending) ? b.ending.toLowerCase() : undefined;
-  return { ownKey: b.ownKey, locked: b.ownKey && b.locked === true, ...(b.ownKey && ending ? { ending } : {}) };
+  // "erased-expired": the unlock found the case past its 30-day keep time and erased it. Any other status is ignored.
+  return {
+    ownKey: b.ownKey, locked: b.ownKey && b.locked === true, ...(b.ownKey && ending ? { ending } : {}),
+    ...(b.status === 'erased-expired' ? { status: 'erased-expired' as const } : {}),
+  };
 }
 
 /** The sentence under a key field uses the same rules as the PC key: 12 characters, 8 that show, matching entries. */

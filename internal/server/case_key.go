@@ -39,6 +39,9 @@ type caseKeyDTO struct {
 	// Ending is the last four characters of the key's check value ("Key ending
 	// xxxx"). Empty when the case has no key of its own.
 	Ending string `json:"ending"`
+	// Status is empty for a normal answer. "erased-expired" says the unlock found the case past its 30-day
+	// keep time and erased it (RV-DAT-8); the other fields are then those of a case with no key.
+	Status string `json:"status,omitempty"`
 }
 
 // caseKeyFailure is the body of a refused key request.
@@ -328,7 +331,14 @@ func (h *handler) caseKeyUnlock(w http.ResponseWriter, r *http.Request, raw stri
 	}
 	defer b.wipe()
 	h.keyOp.Lock()
-	defer h.keyOp.Unlock()
+	keyOpHeld := true
+	releaseKeyOp := func() {
+		if keyOpHeld {
+			keyOpHeld = false
+			h.keyOp.Unlock()
+		}
+	}
+	defer releaseKeyOp()
 	th, ok := h.caseKeyJudged(w, ck, id, b.secret("passphrase"))
 	if !ok {
 		return
@@ -358,7 +368,12 @@ func (h *handler) caseKeyUnlock(w http.ResponseWriter, r *http.Request, raw stri
 	}
 	// The start-up sweep could not see this case's close date while its key was locked. If the 30 days
 	// ran out meanwhile, the same sweep rule applies now, as it would have at start (RV-DAT-8).
-	h.eraseIfExpired(r.Context(), id)
+	// It may wait some seconds for the case to be free, so another case's key is not held back meanwhile.
+	releaseKeyOp()
+	if h.eraseIfExpired(r, id) {
+		writeJSON(w, http.StatusOK, caseKeyDTO{Status: erasedExpiredStatus}, 4096)
+		return
+	}
 	info, err := ck.CaseKey(id)
 	if err != nil && !info.Has {
 		// The unlock removed the key (a half-finished Remove was completed).

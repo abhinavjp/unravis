@@ -21,6 +21,8 @@ func TestSweepDueIsOneRuleForEveryStore(t *testing.T) {
 		{"archiving", CaseInfo{Closed: at(2 * Retention), Mark: MarkArchiving}, false},
 		{"freeing", CaseInfo{Closed: at(2 * Retention), Mark: MarkFreeing}, false},
 		{"archive active", CaseInfo{Closed: at(2 * Retention), Archive: &ArchiveInfo{Active: true}}, false},
+		{"archive pending", CaseInfo{Closed: at(2 * Retention), Archive: &ArchiveInfo{Pending: &ArchivePending{}}}, false},
+		{"archive record, not active, nothing pending", CaseInfo{Closed: at(2 * Retention), Archive: &ArchiveInfo{}}, true},
 	}
 	for _, c := range cases {
 		if got := SweepDue(c.info, now); got != c.want {

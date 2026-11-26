@@ -1065,10 +1065,13 @@ const eraseCodeLen = 8
 const defaultEraseWait = 30 * time.Second
 
 // eraseTimer starts the wait of one erase.
-func (h *handler) eraseTimer() <-chan time.Time {
+func (h *handler) eraseTimer() <-chan time.Time { return h.eraseTimerFor(defaultEraseWait) }
+
+// eraseTimerFor starts a wait of at most max: the configured wait (tests) wins when it is shorter.
+func (h *handler) eraseTimerFor(max time.Duration) <-chan time.Time {
 	d := h.eraseWait
-	if d <= 0 {
-		d = defaultEraseWait
+	if d <= 0 || d > max {
+		d = max
 	}
 	if h.eraseAfter != nil {
 		return h.eraseAfter(d)
