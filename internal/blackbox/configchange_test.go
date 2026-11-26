@@ -213,7 +213,8 @@ func TestAuditTamperingStopsChanges(t *testing.T) {
 			t.Errorf("%s: history says verified (%+v, %v)", name, h, err)
 		}
 		before := hashConfig(g.installedCfg(t))
-		if _, err := g.m.ChangeConfig(off("web.iis")); !reasonIs(err, ReasonAuditBroken) {
+		backOn := true
+		if _, err := g.m.ChangeConfig(ChangeOp{Verb: OpCollector, ID: "web.iis", On: &backOn}); !reasonIs(err, ReasonAuditBroken) {
 			t.Errorf("%s: %v", name, err)
 		}
 		if hashConfig(g.installedCfg(t)) != before {
@@ -238,7 +239,7 @@ func TestPendingChangeIsFinishedByTheNextCommand(t *testing.T) {
 	if err := SaveConfig(g.p.ConfigPath, changed, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := writePending(dir, pendingMark{Seq: 1, Snapshot: snap, Deadline: changeNow().Add(-time.Hour), Detail: "collector web.iis off"}); err != nil {
+	if err := writePending(dir, pendingMark{Seq: 1, Snapshot: snap, Detail: "collector web.iis off"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := g.m.RollbackConfig(); !reasonIs(err, ReasonNothingToRollBack) {
@@ -251,12 +252,144 @@ func TestPendingChangeIsFinishedByTheNextCommand(t *testing.T) {
 	if !h.Verified || len(h.Lines) == 0 || h.Lines[0].Result != "recovered" || h.Pending {
 		t.Fatalf("%+v", h)
 	}
-	// A marker still inside its deadline is another change in progress: refused, nothing touched.
-	if err := writePending(dir, pendingMark{Seq: 9, Snapshot: snapName(9), Deadline: changeNow().Add(time.Hour)}); err != nil {
+}
+
+func TestAChangeRunningRightNowBlocksAnother(t *testing.T) {
+	g := changeRig(t)
+	dir := g.changeDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	lock := filepath.Join(dir, lockFileName)
+	if err := os.WriteFile(lock, []byte("1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := hashConfig(g.installedCfg(t))
 	if _, err := g.m.ChangeConfig(off("web.iis")); !reasonIs(err, ReasonChangeRefused) {
-		t.Errorf("%v", err)
+		t.Fatalf("fresh lock: %v", err)
+	}
+	if hashConfig(g.installedCfg(t)) != before {
+		t.Fatal("a change ran while another held the lock")
+	}
+	// A lock left by a process that died is taken over.
+	old := time.Now().Add(-2 * staleLock)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.m.ChangeConfig(off("web.iis")); err != nil {
+		t.Fatalf("stale lock: %v", err)
+	}
+	if _, err := os.Stat(lock); err == nil {
+		t.Error("the lock was not released")
+	}
+}
+
+// sleepEnv runs a hook at each Sleep, so a test can crash the recorder in the middle of the watch.
+type sleepEnv struct {
+	*fakeEnv
+	hook func()
+}
+
+func (e *sleepEnv) Sleep(d time.Duration) {
+	if e.hook != nil {
+		e.hook()
+	}
+	e.fakeEnv.Sleep(d)
+}
+
+func TestACrashedRecorderIsRolledBackAndStartedAgain(t *testing.T) {
+	g := changeRig(t)
+	before := hashConfig(g.installedCfg(t))
+	crashed := false
+	g.m.Env = &sleepEnv{fakeEnv: g.env, hook: func() {
+		if !crashed {
+			crashed = true
+			g.svc.state = SvcStopped // the recorder died on the new settings
+		}
+	}}
+	_, err := g.m.ChangeConfig(off("web.iis"))
+	if !reasonIs(err, ReasonUnhealthy) {
+		t.Fatalf("%v", err)
+	}
+	if g.svc.state != SvcRunning {
+		t.Errorf("the recorder is %s: the roll-back must start it again", g.svc.state)
+	}
+	if hashConfig(g.installedCfg(t)) != before {
+		t.Error("the previous settings were not put back")
+	}
+	if h, _ := g.m.History(); len(h.Lines) != 1 || h.Lines[0].Result != "rolled-back" {
+		t.Errorf("%+v", h)
+	}
+}
+
+func TestAFailedRollBackKeepsTheMarkerAndTheNextCommandFinishesIt(t *testing.T) {
+	g := changeRig(t)
+	before := hashConfig(g.installedCfg(t))
+	g.env.aliveFails = 1 << 20
+	armed := true
+	g.m.Env = &sleepEnv{fakeEnv: g.env, hook: func() {
+		if armed {
+			armed = false
+			g.svc.failStarts = 1 // the roll-back's own restart fails once
+		}
+	}}
+	if _, err := g.m.ChangeConfig(off("web.iis")); !reasonIs(err, ReasonUnhealthy) {
+		t.Fatalf("%v", err)
+	}
+	h, _ := g.m.History()
+	if len(h.Lines) != 1 || h.Lines[0].Result != "rollback-failed" || !h.Pending {
+		t.Fatalf("a failed roll-back must be said, and its marker kept: %+v", h)
+	}
+	if hashConfig(g.installedCfg(t)) == before {
+		t.Fatal("test set-up: the roll-back should not have taken")
+	}
+	g.env.aliveFails = 0
+	g.m.Env = g.env
+	// Any change command finishes the unfinished roll-back first.
+	if _, err := g.m.RollbackConfig(); !reasonIs(err, ReasonNothingToRollBack) {
+		t.Fatalf("%v", err)
+	}
+	if hashConfig(g.installedCfg(t)) != before {
+		t.Error("the unfinished roll-back was not finished")
+	}
+	if h, _ := g.m.History(); !h.Verified || h.Pending || h.Lines[len(h.Lines)-1].Result != "recovered" {
+		t.Fatalf("%+v", h)
+	}
+}
+
+func TestRollbackNeverBringsBackThePortOrTheBindAddress(t *testing.T) {
+	g := changeRig(t)
+	if _, err := g.m.ChangeConfig(off("web.iis")); err != nil {
+		t.Fatal(err)
+	}
+	// An administrator changes the status port with apply afterwards.
+	cur := g.installedCfg(t)
+	cur.Port = 7799
+	if _, err := g.m.ApplyConfig(cur); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.m.RollbackConfig(); err != nil {
+		t.Fatal(err)
+	}
+	got := g.installedCfg(t)
+	if got.Port != 7799 {
+		t.Errorf("roll-back brought the old port back: %d", got.Port)
+	}
+	if !got.CollectorOn("web.iis") {
+		t.Error("the collector was not switched back on")
+	}
+}
+
+func TestANoOpWritesNothingToTheAudit(t *testing.T) {
+	g := changeRig(t)
+	on := true
+	for i := 0; i < 5; i++ {
+		if _, err := g.m.ChangeConfig(ChangeOp{Verb: OpCollector, ID: "web.iis", On: &on}); !reasonIs(err, ReasonChangeRefused) {
+			t.Fatal(err)
+		}
+	}
+	if h, _ := g.m.History(); len(h.Lines) != 0 {
+		t.Errorf("no-ops filled the audit: %+v", h.Lines)
 	}
 }
 

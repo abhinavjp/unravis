@@ -264,7 +264,7 @@ func appendAudit(dir string, l AuditLine) (AuditLine, error) {
 		return l, err
 	}
 	if problem != "" {
-		return l, &ApplyError{Reason: ReasonAuditBroken, Message: "The change history does not verify (" + problem + "). Nothing was changed. An administrator must look at " + changeDirName + " in the program folder."}
+		return l, auditBroken(problem)
 	}
 	l.Seq = len(lines) + 1
 	if len(lines) > 0 {
@@ -296,10 +296,9 @@ func appendAudit(dir string, l AuditLine) (AuditLine, error) {
 func snapName(seq int) string { return fmt.Sprintf("snap-%06d.json", seq) }
 
 type pendingMark struct {
-	Seq      int       `json:"seq"` // the number the outcome line will get
-	Snapshot string    `json:"snapshot"`
-	Deadline time.Time `json:"deadline"`
-	Detail   string    `json:"detail"`
+	Seq      int    `json:"seq"` // the number the outcome line will get
+	Snapshot string `json:"snapshot"`
+	Detail   string `json:"detail"`
 }
 
 func hashConfig(c Config) string {
@@ -319,7 +318,7 @@ func (m *Manager) changeDir() (progDir, dir string, err error) {
 // prepareChangeDir makes the folder, locked to administrators and SYSTEM.
 func (m *Manager) prepareChangeDir(dir string) error {
 	if fi, err := os.Lstat(dir); err == nil {
-		if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		if fi.Mode().Type() != os.ModeDir { // a link or junction is not a plain folder
 			return applySaveError(errors.New("change folder is not a folder"))
 		}
 	} else if err := os.Mkdir(dir, 0o700); err != nil {
@@ -432,13 +431,77 @@ func (m *Manager) ChangeConfig(op ChangeOp) (ChangeResult, error) {
 // running it twice goes back and forth.
 func (m *Manager) RollbackConfig() (ChangeResult, error) {
 	op := ChangeOp{Verb: OpRollback}
-	return m.change(op, func(_ Config, dir string) (Config, error) {
-		_, c, err := latestSnapshot(dir)
+	return m.change(op, func(cur Config, dir string) (Config, error) {
+		_, snap, err := latestSnapshot(dir)
 		if err != nil {
-			return c, &ApplyError{Reason: ReasonNothingToRollBack, Message: "There is no earlier change to go back to."}
+			return snap, &ApplyError{Reason: ReasonNothingToRollBack, Message: "There is no earlier change to go back to."}
+		}
+		// Only collectors and counters.extra come back; the port, bind address, folder and the rest stay as they are now.
+		c, terr := tunables(cur, snap)
+		if terr != nil {
+			return cur, refused("The earlier settings no longer fit the settings now in force.")
 		}
 		return c, nil
 	})
+}
+
+// staleLock is how long a lock file may sit before its owner counts as dead. The longest honest run is about three
+// minutes (apply and restart, the one-minute watch, then a roll-back with its own restart), and the owner refreshes the
+// lock before the watch.
+const staleLock = 6 * time.Minute
+
+const lockFileName = "lock"
+
+// acquireChangeLock takes the one lock of the change folder (created exclusively). A lock older than staleLock belongs
+// to a process that died and is taken over. The returned func releases it.
+func acquireChangeLock(dir string) (release func(), err error) {
+	path := filepath.Join(dir, lockFileName)
+	for try := 0; try < 2; try++ {
+		f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // program folder
+		if e == nil {
+			_, _ = f.WriteString(strconv.Itoa(os.Getpid()))
+			_ = f.Close()
+			return func() { _ = os.Remove(path) }, nil
+		}
+		if !errors.Is(e, os.ErrExist) {
+			return nil, applySaveError(e)
+		}
+		if fi, serr := os.Lstat(path); serr == nil && time.Since(fi.ModTime()) > staleLock {
+			_ = os.Remove(path)
+			continue
+		}
+		break
+	}
+	return nil, refused("Another change is running. Try again in a few minutes.")
+}
+
+func touchLock(dir string) {
+	now := time.Now()
+	_ = os.Chtimes(filepath.Join(dir, lockFileName), now, now)
+}
+
+// tunables returns cur with only the settings a change may touch (collectors and counters.extra) taken from from. A
+// roll-back or a recovery never brings back anything else: an administrator may have changed the port, the bind
+// address or the folder since, and that must stay.
+func tunables(cur, from Config) (Config, error) {
+	d1, err := cur.Marshal()
+	if err != nil {
+		return cur, err
+	}
+	out, err := ParseConfig(d1)
+	if err != nil {
+		return cur, err
+	}
+	d2, err := from.Marshal()
+	if err != nil {
+		return cur, err
+	}
+	src, err := ParseConfig(d2)
+	if err != nil {
+		return cur, err
+	}
+	out.Collectors, out.Counters = src.Collectors, src.Counters
+	return out, out.Validate()
 }
 
 func (m *Manager) change(op ChangeOp, next func(cur Config, dir string) (Config, error)) (res ChangeResult, err error) {
@@ -459,6 +522,12 @@ func (m *Manager) change(op ChangeOp, next func(cur Config, dir string) (Config,
 	if err := m.prepareChangeDir(dir); err != nil {
 		return res, err
 	}
+	release, err := acquireChangeLock(dir)
+	if err != nil {
+		return res, err
+	}
+	defer release()
+	// Holding the lock means no other change is running: a marker that is still here belongs to one that died.
 	if err := m.recoverPending(progDir, dir); err != nil {
 		return res, err
 	}
@@ -474,13 +543,8 @@ func (m *Manager) change(op ChangeOp, next func(cur Config, dir string) (Config,
 	before, after := hashConfig(cur), hashConfig(want)
 	line := AuditLine{Who: "local-admin", Verb: op.Verb, Detail: op.Describe(), Before: before, After: after}
 	if before == after {
-		line.Result = "refused"
-		line.Detail += " (no change)"
-		l, aerr := appendAudit(dir, line)
-		if aerr != nil {
-			return res, aerr
-		}
-		res.Line, res.Config = l, cur
+		// Nothing to do, and nothing is written: a loop of no-ops must not fill the audit file.
+		res.Config = cur
 		return res, refused("That is already how it is set. Nothing was changed.")
 	}
 	// The snapshot of "before" is named for the line the outcome will get, so a roll-back finds the newest.
@@ -489,15 +553,15 @@ func (m *Manager) change(op ChangeOp, next func(cur Config, dir string) (Config,
 		return res, applySaveError(rerr)
 	}
 	if problem != "" {
-		return res, &ApplyError{Reason: ReasonAuditBroken, Message: "The change history does not verify (" + problem + "). Nothing was changed. An administrator must look at " + changeDirName + " in the program folder."}
+		return res, auditBroken(problem)
 	}
 	seq := len(lines) + 1
 	snap, err := writeSnapshot(dir, seq, cur)
 	if err != nil {
 		return res, applySaveError(err)
 	}
-	mark := pendingMark{Seq: seq, Snapshot: snap, Deadline: changeNow().Add(healthWindow + 30*time.Second), Detail: line.Detail}
-	if err := writePending(dir, mark); err != nil {
+	if err := writePending(dir, pendingMark{Seq: seq, Snapshot: snap, Detail: line.Detail}); err != nil {
+		_ = os.Remove(filepath.Join(dir, snap))
 		return res, applySaveError(err)
 	}
 	ar, aerr := m.ApplyConfig(want)
@@ -518,18 +582,28 @@ func (m *Manager) change(op ChangeOp, next func(cur Config, dir string) (Config,
 		line.Result = "rollback"
 	}
 	if ar.Restarted {
+		touchLock(dir)
 		if herr := m.watchHealthy(want); herr != nil {
-			// Not healthy: the previous settings go back by themselves.
+			touchLock(dir)
+			// Not healthy: the previous settings go back by themselves, and the recorder is started again if it is down.
 			_, rb := m.ApplyConfig(cur)
-			_ = os.Remove(filepath.Join(dir, snap)) // the snapshot equals the settings now in force: nothing to go back to
-			line.Result, line.After = "rolled-back", before
+			running := rb == nil && m.recoverService()
+			if rb != nil {
+				// The roll-back did not take. The snapshot and the marker stay, so the next change command tries again.
+				line.Result = "rollback-failed"
+			} else {
+				_ = os.Remove(filepath.Join(dir, snap)) // it equals the settings now in force: nothing to go back to
+				line.Result, line.After = "rolled-back", before
+			}
 			l, aerr := appendAudit(dir, line)
-			_ = os.Remove(filepath.Join(dir, pendingFileName))
+			if rb == nil {
+				_ = os.Remove(filepath.Join(dir, pendingFileName))
+			}
 			if aerr != nil {
 				return res, aerr
 			}
 			res.Line, res.Config = l, cur
-			return res, unhealthyError(rb == nil)
+			return res, unhealthyError(rb == nil, running)
 		}
 	}
 	l, aerr := appendAudit(dir, line)
@@ -542,12 +616,19 @@ func (m *Manager) change(op ChangeOp, next func(cur Config, dir string) (Config,
 	return res, nil
 }
 
-func unhealthyError(restored bool) error {
+func auditBroken(problem string) error {
+	return &ApplyError{Reason: ReasonAuditBroken, Message: "The change history does not verify (" + problem + "). Nothing was changed. An administrator must look at " + changeDirName + " in the program folder."}
+}
+
+func unhealthyError(restored, running bool) error {
 	msg := "The recorder was not healthy a minute after the change, so the previous settings were put back."
-	if !restored {
+	switch {
+	case !restored:
 		msg = "The recorder was not healthy a minute after the change and the previous settings could not be put back. Check the Blackbox now."
+	case !running:
+		msg = "The recorder was not healthy a minute after the change. The previous settings were put back, but the recorder is stopped. Press Start on the Blackbox, or check Services in Windows."
 	}
-	return &ApplyError{Reason: ReasonUnhealthy, Message: msg}
+	return &ApplyError{Reason: ReasonUnhealthy, Message: msg, Running: running}
 }
 
 func writePending(dir string, p pendingMark) error {
@@ -558,9 +639,9 @@ func writePending(dir string, p pendingMark) error {
 	return writeFileAtomic(filepath.Join(dir, pendingFileName), b, 0o600)
 }
 
-// recoverPending finishes a change whose watching process died: when the marker is older than its deadline, the
-// snapshot is applied and one "recovered" line is written. A marker still inside its deadline means another change is
-// running, which is refused.
+// recoverPending finishes a change whose process died (the caller holds the lock, so no other change is running): the
+// settings of the snapshot (collectors and counters.extra only) are applied again and one line is written. When the
+// audit already has the line, the change did finish and only the marker is removed.
 func (m *Manager) recoverPending(_ string, dir string) error {
 	b, err := os.ReadFile(filepath.Join(dir, pendingFileName)) //nolint:gosec // program folder
 	if errors.Is(err, os.ErrNotExist) {
@@ -569,30 +650,54 @@ func (m *Manager) recoverPending(_ string, dir string) error {
 	if err != nil {
 		return applySaveError(err)
 	}
-	var p pendingMark
-	if json.Unmarshal(b, &p) != nil || p.Snapshot != snapName(p.Seq) {
-		_ = os.Remove(filepath.Join(dir, pendingFileName))
-		return nil
+	remove := func() { _ = os.Remove(filepath.Join(dir, pendingFileName)) }
+	fail := func(why string) error {
+		_, aerr := appendAudit(dir, AuditLine{Who: "local-admin", Verb: "recover", Detail: "an unfinished change could not be undone (" + why + ")", Result: "recover-failed"})
+		remove()
+		return aerr
 	}
-	if changeNow().Before(p.Deadline) {
-		return refused("Another change is still being checked. Try again in a minute.")
+	var p pendingMark
+	if json.Unmarshal(b, &p) != nil || p.Seq < 1 || p.Snapshot != snapName(p.Seq) {
+		return fail("the marker is not valid")
+	}
+	detail := oneLine(p.Detail)
+	if len(detail) > 120 {
+		detail = detail[:120]
+	}
+	lines, problem, rerr := ReadAudit(dir)
+	if rerr != nil {
+		return applySaveError(rerr)
+	}
+	if problem != "" {
+		return auditBroken(problem)
+	}
+	if len(lines) >= p.Seq && lines[p.Seq-1].Result != "rollback-failed" {
+		remove() // the change finished and wrote its line; only the marker was left
+		return nil
 	}
 	data, err := os.ReadFile(filepath.Join(dir, p.Snapshot)) //nolint:gosec // program folder
 	if err != nil {
-		_ = os.Remove(filepath.Join(dir, pendingFileName))
-		return nil
+		return fail("its snapshot is missing")
 	}
-	old, err := ParseConfig(data)
+	snap, err := ParseConfig(data)
 	if err != nil {
-		_ = os.Remove(filepath.Join(dir, pendingFileName))
-		return nil
+		return fail("its snapshot is not valid")
 	}
-	if _, err := m.ApplyConfig(old); err != nil {
+	installed := installedPaths(filepath.Dir(dir)).ConfigPath
+	cur, err := LoadConfig(installed)
+	if err != nil {
 		return err
 	}
+	old, err := tunables(cur, snap)
+	if err != nil {
+		return fail("the snapshot does not fit the settings now in force")
+	}
+	if _, err := m.ApplyConfig(old); err != nil {
+		return err // the marker stays; the next command tries again
+	}
 	_ = os.Remove(filepath.Join(dir, p.Snapshot)) // it equals the settings now in force
-	_, aerr := appendAudit(dir, AuditLine{Who: "local-admin", Verb: "recover", Detail: p.Detail + " (the process that made it did not finish)", Before: "", After: hashConfig(old), Result: "recovered"})
-	_ = os.Remove(filepath.Join(dir, pendingFileName))
+	_, aerr := appendAudit(dir, AuditLine{Who: "local-admin", Verb: "recover", Detail: detail + " (the process that made it did not finish)", After: hashConfig(old), Result: "recovered"})
+	remove()
 	return aerr
 }
 
@@ -612,7 +717,7 @@ func (m *Manager) History() (ConfigHistory, error) {
 	}
 	lines, problem, err := ReadAudit(dir)
 	if err != nil {
-		return ConfigHistory{}, applySaveError(err)
+		return ConfigHistory{}, errors.New("The change history could not be read. Run this as an administrator.")
 	}
 	h := ConfigHistory{Verified: problem == "", Problem: problem}
 	if len(lines) > historyKeep {

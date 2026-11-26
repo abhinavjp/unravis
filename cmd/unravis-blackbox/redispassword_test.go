@@ -352,3 +352,42 @@ func TestConfigSetValidateHistoryRollbackThroughTheCLI(t *testing.T) {
 		t.Errorf("unknown config verb: %d", c)
 	}
 }
+
+func TestConfigVerbsTakeOnlyTheirOwnFlagsAndValidateOpensOnlyOrdinaryFiles(t *testing.T) {
+	r := installedRig(t)
+	victim := filepath.Join(r.dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"config", "history", "--answer-file", victim},
+		{"config", "rollback", "--folder", r.dir},
+		{"config", "set", "web.iis", "off", "--port", "9999"},
+		{"config", "validate", victim, "--config", victim},
+	} {
+		if c, _, _ := r.do(args...); c != exitUsage {
+			t.Errorf("%v: %d (a flag the verb does not name must be refused)", args, c)
+		}
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "keep me" { //nolint:gosec // test file
+		t.Fatalf("--answer-file overwrote a file: %q", b)
+	}
+	// validate: only a full path to an ordinary small file.
+	big := filepath.Join(r.dir, "big.json")
+	if err := os.WriteFile(big, append([]byte(`{"name":"`), make([]byte, 2<<20)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(r.dir, "link.json")
+	_ = os.Symlink(victim, link)
+	notSettings := filepath.Join(r.dir, "other.json")
+	_ = os.WriteFile(notSettings, []byte(`{"secretKeyName":"x"}`), 0o600)
+	for _, p := range []string{"relative.json", r.dir, big, link, notSettings, `\\host\share\x.json`, "//host/share/x.json", filepath.Join(r.dir, "none.json")} {
+		c, out, errs := r.do("config", "validate", p, "--json")
+		if c != exitFail {
+			t.Errorf("%q: %d %s %s", p, c, out, errs)
+		}
+		if strings.Contains(out, "secretKeyName") || strings.Contains(out, r.dir) {
+			t.Errorf("%q: the answer echoes the file or the path: %s", p, out)
+		}
+	}
+}

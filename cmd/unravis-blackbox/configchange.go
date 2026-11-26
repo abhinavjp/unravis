@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -108,7 +111,58 @@ func historyText(h blackbox.ConfigHistory) string {
 		b.WriteString("No changes have been made with this command.\n")
 	}
 	for _, l := range h.Lines {
-		fmt.Fprintf(&b, "%3d  %s  %-11s  %s\n", l.Seq, l.At.Format("2006-01-02 15:04:05Z"), l.Result, l.Detail)
+		fmt.Fprintf(&b, "%3d  %s  %-11s  %s\n", l.Seq, l.At.Format("2006-01-02 15:04:05Z"), cleanText(l.Result, 20), cleanText(l.Detail, 160))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// cleanText keeps printable text only and cuts it, so a forged audit line cannot put control characters on a screen.
+func cleanText(s string, max int) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+	if len(s) > max {
+		s = s[:max]
+	}
+	return s
+}
+
+const validateMaxBytes = 1 << 20
+
+// validateFile reads a settings file for `config validate`. It runs as an administrator or SYSTEM, so it opens only an
+// ordinary file on a local drive: no network path, device name, pipe, link or junction, and nothing larger than a
+// settings file. Every failure to read says the same sentence, so the answer tells nobody what exists on the disk.
+func validateFile(path string) (blackbox.Config, error) {
+	bad := fmt.Errorf("That file cannot be read as Blackbox settings. Give the full path of an ordinary settings file on this PC: %w", blackbox.ErrInvalidConfig)
+	if !filepath.IsAbs(path) || strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") || strings.ContainsAny(path, "\x00") {
+		return blackbox.Config{}, bad
+	}
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > validateMaxBytes {
+		return blackbox.Config{}, bad
+	}
+	f, err := os.Open(path) //nolint:gosec // checked above: absolute, local, regular, small
+	if err != nil {
+		return blackbox.Config{}, bad
+	}
+	defer func() { _ = f.Close() }()
+	if fi2, err := f.Stat(); err != nil || !fi2.Mode().IsRegular() || !os.SameFile(fi, fi2) {
+		return blackbox.Config{}, bad
+	}
+	data, err := io.ReadAll(io.LimitReader(f, validateMaxBytes+1))
+	if err != nil || len(data) > validateMaxBytes {
+		return blackbox.Config{}, bad
+	}
+	draft, err := blackbox.ParseConfigDraft(data)
+	if err != nil {
+		// Not settings at all (or an unknown field): no detail, so a non-settings file is not echoed back.
+		return blackbox.Config{}, fmt.Errorf("That file is not valid Blackbox settings: %w", blackbox.ErrInvalidConfig)
+	}
+	if err := draft.Validate(); err != nil {
+		return blackbox.Config{}, fmt.Errorf("%s: %w", cleanText(err.Error(), 200), blackbox.ErrInvalidConfig)
+	}
+	return draft, nil
 }

@@ -377,6 +377,27 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	if err := fs.Parse(rest); err != nil {
 		return exitUsage
 	}
+	if strings.HasPrefix(cmd, "config-") {
+		// The config verbs take only the flags they name. In particular they never take --answer-file (which would
+		// open and overwrite a file as the caller) or the install flags, which would be ignored without a word.
+		allowed := map[string]bool{"json": true}
+		switch cmd {
+		case "config-show":
+			allowed["config"] = true
+		case "config-set":
+			allowed["every"] = true
+		}
+		bad := ""
+		fs.Visit(func(f *flag.Flag) {
+			if !allowed[f.Name] && bad == "" {
+				bad = f.Name
+			}
+		})
+		if bad != "" {
+			_, _ = fmt.Fprintf(stderr, "config %s does not take --%s\n", strings.TrimPrefix(cmd, "config-"), bad)
+			return exitUsage
+		}
+	}
 	if cmd == "config-set" || cmd == "config-validate" {
 		cfgWords = append(cfgWords, fs.Args()...)
 	} else if fs.NArg() > 0 {
@@ -598,7 +619,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		if len(cfgWords) != 1 {
 			return ans.fail(fmt.Errorf("usage: config validate <file>: %w", blackbox.ErrInvalidConfig))
 		}
-		cfg, err := blackbox.LoadConfig(cfgWords[0])
+		cfg, err := validateFile(cfgWords[0])
 		if err != nil {
 			return ans.fail(err)
 		}
