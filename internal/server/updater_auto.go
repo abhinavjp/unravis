@@ -51,6 +51,7 @@ type autoState struct {
 	mu     sync.Mutex
 	tries  map[string]int // version -> automatic applies tried; also kept on disk, so a restart does not forget it
 	loaded bool
+	loops  []chan struct{} // one per StartAuto; each closes when its loop has ended
 	// failedByAuto is set when an automatic apply was launched; only then may autoStep turn a launch failure back into "ready"
 	// (a failure of the person's own Apply now stays on screen with its reason).
 	failedByAuto bool
@@ -157,6 +158,61 @@ func (u *Updater) touchPower() {
 	if touch != nil {
 		touch()
 	}
+}
+
+// autoCloseWait is how long Close waits for the quiet-time loop to end (RV-SRV-3). A step that is stuck in a slow call is left
+// behind after this; the program is ending either way.
+var autoCloseWait = 3 * time.Second
+
+// StartAuto runs RunAuto in the background and remembers it, so Close can wait for it. The loop is registered before this returns:
+// a Close that follows at once still sees it.
+func (u *Updater) StartAuto(ctx context.Context) {
+	done := make(chan struct{})
+	u.auto.mu.Lock()
+	u.auto.loops = append(u.auto.loops, done)
+	u.auto.mu.Unlock()
+	go func() {
+		defer close(done)
+		u.RunAuto(ctx)
+	}()
+}
+
+// waitAuto waits for the loops StartAuto began, for at most d in all (the way fileJobs.shutdown waits). It forgets the loops it waited
+// for, so a second call does not wait for them again.
+func (u *Updater) waitAuto(d time.Duration) {
+	u.auto.mu.Lock()
+	loops := append([]chan struct{}(nil), u.auto.loops...)
+	u.auto.mu.Unlock()
+	defer u.forgetAuto(loops)
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for _, done := range loops {
+		select {
+		case <-done:
+		case <-timer.C:
+			return
+		}
+	}
+}
+
+// forgetAuto drops the given loops from the list, keeping any that StartAuto added since.
+func (u *Updater) forgetAuto(gone []chan struct{}) {
+	u.auto.mu.Lock()
+	defer u.auto.mu.Unlock()
+	kept := u.auto.loops[:0]
+	for _, l := range u.auto.loops {
+		waited := false
+		for _, g := range gone {
+			if l == g {
+				waited = true
+				break
+			}
+		}
+		if !waited {
+			kept = append(kept, l)
+		}
+	}
+	u.auto.loops = kept
 }
 
 // RunAuto is the quiet-time loop. It stops when ctx ends. It does nothing for a development build, while updates are off, or when

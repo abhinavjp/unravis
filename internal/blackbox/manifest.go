@@ -133,6 +133,33 @@ type Manifest struct {
 	Gaps        []Gap        `json:"gaps"`
 	Events      []Event      `json:"events"`
 	Probe       Probe        `json:"probe"`
+	// PausedDiskLow is true while recording is paused because the drive is almost
+	// full (RV-BB-9). It is stored, not worked out from the event list: that list
+	// keeps only the newest maxEvents, so after enough later events the pause
+	// event is gone while recording is still paused. PausedSince is when the pause
+	// began. Both are absent in a manifest an older recorder wrote (resolvePaused
+	// fills them from the events once), and an older reader ignores them.
+	PausedDiskLow bool      `json:"pausedDiskLow,omitempty"`
+	PausedSince   time.Time `json:"pausedSince,omitzero"`
+}
+
+// resolvePaused fills the stored pause from the event list when the manifest
+// holds none (an older recorder wrote it, or the drive was never full). The
+// newest of the pause and resume events wins. A manifest that already stores a
+// pause is left as it is, so the answer no longer depends on the event window.
+func (m *Manifest) resolvePaused() {
+	if m.PausedDiskLow || !m.PausedSince.IsZero() {
+		return
+	}
+	for i := len(m.Events) - 1; i >= 0; i-- {
+		switch m.Events[i].Kind {
+		case EventPausedDiskLow:
+			m.PausedDiskLow, m.PausedSince = true, m.Events[i].T
+			return
+		case EventResumed:
+			return
+		}
+	}
 }
 
 // ErrNewerFormat is returned when the manifest was written by a newer recorder.
@@ -224,6 +251,7 @@ func readManifest(dir string) (Manifest, error) {
 		return Manifest{}, errors.New("blackbox: manifest has no format version")
 	}
 	m.normalize()
+	m.resolvePaused()
 	return m, nil
 }
 

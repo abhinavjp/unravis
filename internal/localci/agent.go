@@ -152,6 +152,12 @@ type Agent struct {
 	// CacheLimit is the size the build cache is trimmed to (see Store.TrimCaches), once an hour and at start.
 	// Zero: DefaultCacheLimit. Negative: never trim.
 	CacheLimit int64
+	// RunKeep is how long the folders of a finished run (runs/ and work/) stay; checked once an hour and at start.
+	// Zero: DefaultRunKeep. Negative: no age rule (the size rule still runs unless RunsLimit is negative too).
+	RunKeep time.Duration
+	// RunsLimit is the size runs/ and work/ are cut down to after that (the oldest finished runs first).
+	// Zero: DefaultRunsLimit. Negative: no size rule.
+	RunsLimit int64
 	// MinFree is the free space the drive of the store must have for the agent to start a run. Below it the agent
 	// trims the build cache harder and claims nothing until there is room: a test that runs on a full disk fails for
 	// that reason ("free disk space", "server never listened") and would read as a new failure of the change.
@@ -173,6 +179,7 @@ type Agent struct {
 	lastPrune   time.Time
 	lastLowTrim time.Time
 	trimming    atomic.Bool
+	trimmingRun atomic.Bool
 	lowDisk     atomic.Bool
 	wake        chan struct{}
 	wg          sync.WaitGroup
@@ -561,6 +568,7 @@ func (a *Agent) prune(ctx context.Context, now time.Time) {
 		a.logf("removed %d old finished requests", n)
 	}
 	a.trimCaches(ctx, now, 1)
+	a.trimRuns(ctx, now)
 }
 
 // diskIsLow says whether the drive of the store is too full to start a run. Entering that state trims the build
@@ -619,6 +627,49 @@ func (a *Agent) trimCaches(ctx context.Context, now time.Time, div int64) {
 		}
 		if err != nil && ctx.Err() == nil {
 			a.logf("build cache trim: %v", err)
+		}
+	}()
+}
+
+// trimRuns removes the folders of old finished runs in the background (see Store.TrimRuns). The claim time of
+// the oldest running request is read first, so a folder a running request may be using is never touched. When
+// the queue cannot be read nothing is removed.
+func (a *Agent) trimRuns(ctx context.Context, now time.Time) {
+	if (a.RunKeep < 0 && a.RunsLimit < 0) || a.Dir == "" || !a.trimmingRun.CompareAndSwap(false, true) {
+		return
+	}
+	rs, err := a.Queue.List()
+	if err != nil {
+		a.trimmingRun.Store(false)
+		a.logf("run folders trim: the queue cannot be read, nothing removed: %v", err)
+		return
+	}
+	var active time.Time
+	for _, r := range rs {
+		if r.State == StateRunning && (active.IsZero() || r.ClaimedAt.Before(active)) {
+			active = r.ClaimedAt
+		}
+	}
+	a.mu.Lock()
+	for _, j := range a.jobs {
+		if active.IsZero() || j.since.Before(active) {
+			active = j.since
+		}
+	}
+	a.mu.Unlock()
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		defer a.trimmingRun.Store(false)
+		res, err := (&Store{Dir: a.Dir}).TrimRuns(ctx, TrimRunsOptions{Keep: a.RunKeep, Limit: a.RunsLimit, Now: now, ActiveSince: active})
+		if res.Runs+res.Work > 0 {
+			a.logf("%s", res.describe())
+		}
+		for _, s := range res.Skipped {
+			a.logf("run folders: left alone %s", s)
+		}
+		if err != nil && ctx.Err() == nil {
+			a.logf("run folders trim: %v", err)
 		}
 	}()
 }

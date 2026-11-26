@@ -463,6 +463,9 @@ jobs:
     # logon-SID DACL, remote reject, peer and server checks). Later sidecar items (BL-301 and on) add their packages here.
     # Also builds with the `e2e` tag, which only tests use, so that variant cannot rot.
     # Matrix windows-2022 and windows-2025 for the pipe tests, as spec 08 D2 says. The go-tests shards of the `build` gate also run these tests (go test ./...).
+    # RV-CI-1: skipped for a notes-only pull request, like the jobs above. Not part of `build`'s needs and not a required check, so a skip blocks nothing.
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -555,6 +558,9 @@ jobs:
     # BL-441. Lint, vet, race tests against a known-failure baseline, and the web checks, on Linux.
     # The Windows `build` job stays the correctness gate. A few tests are Windows-only and fail here;
     # they are listed in docs/desktop/baseline-go-tests.txt and only a failure NOT in that file fails the job.
+    # RV-CI-1: skipped for a notes-only pull request (the `changes` job). Not part of `build`'s needs and not a required check, so a skip blocks nothing.
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -579,11 +585,43 @@ jobs:
       - name: Go - vet
         run: go vet ./...
 
-      - name: Go - install golangci-lint
+      - name: Go - lint tool, which version and where it is kept
+        # RV-CI-2: building golangci-lint took 33 to 44 seconds on every run (five runs on 2026-11-26), so the built tool is kept
+        # between runs. The key holds the tool version and the Go that builds it: a new tool version, or a new Go from go.mod,
+        # misses the cache and builds again. The version is written here once; the install and the key both read it.
+        id: golangci
+        run: |
+          version=v2.15.0
+          bin="${RUNNER_TEMP}/golangci-lint-bin"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "bin=${bin}" >> "$GITHUB_OUTPUT"
+          echo "key=golangci-lint-${version}-${RUNNER_OS}-$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+          echo "${bin}" >> "$GITHUB_PATH"
+
+      - name: Go - lint tool, restore
+        id: golangci-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.golangci.outputs.bin }}
+          key: ${{ steps.golangci.outputs.key }}
+
+      - name: Go - install golangci-lint (only when the cache had no copy)
+        if: ${{ steps.golangci-cache.outputs.cache-hit != 'true' }}
         # Built here with the module's Go, not downloaded: the released binaries are built with Go 1.26
         # and refuse a module that says go 1.27 ("Go language version used to build golangci-lint is lower").
         # Go from go.mod is first on PATH (setup-go), so this builds with it.
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+        env:
+          GOBIN: ${{ steps.golangci.outputs.bin }}
+          GOLANGCI_LINT_VERSION: ${{ steps.golangci.outputs.version }}
+        run: go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+
+      - name: Go - lint tool, save
+        # Right after the build, not at the end of the job: a lint finding must not throw the built tool away.
+        if: ${{ steps.golangci-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.golangci.outputs.bin }}
+          key: ${{ steps.golangci.outputs.key }}
 
       - name: Go - lint (only code changed since the base branch or the previous head)
         run: |
@@ -705,6 +743,10 @@ jobs:
   powershell-syntax:
     # The release and install scripts are PowerShell nobody can run on every push. This at least proves each one parses:
     # in PowerShell 7 (release scripts) and in Windows PowerShell 5.1 (tools/dev, which must run on a stock PC).
+    # RV-CI-1: skipped for a notes-only pull request. A changed .ps1 file is never notes (the `changes` job counts every path outside
+    # .forge/, docs/, root *.md, LICENSE and NOTICE as code), so a script change still runs this job. Not a required check.
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: windows-2022
     timeout-minutes: 10
     steps:

@@ -365,3 +365,15 @@ func TestTrustCfgArgvReachesTheChild(t *testing.T) {
 		t.Fatalf("run-item must know the flags of a child: %d %s", code, e)
 	}
 }
+
+func TestRunKeepDurationIsCutAtAHundredYearsInsteadOfWrappingAround(t *testing.T) {
+	if got := runKeepDuration(213504); got != time.Duration(maxRunKeepDays)*24*time.Hour {
+		t.Fatalf("213504 days gave %v", got)
+	}
+	if got := runKeepDuration(7); got != 7*24*time.Hour {
+		t.Fatalf("7 days gave %v", got)
+	}
+	if runKeepDuration(-1) >= 0 || runKeepDuration(0) != 0 {
+		t.Fatal("-1 must stay negative and 0 the default")
+	}
+}
