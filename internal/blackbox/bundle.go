@@ -3,6 +3,7 @@ package blackbox
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,7 +20,7 @@ import (
 )
 
 // B8 (bundle part): one zip for one question, "what happened on this server in the last N hours". It holds the hourly
-// recordings of the window, the settings file as written (it holds no password: those live in sealed files elsewhere),
+// recordings of the window, the settings (written again from the checked settings, so unknown keys are dropped; they hold no password, those live in sealed files elsewhere),
 // the newest server facts, the recorder's own manifest and a list of every file with its SHA-256. A second copy of that
 // list, with the SHA-256 of the zip itself, is written NEXT to the zip, so a zip that was cut or changed in transit is
 // told apart from a good one.
@@ -86,7 +87,7 @@ func ParseBundleSince(s string) (time.Duration, error) {
 	var d time.Duration
 	if strings.HasSuffix(s, "d") {
 		n, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
-		if err != nil || n < 1 {
+		if err != nil || n < 1 || n > 7 { // checked before the multiplication, which would overflow for huge counts
 			return 0, errors.New("--since must look like 90m, 2h or 1d")
 		}
 		d = time.Duration(n) * 24 * time.Hour
@@ -118,7 +119,7 @@ func lastFacts(dir string, names []string) (json.RawMessage, bool) {
 		sc.Buffer(make([]byte, 0, 64<<10), 16<<20)
 		for sc.Scan() {
 			line := sc.Bytes()
-			if !strings.Contains(string(line), `"facts":`) {
+			if !bytes.Contains(line, []byte(`"facts":`)) {
 				continue
 			}
 			var s struct {
@@ -128,9 +129,13 @@ func lastFacts(dir string, names []string) (json.RawMessage, bool) {
 				found = append(json.RawMessage(nil), s.Facts...)
 			}
 		}
+		scanErr := sc.Err()
 		_ = f.Close()
 		if found != nil {
 			return found, true
+		}
+		if scanErr != nil {
+			return nil, false // a line too long to read: say nothing rather than hand back an older block as the newest
 		}
 	}
 	return nil, false
@@ -150,9 +155,10 @@ func MakeBundle(cfg Config, now time.Time, o BundleOptions) (res BundleResult, e
 	}
 	out := o.Out
 	if out == "" {
-		out = cfg.Name + "-bundle-" + now.Format("2006-01-02-1504")
+		stamp := "-bundle-" + now.Format("2006-01-02-1504")
+		out = CutText(cfg.Name, 63-len(stamp)) + stamp
 	}
-	if !bundleOutRe.MatchString(out) || strings.HasSuffix(strings.ToLower(out), ".zip") || strings.Contains(out, "..") {
+	if !bundleOutRe.MatchString(out) || strings.HasSuffix(strings.ToLower(out), ".zip") || strings.Contains(out, "..") || reservedDeviceBase(out) {
 		return res, bundleErr(SnapOther, "--out must be a plain name (letters, digits, dot, dash, underscore), without a folder and without .zip.", nil)
 	}
 	from := now.Add(-o.Since)
@@ -191,42 +197,70 @@ func MakeBundle(cfg Config, now time.Time, o BundleOptions) (res BundleResult, e
 	}
 
 	base := filepath.Join(cfg.Folder, SnapshotsDir)
+	if fi, lerr := os.Lstat(base); lerr == nil && fi.Mode().Type() != os.ModeDir {
+		return res, bundleErr(SnapOther, "The snapshots folder is a link, not a folder. Nothing was written.", nil)
+	}
 	if merr := os.MkdirAll(base, 0o755); merr != nil {
 		return res, classifySnapErr(merr, total)
 	}
-	final := out
-	for i := 2; ; i++ {
-		if _, serr := os.Lstat(filepath.Join(base, final+".zip")); serr != nil {
-			break
-		}
-		final = fmt.Sprintf("%s-%d", out, i)
+	if fi, lerr := os.Lstat(base); lerr != nil || fi.Mode().Type() != os.ModeDir {
+		return res, bundleErr(SnapOther, "The snapshots folder is a link, not a folder. Nothing was written.", nil)
 	}
-	zipPath := filepath.Join(base, final+".zip")
-	manPath := filepath.Join(base, final+".manifest.json")
-	tmp := zipPath + ".tmp"
+	// Claim both names at once, exclusively: a second bundle, a leftover file or a planted link is never overwritten or
+	// followed. Only the files this run made are removed on failure.
+	var zf, mf *os.File
+	var zipPath, manPath string
+	for i := 1; ; i++ {
+		final := out
+		if i > 1 {
+			final = fmt.Sprintf("%s-%d", out, i)
+		}
+		zipPath, manPath = filepath.Join(base, final+".zip"), filepath.Join(base, final+".manifest.json")
+		z, zerr := os.OpenFile(zipPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // inside the recordings folder
+		if zerr != nil {
+			if errors.Is(zerr, os.ErrExist) && i < 1000 {
+				continue
+			}
+			return res, classifySnapErr(zerr, total)
+		}
+		m, merr := os.OpenFile(manPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // inside the recordings folder
+		if merr != nil {
+			_ = z.Close()
+			_ = os.Remove(zipPath)
+			if errors.Is(merr, os.ErrExist) && i < 1000 {
+				continue
+			}
+			return res, classifySnapErr(merr, total)
+		}
+		zf, mf = z, m
+		break
+	}
 	done := false
 	defer func() {
 		if !done {
-			_ = os.Remove(tmp)
+			_ = zf.Close()
+			_ = mf.Close()
 			_ = os.Remove(zipPath)
 			_ = os.Remove(manPath)
 		}
 	}()
-	zf, oerr := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // inside the recordings folder
-	if oerr != nil {
-		return res, classifySnapErr(oerr, total)
-	}
 	zw := zip.NewWriter(zf)
-	man := BundleManifest{Version: 1, Name: cfg.Name, Created: now.Truncate(time.Second), From: from.Truncate(time.Second), To: now.Truncate(time.Second)}
+	// The files are whole hours, so the real coverage starts at the first included hour, up to 59 minutes before the
+	// requested start.
+	firstHour, _ := HourOfName(names[0])
+	man := BundleManifest{Version: 1, Name: cfg.Name, Created: now.Truncate(time.Second), From: firstHour, To: now.Truncate(time.Second)}
 	add := func(name string, src io.Reader) error {
-		w, err := zw.Create(name)
+		w, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate, Modified: now})
 		if err != nil {
 			return err
 		}
 		h := sha256.New()
-		n, err := io.Copy(io.MultiWriter(w, h), src)
+		n, err := io.Copy(io.MultiWriter(w, h), io.LimitReader(src, bundleMaxBytes-res.Bytes+1))
 		if err != nil {
 			return err
+		}
+		if res.Bytes+n > bundleMaxBytes {
+			return errBundleTooBig // a file grew while it was copied
 		}
 		man.Files = append(man.Files, BundleEntry{Name: name, Bytes: n, SHA256: hex.EncodeToString(h.Sum(nil))})
 		res.Bytes += n
@@ -234,7 +268,9 @@ func MakeBundle(cfg Config, now time.Time, o BundleOptions) (res BundleResult, e
 	}
 	fail := func(err error) (BundleResult, error) {
 		_ = zw.Close()
-		_ = zf.Close()
+		if errors.Is(err, errBundleTooBig) {
+			return res, bundleErr(SnapOther, "The recordings grew past the size one bundle may hold while it was written. Use a shorter --since.", nil)
+		}
 		return res, classifySnapErr(err, total)
 	}
 	for _, n := range names {
@@ -267,32 +303,34 @@ func MakeBundle(cfg Config, now time.Time, o BundleOptions) (res BundleResult, e
 	} else {
 		man.Notes = append(man.Notes, "no server facts in this window (they are written once an hour)")
 	}
+	man.Notes = append(man.Notes, "recordings are whole hours: they start at 'from', which can be earlier than the requested start; bundle-manifest.json lists every other file but not itself")
 	man.Notes = append(man.Notes, "not included: ERRORLOG and Redis log tails, SQL service files")
 	mb2, _ := json.MarshalIndent(man, "", "  ")
 	if err := add("bundle-manifest.json", strings.NewReader(string(mb2))); err != nil {
 		return fail(err)
 	}
 	if err := zw.Close(); err != nil {
-		_ = zf.Close()
 		return res, classifySnapErr(err, total)
 	}
 	if err := zf.Sync(); err != nil {
-		_ = zf.Close()
 		return res, classifySnapErr(err, total)
 	}
 	if err := zf.Close(); err != nil {
 		return res, classifySnapErr(err, total)
 	}
-	sum, size, herr := fileSHA256Size(tmp)
+	sum, size, herr := fileSHA256Size(zipPath)
 	if herr != nil {
 		return res, classifySnapErr(herr, total)
 	}
-	if err := os.Rename(tmp, zipPath); err != nil {
-		return res, classifySnapErr(err, total)
-	}
 	man.ZipSHA256, man.ZipBytes = sum, size
 	outer, _ := json.MarshalIndent(man, "", "  ")
-	if err := os.WriteFile(manPath, append(outer, '\n'), 0o644); err != nil { //nolint:gosec // inside the recordings folder
+	if _, err := mf.Write(append(outer, '\n')); err != nil {
+		return res, classifySnapErr(err, total)
+	}
+	if err := mf.Sync(); err != nil {
+		return res, classifySnapErr(err, total)
+	}
+	if err := mf.Close(); err != nil {
 		return res, classifySnapErr(err, total)
 	}
 	done = true
@@ -300,6 +338,8 @@ func MakeBundle(cfg Config, now time.Time, o BundleOptions) (res BundleResult, e
 	res.ZipBytes, res.SHA256, res.From, res.To, res.Notes = size, sum, man.From, man.To, man.Notes
 	return res, nil
 }
+
+var errBundleTooBig = errors.New("bundle too big")
 
 func fileSHA256Size(path string) (string, int64, error) {
 	f, err := os.Open(path) //nolint:gosec // the zip just written
@@ -310,4 +350,21 @@ func fileSHA256Size(path string) (string, int64, error) {
 	h := sha256.New()
 	n, err := io.Copy(h, f)
 	return hex.EncodeToString(h.Sum(nil)), n, err
+}
+
+// reservedDeviceBase says whether name (the part before the first dot) is a Windows device name. A file called NUL.zip
+// is the device, not a file.
+func reservedDeviceBase(name string) bool {
+	base := strings.ToUpper(name)
+	if i := strings.IndexByte(base, '.'); i >= 0 {
+		base = base[:i]
+	}
+	switch base {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	if len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9' {
+		return true
+	}
+	return false
 }

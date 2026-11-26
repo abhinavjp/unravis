@@ -135,7 +135,7 @@ func TestBundleRefusalsLeaveNothingBehind(t *testing.T) {
 			t.Errorf("%s: left behind %d entries", name, len(ents))
 		}
 	}
-	for _, out := range []string{"../x", "a/b", `a\b`, "x.zip", ".hidden", "", " "} {
+	for _, out := range []string{"../x", "a/b", `a\b`, "x.zip", ".hidden", "", " ", "NUL", "con", "COM1", "lpt9", "nul.txt"} {
 		if out == "" {
 			continue // the default name is fine
 		}
@@ -183,9 +183,57 @@ func TestParseBundleSince(t *testing.T) {
 			t.Errorf("%q: %v %v", in, got, err)
 		}
 	}
-	for _, in := range []string{"0m", "8d", "soon", "-1h", "10s", "1.5d"} {
+	for _, in := range []string{"0m", "8d", "soon", "-1h", "10s", "1.5d", "213504d"} {
 		if _, err := ParseBundleSince(in); err == nil {
 			t.Errorf("%q accepted", in)
 		}
+	}
+}
+
+func TestBundleCoverageStartsAtTheFirstWholeHourAndNoTempFilesRemain(t *testing.T) {
+	cfg, now := bundleRig(t)
+	res, err := MakeBundle(cfg, now, BundleOptions{Since: 90 * time.Minute, Out: "cov"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 12:30 minus 90 minutes is 11:00, and the 11:00 hour file is the first one in.
+	if want := time.Date(2026, 11, 26, 11, 0, 0, 0, time.UTC); !res.From.Equal(want) {
+		t.Errorf("from %v, want %v", res.From, want)
+	}
+	// 10:30 would start inside the 10:00 hour: the whole hour comes in and the coverage says so.
+	res2, err := MakeBundle(cfg, now, BundleOptions{Since: 2 * time.Hour, Out: "cov2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC); !res2.From.Equal(want) {
+		t.Errorf("from %v, want %v", res2.From, want)
+	}
+	ents, _ := os.ReadDir(filepath.Join(cfg.Folder, SnapshotsDir))
+	for _, e := range ents {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("temp file left: %s", e.Name())
+		}
+	}
+}
+
+func TestBundleNeverOverwritesAnExistingManifestOrZip(t *testing.T) {
+	cfg, now := bundleRig(t)
+	snaps := filepath.Join(cfg.Folder, SnapshotsDir)
+	if err := os.MkdirAll(snaps, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	man := filepath.Join(snaps, "case.manifest.json")
+	if err := os.WriteFile(man, []byte("keep me"), 0o644); err != nil { //nolint:gosec // test file
+		t.Fatal(err)
+	}
+	res, err := MakeBundle(cfg, now, BundleOptions{Since: 90 * time.Minute, Out: "case"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(man); string(b) != "keep me" { //nolint:gosec // test file
+		t.Errorf("the existing manifest was overwritten: %q", b)
+	}
+	if filepath.Base(res.Path) != "case-2.zip" {
+		t.Errorf("path %s", res.Path)
 	}
 }
