@@ -416,7 +416,7 @@ func (h *handler) importAsync(w http.ResponseWriter, id casestore.CaseID, job *i
 		writeCaseFailure(w, http.StatusInternalServerError, "import-failed", "The import could not start.")
 		return
 	}
-	size, err := spool.fill(tracked)
+	size, err := spool.fill(job.ctx, tracked)
 	if err != nil {
 		spool.close()
 		h.writeImportError(w, err, tracked, casestore.ImportResult{})
@@ -613,13 +613,29 @@ func (s *spoolFile) stream() (cipher.Stream, error) {
 	return cipher.NewCTR(block, s.iv[:]), nil
 }
 
-// fill writes all of r into the spool and returns the byte count.
-func (s *spoolFile) fill(r io.Reader) (int64, error) {
+// ctxReader returns ctx's error instead of reading once ctx is done, so a copy
+// over it stops at the next read (RV-SRV-4).
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+// fill writes all of r into the spool and returns the byte count. It stops with
+// ctx's error as soon as ctx is done (the job was cancelled or the program is
+// ending); the caller then closes the spool, which removes the partial file.
+func (s *spoolFile) fill(ctx context.Context, r io.Reader) (int64, error) {
 	st, err := s.stream()
 	if err != nil {
 		return 0, err
 	}
-	n, err := io.Copy(cipher.StreamWriter{S: st, W: s.f}, r)
+	n, err := io.Copy(cipher.StreamWriter{S: st, W: s.f}, ctxReader{ctx: ctx, r: r})
 	if err != nil {
 		return n, err
 	}
