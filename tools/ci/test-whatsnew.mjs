@@ -45,6 +45,9 @@ test('a fragment is checked: schema, words, picture kinds, screen ids, steps, od
   bad({ highlights: [{ text: 'a', image: { screen: 'home', wait: 99999 } }] }, /wait/);
   bad({ highlights: [{ text: 'a', image: { screen: 'home', clip: ' ' } }] }, /clip/);
   bad({ highlights: [{ text: 'use <b>bold</b>' }] }, /no < or >/);
+  bad({ highlights: [{ text: 'one\n## Fake section' }] }, /one line/);
+  bad({ highlights: [{ text: 'ok', alt: 'a | b', image: '/whatsnew/x/y.jpg' }] }, /no \| in/);
+  bad({ headline: 'a\nb' }, /one line/);
   bad({ highlights: [{ text: 'a'.repeat(601) }] }, /text/);
   bad({ highlights: [{ text: 'a', label: 'l'.repeat(41) }] }, /label/);
   bad({ changes: ['x'.repeat(301)] }, /changes/);

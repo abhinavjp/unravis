@@ -1,4 +1,4 @@
-#Requires -Version 7.2
+#Requires -Version 7.3
 <#
 .SYNOPSIS
   Makes the What's new notes and screenshots for the next release and opens ONE pull request into develop with them.
@@ -78,6 +78,7 @@ try {
     $work = Join-Path ([System.IO.Path]::GetTempPath()) "unravis-whatsnew-$key"
     if (Test-Path -LiteralPath $work) { Stop-Here "$work already exists (an earlier run?). Remove it (git worktree remove --force `"$work`") and run again." }
     $branch = "whatsnew/$key"
+    & git worktree prune   # forget worktrees whose folder was deleted by hand, so their branch can be reused
     Invoke-Checked git @('worktree', 'add', '-q', '-B', $branch, $work, $baseSha) 'git worktree add'
     $worktrees += $work
     Write-Host "Working in $work on branch $branch."
@@ -131,6 +132,8 @@ try {
             Write-Host "-NoPush: nothing was pushed. Look at it in $work (branch $branch); remove it with: git worktree remove --force `"$work`"" -ForegroundColor Yellow
             $worktrees = @($worktrees | Where-Object { $_ -ne $work })   # keep this one
         } else {
+            & git ls-remote --exit-code --heads origin $branch *> $null
+            if ($LASTEXITCODE -eq 0) { Stop-Here "The branch $branch is already on origin (an earlier run). Merge or close its pull request and delete the branch, then run again." }
             Invoke-Checked git @('push', '-u', 'origin', $branch) 'git push'
             $body = @"
 ## What and why
@@ -149,6 +152,9 @@ none
         }
     } finally { Pop-Location }
 } finally {
-    foreach ($w in $worktrees) { try { & git worktree remove --force $w 2>&1 | Out-Null } catch { } }
+    foreach ($w in $worktrees) {
+        & git worktree remove --force $w 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Warning "Could not remove the temporary folder $w (something may still be using it). Remove it with: git worktree remove --force `"$w`"" }
+    }
     Pop-Location
 }

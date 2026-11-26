@@ -145,9 +145,12 @@ function Get-PictureMarkdown {
     param([string]$Path, [string]$Alt, [string]$Slug)
     if (-not $Slug -or -not $Path) { return '' }
     if ($Path -notmatch '^/whatsnew/[A-Za-z0-9._/-]+$' -or $Path.Contains('..') -or $Path.Contains('//')) { return '' }
-    $altText = ($Alt -replace '[\[\]\r\n]', ' ').Trim()
+    $altText = ($Alt -replace '[\[\]|\r\n]', ' ').Trim()
     return '![{0}](https://github.com/{1}/blob/{2}/web/public{3}?raw=true)' -f $altText, $Slug, $Tag, $Path
 }
+
+# Words from a note file as one plain line (no line breaks, so a note cannot start a new section on the page).
+function Get-OneLine([string]$s) { return ($s -replace '\s+', ' ').Trim() }
 
 function Get-HighlightsMarkdown {
     $json = @(Invoke-Git @('show', "${Tag}:web/public/releases/notes.json")) -join "`n"
@@ -158,12 +161,12 @@ function Get-HighlightsMarkdown {
     $slug = Get-RepoSlug
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('## Highlights')
-    if ($entry.headline) { $lines.Add(''); $lines.Add("**$($entry.headline)**") }
+    if ($entry.headline) { $lines.Add(''); $lines.Add("**$(Get-OneLine $entry.headline)**") }
     $lines.Add('')
     foreach ($h in @($entry.highlights)) {
         if (-not $h.text) { continue }
-        $label = if ($h.label) { "**$($h.label).** " } else { '' }
-        $lines.Add("- $label$($h.text)")
+        $label = if ($h.label) { "**$(Get-OneLine $h.label).** " } else { '' }
+        $lines.Add("- $label$(Get-OneLine $h.text)")
         $after = Get-PictureMarkdown $h.image $h.alt $slug
         $before = Get-PictureMarkdown $h.before $h.alt $slug
         if ($after -and $before) {
@@ -185,12 +188,13 @@ $highlights = Get-HighlightsMarkdown
 $date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 
 $text = Get-Content -LiteralPath $TemplatePath -Raw
-$text = $text.Replace('{{HIGHLIGHTS}}', $highlights)
 $text = $text.Replace('{{VERSION}}', $Version)
 $text = $text.Replace('{{DATE}}', $date)
 $text = $text.Replace('{{WHAT_CHANGED}}', $whatChanged)
 $text = $text.Replace('{{PREVIOUS_TAG}}', $previousTagText)
 $text = $text.Replace('{{SIGNING_NOTE}}', $signingNote)
+# Last, so words written in a note can never be taken for one of the placeholders above.
+$text = $text.Replace('{{HIGHLIGHTS}}', $highlights)
 
 # Written without a byte order mark (Set-Content -Encoding utf8 adds one in Windows PowerShell 5.1).
 $outPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutFile)

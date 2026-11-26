@@ -71,6 +71,7 @@ export function validateFragment(fragment, name, screenIds = null) {
   if (!fragment || typeof fragment !== 'object' || Array.isArray(fragment)) return [at + ': must be a JSON object.'];
   if (fragment.schema !== SCHEMA) errors.push(at + ': "schema" must be ' + SCHEMA + '.');
   if ('headline' in fragment && !str(fragment.headline, 200)) errors.push(at + ': "headline" must be 1 to 200 characters.');
+  else if (typeof fragment.headline === 'string' && /[\r\n]/.test(fragment.headline)) errors.push(at + ': "headline" must be one line.');
   const highlights = fragment.highlights ?? [];
   if (!Array.isArray(highlights) || highlights.length > 20) errors.push(at + ': "highlights" must be a list of at most 20.');
   else highlights.forEach((h, i) => {
@@ -82,6 +83,8 @@ export function validateFragment(fragment, name, screenIds = null) {
     if ('before' in h && !('image' in h)) errors.push(w + ': "before" needs an "image".');
     if ('image' in h) checkShot(h.image, w + ' image', errors, screenIds);
     if ('before' in h) checkShot(h.before, w + ' before', errors, screenIds);
+    for (const text of [h.text, h.label, h.alt]) if (typeof text === 'string' && /[\r\n]/.test(text)) { errors.push(w + ': keep each of the words on one line (no line breaks).'); break; }
+    if (typeof h.alt === 'string' && h.alt.includes('|')) errors.push(w + ': no | in "alt".');
     for (const text of [h.text, h.label, h.alt]) if (typeof text === 'string' && /[<>]/.test(text)) { errors.push(w + ': no < or > in the words (they are shown as plain text).'); break; }
   });
   const changes = fragment.changes ?? [];

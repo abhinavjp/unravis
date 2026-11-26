@@ -116,7 +116,11 @@ foreach ($tool in 'git', 'npm') { if (-not (Get-Command $tool -ErrorAction Silen
 Write-Host "Web files: will be rebuilt with Node $DistNodeVersion and committed to the promote branch when they differ (docs/pipeline/dist-on-promotion.md)."
 # What's new check: note files that nobody turned into the release's entry yet. Read only; a missing folder is just "none waiting".
 $waitingNotes = @()
-try { $waitingNotes = @(Split-Lines (Invoke-Gh api "repos/$Repo/contents/docs/whatsnew/fragments?ref=$sha" --jq '.[] | select(.type == "file" and (.name | endswith(".json"))) | .name')) } catch { $waitingNotes = @() }
+try { $waitingNotes = @(Split-Lines (Invoke-Gh api "repos/$Repo/contents/docs/whatsnew/fragments?ref=$sha" --jq '.[] | select(.type == "file" and (.name | endswith(".json"))) | .name')) } catch {
+    # Only "the folder does not exist" (404) means nothing is waiting. Any other failure (rate limit, network, token) must not look like "none waiting".
+    if ($_.Exception.Message -match 'HTTP 404|Not Found') { $waitingNotes = @() }
+    else { Stop-Here "Could not check docs/whatsnew/fragments for waiting What's new notes: $($_.Exception.Message) (-SkipNotesCheck to promote without the check.)" }
+}
 if ($waitingNotes.Count -and -not $SkipNotesCheck) {
     Stop-Here "$($waitingNotes.Count) What's new note file(s) are still waiting in docs/whatsnew/fragments ($($waitingNotes -join ', ')). Run tools\release\Prepare-WhatsNew.ps1, merge the pull request it makes into develop, then promote again. (-SkipNotesCheck to promote without them.)"
 }
