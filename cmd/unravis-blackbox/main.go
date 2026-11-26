@@ -60,6 +60,10 @@ Commands that change the service (run as administrator):
   enable-sql  Activate the installed SQL service after the owner grant:
               confirms the installed settings and folder, clears the
               persisted off latch (owner-only) and starts the service.
+  sql-status  Read-only: say in plain words where SQL recording stands (not
+              installed, needs the grant, working, turned off) and the one
+              next step. Prints the grant text when that is the next step.
+              Never connects to SQL and never starts anything.
   set-sql-login    Save one SQL login (or a server on another machine) sealed
               inside the locked SQL folder. Reads {"server","user","password",
               "trustServerCertificate"} from --login-stdin, or from
@@ -72,7 +76,15 @@ Commands that change the service (run as administrator):
   remove-sql  Stop and remove the SQL service, then print the revoke script.
               --confirm-name <name>  the Blackbox name, required.
 
+Redis password (only when Redis on this PC asks for one):
+  set-redis-password    Read the password from standard input, test it against
+              Redis on this PC, and save it sealed for this PC. Never printed.
+              Administrator only.
+  clear-redis-password  Remove the saved password.
+
 Other commands:
+  config show Print the settings in force and every collector with its id, what
+              it reads, and whether it is on. Read-only: changes nothing.
   snapshot    Copy the recordings into <folder>\snapshots\<name>-<date>-<time>.
   run         Record in this window instead of as a service (Ctrl+C to stop).
   vm-probe    Read-only: list which VMware counters this host has and what they
@@ -102,6 +114,8 @@ type deps struct {
 	// reads; nil means the console. Both are test seams.
 	sealer func() (sealedfile.Protector, error)
 	stdin  io.Reader
+	// redisCheck tests a Redis password against this PC's Redis (set-redis-password). Nil means the real check.
+	redisCheck func(port int, password string) error
 	// confirmDir proves the SQL data folder for a saved login (see sqlLoginDir); nil means SQLManager.ConfirmLoginDir. Test seam.
 	confirmDir func(cfg blackbox.Config, configPath string) (string, error)
 	// vmProbe is the vm-probe reading. nil means the real PDH probe (BL-113).
@@ -325,6 +339,14 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	if cmd == "diag-probe" {
 		return runDiagProbe(rest, stdout, stderr, d)
 	}
+	if cmd == "config" {
+		// "config show" is one read-only command; its flags follow it.
+		if len(rest) == 0 || rest[0] != "show" {
+			_, _ = fmt.Fprintln(stderr, `usage: unravis-blackbox config show [--json] [--config <file>]`)
+			return exitUsage
+		}
+		cmd, rest = "config-show", rest[1:]
+	}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", "", "blackbox.json")
@@ -385,7 +407,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 				return filepath.Join(progDir, name)
 			}
 		}
-		if cmd == "apply" || cmd == "remove" || cmd == "setup-sql" || cmd == "clear-sql-login" || cmd == "set-sql-login" {
+		if cmd == "apply" || cmd == "remove" || cmd == "setup-sql" || cmd == "clear-sql-login" || cmd == "set-sql-login" ||
+			cmd == "set-redis-password" || cmd == "clear-redis-password" {
 			// SEC-15: these run elevated from the app, whose folder an ordinary
 			// user can write to on a per-user install. Never take settings or a
 			// key file from there: use the installed copy (which may be missing,
@@ -532,6 +555,32 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 			extra["note"] = res.SQLNote
 		}
 		return ans.ok(text, extra)
+	case "sql-status":
+		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
+		if err != nil {
+			return ans.fail(err)
+		}
+		st, serr := d.sqlMgr.Svc.State(blackbox.SQLServiceName)
+		w := blackbox.DescribeSQL(st, serr, blackbox.ReadSQLStatus(cfg.Folder, d.now()))
+		text := w.Say
+		if w.Next != "" {
+			text += "\nNext: unravis-blackbox " + w.Next
+		}
+		extra := map[string]any{"sql": w}
+		if w.ShowGrant {
+			text += "\n\nRun this grant in SSMS as an admin (the Blackbox never runs it for you):\n" + grantScript
+			extra["grantScript"] = grantScript
+		}
+		return ans.ok(text, extra)
+	case "config-show":
+		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
+		if err != nil {
+			return ans.fail(err)
+		}
+		states := cfg.CollectorStates()
+		return ans.ok(configShowText(cfg, states), map[string]any{"config": cfg, "collectors": states})
+	case "set-redis-password", "clear-redis-password":
+		return runRedisPassword(cmd, paths.ConfigPath, d, ans)
 	case "snapshot":
 		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
 		if err != nil {
@@ -778,4 +827,21 @@ func runSQLForeground(p blackbox.Paths, d deps, ans answer, stderr io.Writer) in
 		return ans.failSQL(err)
 	}
 	return exitOK
+}
+
+// configShowText is the plain-text answer of "config show": the main limits, then one line per collector.
+func configShowText(cfg blackbox.Config, states []blackbox.CollectorState) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s: every %d s, keeps %d days, at most %.1f GB, folder %s\n", cfg.Name, cfg.IntervalSeconds, cfg.KeepDays, cfg.MaxGB, cfg.Folder)
+	for _, s := range states {
+		state := "on"
+		switch {
+		case s.Always:
+			state = "on (always)"
+		case !s.On:
+			state = "off"
+		}
+		fmt.Fprintf(&b, "  %-18s %-8s %-12s every %3d s  %s\n", s.ID, s.Kind, state, s.EverySec, s.Title)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
