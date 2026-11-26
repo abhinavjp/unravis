@@ -169,6 +169,7 @@ func wordsFromFunctions(t *testing.T) []wordsCase {
 		"stopped":    base(func(m *Manifest) { m.State = ManifestStopped }, nil),
 		"disk-paused": base(func(m *Manifest) {
 			m.Events = []Event{{T: now, Kind: EventPausedDiskLow}}
+			m.PausedDiskLow = true
 		}, nil),
 		"late": base(func(m *Manifest) {
 			old := now.Add(-10 * time.Minute)
