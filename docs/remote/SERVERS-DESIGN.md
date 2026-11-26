@@ -64,7 +64,7 @@ type Transport interface {
 }
 ```
 
-`ssh-direct` runs the grammar's read verbs (`ls`/`dir`, `tail -c +N`, `Get-Content`, `sha256sum`/`Get-FileHash`) over exec channels. `salt-via-master` runs the same verbs through `sudo -n salt '<exact id>' cmd.run ...` on the master, in 256 KiB chunks (base64 on the wire) because Salt jobs time out on big payloads. `blackbox-http` is `HTTPSource`, dialled over the SSH tunnel when the status page listens on loopback (the default `bind 127.0.0.1`), so no firewall rule or `0.0.0.0` bind is needed to read a remote recorder.
+`ssh-direct` runs the grammar's read verbs (`ls`/`dir`, `tail -c +N`, `Get-Content`, `sha256sum`/`Get-FileHash`) over exec channels. `salt-via-master` runs the same verbs through `sudo -n salt '<exact id>' cmd.run ...` on the master, in 48 KiB chunks by default (base64 on the wire, about a third larger) because Salt jobs time out on big payloads. Built in `internal/remote/saltmaster` and unit-tested against a fake master; **not yet verified on a real Salt master**. Above a few hundred MB this path is slow; see `LOG-TRANSFER-RESEARCH.md` for what to send, when to compress, and what to measure first. `blackbox-http` is `HTTPSource`, dialled over the SSH tunnel when the status page listens on loopback (the default `bind 127.0.0.1`), so no firewall rule or `0.0.0.0` bind is needed to read a remote recorder.
 
 ## 4. Design
 
@@ -176,7 +176,7 @@ Every error says what happened and what to do (for example: "The server's key ch
 ```
 S0 grammar + vectors ──┬─> S1 sealed registry ──> S2 ssh-direct transport ──> S4 pull job + staging ─┬─> S6 CLI verbs
                        │                          └─> S3 blackbox over ssh tunnel (status + manifest) │
-                       └─> S2b salt-via-master (after PR 348 lands)                                   └─> S7 UI (after prototype approval)
+                       └─> S2b salt-via-master (built, unit-tested, not live-verified)                                   └─> S7 UI (after prototype approval)
 S5 scrub + hash + resume tests (with S4)    S8 schedules    S9 remote update/restart (after CLI plan write verbs)
 ```
 
@@ -188,3 +188,15 @@ S5 scrub + hash + resume tests (with S4)    S8 schedules    S9 remote update/res
 - S6 CLI verbs and code-mode read bindings; S7 UI after the owner approves the prototype; S8 schedules; S9 later.
 
 Coordination with the other two threads: the Salt thread (PR 348) keeps its tool read-only and contributes the vectors for S0 and the Salt transport for S2b; the CLI plan thread (PR 346) owns the `unravis ops` root, the exit codes and the audit chain, and S6 adds a `server` group under it. Backlog items: BL-603 (Servers: remote pull layer and screen), listed in `docs/BACKLOG.md`.
+
+## 10. Prototype v4 additions (2026-11-26)
+
+`web/prototype/servers-PROTOTYPE.html` (v4, awaiting approval) adds, all simulated:
+
+- **Access check.** Copy-ready read-only commands (and a note for an IT admin) on the Trust, Pick and Reach steps: host key fingerprint from the PC and on the server, `salt-key -L`, `manage.status`, `test.ping`, and a listing of the Blackbox and log folders per chosen machine.
+- **Case-aware range.** For a case, "How much" defaults to the investigation window plus a reference range (day before or week before, or none), editable per item. Not for a case: 24 hours, 3 days or 7 days.
+- **Manifest first.** The file list (names, sizes, time ranges) is read before any data moves.
+- **Compression.** Auto (text squeezed once on the server at low priority, zips sent as they are), Always, or Never, with size and time estimates and a plain warning above about 15 minutes.
+- **Background back-fill.** After the case window lands, the rest of the last 7 days is fetched quietly, newest first, pausable.
+
+The numbers (compression ratio, Salt speed) are assumptions until measured. Research and sources: `LOG-TRANSFER-RESEARCH.md`.
