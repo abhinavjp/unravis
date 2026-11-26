@@ -379,6 +379,7 @@ func keepPlaceholderFresh(dst string, mine os.FileInfo) (stop func()) {
 	every := placeholderRefreshEvery
 	go func() {
 		defer close(done)
+		// idle-ok: runs only while one case file is being saved and is stopped before the replace.
 		tick := time.NewTicker(every)
 		defer tick.Stop()
 		for {
