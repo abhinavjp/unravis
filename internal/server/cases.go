@@ -1791,6 +1791,8 @@ func (h *handler) writeImportError(w http.ResponseWriter, err error, body *track
 		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "cap-exceeded", "The file or the case is over its size or row cap.")
 	case errors.As(err, &limit):
 		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "limit-"+limit.Limit, "The file is over the "+limit.Limit+" limit of its importer.")
+	case errors.Is(err, importer.ErrYearNotStated):
+		writeCaseFailure(w, http.StatusUnprocessableEntity, reasonNeedsYear, needsYearText)
 	case errors.As(err, &quarantine):
 		reason := quarantine.Reason
 		if !reason.Valid() {

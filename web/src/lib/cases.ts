@@ -550,7 +550,7 @@ export interface ImportJob {
 /* ------------------------------------------------------------------ check (no import kept) */
 // The check reads each file the way a preview does and says what would happen to it. Nothing is kept.
 
-export type CheckVerdict = 'ready' | 'needs-computer' | 'needs-zone' | 'not-supported' | 'no-computer';
+export type CheckVerdict = 'ready' | 'needs-computer' | 'needs-zone' | 'needs-year' | 'not-supported' | 'no-computer';
 
 /** The verdict for one file. `key` is the client's id for the file; `serverName` is the computer name the file names (needs-computer). */
 export interface CheckFileVerdict {
@@ -564,6 +564,8 @@ export interface CheckFileVerdict {
   tied: string[];
   serverName: string;
   needsZone: boolean;
+  /** The log lines carry no year, so the person must give one (Redis). Can be set beside a missing computer. */
+  needsYear: boolean;
   /** The not-supported reason code, or ''. */
   reason: string;
   /** Row counts exist only when the file was read and counted (ready, needs-zone). Absent means not counted, never zero. */
@@ -577,7 +579,7 @@ export interface CheckReport {
   checkedAt: string;
 }
 
-const CHECK_VERDICTS: readonly string[] = ['ready', 'needs-computer', 'needs-zone', 'not-supported', 'no-computer'];
+const CHECK_VERDICTS: readonly string[] = ['ready', 'needs-computer', 'needs-zone', 'needs-year', 'not-supported', 'no-computer'];
 const isCheckVerdict = (value: unknown): value is CheckVerdict => typeof value === 'string' && CHECK_VERDICTS.includes(value);
 
 /** A count that the server sent as a number; nothing at all when it was left out, so "not counted" never reads as zero. */
@@ -588,7 +590,7 @@ function toCheckFile(raw: Record<string, unknown> | null): CheckFileVerdict | nu
   if (!raw || typeof raw.key !== 'string' || typeof raw.name !== 'string' || !isCheckVerdict(raw.verdict)) return null;
   return {
     key: raw.key, name: raw.name, size: asNumber(raw.size), verdict: raw.verdict, importer: asString(raw.importer), tied: asStrings(raw.tied),
-    serverName: asString(raw.serverName), needsZone: raw.needsZone === true, reason: asString(raw.reason),
+    serverName: asString(raw.serverName), needsZone: raw.needsZone === true, needsYear: raw.needsYear === true, reason: asString(raw.reason),
     ...optionalCount('rows', raw.rows), ...optionalCount('emitted', raw.emitted), ...optionalCount('rejected', raw.rejected)
   };
 }
