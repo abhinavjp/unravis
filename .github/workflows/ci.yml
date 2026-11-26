@@ -803,6 +803,10 @@ jobs:
         shell: pwsh
         run: ./tools/release/Test-ReleaseManager.ps1
 
+      - name: Remote Salt tool self-test (gates, quoting, Blackbox verbs, bundle pull; no server needed)
+        shell: pwsh
+        run: ./tools/remote/Test-RemoteSalt.ps1
+
       - name: Parse tools/dev in Windows PowerShell 5.1
         shell: powershell
         run: |

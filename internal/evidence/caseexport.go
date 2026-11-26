@@ -187,6 +187,8 @@ var exportPolicy = map[string]map[string]attrPolicy{
 		"method": polEnum(httpMethods), "module": polNameKeep("module", frebModule), "notification": polEnum(frebNotifications)},
 	"win-counters": counterPolicy,
 	"sql-pdh":      counterPolicy,
+	// The Blackbox's own recordings: the same counter names as the Windows counters, and a gap's length in intervals.
+	"blackbox-source": {"object": polObject, "counter": polEnum(counterNames), "instance": polName("instance", "_Total", "recordings-volume"), "intervals": polNum},
 	"win-events": {"log": polEnum(winEventLogs), "provider": polEnum(winEventProviders), "id": polNum,
 		"app-pool": polName("pool"), "reason": polEnum(winEventReasons), "faulting-app": polEnum(faultingApps)},
 	"mongod-json":       mongoOpPolicy,
