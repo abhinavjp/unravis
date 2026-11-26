@@ -530,3 +530,32 @@ func TestRemoveNoFollowNeverDeletesThroughALink(t *testing.T) {
 		t.Fatalf("missing: %v", err)
 	}
 }
+
+func TestJobTreeIsAnotherCheckoutOfTheSameCommit(t *testing.T) {
+	o := newOrigin(t)
+	c, s := mirrored(t, o)
+	ctx := context.Background()
+	wt, err := c.PullRequest(ctx, PRSpec{RunID: "run9", BaseRef: "develop", HeadSHA: o.feature})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jt, err := c.JobTree(ctx, wt, "j1", false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jt.Path != wt.Path+"-j1" || gitT(t, jt.Path, "rev-parse", "HEAD") != wt.Commit {
+		t.Fatalf("%+v", jt)
+	}
+	// one tree's wipe does not reach the other
+	writeT(t, jt.Path, "only-here.txt", "x")
+	if exists(filepath.Join(wt.Path, "only-here.txt")) {
+		t.Fatal("the trees share files")
+	}
+	if _, err := c.JobTree(ctx, wt, "../x", false, nil); err == nil {
+		t.Fatal("a bad name was accepted")
+	}
+	if err := c.Remove(ctx, jt.Path); err != nil || exists(jt.Path) {
+		t.Fatalf("remove: %v", err)
+	}
+	_ = s
+}

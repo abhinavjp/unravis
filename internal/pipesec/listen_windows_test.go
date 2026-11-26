@@ -211,7 +211,9 @@ func TestRejectRemoteClients(t *testing.T) {
 // skipOrFail skips locally but fails on CI, where a skip would hide a test that never runs.
 func skipOrFail(t *testing.T, msg string) {
 	t.Helper()
-	if os.Getenv("CI") != "" {
+	// The local runner (LOCAL_CI_RUNNER) is not an elevated machine: it skips here, and GitHub, which is, still
+	// fails the test, so a skip never hides a break on the elevated runner.
+	if os.Getenv("CI") != "" && os.Getenv("LOCAL_CI_RUNNER") == "" {
 		t.Fatal(msg)
 	}
 	t.Skip(msg)
