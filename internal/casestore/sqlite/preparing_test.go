@@ -57,7 +57,6 @@ func TestNewCaseIsNotPreparing(t *testing.T) {
 	}
 	_ = c.Close()
 	c = mustOpen(t, s, info.ID)
-	time.Sleep(50 * time.Millisecond)
 	if c.Preparing() {
 		t.Fatal("a case with all its indexes says it is preparing")
 	}
