@@ -34,6 +34,7 @@ var (
 	ErrBadReply   = errors.New("The Salt master gave an answer Unravis could not read.")                             //nolint:staticcheck // shown to the person as a sentence
 	ErrMasterCmd  = errors.New("The Salt master could not run that request.")                                        //nolint:staticcheck // shown to the person as a sentence
 	ErrTooLarge   = errors.New("That folder holds too many files to list at once.")                                  //nolint:staticcheck // shown to the person as a sentence
+	ErrBadListing = errors.New("The machine answered, but Unravis could not read its list of files.")                //nolint:staticcheck // shown to the person as a sentence
 	ErrShortChunk = errors.New("The machine sent a piece of the file that was cut short. Nothing was kept from it.") //nolint:staticcheck // shown to the person as a sentence
 )
 
@@ -480,7 +481,7 @@ func (t *Transport) List(ctx context.Context, dir string) ([]transport.FileInfo,
 	}
 	var cmdline string
 	if t.win() {
-		cmdline = "Get-ChildItem -LiteralPath " + t.lit(real) + " -File | ForEach-Object {\"{0}|{1}|{2}\" -f $_.Length,([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds(),$_.Name}"
+		cmdline = "Get-ChildItem -LiteralPath " + t.lit(real) + " -File | ForEach-Object {'{0}|{1}|{2}' -f $_.Length,([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds(),$_.Name}"
 	} else {
 		cmdline = "ls -l --time-style=+%s -- " + t.lit(real)
 	}
@@ -492,7 +493,11 @@ func (t *Transport) List(ctx context.Context, dir string) ([]transport.FileInfo,
 		return nil, ErrTooLarge
 	}
 	var out []transport.FileInfo
+	lines := 0
 	for _, line := range strings.Split(s, "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines++
+		}
 		fi, ok := t.parseListLine(line)
 		if !ok {
 			continue
@@ -501,6 +506,9 @@ func (t *Transport) List(ctx context.Context, dir string) ([]transport.FileInfo,
 		if len(out) > maxListFiles {
 			return nil, ErrTooLarge
 		}
+	}
+	if len(out) == 0 && t.win() && lines > 0 {
+		return nil, ErrBadListing // the machine answered, but not in the shape asked for: never report that as an empty folder
 	}
 	return out, nil
 }

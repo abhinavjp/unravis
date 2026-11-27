@@ -398,3 +398,48 @@ func TestMinionDownOnlyAtTheStart(t *testing.T) {
 		t.Fatal("log text mentioning no response was taken for a down minion")
 	}
 }
+
+// winFake answers like a Windows minion: the folder check returns the path, the listing returns whatever list holds.
+type winFake struct {
+	list string
+	cmds []string
+}
+
+func (w *winFake) Exec(_ context.Context, cmd string, _ int) ([]byte, error) {
+	w.cmds = append(w.cmds, cmd)
+	out := w.list
+	if strings.Contains(cmd, "Resolve-Path") {
+		out = `D:\UnravisBlackbox`
+	}
+	b, _ := json.Marshal(map[string]any{"BG-SRV-01": out})
+	return b, nil
+}
+
+func TestWindowsListUsesNoDoubleQuotesAndParses(t *testing.T) {
+	w := &winFake{list: "100|1700000100|bb-1.ndjson\r\n250|1700000200|diagnostics.log\r\n"}
+	tr, err := Master{R: w, OS: "linux"}.For("BG-SRV-01", "windows", []string{`D:\UnravisBlackbox`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := tr.List(context.Background(), `D:\UnravisBlackbox`)
+	if err != nil || len(files) != 2 || files[0].Name != "bb-1.ndjson" || files[1].Size != 250 {
+		t.Fatalf("%+v %v", files, err)
+	}
+	last := w.cmds[len(w.cmds)-1]
+	if !strings.Contains(last, "Get-ChildItem") || strings.Contains(last, `"`) {
+		t.Fatalf("the listing command must carry no double quote (Salt mangles it on Windows): %s", last)
+	}
+}
+
+func TestWindowsListNeverCallsAnUnreadableAnswerAnEmptyFolder(t *testing.T) {
+	w := &winFake{list: "{0}|{1}|{2}"}
+	tr, _ := Master{R: w, OS: "linux"}.For("BG-SRV-01", "windows", []string{`D:\UnravisBlackbox`})
+	if _, err := tr.List(context.Background(), `D:\UnravisBlackbox`); !errors.Is(err, ErrBadListing) {
+		t.Fatalf("got %v", err)
+	}
+	w.list = ""
+	files, err := tr.List(context.Background(), `D:\UnravisBlackbox`)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("a really empty folder: %+v %v", files, err)
+	}
+}
