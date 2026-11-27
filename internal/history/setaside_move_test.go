@@ -32,10 +32,10 @@ func TestSetAsideNeverReplacesAnExistingCopy(t *testing.T) {
 	if kept != "connections.dat.unreadable-20261127-143012-2" {
 		t.Fatalf("kept as %q, want the -2 name", kept)
 	}
-	if got, _ := os.ReadFile(older); string(got) != "an older damaged copy" {
+	if got, _ := os.ReadFile(older); string(got) != "an older damaged copy" { //nolint:gosec // test reads its own temp file
 		t.Fatalf("the older copy was replaced: %q", got)
 	}
-	if got, _ := os.ReadFile(filepath.Join(filepath.Dir(path), kept)); !bytes.Equal(got, damaged) {
+	if got, _ := os.ReadFile(filepath.Join(filepath.Dir(path), kept)); !bytes.Equal(got, damaged) { //nolint:gosec // test reads its own temp file
 		t.Fatalf("the new copy is not the damaged file: %q", got)
 	}
 }
@@ -59,7 +59,7 @@ func TestSetAsideCountsCopiesWhateverTheirCase(t *testing.T) {
 	if _, err := service.SetAside(); !errors.Is(err, ErrSetAsideFull) {
 		t.Fatalf("set-aside with three upper-case copies = %v, want ErrSetAsideFull", err)
 	}
-	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, damaged) {
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, damaged) { //nolint:gosec // test reads its own temp file
 		t.Fatalf("the file moved: %v", err)
 	}
 }
