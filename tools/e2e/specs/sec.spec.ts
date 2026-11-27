@@ -287,7 +287,9 @@ test('SEC-09: the wizard says 127.0.0.1 is only this PC, and a wide bind is refu
 
 const BANNED = /\b(cause[sd]?|causing|because|due to|waiting on|blocked by|led to|results? in|proof|prove[sn]?)\b/i;
 
-test('SEC-11: the words on the Blackbox screens and the key keeper cards avoid the banned overclaiming words', async ({ page }) => {
+test('SEC-11: the words on the Blackbox screens and the key keeper cards avoid the banned overclaiming words', async ({ page, allow }) => {
+  // Review asks the server to check the settings; a demo run off Windows cannot read a Windows drive path, so that answer may be 422.
+  allow(/\/api\/blackbox\/validate/, 'Review check of a Windows path on a non-Windows demo');
   const seen: string[] = [];
   const check = async (where: string, scope: Locator) => {
     const text = await scope.first().innerText();
