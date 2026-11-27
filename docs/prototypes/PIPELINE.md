@@ -159,6 +159,23 @@ Kept: a fresh agent each round, the goldfish isolation rules, Sonnet only.
 
 After nachi approves a prototype and the real UI is built, run the same goldfish prompt on real screenshots (see `tools/uiaudit`) before the PR is called done. Same rules.
 
+## Step 9: prototype-to-build check (after the real UI is built)
+
+Do this before the PR is called done, and show nachi the before/after pair first.
+
+1. Open the approved prototype and the built screen in the same state (same step, same choices, same data). Take a full-window screenshot of each at 1280x900, light theme. Put them side by side.
+2. List every real difference. For each one write a reason from this fixed list:
+   - **older component**: an existing component was reused and not updated;
+   - **not buildable as drawn**: the data or backend for it does not exist yet (name the backlog item);
+   - **our decision**: we chose it on purpose (name the ruling or test that requires it);
+   - **not noticed**: nobody caught it. Fix it.
+3. Fix the build to match the prototype. Never edit the prototype to match the build.
+4. Anything that stays different goes into `docs/BACKLOG.md` with its reason, so the next thread does not rediscover it.
+5. A copy-lint or a beginner-hint test that rejects prototype wording is an "our decision". Record it; do not weaken the test.
+6. Run the tools in "Using it for the real UI" on the built screens.
+
+Checklist for the PR: same-state screenshots attached; every difference has a reason; no unexplained "not noticed" left; BACKLOG updated.
+
 ## Skill
 
 The skill form is [skill/SKILL.md](skill/SKILL.md). Install it by copying it to `.claude/skills/prototype-pipeline/SKILL.md` (that folder is gitignored, so it is not tracked).

@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "changes": [
+    "The Place a Blackbox steps now use the approved wording: the Name, Where, Record, Keep and Review pages read the way the prototype does, the Keep limits say what they do, and the Redis tag no longer stretches."
+  ]
+}
