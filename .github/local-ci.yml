@@ -9,9 +9,37 @@ jobs:
         # build (only for this step: the install step above must build a binary that runs here).
         "Go - lint (only code changed since develop)":
           GOOS: linux
+    go:
+      # The Go tests start the desktop app (cmd/audit-explorer: ten concurrent starts, a killed owner, the shutdown rpc). It owns a
+      # per-user first-instance name, so the same tests in two jobs at once (two runs, or two jobs of one run) make the second
+      # one fail. Only the step that runs them takes turns; the job's other steps run side by side.
+      step-exclusive:
+        "Go - tests of the affected packages (Linux, compared with the baseline)": desktop-first-instance
+      # A test must never open a real window (the "Unravis test" box, 2026-11-26). The watcher records any window a *.test.exe opens
+      # while the step runs and closes it; the step fails when it saw one. It does nothing where there is no PowerShell.
+      step-watch:
+        "Go - tests of the affected packages (Linux, compared with the baseline)": powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/ci/watch-test-windows.ps1 -Log "{log}" -StopFile "{stop}"
   ci.yml:
     desktop-sidecar:
       # The sidecar tests start the desktop app, which owns a per-user first-instance name (a mutex). Two copies on one PC
       # fight over it (the two matrix legs, or two runs the agent has going, or the app the owner has open): the loser
       # exits 13. Hold the name for the whole job, so they take turns.
       exclusive: desktop-first-instance
+      step-watch:
+        "Pipe security tests": powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/ci/watch-test-windows.ps1 -Log "{log}" -StopFile "{stop}"
+        "Pipe server tests (BL-301)": powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/ci/watch-test-windows.ps1 -Log "{log}" -StopFile "{stop}"
+        "Locator tests (BL-302)": powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/ci/watch-test-windows.ps1 -Log "{log}" -StopFile "{stop}"
+        "Shutdown RPC tests (BL-303)": powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/ci/watch-test-windows.ps1 -Log "{log}" -StopFile "{stop}"
+    package:
+      step-watch:
+        "Go - build and root test with the tauri_sidecar tag": powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/ci/watch-test-windows.ps1 -Log "{log}" -StopFile "{stop}"
+    go-tests:
+      step-exclusive:
+        "Go - tests (shard ${{ matrix.shard }} of 3)": desktop-first-instance
+      step-watch:
+        "Go - tests (shard ${{ matrix.shard }} of 3)": powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/ci/watch-test-windows.ps1 -Log "{log}" -StopFile "{stop}"
+    linux-gates:
+      step-exclusive:
+        "Go - tests (compared with the baseline)": desktop-first-instance
+      step-watch:
+        "Go - tests (compared with the baseline)": powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/ci/watch-test-windows.ps1 -Log "{log}" -StopFile "{stop}"

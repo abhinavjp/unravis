@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -20,7 +21,8 @@ const updateManualMinGap = 5 * time.Second
 // updateCheckReply is the JSON body of the three endpoints.
 type updateCheckReply = UpdateStatus
 
-// updateCheckState holds one Updater per server, kept here because the handler struct lives in server.go.
+// updateCheckState holds one Updater per server. It is a field of the handler (handler.updateState), so it goes away with the
+// server instead of staying in a package-wide map.
 type updateCheckState struct {
 	mu      sync.Mutex
 	updater *Updater
@@ -28,11 +30,8 @@ type updateCheckState struct {
 	lastRun time.Time // a double click costs one check
 }
 
-var updateCheckStates sync.Map // *handler -> *updateCheckState
-
 func updateCheckStateFor(h *handler) *updateCheckState {
-	state, _ := updateCheckStates.LoadOrStore(h, &updateCheckState{})
-	return state.(*updateCheckState)
+	return &h.updateState
 }
 
 // WithUpdater attaches the update checker. Without it the update endpoints answer "dev" and check nothing.
@@ -182,16 +181,18 @@ func (h *handler) updateSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "Update checks are not available in this build.")
 		return
 	}
-	in := u.currentSettings() // a body that leaves a field out keeps the current value
+	// A body that leaves a field out keeps the current value. It is read before the lock is taken, so a slow client cannot hold it.
+	var in SettingsPatch
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if _, err := cleanUpdaterSettings(in, defaultUpdateMinutes(u.channel)); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	saved, err := u.SetSettings(in)
+	saved, err := u.PatchSettings(in)
 	if err != nil {
+		var bad errSettingsInvalid
+		if errors.As(err, &bad) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

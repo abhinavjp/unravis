@@ -35,6 +35,11 @@ type Host interface {
 	// Commits lists every commit of the pull request with the logins of its author and committer. When the
 	// host cannot list them all, the list ends with a commit that has no logins.
 	Commits(ctx context.Context, repo string, number int) ([]PRCommit, error)
+	// PushHistory lists the push records the host keeps for the branch headRef of repo, newest first, and says
+	// whether the list reaches back to the creation of the branch. It is the host's record of who pushed what (not
+	// what any commit says: a commit's author and committer are text the pusher chose). Any error means the
+	// history is unknown.
+	PushHistory(ctx context.Context, repo, headRef string) (PushHistory, error)
 	// CloneURL is where the bare mirror fetches repo from.
 	CloneURL(repo string) string
 	// OpenPullRequests lists the open pull requests of repo. etag is what the previous answer returned: when

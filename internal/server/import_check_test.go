@@ -426,3 +426,44 @@ func TestImportCheckCountsOnlyWhenCounted(t *testing.T) {
 		}
 	}
 }
+
+// checkRedisYearless is a synthetic Windows-port redis log: day and month, no year.
+const checkRedisYearless = "[22044] 26 Nov 13:47:27.070 * 10 changes in 300 seconds. Saving...\n" +
+	"[22044] 26 Nov 13:47:27.154 * Background saving started by pid 31684\n" +
+	"[22044] 26 Nov 13:47:29.067 # fork operation complete\n" +
+	"[22044] 26 Nov 13:47:29.088 * Background saving terminated with success\n"
+
+// A year-less redis log needs the year whatever else is missing, so the check says so beside the computer fix.
+func TestImportCheckNeedsYearBesideComputer(t *testing.T) {
+	e := newIntEnv(t, intRepo())
+	id := e.newCase("Check, needs year and computer")
+	_, done := startedCheck(t, e, id, e.upload(checkPath(id), nil, &upload{"server_log.txt", checkRedisYearless}))
+	v := onlyVerdict(t, done)
+	if !v.NeedsYear || v.Importer != "redis-log" || v.Verdict != verdictNoComputer {
+		t.Fatalf("verdict = %+v, want no-computer with needsYear for redis-log", v)
+	}
+	if n := len(e.importsOf(id)); n != 0 {
+		t.Fatalf("a check stored %d imports", n)
+	}
+}
+
+// With the computer known the importer itself refuses for want of the year: needs-year, 422 reason needs-year.
+// Giving the year makes the same file read.
+func TestRedisYearlessImportNeedsYear(t *testing.T) {
+	e := newIntEnv(t, intRepo())
+	id := e.newCase("Redis year")
+	base := "/api/cases/" + id + "/imports?preview=1&importer=redis-log&host=web-a"
+	res := e.upload(base, nil, &upload{"server_log.txt", checkRedisYearless})
+	if res.Code != http.StatusUnprocessableEntity || !strings.Contains(res.Body.String(), `"reason":"needs-year"`) {
+		t.Fatalf("no year = %d %s", res.Code, res.Body)
+	}
+	res = e.upload(base+"&s.year=2026", nil, &upload{"server_log.txt", checkRedisYearless})
+	if res.Code != http.StatusOK {
+		t.Fatalf("with year = %d %s", res.Code, res.Body)
+	}
+	// And the check, with a host it can resolve, reports needs-year.
+	_, done := startedCheck(t, e, id, e.upload(checkPath(id)+"&host=web-a", nil, &upload{"server_log.txt", checkRedisYearless}))
+	if v := onlyVerdict(t, done); !v.NeedsYear {
+		t.Fatalf("check verdict = %+v, want needsYear", v)
+	}
+}

@@ -25,6 +25,12 @@ type JobOverride struct {
 	// Exclusive names a resource of this PC that only one job instance may use at a time, across the jobs of every run
 	// this program has going (for example a per-user named object that two parallel copies would fight over).
 	Exclusive string
+	// StepExclusive is the same for single steps: step name -> resource. Only that step holds the resource (the steps of other jobs
+	// that name it wait), so a job can keep its other steps running side by side.
+	StepExclusive map[string]string
+	// StepWatch starts a watcher command beside a step: step name -> command line (see stepwatch.go). The step fails when the
+	// watcher logged anything.
+	StepWatch map[string]string
 }
 
 type rawLocalConfig struct {
@@ -33,10 +39,12 @@ type rawLocalConfig struct {
 }
 
 type rawJobOver struct {
-	Skip      string                       `yaml:"skip"`
-	Accepted  bool                         `yaml:"accepted"`
-	StepEnv   map[string]map[string]string `yaml:"step-env"`
-	Exclusive string                       `yaml:"exclusive"`
+	Skip          string                       `yaml:"skip"`
+	Accepted      bool                         `yaml:"accepted"`
+	StepEnv       map[string]map[string]string `yaml:"step-env"`
+	Exclusive     string                       `yaml:"exclusive"`
+	StepExclusive map[string]string            `yaml:"step-exclusive"`
+	StepWatch     map[string]string            `yaml:"step-watch"`
 }
 
 // ParseLocalConfig parses the overrides file strictly: unknown keys are an error, and runs-on

@@ -41,6 +41,8 @@ export const GUIDED_TEXT = {
   readNote: (calls: string, rows: string) => `This run read ${calls} audit calls and ${rows} IIS rows.`,
   readGap: (total: string, used: string, parts: string[]) => `Scope counts ${used} of the ${total} calls read. Left out: ${parts.join(', ')}.`,
   truncated: 'The read stopped at its limit. Narrow the window to read everything.',
+  // The run was cut short for a reason the notes under it give (too many calls, or a source that stopped sending calls). This line does not guess which.
+  readCut: 'This read was cut short, so some calls are not in the figures. The note under it says why.',
   nextStep: 'Next step',
   previousStep: 'Previous step',
   jumpedAhead: 'This step shows the last run. Run the steps first to fill it in.',

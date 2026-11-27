@@ -20,8 +20,37 @@ type fakeHost struct {
 	// commits are what the host lists for the pull request; nil means one commit written by the author.
 	commits    []PRCommit
 	commitsErr error
-	url        string
-	asked      int
+	// pusher is who the host says pushed the head commit; empty means the author of the pull request.
+	// noPusher makes the host's push record empty; pusherErr makes the lookup fail. older are earlier push
+	// records of the branch (newest first); cut makes the history incomplete.
+	pusher      string
+	noPusher    bool
+	pusherErr   error
+	older       []PushEvent
+	cut         bool
+	pusherAsked []string // the head branch of every PushHistory call
+	url         string
+	asked       int
+}
+
+func (f *fakeHost) PushHistory(_ context.Context, _, headRef string) (PushHistory, error) {
+	f.pusherAsked = append(f.pusherAsked, headRef)
+	if f.pusherErr != nil {
+		return PushHistory{}, f.pusherErr
+	}
+	if f.noPusher {
+		return PushHistory{Complete: !f.cut}, nil
+	}
+	who := f.pusher
+	if who == "" {
+		who = f.pr.Author
+	}
+	events := append([]PushEvent{{After: f.pr.HeadSHA, Type: "push", Actor: who}}, f.older...)
+	if !f.cut {
+		// a complete history ends with the creation of the branch, by the author of the pull request
+		events = append(events, PushEvent{After: strings.Repeat("d", 40), Type: "branch_creation", Actor: f.pr.Author})
+	}
+	return PushHistory{Events: events, Complete: !f.cut}, nil
 }
 
 func (f *fakeHost) Commits(context.Context, string, int) ([]PRCommit, error) {
@@ -328,6 +357,118 @@ func TestRunPROwnerPRWithAForeignCommitRunsTheBaseDefinition(t *testing.T) {
 	}
 	if !exists(filepath.Join(opts.Store.CachesPath(), "go-build")) || exists(opts.Store.UntrustedCachesPath()) && exists(filepath.Join(opts.Store.UntrustedCachesPath(), "go-build")) {
 		t.Fatal("the owner's run uses the owner's caches")
+	}
+}
+
+// TestRunPROwnerLoginsPushedBySomebodyElseRunsTheBaseDefinition is the test for RV-SEC-3: every commit of the
+// branch carries the owner's login (a collaborator can write any identity into a commit), but the host's record
+// says somebody else pushed the head, or says nothing, or cannot be asked. None of these may run the
+// pull request's own workflow files or use the owner's caches.
+func TestRunPROwnerLoginsPushedBySomebodyElseRunsTheBaseDefinition(t *testing.T) {
+	needBash(t)
+	o := newOrigin(t)
+	for name, tweak := range map[string]func(*fakeHost){
+		"a collaborator pushed it":          func(h *fakeHost) { h.pusher = "alice" },
+		"owner commits, other pusher login": func(h *fakeHost) { h.pusher = "mallory" },
+		"no record of the push":             func(h *fakeHost) { h.noPusher = true },
+		"the lookup failed":                 func(h *fakeHost) { h.pusherErr = errors.New("gh: 502") },
+		"an older push by a collaborator, the owner pushed on top": func(h *fakeHost) {
+			h.pusher = "acme"
+			h.older = []PushEvent{{After: strings.Repeat("c", 40), Type: "push", Actor: "alice"}}
+		},
+		"a collaborator merged a pull request into the branch": func(h *fakeHost) {
+			h.pusher = "acme"
+			h.older = []PushEvent{{After: strings.Repeat("c", 40), Type: "pr_merge", Actor: "alice"}}
+		},
+		"a collaborator merged through the merge queue": func(h *fakeHost) {
+			h.pusher = "acme"
+			h.older = []PushEvent{{After: strings.Repeat("c", 40), Type: "merge_queue_merge", Actor: "alice"}}
+		},
+		"a kind of record that is not known": func(h *fakeHost) {
+			h.pusher = "acme"
+			h.older = []PushEvent{{After: strings.Repeat("c", 40), Type: "new_kind", Actor: "acme"}}
+		},
+		"the push history may be cut off": func(h *fakeHost) { h.pusher = "acme"; h.cut = true },
+		"the owner pushed other people's commits": func(h *fakeHost) {
+			h.commits = []PRCommit{{SHA: strings.Repeat("a", 40), AuthorLogin: "alice", CommitterLogin: "alice"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := &fakeHost{pr: okPR(o, 3, o.evil, "acme"), commits: []PRCommit{{SHA: strings.Repeat("a", 40), AuthorLogin: "acme", CommitterLogin: "acme"}}}
+			tweak(h)
+			opts, console := prOptions(t, o, h)
+			res, err := RunPR(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("%v\n%s", err, console.String())
+			}
+			log := logOf(t, opts.Store, res.RunID, "go")
+			if !strings.Contains(log, "workflow=base") || strings.Contains(log, "workflow=PR") {
+				t.Fatalf("a head the owner did not push must run the base definition:\n%s", log)
+			}
+			if !exists(filepath.Join(opts.Store.UntrustedCachesPath(), "go-build")) || exists(filepath.Join(opts.Store.CachesPath(), "go-build")) {
+				t.Fatal("such a run must use the caches kept apart from the owner's")
+			}
+		})
+	}
+	// without a trusted base the same pull request is refused, not run
+	h := &fakeHost{pr: okPR(o, 3, o.evil, "acme"), pusher: "alice"}
+	opts, _ := prOptions(t, o, h)
+	opts.Workflows, opts.Workflow = nil, "fast-gate.yml"
+	res, err := RunPR(context.Background(), opts)
+	if err != nil || res.Run.Conclusion != "failure" || !strings.Contains(res.Entry.Reason, "trusts") {
+		t.Fatalf("%v %+v", err, res)
+	}
+	// the owner pushed the head: the pull request's own definition, and the host was asked about this very head
+	h = &fakeHost{pr: okPR(o, 3, o.evil, "acme"), pusher: "ACME"}
+	opts, _ = prOptions(t, o, h)
+	res, err = RunPR(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logOf(t, opts.Store, res.RunID, "go"), "workflow=PR") {
+		t.Fatal("a head pushed by the owner keeps the owner's definition")
+	}
+	if len(h.pusherAsked) != 1 || h.pusherAsked[0] != "feature" {
+		t.Fatalf("the host must be asked about the head branch that runs: %v", h.pusherAsked)
+	}
+}
+
+// TestRunPRTrustOwnerBranchStillChecksWhoPushed: --trust-owner-branch waives only the per-commit login check.
+// A branch somebody else pushed to still runs the base definition; a branch the owner alone pushed to, whose
+// commits carry no login, runs its own.
+func TestRunPRTrustOwnerBranchStillChecksWhoPushed(t *testing.T) {
+	needBash(t)
+	o := newOrigin(t)
+	noLogin := []PRCommit{{SHA: strings.Repeat("a", 40), AuthorLogin: "", CommitterLogin: ""}}
+	for name, h := range map[string]*fakeHost{
+		"another pusher":             {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, pusher: "alice"},
+		"an older pusher":            {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, older: []PushEvent{{After: strings.Repeat("c", 40), Type: "push", Actor: "alice"}}},
+		"lookup failed":              {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, pusherErr: errors.New("gh: 502")},
+		"history cut off":            {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, cut: true},
+		"a merge by another account": {pr: okPR(o, 3, o.evil, "acme"), commits: noLogin, older: []PushEvent{{After: strings.Repeat("c", 40), Type: "pr_merge", Actor: "alice"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			opts, console := prOptions(t, o, h)
+			opts.TrustOwnerBranch = true
+			res, err := RunPR(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("%v\n%s", err, console.String())
+			}
+			log := logOf(t, opts.Store, res.RunID, "go")
+			if !strings.Contains(log, "workflow=base") || strings.Contains(log, "workflow=PR") {
+				t.Fatalf("the flag must not waive the push check:\n%s", log)
+			}
+		})
+	}
+	h := &fakeHost{pr: okPR(o, 3, o.evil, "acme"), commits: noLogin}
+	opts, _ := prOptions(t, o, h)
+	opts.TrustOwnerBranch = true
+	res, err := RunPR(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logOf(t, opts.Store, res.RunID, "go"), "workflow=PR") || len(h.pusherAsked) != 1 {
+		t.Fatalf("the flag still lets the owner's own branch run its definition (asked %v)", h.pusherAsked)
 	}
 }
 

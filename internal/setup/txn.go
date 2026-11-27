@@ -148,10 +148,31 @@ func (t *Txn) keepCopy(path, what string) (bool, error) {
 	if err := t.record(Undo{Kind: UndoRestoreFile, Path: path, Backup: b, Note: what + " overwritten: restore from backup " + b}); err != nil {
 		return false, err
 	}
+	// A ".part" left by a killed run (same backup folder, same counter) must not make this copy fail: the exclusive create below
+	// refuses an existing name.
+	if err := clearStalePart(b + ".part"); err != nil {
+		return false, err
+	}
 	if err := copyFile(context.Background(), path, b+".part"); err != nil {
 		return false, err
 	}
 	return true, os.Rename(b+".part", b)
+}
+
+// clearStalePart removes an old half-written backup copy at part. Only a plain file is removed: a folder, a link or anything else
+// at that name is not ours, so it is left alone and the copy is refused.
+func clearStalePart(part string) error {
+	fi, err := os.Lstat(part)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("setup cannot make its backup copy because %s is in the way and is not a plain file", part)
+	}
+	return os.Remove(part)
 }
 
 // WriteFile writes data to path, keeping any old file for the rollback.

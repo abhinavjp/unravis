@@ -11,7 +11,7 @@
   import { BBC_TEXT as T } from '../lib/copy/blackboxChartsCopy';
   import { sqlNote } from '../lib/blackboxSqlNames';
   import {
-    PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapRanges, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
+    PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapsForLine, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
     alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own, niceBinaryMax, biggestPlotted, settleWidth,
     type SeriesAnswer, type SeriesLine, type SeriesPoint, type SeriesUnit, type WindowPreset
   } from '../lib/blackboxSeries';
@@ -23,7 +23,8 @@
   // host check. Nothing is collected here. A value that was not read is a break in the line, never 0. Times follow the header's time zone choice, like the panel.
   echarts.use([MarkAreaComponent]);
 
-  let { item, onClose }: { item: BlackboxItem; onClose: () => void } = $props();
+  // `inline` puts the same charts in the page instead of a pop-up (Unravis Lite). Nothing closes it, so there is no close button and Esc does nothing.
+  let { item, onClose = () => {}, inline = false }: { item: BlackboxItem; onClose?: () => void; inline?: boolean } = $props();
 
   const POINTS = 600;
   const STORE = 'unravis.bbCharts.';
@@ -73,7 +74,7 @@
   let node = $state<HTMLDivElement>();
   let chart = $state<ReturnType<typeof echarts.init>>();
 
-  onMount(() => { dialog?.showModal(); });
+  onMount(() => { if (inline) dialog?.show(); else dialog?.showModal(); });
 
   // The chart exists only while the Charts view is on screen: leaving it (or closing the pop-up) removes the listener, stops the
   // size watcher and frees the chart object, so nothing is held for a view nobody is looking at.
@@ -307,7 +308,7 @@
       s.keys.forEach((k, j) => {
         const d = byKey.get(k)!;
         const c = colourOf.get(k);
-        const cd = chartData(d.points, gapRanges(a.gaps), log);
+        const cd = chartData(d.points, gapsForLine(a, k), log);
         hiddenNow += cd.hidden;
         series.push({
           type: 'line', name: d.title, id: k, xAxisIndex: i, yAxisIndex: i, data: cd.data, connectNulls: false, showSymbol: cd.data.length < 40, symbolSize: 4,
@@ -374,8 +375,8 @@
 </script>
 
 <!-- Esc closes only this pop-up, wherever focus is: it is caught first here so the Blackbox drawer behind it and the app's own Esc stay put. -->
-<svelte:window onkeydowncapture={(e) => { const f = e.target as HTMLElement | null; if (f instanceof HTMLSelectElement || (f instanceof HTMLInputElement && f.type === 'search' && f.value)) return; if (e.key === 'Escape' && dialog?.open) { e.preventDefault(); e.stopPropagation(); dialog.close(); } }} />
-<dialog bind:this={dialog} class="bbc" aria-labelledby="bbc-title" onclose={onClose}>
+<svelte:window onkeydowncapture={(e) => { const f = e.target as HTMLElement | null; if (f instanceof HTMLSelectElement || (f instanceof HTMLInputElement && f.type === 'search' && f.value)) return; if (e.key === 'Escape' && !inline && dialog?.open) { e.preventDefault(); e.stopPropagation(); dialog.close(); } }} />
+<dialog bind:this={dialog} class="bbc" class:inline aria-labelledby="bbc-title" onclose={onClose}>
   <header class="bbc-head">
     <div>
       <h2 id="bbc-title">{T.title(item.name)}</h2>
@@ -388,7 +389,7 @@
     </div>
     <div class="bbc-head-actions">
       {#if !showIntro}<button type="button" class="quiet-button" title={T.helpShowHint} onclick={() => setIntro(true)}>{T.helpShow}</button>{/if}
-      <button type="button" class="bbc-close" aria-label={T.close} title={T.close} onclick={() => dialog?.close()}>×</button>
+      {#if !inline}<button type="button" class="bbc-close" aria-label={T.close} title={T.close} onclick={() => dialog?.close()}>×</button>{/if}
     </div>
   </header>
 
@@ -691,6 +692,8 @@
 <style>
   .bbc { width: min(1840px, calc(100vw - 32px)); max-width: none; height: calc(100vh - 32px); max-height: none; padding: 0; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md, 8px); display: flex; flex-direction: column; overflow: hidden; }
   .bbc:not([open]) { display: none; }
+  /* In the Lite page the charts sit in the flow of the page, not over it. */
+  .bbc.inline { position: static; inset: auto; margin: 0; width: 100%; height: max(640px, calc(100vh - 150px)); }
   .bbc::backdrop { background: var(--scrim); }
   .bbc-head { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
   .bbc-head h2 { margin: 0; font-size: var(--fs-6); font-weight: 600; }
@@ -823,7 +826,8 @@
     .bbc-side { overflow: visible; max-height: none; }
   }
   @media (max-width: 639px) {
-    .bbc { width: 100vw; height: 100vh; height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; }
+    .bbc.inline { width: 100%; height: auto; min-height: 640px; }
+    .bbc:not(.inline) { width: 100vw; height: 100vh; height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; }
     .bbc-legend { max-width: calc(100% - 40px); }
   }
 </style>

@@ -207,6 +207,10 @@ func New(port int, opts ...Option) (*Bridge, error) {
 	b.locate = func() (string, string, error) {
 		record, err := readSessionRecord(path)
 		if err != nil {
+			// A running dashboard that could not write the file says why (RV-SEC-7); otherwise nothing is running.
+			if reason, ok := sessionFailureNote(path); ok {
+				return "", "", coded(CodeBackendUnavailable, sessionNotWritten(reason))
+			}
 			return "", "", coded(CodeBackendUnavailable, notRunning)
 		}
 		filePort, fileToken := record.Port, record.Token

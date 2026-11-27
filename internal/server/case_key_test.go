@@ -28,6 +28,12 @@ const (
 // newCKEnv is newMKEnv with small Argon2 costs for the per-case keys.
 func newCKEnv(t *testing.T, extra ...Option) *mkEnv {
 	t.Helper()
+	return newCKEnvClock(t, nil, extra...)
+}
+
+// newCKEnvClock is newCKEnv with the store's clock (nil: the real one), to close a case at a chosen time.
+func newCKEnvClock(t *testing.T, now func() time.Time, extra ...Option) *mkEnv {
+	t.Helper()
 	logs := &bytes.Buffer{}
 	log.SetOutput(logs)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
@@ -38,7 +44,7 @@ func newCKEnv(t *testing.T, extra ...Option) *mkEnv {
 		Root: root, Protector: storetest.RandomProtector(), MinFreeBytes: -1,
 		Protectors: sess.Lookup, NewCaseKind: sess.NewCaseKind,
 		LegacyCheck: sess.LegacyCheck, LegacyDone: sess.LegacyDone,
-		KeyParams: cfsFast,
+		KeyParams: cfsFast, Now: now,
 	})
 	if err != nil {
 		t.Fatal(err)

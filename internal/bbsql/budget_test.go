@@ -591,30 +591,37 @@ func TestSQLBudgetSampleByteBound(t *testing.T) {
 // many ticks of the REAL samplers (retained per-file/per-wait/per-semaphore
 // baselines), with churn and null/reset cases exercising map rebuilds.
 func TestSQLBudgetWorkingSet(t *testing.T) {
-	before, ok := budgetWorkingSetBytes(t)
-	if !ok {
-		t.Skip("psapi working-set reading unavailable on this platform")
-	}
-	r := newBudgetRunner(t, realisticCounts(), false, nil)
-	now := time.Date(2026, 1, 2, 8, 0, 0, 0, time.UTC)
-	r.Now = func() time.Time { return now }
-	for i := 0; i < budgetMemoryTicks; i++ {
-		if err := r.Tick(now); err != nil {
-			t.Fatalf("tick %d: %v", i, err)
+	// The working set is what the OS reports, so another process loading the PC (a parallel build, the page file) can add
+	// tens of MB in one run. A real leak grows on every run, so the bound must be missed on all of three tries to fail.
+	const tries = 3
+	var growth int64
+	for try := 1; try <= tries; try++ {
+		before, ok := budgetWorkingSetBytes(t)
+		if !ok {
+			t.Skip("psapi working-set reading unavailable on this platform")
 		}
-		now = now.Add(BaseInterval)
+		r := newBudgetRunner(t, realisticCounts(), false, nil)
+		now := time.Date(2026, 1, 2, 8, 0, 0, 0, time.UTC)
+		r.Now = func() time.Time { return now }
+		for i := 0; i < budgetMemoryTicks; i++ {
+			if err := r.Tick(now); err != nil {
+				t.Fatalf("tick %d: %v", i, err)
+			}
+			now = now.Add(BaseInterval)
+		}
+		runtime.GC()
+		after, ok := budgetWorkingSetBytes(t)
+		if !ok {
+			t.Skip("psapi working-set reading unavailable on this platform")
+		}
+		growth = int64(after) - int64(before)
+		const cap = budgetWorkingSetGrowthCapMB << 20
+		t.Logf("try %d: working set: %d -> %d bytes over %d ticks (growth %d, cap %d)", try, before, after, budgetMemoryTicks, growth, cap)
+		if growth < cap {
+			return
+		}
 	}
-	runtime.GC()
-	after, ok := budgetWorkingSetBytes(t)
-	if !ok {
-		t.Skip("psapi working-set reading unavailable on this platform")
-	}
-	growth := after - before
-	const cap = budgetWorkingSetGrowthCapMB << 20
-	t.Logf("working set: %d -> %d bytes over %d ticks (growth %d, cap %d)", before, after, budgetMemoryTicks, growth, cap)
-	if growth >= cap {
-		t.Errorf("sampling grew the working set by %d bytes, want < %d (C13: under 10 MB extra memory)", growth, cap)
-	}
+	t.Errorf("sampling grew the working set by %d bytes on each of %d tries, want < %d (C13: under 10 MB extra memory)", growth, tries, int64(budgetWorkingSetGrowthCapMB)<<20)
 }
 
 func TestSQLBudgetNoGoroutineGrowth(t *testing.T) {

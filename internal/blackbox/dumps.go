@@ -21,13 +21,26 @@ import (
 // opened; the newest entries are kept in a bounded heap, so the result is the
 // newest 200 of what was visited and the status says honestly when the visit
 // budget truncated the scan or a root could not be read.
+//
+// RV-BB-11 (W-36): inside each folder the entries are read first (up to the
+// enumeration budget), sorted newest first by modified time, and only then
+// counted against the visit and list limits. Before, the limits were applied in
+// directory order, so in a large dump folder the newest dumps could be the ones
+// left out.
 
 // Limits on the dump catalogue walk, so a huge tree cannot slow a sample.
 const (
-	dumpMaxDepth   = 2
+	dumpMaxDepth = 2
+	// dumpMaxVisited is how many dump files and sub-folders (roots included) are
+	// looked at, newest first within each folder.
 	dumpMaxVisited = 500
 	dumpMaxListed  = 200
-	dumpsEvery     = 5 * time.Minute
+	// dumpMaxEnumerated is how many directory entries of any kind the whole scan
+	// reads (names and types only) to find the newest ones. Bigger than the visit
+	// budget so a folder of a few thousand files still shows its newest dumps; a
+	// folder bigger than this is read in part and the status says so.
+	dumpMaxEnumerated = 5000
+	dumpsEvery        = 5 * time.Minute
 	// dumpReadBatch is how many directory entries one ReadDir call takes: the
 	// enumeration cost of a huge directory is bounded per batch, and the visit
 	// budget stops the scan between batches instead of after the whole listing.
@@ -55,10 +68,12 @@ func dumpRoots() []string {
 // truncated or partly unreadable scan is never presented as a complete
 // newest-first catalogue (W12-06).
 type DumpScanStatus struct {
-	// Visited is how many directory entries (roots included) the scan counted.
+	// Visited is how many dump files and sub-folders (roots included) the scan
+	// counted against the visit budget.
 	Visited int
-	// Truncated is true when the visit budget stopped the scan before the
-	// roots were fully read: later entries and later roots were not looked at.
+	// Truncated is true when the visit or enumeration budget stopped the scan
+	// before the roots were fully read: later entries and later roots were not
+	// looked at.
 	Truncated bool
 	// Unreadable counts roots or subdirectories that could not be opened or
 	// were refused (a link or reparse alias). A root that simply does not
@@ -89,69 +104,101 @@ func catalogueDumps(roots []string) ([]DumpEntry, DumpScanStatus) {
 		}
 		return true
 	}
-	var scanDir func(dir string, depth int)
-	scanDir = func(dir string, depth int) {
+	// enumerated counts every directory entry the scan has read, of any kind.
+	enumerated := 0
+	// readCandidates reads one folder in bounded batches and returns its dump
+	// files and sub-folders, newest first. Entries that can never be listed
+	// (other files, links, folders past the depth limit) cost an enumeration
+	// step but no visit and no stat.
+	readCandidates := func(dir string, depth int) []dumpCand {
 		f, err := os.Open(dir) // a directory handle, never a dump's content
 		if err != nil {
 			if !os.IsNotExist(err) {
 				st.Unreadable++
 			}
-			return
+			return nil
 		}
 		defer f.Close()
+		var cands []dumpCand
 		for {
-			if st.Truncated {
-				return
-			}
 			batch, rerr := dumpReadDir(f, dumpReadBatch)
+			if enumerated >= dumpMaxEnumerated && len(batch) > 0 {
+				st.Truncated = true // there is more here than the scan may read
+				break
+			}
+			enumerated += len(batch)
 			for _, d := range batch {
-				if !visit() {
-					return
-				}
 				name := d.Name()
+				c := dumpCand{name: name}
 				if d.IsDir() {
 					if depth+1 >= dumpMaxDepth {
 						continue
 					}
-					sub := filepath.Join(dir, name)
-					// A junction or symlink directory is not followed: Lstat
-					// sees the alias itself (ModeIrregular / ModeSymlink).
-					li, lerr := os.Lstat(sub)
-					if lerr != nil || !li.IsDir() || li.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
-						if lerr != nil && !os.IsNotExist(lerr) {
-							st.Unreadable++
-						}
+					c.isDir = true
+					if info, ierr := d.Info(); ierr == nil {
+						c.mtime = info.ModTime().UTC().Truncate(time.Second)
+					}
+				} else {
+					if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 || !strings.EqualFold(filepath.Ext(name), ".dmp") {
 						continue
 					}
-					scanDir(sub, depth+1)
-					continue
+					info, ierr := d.Info() // stat only: the content is never opened
+					if ierr != nil {
+						continue
+					}
+					c.size = info.Size()
+					c.mtime = info.ModTime().UTC().Truncate(time.Second)
 				}
-				if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 || !strings.EqualFold(filepath.Ext(name), ".dmp") {
-					continue
-				}
-				info, ierr := d.Info() // stat only: the content is never opened
-				if ierr != nil {
-					continue
-				}
-				heap.Push(h, DumpEntry{
-					Name:   name,
-					Size:   info.Size(),
-					MTime:  info.ModTime().UTC().Truncate(time.Second),
-					Target: dumpTarget(name),
-				})
-				if h.Len() > dumpMaxListed {
-					heap.Pop(h) // evict the oldest of the kept set
-				}
+				cands = append(cands, c)
 			}
 			if rerr != nil || len(batch) == 0 {
+				break
+			}
+		}
+		// Newest first, so the visit and list limits keep the newest.
+		sort.Slice(cands, func(i, j int) bool {
+			if !cands[i].mtime.Equal(cands[j].mtime) {
+				return cands[i].mtime.After(cands[j].mtime)
+			}
+			return cands[i].name < cands[j].name
+		})
+		return cands
+	}
+	var scanDir func(dir string, depth int)
+	scanDir = func(dir string, depth int) {
+		for _, c := range readCandidates(dir, depth) {
+			if !visit() {
 				return
+			}
+			if c.isDir {
+				sub := filepath.Join(dir, c.name)
+				// A junction or symlink directory is not followed: Lstat
+				// sees the alias itself (ModeIrregular / ModeSymlink).
+				li, lerr := os.Lstat(sub)
+				if lerr != nil || !li.IsDir() || li.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+					if lerr != nil && !os.IsNotExist(lerr) {
+						st.Unreadable++
+					}
+					continue
+				}
+				scanDir(sub, depth+1)
+				continue
+			}
+			heap.Push(h, DumpEntry{
+				Name:   c.name,
+				Size:   c.size,
+				MTime:  c.mtime,
+				Target: dumpTarget(c.name),
+			})
+			if h.Len() > dumpMaxListed {
+				heap.Pop(h) // evict the oldest of the kept set
 			}
 		}
 	}
 	for _, root := range roots {
-		// The budget is checked BEFORE the next root is opened: an exhausted
+		// The budgets are checked BEFORE the next root is opened: an exhausted
 		// scan never touches another directory (W12-06).
-		if st.Truncated || st.Visited >= dumpMaxVisited {
+		if st.Truncated || st.Visited >= dumpMaxVisited || enumerated >= dumpMaxEnumerated {
 			st.Truncated = true
 			break
 		}
@@ -184,6 +231,15 @@ func catalogueDumps(roots []string) ([]DumpEntry, DumpScanStatus) {
 		return all[i].Name < all[j].Name
 	})
 	return all, st
+}
+
+// dumpCand is one dump file or sub-folder of a folder being scanned, with the
+// modified time it is ordered by.
+type dumpCand struct {
+	name  string
+	isDir bool
+	size  int64
+	mtime time.Time
 }
 
 // dumpHeap keeps the newest dumpMaxListed entries: a min-heap ordered oldest

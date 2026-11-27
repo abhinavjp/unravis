@@ -54,6 +54,22 @@ jobs:
           if ($env:INPUT_PREVIOUS) { $a.Previous = $env:INPUT_PREVIOUS }
           ./tools/release/Invoke-VerifyRelease.ps1 @a
 
+      - name: The published programs do not carry the test-only switch (RV-SEC-7)
+        # The same scan release.yml runs on dist, on the files people download. A tag from before the scan existed has no script: it is skipped with a notice.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ ! -f tools/ci/check-no-e2e-switch.mjs ]; then
+            echo "::notice::$INPUT_TAG has no tools/ci/check-no-e2e-switch.mjs (it is older than the check), so the published programs were not scanned."
+            exit 0
+          fi
+          dir="$RUNNER_TEMP/published-assets"
+          mkdir -p "$dir"
+          gh release download "$INPUT_TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.zip' --pattern '*-setup-*.exe' --dir "$dir"
+          node tools/ci/check-no-e2e-switch.mjs "$dir"
+
   recorder:
     runs-on: windows-2022
     timeout-minutes: 45

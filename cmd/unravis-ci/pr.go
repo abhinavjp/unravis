@@ -49,7 +49,7 @@ func cmdRunPR(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	workflow := fs.String("workflow", "", "run this workflow file whatever the base branch is")
 	keep := fs.Bool("keep", false, "keep the worktree after the run")
 	slots := fs.Int("slots", 2, "jobs at once")
-	trustOwner := fs.Bool("trust-owner-branch", false, "for a run you start by hand: trust the runner definition of your own pull request even when its commits carry no GitHub login")
+	trustOwner := fs.Bool("trust-owner-branch", false, "for a run you start by hand: do not require a GitHub login on every commit of your own pull request (the check of who pushed to the branch still runs, and a branch anybody else pushed to still runs from the base)")
 	var wfFor, protect, vars, trustedBase, allowEnv multiFlag
 	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
 	fs.Var(&protect, "protect", "extra path read from the base branch for pull requests of non-owners (repeatable; added to the defaults)")
@@ -137,11 +137,27 @@ func trustedBases(workflows map[string]string, extra []string) []string {
 
 // ---------------------------------------------------------------- runs
 
+// runJSON is one run of `runs --json`: the index entry (run_id, workflow, event, repo, pr, conclusion, reason, start,
+// end, ...) plus the length of the run, which the table shows as TIME. The field names are part of the command's
+// interface; add fields, do not rename or drop them.
+type runJSON struct {
+	localci.IndexEntry
+	DurationSeconds int64 `json:"duration_seconds"` // 0 when the run has no start or end
+}
+
+func runSeconds(e localci.IndexEntry) int64 {
+	if e.End.IsZero() || e.Start.IsZero() {
+		return 0
+	}
+	return int64(e.End.Sub(e.Start).Round(time.Second) / time.Second)
+}
+
 func cmdRuns(args []string, stdout, stderr io.Writer, environ []string) int {
 	fs := flag.NewFlagSet("runs", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	state := fs.String("state", "", "the CI store folder (default: under LOCALAPPDATA)")
 	limit := fs.Int("limit", 20, "show the latest N runs (0 = all)")
+	asJSON := fs.Bool("json", false, "print the runs as a JSON array (see runJSON), oldest first like the table")
 	if pos, err := parseInterspersed(fs, args); err != nil || len(pos) != 0 {
 		if err == nil {
 			_, _ = fmt.Fprintln(stderr, "runs: takes no arguments")
@@ -158,12 +174,19 @@ func cmdRuns(args []string, stdout, stderr io.Writer, environ []string) int {
 		_, _ = fmt.Fprintln(stderr, "runs:", err)
 		return exitUsage
 	}
+	if *limit > 0 && len(entries) > *limit {
+		entries = entries[len(entries)-*limit:]
+	}
+	if *asJSON {
+		rows := make([]runJSON, 0, len(entries))
+		for _, e := range entries {
+			rows = append(rows, runJSON{IndexEntry: e, DurationSeconds: runSeconds(e)})
+		}
+		return writeJSON("runs", stdout, stderr, rows)
+	}
 	if len(entries) == 0 {
 		_, _ = fmt.Fprintf(stdout, "no runs in %s\n", dir)
 		return exitOK
-	}
-	if *limit > 0 && len(entries) > *limit {
-		entries = entries[len(entries)-*limit:]
 	}
 	_, _ = fmt.Fprintf(stdout, "%-40s %-10s %-6s %-14s %-8s %s\n", "RUN ID", "RESULT", "PR", "WORKFLOW", "TIME", "REASON")
 	for _, e := range entries {

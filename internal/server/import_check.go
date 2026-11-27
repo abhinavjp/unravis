@@ -51,6 +51,13 @@ const (
 	verdictNeedsZone     = "needs-zone"
 	verdictNotSupported  = "not-supported"
 	verdictNoComputer    = "no-computer"
+	verdictNeedsYear     = "needs-year"
+)
+
+const (
+	// reasonNeedsYear is the failure reason of a log whose lines carry no year and the owner gave none.
+	reasonNeedsYear = "needs-year"
+	needsYearText   = "The log does not say which year it was written in. Send the year with the file."
 )
 
 // checkFileVerdict is the answer for one file. Tied holds two or more kinds when
@@ -64,7 +71,10 @@ type checkFileVerdict struct {
 	Tied       []string `json:"tied"`
 	ServerName string   `json:"serverName"`
 	NeedsZone  bool     `json:"needsZone"`
-	Reason     string   `json:"reason"`
+	// NeedsYear says the log's lines carry no year, so the page asks the owner for it. It is set beside
+	// any verdict that names a fix of another kind (the computer first), because the year does not wait for the host.
+	NeedsYear bool   `json:"needsYear"`
+	Reason    string `json:"reason"`
 	// Rows, Emitted and Rejected are set only when the file was read and counted
 	// (ready, or needs-zone). Every other verdict leaves them out, so a missing count
 	// is never read as zero.
@@ -194,7 +204,7 @@ func (h *handler) postImportCheck(w http.ResponseWriter, r *http.Request, raw st
 				writeCaseFailure(w, http.StatusRequestEntityTooLarge, "too-many-files", "Too many files to check at once.")
 				return
 			}
-			item, ok := h.spoolCheckFile(w, part, key, limit)
+			item, ok := h.spoolCheckFile(job.ctx, w, part, key, limit)
 			if !ok {
 				return
 			}
@@ -234,7 +244,7 @@ func writeCheckFormError(w http.ResponseWriter, err error) {
 
 // spoolCheckFile takes one file part into an encrypted spool. On a refusal it
 // has answered and holds nothing.
-func (h *handler) spoolCheckFile(w http.ResponseWriter, part *multipart.Part, key string, limit int64) (checkItem, bool) {
+func (h *handler) spoolCheckFile(ctx context.Context, w http.ResponseWriter, part *multipart.Part, key string, limit int64) (checkItem, bool) {
 	name := baseName(part.FileName())
 	spool, err := newSpool(h.jobs.spoolDir)
 	if err != nil {
@@ -242,7 +252,7 @@ func (h *handler) spoolCheckFile(w http.ResponseWriter, part *multipart.Part, ke
 		return checkItem{}, false
 	}
 	tracked := &trackedReader{r: io.LimitReader(part, limit+1)}
-	size, err := spool.fill(tracked)
+	size, err := spool.fill(ctx, tracked)
 	if err != nil {
 		spool.close()
 		h.writeImportError(w, err, tracked, casestore.ImportResult{})
@@ -350,6 +360,8 @@ func (h *handler) checkOne(ctx context.Context, c casestore.Case, id casestore.C
 			v.Importer = imp.Name()
 		}
 	}
+	// A log with no year in its lines needs the year whatever else is missing, so it is asked for now, not after the computer is named.
+	v.NeedsYear = h.needsYear(it, imp)
 	switch {
 	case reason == importer.ReasonUnknownHost:
 		var observed []string
@@ -365,8 +377,29 @@ func (h *handler) checkOne(ctx context.Context, c casestore.Case, id casestore.C
 	case reason == importer.ReasonTZUnlabelled:
 		v.Verdict, v.NeedsZone = verdictNeedsZone, true
 		return v
+	case f.Reason == reasonNeedsYear:
+		v.Verdict, v.NeedsYear = verdictNeedsYear, true
+		return v
 	}
 	return notSupported(f.Reason)
+}
+
+// needsYear asks an importer that can say so whether the head of the file shows lines with no year.
+func (h *handler) needsYear(it *checkItem, imp importer.Importer) bool {
+	prober, ok := imp.(importer.YearProber)
+	if !ok {
+		return false
+	}
+	body, err := it.spool.reader()
+	if err != nil {
+		return false
+	}
+	head := make([]byte, importer.HeadSize)
+	n, err := io.ReadFull(body, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return false
+	}
+	return prober.NeedsYear(head[:n])
 }
 
 // needsZone says a file written in a host's local clock names a host the list

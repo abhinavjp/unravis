@@ -22,7 +22,10 @@ export interface SeriesDump { name: string; size: number; mtime: string; target?
 export interface SeriesAnswer {
   start: string; end: string; bucketSeconds: number; intervalSeconds: number; samples: number; first?: string; last?: string;
   lines: SeriesLine[]; groups: SeriesGroupCover[]; processes: SeriesProc[]; eventIds: SeriesEventId[]; dumps: SeriesDump[];
-  gaps: SeriesGap[]; markers: SeriesMarker[]; truncated?: boolean; state?: { state: string; label: string; detail: string; tone: string };
+  gaps: SeriesGap[];
+  /** Runs of samples whose reading of the PC itself (CPU, memory, disk, network) was slow: those lines break across them, the other lines carry on. Absent from an older server. */
+  hostBreaks?: SeriesGap[];
+  markers: SeriesMarker[]; truncated?: boolean; state?: { state: string; label: string; detail: string; tone: string };
   read: { files: number; samples: number; torn: number; dropped: string[] | null; missing: string[] | null };
   /** What the SQL service's part of the answer rests on. Absent from an older server. */
   sql?: SeriesSql;
@@ -47,6 +50,8 @@ function readSql(v: unknown): SeriesSql | undefined {
 }
 
 /** The answer when it has the documented shape, else null (the view then says the answer could not be read, never draws a blank chart). */
+const isGap = (g: unknown): g is SeriesGap => isObj(g) && typeof g.from === 'string' && typeof g.to === 'string' && typeof g.seconds === 'number';
+
 export function readSeriesAnswer(v: unknown): SeriesAnswer | null {
   if (!isObj(v)) return null;
   if (typeof v.start !== 'string' || typeof v.end !== 'string' || typeof v.bucketSeconds !== 'number' || typeof v.samples !== 'number') return null;
@@ -65,7 +70,8 @@ export function readSeriesAnswer(v: unknown): SeriesAnswer | null {
     eventIds: (isArr(v.eventIds) ? v.eventIds : []).filter((e): e is SeriesEventId => isObj(e) && [e.channel, e.eventId, e.level, e.count].every((n) => typeof n === 'number' && Number.isFinite(n))),
     dumps: (isArr(v.dumps) ? v.dumps : []).filter((d): d is SeriesDump => isObj(d) && typeof d.name === 'string' && typeof d.mtime === 'string' && typeof d.size === 'number'),
     state: isObj(v.state) && typeof v.state.label === 'string' ? { state: typeof v.state.state === 'string' ? v.state.state : '', label: v.state.label, detail: typeof v.state.detail === 'string' ? v.state.detail : '', tone: typeof v.state.tone === 'string' ? v.state.tone : '' } : undefined,
-    gaps: (v.gaps as unknown[]).filter((g): g is SeriesGap => isObj(g) && typeof g.from === 'string' && typeof g.to === 'string' && typeof g.seconds === 'number'),
+    gaps: (v.gaps as unknown[]).filter(isGap),
+    hostBreaks: (isArr(v.hostBreaks) ? v.hostBreaks : []).filter(isGap),
     markers: (isArr(v.markers) ? v.markers : []).filter((m): m is SeriesMarker => isObj(m) && typeof m.t === 'string' && typeof m.kind === 'string'), truncated: v.truncated === true,
     sql: readSql(v.sql),
     read: {
@@ -315,6 +321,17 @@ export function chartData(pts: SeriesPoint[], gaps: Array<{ fromMs: number; toMs
 /** The server's gaps as millisecond ranges, for chartData. A gap with a time that does not parse is left out. */
 export function gapRanges(gaps: SeriesGap[]): Array<{ fromMs: number; toMs: number }> {
   return gaps.map((g) => ({ fromMs: Date.parse(g.from), toMs: Date.parse(g.to) })).filter((g) => Number.isFinite(g.fromMs) && Number.isFinite(g.toMs) && g.toMs > g.fromMs);
+}
+
+/**
+ * Whether a line comes from the reading of the PC itself (CPU, memory, disk queue and time, network). Those lines are left empty when that reading
+ * was slow, so they break there; counter-group lines (they have a dot in the key) and the recordings-drive free space do not.
+ */
+export const isHostLine = (key: string): boolean => !key.includes('.') && key !== 'diskFreePct';
+
+/** The gaps that apply to one line: the recorder's own gaps, plus the slow-host runs for a host line. A slow host read is a gap, never a 0. */
+export function gapsForLine(a: Pick<SeriesAnswer, 'gaps' | 'hostBreaks'>, key: string): Array<{ fromMs: number; toMs: number }> {
+  return gapRanges(isHostLine(key) ? [...a.gaps, ...(a.hostBreaks ?? [])] : a.gaps);
 }
 
 /** Last, average, lowest and highest over the shown points (Perfmon's bar under the chart). The average weighs every bucket the same. */

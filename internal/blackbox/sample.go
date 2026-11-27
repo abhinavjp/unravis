@@ -59,8 +59,47 @@ type Sample struct {
 	VM          *VMGroup          `json:"vm,omitempty"`
 	Dumps       *DumpsGroup       `json:"dumps,omitempty"`
 	SQLLog      *SQLLogGroup      `json:"sqlLog,omitempty"`
+	// ExtraCounters holds the counters the owner added by path (settings "counters.extra").
+	ExtraCounters *ExtraCountersGroup `json:"extraCounters,omitempty"`
+	// Paths is where the logs and settings files are (path, size, time; never content), once an hour.
+	Paths *PathsGroup `json:"paths,omitempty"`
+	// Facts is the server facts block (versions, services, certificate end dates), once an hour.
+	Facts *FactsGroup `json:"facts,omitempty"`
+	// Redis is the Redis on this PC: server figures, slow command names, latency spikes, client counts (B4).
+	Redis *RedisGroup `json:"redis,omitempty"`
 
 	Missing []string `json:"missing,omitempty"`
+}
+
+// MissingHostSlow and MissingHostBusy are the Missing words for a round whose host read
+// (CPU, memory, disk, network, processes) did not finish in its budget, or was still
+// running from an earlier round. The sample then holds only the group readings.
+const (
+	MissingHostSlow = "host: slow"
+	MissingHostBusy = "host: busy"
+)
+
+// hostBusyWord says the host read of this sample was skipped because an earlier
+// read was still running (not because this one ran over its budget).
+func hostBusyWord(s Sample) bool {
+	for _, m := range s.Missing {
+		if m == MissingHostBusy {
+			return true
+		}
+	}
+	return false
+}
+
+// HostSkipped says the host read of this sample did not come in time. Every host
+// reading of such a sample is absent, which is not the same as 0: a reader draws it
+// as a gap in the host lines, never as 0 percent CPU.
+func (s Sample) HostSkipped() bool {
+	for _, m := range s.Missing {
+		if m == MissingHostSlow || m == MissingHostBusy {
+			return true
+		}
+	}
+	return false
 }
 
 // ProcRow is one process in a sample. CPUSec is cumulative so a reader can

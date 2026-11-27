@@ -12,6 +12,10 @@ var (
 	ErrQuarantine         = errors.New("file quarantined")
 	ErrTimezoneUnlabelled = errors.New("time zone not stated")
 	ErrUnknownHost        = errors.New("unknown host")
+	// ErrYearNotStated is joined to the refusal of a log whose lines carry no
+	// year (the redis log writes day and month only) when the owner gave none.
+	// The server turns it into a "needs-year" answer, so the page asks for it.
+	ErrYearNotStated = errors.New("log year not stated")
 	// ErrOutOfWindow ends an import whose events all lie outside the requested
 	// time window. Nothing is stored, so a later pull with a wider window can
 	// still read the same bytes.

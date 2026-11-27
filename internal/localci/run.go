@@ -28,15 +28,17 @@ type RunOptions struct {
 	// files from under another job's tests. name is a short tag unique within the run. cleanup always runs.
 	JobTree  func(ctx context.Context, name string) (path string, cleanup func(), err error)
 	StateDir string // per-run folder: logs, run.json, artifacts
-	GitHub   map[string]any
-	Inputs   map[string]string
-	Vars     map[string]string
-	Env      []string // base process environment (KEY=VALUE), already scrubbed by the caller
-	Only     []string // run only these job ids; empty => all
-	Slots    int      // max jobs at once (default 2)
-	Redact   func(string) string
-	Log      io.Writer
-	Now      func() time.Time
+	// LockDir, when set, makes an "exclusive" resource hold across processes (every queue item runs in its own process) by a lock file in it.
+	LockDir string
+	GitHub  map[string]any
+	Inputs  map[string]string
+	Vars    map[string]string
+	Env     []string // base process environment (KEY=VALUE), already scrubbed by the caller
+	Only    []string // run only these job ids; empty => all
+	Slots   int      // max jobs at once (default 2)
+	Redact  func(string) string
+	Log     io.Writer
+	Now     func() time.Time
 	// DryRun resolves and prints the plan and runs nothing.
 	DryRun bool
 	// Progress, when set, is told when the plan is known and when each job instance starts and ends. Calls are
@@ -603,7 +605,7 @@ func (r *runState) runInstance(ctx context.Context, job *Job, combo map[string]a
 		return fin("cancelled", "cancelled before it started")
 	}
 	if ov.Exclusive != "" {
-		release, err := acquireExclusive(ctx, ov.Exclusive, func() { r.logf("[%s] waiting for the exclusive resource %q", key, ov.Exclusive) })
+		release, err := acquireExclusive(ctx, ov.Exclusive, r.o.LockDir, func() { r.logf("[%s] waiting for the exclusive resource %q", key, ov.Exclusive) })
 		if err != nil {
 			return fin("cancelled", "cancelled before it started")
 		}
@@ -836,6 +838,18 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 		finish()
 		return
 	}
+	// A step that names an exclusive resource in local-ci.yml waits for it first and holds it for the step only.
+	if res := r.o.Config.Override(r.file, in.job.ID).StepExclusive[st.Name]; res != "" {
+		release, lerr := acquireExclusive(ctx, res, r.o.LockDir, func() {
+			r.logf("[%s] step %d/%d %s: waiting for the exclusive resource %q", in.key, n, total, name, res)
+		})
+		if lerr != nil {
+			stepFail("cancelled while waiting for the exclusive resource " + res)
+			finish()
+			return
+		}
+		defer release()
+	}
 	// step environment and the other interpolated fields
 	stepEnv, err := interpEnv(st.Env, ec)
 	if extra := r.o.Config.Override(r.file, in.job.ID).StepEnv[st.Name]; len(extra) > 0 && err == nil {
@@ -916,6 +930,10 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 
 	var outputs map[string]string
 	var runErr error
+	var watch *stepWatch
+	if line := r.o.Config.Override(r.file, in.job.ID).StepWatch[st.Name]; line != "" {
+		watch = in.startStepWatch(runCtx, line, n, env, func(m string) { emit("[ci] " + m) })
+	}
 	if st.Uses != "" {
 		with, werr := interpEnv(st.With, ec)
 		if werr != nil {
@@ -929,6 +947,14 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 		runErr = in.runScript(stepCtx, st, ec, n, env, lw)
 	}
 	lw.Flush()
+	if seen := watch.stop(); len(seen) > 0 {
+		for _, l := range seen {
+			emit("[ci] watcher: " + l)
+		}
+		if runErr == nil {
+			runErr = fmt.Errorf("the step watcher saw %d problem(s), first: %s", len(seen), seen[0])
+		}
+	}
 	_ = lf.Close()
 	// special files
 	if perr := in.applyFiles(files, st, &outputs, emit); perr != nil && runErr == nil {

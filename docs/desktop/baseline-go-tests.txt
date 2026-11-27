@@ -206,6 +206,7 @@ api-audit-explorer/internal/blackbox.TestSaveAndLoadRoundTripWithBackup
 api-audit-explorer/internal/blackbox.TestSaveConfigRefusesInvalidAndKeepsOldFile
 api-audit-explorer/internal/blackbox.TestScn1L8PackReadmeInstallCommandHasNoName
 api-audit-explorer/internal/blackbox.TestSelfUsageReadsThisProcess
+api-audit-explorer/internal/blackbox.TestSlowHostReadEndToEndThroughTheRecorder
 api-audit-explorer/internal/blackbox.TestStartStopApply
 api-audit-explorer/internal/blackbox.TestStartStopApplyUseTheRightCommands
 api-audit-explorer/internal/blackbox.TestStateFromARealRecordingFolder
@@ -252,6 +253,7 @@ api-audit-explorer/internal/server.TestBlackboxUpdateIsOneChangeAtATime
 api-audit-explorer/internal/server.TestBlackboxWithoutAHelperOrWithoutTheHub
 api-audit-explorer/internal/server.TestScn1L8RevealKeyKeeperAnswers
 api-audit-explorer/internal/server.TestScn1L8StoppedBlackboxIsPartlyReady
+api-audit-explorer/internal/server.TestStatusWarnsWhenMostNewSamplesLostTheirHostRead
 api-audit-explorer/internal/setup.TestAFailedUpgradeLeavesNoKeptVersion
 api-audit-explorer/internal/setup.TestASetupThatCannotBeRolledBackToIsNotKept
 api-audit-explorer/internal/setup.TestAnAliasIntoASystemFolderIsRefused

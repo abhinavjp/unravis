@@ -109,6 +109,12 @@ func BuildGroups(d GroupDeps) []Group {
 	}
 	var groups []Group
 	for _, name := range names {
+		// "collectors" can switch a source off. A source that must run (the recorder's own health picture) never does:
+		// Validate refuses to switch it off, and a Config that skipped Validate is still held to that here.
+		info, known := CollectorOfGroup(name)
+		if known && !info.Always && !d.Config.CollectorOn(info.ID) {
+			continue
+		}
 		gd := d
 		if tracker != nil {
 			groupName := name
@@ -136,6 +142,9 @@ func BuildGroups(d GroupDeps) []Group {
 			}
 		default:
 			built = g
+		}
+		if base := time.Duration(d.Config.IntervalSeconds) * time.Second; known && !info.Always && d.Config.CollectorEvery(info.ID) > base {
+			built = &everyGroup{inner: built, every: d.Config.CollectorEvery(info.ID), slack: base / 2}
 		}
 		if tracker != nil {
 			built = &trackedGroup{name: name, tracker: tracker, inner: built}
@@ -363,6 +372,14 @@ func applyGroup(s *Sample, name string, v any) {
 		assignIf(&s.Dumps, v)
 	case "sqlLog":
 		assignIf(&s.SQLLog, v)
+	case "extraCounters":
+		assignIf(&s.ExtraCounters, v)
+	case "paths":
+		assignIf(&s.Paths, v)
+	case "facts":
+		assignIf(&s.Facts, v)
+	case "redis":
+		assignIf(&s.Redis, v)
 	}
 }
 
@@ -458,7 +475,24 @@ type groupCollector struct {
 	// the diagnostics log. Reused every pass; tick loop only.
 	gt        []groupTime
 	groupsDur time.Duration // all groups together, this pass
+
+	// The adaptive host budget (RV-BB-1). hostStep is how many times the budget has
+	// been doubled (0, 1 or 2); slowRun counts slow or busy host reads in a row, and
+	// fastRun counts host reads in a row that took under half the current budget.
+	// Tick loop only.
+	hostStep int
+	slowRun  int
+	fastRun  int
 }
+
+// The host budget goes up one step after hostStepUpAfter slow rounds in a row and
+// back down one step after hostStepDownAfter quick rounds in a row, so a PC that is
+// slow for a while is read with more patience, and one that recovers goes back.
+const (
+	hostMaxStep       = 2 // the budget is at most 4 times hostBudget
+	hostStepUpAfter   = 3
+	hostStepDownAfter = 20
+)
 
 // GroupsTime is the total time all counter groups took in the last pass.
 func (c *groupCollector) GroupsTime() time.Duration { return c.groupsDur }
@@ -468,6 +502,48 @@ func (c *groupCollector) GroupsTime() time.Duration { return c.groupsDur }
 // budget; on a loaded or scanned PC a process list over a second threw away the
 // whole sample, round after round, with no visible reason.
 var hostBudget = 2 * time.Second
+
+// hostLimit is the host budget of this round: hostBudget doubled once per step,
+// but never more than half the sampling interval (so the round still fits), and
+// never less than hostBudget itself.
+func (c *groupCollector) hostLimit() time.Duration {
+	base := hostBudget
+	limit := base << uint(c.hostStep)
+	if c.budget != nil {
+		if iv := c.budget.EffectiveInterval(); iv > 0 {
+			if half := time.Duration(iv) * time.Second / 2; limit > half {
+				limit = half
+			}
+		}
+	}
+	if limit < base {
+		limit = base
+	}
+	return limit
+}
+
+// noteHost feeds the adaptive budget with the outcome of one host read: slow is a
+// timeout or a busy slot, quick is a read that finished in under half its budget.
+func (c *groupCollector) noteHost(slow, quick bool) {
+	switch {
+	case slow:
+		c.fastRun = 0
+		c.slowRun++
+		if c.slowRun >= hostStepUpAfter && c.hostStep < hostMaxStep {
+			c.hostStep++
+			c.slowRun = 0
+		}
+	case quick:
+		c.slowRun = 0
+		c.fastRun++
+		if c.fastRun >= hostStepDownAfter && c.hostStep > 0 {
+			c.hostStep--
+			c.fastRun = 0
+		}
+	default:
+		c.slowRun, c.fastRun = 0, 0
+	}
+}
 
 // GroupTimings reports the slow or failed groups of the last pass. The slice is
 // reused: copy it to keep it.
@@ -490,20 +566,32 @@ func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 	// The host read used to sit outside every per-group timer. It is bounded now
 	// too; a stalled process enumeration is a missing sample, not a frozen service.
 	c.gt, c.groupsDur, c.hostDur, c.slowName, c.slowDur = c.gt[:0], 0, 0, "", 0
-	if !c.innerW.idle() {
-		return Sample{}, errHostBusy
-	}
+	// A host read that is slow or still running from an earlier round no longer
+	// costs the whole sample (RV-BB-1): the groups are still read, the host fields
+	// stay absent (never 0), and Missing says why. The round is dropped only when
+	// no group gave a reading either.
+	var s Sample
+	var hostErr error
 	hostStart := time.Now()
-	hv, herr, timedOut := c.innerW.run(func() (any, error) { return c.inner.Collect(now) }, hostBudget)
-	c.hostDur, c.slowName, c.slowDur = time.Since(hostStart), "", 0
-	c.gt = c.gt[:0]
-	if timedOut {
-		return Sample{}, errHostSlow
+	limit := c.hostLimit()
+	if !c.innerW.idle() {
+		hostErr = errHostBusy
+		c.noteHost(true, false)
+	} else {
+		hv, herr, timedOut := c.innerW.run(func() (any, error) { return c.inner.Collect(now) }, limit)
+		c.hostDur = time.Since(hostStart)
+		switch {
+		case timedOut:
+			hostErr = errHostSlow
+			c.noteHost(true, false)
+		case herr != nil:
+			c.noteHost(false, false)
+			return Sample{}, herr
+		default:
+			c.noteHost(false, c.hostDur < limit/2)
+			s, _ = hv.(Sample)
+		}
 	}
-	if herr != nil {
-		return Sample{}, herr
-	}
-	s, _ := hv.(Sample)
 
 	var dt float64
 	if !c.last.IsZero() {
@@ -512,6 +600,7 @@ func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 	c.last = now
 	groupsStart := time.Now()
 	defer func() { c.groupsDur = time.Since(groupsStart) }()
+	groupRead := false
 	for i, g := range c.groups {
 		name := g.Name()
 		if c.budget.GroupSkipped(name, g.Optional()) {
@@ -525,7 +614,19 @@ func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 		// so the tick's start is already behind the real counter sample. Hand each
 		// group the tick time moved on by the real time spent, so the process start
 		// derived from Elapsed Time stays inside pdhCreationSlack on a busy server.
-		c.runGroup(i, g, now.Add(time.Since(hostStart)), dt, &s)
+		if c.runGroup(i, g, now.Add(time.Since(hostStart)), dt, &s) {
+			groupRead = true
+		}
+	}
+	if hostErr != nil {
+		if !groupRead {
+			return Sample{}, hostErr
+		}
+		word := MissingHostSlow
+		if errors.Is(hostErr, errHostBusy) {
+			word = MissingHostBusy
+		}
+		s.Missing = append([]string{word}, s.Missing...)
 	}
 	s.Missing = dedupMissing(s.Missing)
 	return s, nil
@@ -533,21 +634,22 @@ func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 
 // runGroup runs one group under its deadline and applies its result. Every
 // outcome that is not a reading is named in Missing, so an absent field always
-// has a reason and the group's identity is never lost in a shared token.
-func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *Sample) {
+// has a reason and the group's identity is never lost in a shared token. It says
+// whether the group gave a reading.
+func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *Sample) bool {
 	name := g.Name()
 	w := &c.slots[i]
 	if !w.idle() {
 		if dormantNow(g) {
 			// A re-check of a not-applicable group is still running: say nothing.
-			return
+			return false
 		}
 		// The previous tick is still inside this provider. Do not start another
 		// worker and do not re-mark it slow: re-marking every cycle would pin the
 		// group forever (the livelock this budget already had once).
 		s.Missing = append(s.Missing, name+": busy")
 		c.gt = append(c.gt, groupTime{Name: name, Outcome: "busy"})
-		return
+		return false
 	}
 	start := time.Now()
 	v, err, timedOut := w.run(func() (any, error) { return g.Collect(now, dt) }, budgetMaxGroup)
@@ -555,19 +657,19 @@ func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *
 		if dormantNow(g) {
 			// The re-check of a not-applicable group ran long. The slot stays busy
 			// until it ends; nothing is named, timed or counted against the budget.
-			return
+			return false
 		}
 		c.budget.GroupTiming(name, budgetMaxGroup+time.Millisecond, g.Optional())
 		s.Missing = append(s.Missing, name+": slow")
 		// A group that ran out of time is the slowest one, whatever else ran.
 		c.slowName, c.slowDur = name, budgetMaxGroup
 		c.gt = append(c.gt, groupTime{Name: name, Dur: budgetMaxGroup, Outcome: "timeout"})
-		return
+		return false
 	}
 	if errors.Is(err, errNotApplicable) {
 		// The group does not apply to this host: leave no trace (no Missing, no
 		// timing, no budget count). The worker slot was already freed by run.
-		return
+		return false
 	}
 	took := time.Since(start)
 	if took > c.slowDur {
@@ -581,12 +683,13 @@ func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *
 			out = "error"
 		}
 		c.gt = append(c.gt, groupTime{Name: name, Dur: took, Outcome: out})
-		return
+		return false
 	}
 	if took >= diagGroupMin {
 		c.gt = append(c.gt, groupTime{Name: name, Dur: took, Outcome: "ok"})
 	}
 	applyGroup(s, name, v)
+	return true
 }
 
 // isNilPayload catches a typed nil in an interface, which != nil misses. Such a

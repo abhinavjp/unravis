@@ -54,6 +54,8 @@ type Store struct {
 	// removeFile is os.Remove; tests make it fail to stand for a file a
 	// reader holds open (which Windows will not delete).
 	removeFile func(string) error
+	// sleep is time.Sleep; tests replace it to see when the store pauses.
+	sleep func(time.Duration)
 
 	firstOfRun bool
 	priorClean bool
@@ -336,6 +338,14 @@ func (s *Store) recomputeCoverage() {
 }
 
 func (s *Store) event(t time.Time, kind, detail string) {
+	// The pause is kept as its own field, set and cleared with the event that
+	// raises it, so the 200 event window cannot lose it (RV-BB-9).
+	switch kind {
+	case EventPausedDiskLow:
+		s.m.PausedDiskLow, s.m.PausedSince = true, t.UTC()
+	case EventResumed:
+		s.m.PausedDiskLow, s.m.PausedSince = false, time.Time{}
+	}
 	s.m.Events = append(s.m.Events, Event{T: t.UTC(), Kind: kind, Detail: detail})
 	if len(s.m.Events) > maxEvents {
 		s.m.Events = s.m.Events[len(s.m.Events)-maxEvents:]
@@ -348,6 +358,19 @@ func (s *Store) Event(kind, detail string) {
 	defer s.mu.Unlock()
 	s.event(s.now(), kind, detail)
 	_ = s.writeManifestLocked(false)
+}
+
+// EventDurable is Event that waits for the manifest to reach the disk and says
+// when it did not. Event ignores a failed write (the next write carries the event
+// along); a caller that must know the event is stored before it does something
+// it cannot take back (RV-BB-10: marking a crash file as reported) uses this one.
+// After an error the event is still in memory and is stored by the next write,
+// so a retry can show it twice, never not at all.
+func (s *Store) EventDurable(kind, detail string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.event(s.now(), kind, detail)
+	return s.writeManifestLocked(true)
 }
 
 // SetInterval sets the interval in seconds that gap detection judges samples
@@ -591,10 +614,23 @@ func (s *Store) openFileLocked(name string) error {
 	return nil
 }
 
+// manifestRetryPause is the one pause before the single retry of a manifest
+// write that must land.
+const manifestRetryPause = 20 * time.Millisecond
+
+func (s *Store) pause(d time.Duration) {
+	if s.sleep != nil {
+		s.sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
 // writeManifestLocked rewrites the manifest through a temporary file and a
 // rename. A remote reader holding the file open can make the rename fail on
-// Windows; that is retried briefly and then left for the next write, so a reader
-// never stops the recording. sync forces the data to disk first.
+// Windows; a write on the way is left for the next sample and a write that must
+// land is retried once, so a reader never stops the recording. sync forces the
+// data to disk first.
 func (s *Store) writeManifestLocked(sync bool) error {
 	s.m.normalize()
 	s.m.Updated = s.now().UTC()
@@ -605,14 +641,25 @@ func (s *Store) writeManifestLocked(sync bool) error {
 		return err
 	}
 	path := filepath.Join(s.dir, ManifestName)
+	// The store lock is held here, so a pause stalls every reader (status
+	// server, snapshot). A write made on the way (sync false) tries once: the
+	// next sample tries again, as lastWrite is not moved by a failure. A write
+	// that must land (start, stop, an event that cannot be lost) retries once
+	// after a short pause, and never pauses after the last try.
+	attempts := 1
+	if sync {
+		attempts = 2
+	}
 	var werr error
-	for i := 0; i < 3; i++ {
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			s.pause(manifestRetryPause)
+		}
 		if werr = writeFileAtomicSync(path, data, 0o644, sync); werr == nil {
 			s.manifestOK = true
 			s.lastWrite = s.now()
 			return nil
 		}
-		time.Sleep(20 * time.Millisecond)
 	}
 	s.manifestOK = false
 	if sync {
@@ -761,6 +808,13 @@ func (s *Store) CurrentFile() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.curN
+}
+
+// PausedDiskLow says whether the manifest holds a pause for low disk space.
+func (s *Store) PausedDiskLow() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.m.PausedDiskLow
 }
 
 // Dir is the recordings folder.

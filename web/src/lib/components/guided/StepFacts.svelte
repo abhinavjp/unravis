@@ -74,7 +74,7 @@
     {#if read}
       <p class="note">{T.readNote(fmtCount(read.requests), fmtCount(read.iisRows))}</p>
       {#if gap}<p class="note">{T.readGap(gap.total, gap.used, gap.parts)}</p>{/if}
-      {#if read.truncated}<p class="warn" role="alert">{T.truncated}</p>{/if}
+      {#if read.truncated}<p class="warn" role="alert">{T.readCut}</p>{/if}
       {#each read.warnings as warning (warning)}<p class="note">{warning}</p>{/each}
     {/if}
   {:else if step === 2}

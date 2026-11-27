@@ -83,6 +83,8 @@ export interface CaseInfo {
   archive?: ArchiveInfo;
   /** How far a running archive has got, on an Archiving row. */
   percent?: number;
+  /** True while an old case builds its helper indexes in the background (its first charts are slow until it ends). Absent when not. */
+  preparing?: boolean;
 }
 
 /** What happened to a case: made, closed, reopened, archived, restored, freed (A8). `detail` is a short fact such as a file name or a code, never a key or a path. */
@@ -293,6 +295,7 @@ export function toCase(raw: Partial<CaseInfo>): CaseInfo {
   const archive = parseArchive(raw.archive);
   if (archive) out.archive = archive;
   if (typeof raw.percent === 'number' && Number.isFinite(raw.percent)) out.percent = Math.max(0, Math.min(100, Math.floor(raw.percent)));
+  if (raw.preparing === true) out.preparing = true;
   return out;
 }
 
@@ -550,7 +553,7 @@ export interface ImportJob {
 /* ------------------------------------------------------------------ check (no import kept) */
 // The check reads each file the way a preview does and says what would happen to it. Nothing is kept.
 
-export type CheckVerdict = 'ready' | 'needs-computer' | 'needs-zone' | 'not-supported' | 'no-computer';
+export type CheckVerdict = 'ready' | 'needs-computer' | 'needs-zone' | 'needs-year' | 'not-supported' | 'no-computer';
 
 /** The verdict for one file. `key` is the client's id for the file; `serverName` is the computer name the file names (needs-computer). */
 export interface CheckFileVerdict {
@@ -564,6 +567,8 @@ export interface CheckFileVerdict {
   tied: string[];
   serverName: string;
   needsZone: boolean;
+  /** The log lines carry no year, so the person must give one (Redis). Can be set beside a missing computer. */
+  needsYear: boolean;
   /** The not-supported reason code, or ''. */
   reason: string;
   /** Row counts exist only when the file was read and counted (ready, needs-zone). Absent means not counted, never zero. */
@@ -577,7 +582,7 @@ export interface CheckReport {
   checkedAt: string;
 }
 
-const CHECK_VERDICTS: readonly string[] = ['ready', 'needs-computer', 'needs-zone', 'not-supported', 'no-computer'];
+const CHECK_VERDICTS: readonly string[] = ['ready', 'needs-computer', 'needs-zone', 'needs-year', 'not-supported', 'no-computer'];
 const isCheckVerdict = (value: unknown): value is CheckVerdict => typeof value === 'string' && CHECK_VERDICTS.includes(value);
 
 /** A count that the server sent as a number; nothing at all when it was left out, so "not counted" never reads as zero. */
@@ -588,7 +593,7 @@ function toCheckFile(raw: Record<string, unknown> | null): CheckFileVerdict | nu
   if (!raw || typeof raw.key !== 'string' || typeof raw.name !== 'string' || !isCheckVerdict(raw.verdict)) return null;
   return {
     key: raw.key, name: raw.name, size: asNumber(raw.size), verdict: raw.verdict, importer: asString(raw.importer), tied: asStrings(raw.tied),
-    serverName: asString(raw.serverName), needsZone: raw.needsZone === true, reason: asString(raw.reason),
+    serverName: asString(raw.serverName), needsZone: raw.needsZone === true, needsYear: raw.needsYear === true, reason: asString(raw.reason),
     ...optionalCount('rows', raw.rows), ...optionalCount('emitted', raw.emitted), ...optionalCount('rejected', raw.rejected)
   };
 }
@@ -707,6 +712,16 @@ export async function cancelImportJob(caseId: string, jobId: string, signal?: Ab
 }
 
 export const JOB_POLL_MS = 1000;
+/** How often a case that says it is preparing is read again, to see when it stops. */
+export const PREPARING_POLL_MS = 2000;
+/** What the page does after a read of a preparing case fails: say the case is gone, go to its key page, stop asking, or ask again at the next turn. */
+export type PreparingNext = 'again' | 'stop' | 'gone' | 'locked';
+export function preparingAfterError(error: unknown, failures: number): PreparingNext {
+  if (isCaseGone(error)) return 'gone';
+  if (isCaseLocked(error)) return 'locked';
+  if (error instanceof CaseApiError && error.reason === 'untrusted-case') return 'stop';
+  return failures >= JOB_MAX_UNREACHABLE ? 'stop' : 'again';
+}
 /** A few lost answers in a row are tolerated (the server may be busy); more than this and the wait gives up. */
 export const JOB_MAX_UNREACHABLE = 5;
 

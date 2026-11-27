@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/update"
+	"api-audit-explorer/internal/version"
 )
 
 // Silent updates (docs/auto-updater/SILENT-UPDATE.md). While nobody is using Unravis it downloads a verified update, applies it
@@ -50,6 +51,7 @@ type autoState struct {
 	mu     sync.Mutex
 	tries  map[string]int // version -> automatic applies tried; also kept on disk, so a restart does not forget it
 	loaded bool
+	loops  []chan struct{} // one per StartAuto; each closes when its loop has ended
 	// failedByAuto is set when an automatic apply was launched; only then may autoStep turn a launch failure back into "ready"
 	// (a failure of the person's own Apply now stays on screen with its reason).
 	failedByAuto bool
@@ -64,6 +66,11 @@ type autoState struct {
 	// fileOKFor and fileOKAt remember that the downloaded file of that version was found intact (see fileStillThere).
 	fileOKFor string
 	fileOKAt  time.Time
+	// A launch that never got a result (see expireStaleLaunch) makes the automatic apply wait the same 5 minutes, 15, 60, 6 hours
+	// before it starts that version again. The try itself was already counted (bumpAutoTries), so autoMaxTries still ends it.
+	lnFor   string
+	lnFails int
+	lnNext  time.Time
 }
 
 func dlBackoff(fails int) time.Duration {
@@ -153,6 +160,61 @@ func (u *Updater) touchPower() {
 	}
 }
 
+// autoCloseWait is how long Close waits for the quiet-time loop to end (RV-SRV-3). A step that is stuck in a slow call is left
+// behind after this; the program is ending either way.
+var autoCloseWait = 3 * time.Second
+
+// StartAuto runs RunAuto in the background and remembers it, so Close can wait for it. The loop is registered before this returns:
+// a Close that follows at once still sees it.
+func (u *Updater) StartAuto(ctx context.Context) {
+	done := make(chan struct{})
+	u.auto.mu.Lock()
+	u.auto.loops = append(u.auto.loops, done)
+	u.auto.mu.Unlock()
+	go func() {
+		defer close(done)
+		u.RunAuto(ctx)
+	}()
+}
+
+// waitAuto waits for the loops StartAuto began, for at most d in all (the way fileJobs.shutdown waits). It forgets the loops it waited
+// for, so a second call does not wait for them again.
+func (u *Updater) waitAuto(d time.Duration) {
+	u.auto.mu.Lock()
+	loops := append([]chan struct{}(nil), u.auto.loops...)
+	u.auto.mu.Unlock()
+	defer u.forgetAuto(loops)
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for _, done := range loops {
+		select {
+		case <-done:
+		case <-timer.C:
+			return
+		}
+	}
+}
+
+// forgetAuto drops the given loops from the list, keeping any that StartAuto added since.
+func (u *Updater) forgetAuto(gone []chan struct{}) {
+	u.auto.mu.Lock()
+	defer u.auto.mu.Unlock()
+	kept := u.auto.loops[:0]
+	for _, l := range u.auto.loops {
+		waited := false
+		for _, g := range gone {
+			if l == g {
+				waited = true
+				break
+			}
+		}
+		if !waited {
+			kept = append(kept, l)
+		}
+	}
+	u.auto.loops = kept
+}
+
 // RunAuto is the quiet-time loop. It stops when ctx ends. It does nothing for a development build, while updates are off, or when
 // automatic apply is switched off.
 func (u *Updater) RunAuto(ctx context.Context) {
@@ -173,6 +235,7 @@ func (u *Updater) RunAuto(ctx context.Context) {
 
 // autoStep is one look: download when there is something to get, apply when nobody is using the app.
 func (u *Updater) autoStep() {
+	u.expireStaleLaunch(u.readApplyResultIfLaunched()) // nobody may be looking at the page: a stuck "launched" is let go here too
 	st := u.currentSettings()
 	if !st.Auto || !st.ApplyAuto || !u.CanInstall() || u.silent == nil {
 		return
@@ -194,7 +257,7 @@ func (u *Updater) autoStep() {
 	case state == "ready" && ver == m.Version:
 		u.auto.mu.Lock()
 		u.auto.dlFails, u.auto.dlNext = 0, time.Time{}
-		waitRC := time.Now().Before(u.auto.rcNext)
+		waitRC := time.Now().Before(u.auto.rcNext) || u.now().Before(u.auto.lnNext)
 		u.auto.mu.Unlock()
 		if waitRC {
 			return // the feed could not confirm it a moment ago; no call every minute
@@ -268,6 +331,128 @@ func (u *Updater) DismissResult() {
 	if u.resultDir != "" {
 		update.ClearApplyResult(u.resultDir)
 	}
+	u.inst.mu.Lock()
+	u.inst.note = nil
+	u.inst.mu.Unlock()
+}
+
+// readApplyResult is the note the setup program left, or nil. Call it with no lock held (a slow disk must not hold one up).
+func (u *Updater) readApplyResult() *update.ApplyResult {
+	if u.resultDir == "" {
+		return nil
+	}
+	if r, ok := update.ReadApplyResult(u.resultDir); ok {
+		return &r
+	}
+	return nil
+}
+
+// readApplyResultIfLaunched reads the note only when a launch is waiting for one, so the minute tick does not touch the disk otherwise.
+func (u *Updater) readApplyResultIfLaunched() *update.ApplyResult {
+	u.inst.mu.Lock()
+	launched := u.inst.info.State == "launched"
+	u.inst.mu.Unlock()
+	if !launched {
+		return nil
+	}
+	return u.readApplyResult()
+}
+
+// launchedLimit is how long a launched setup program may go without leaving a result before the program stops waiting for it.
+// An update (download is already done) takes well under a minute; 20 minutes allows a slow disk, a security scan or a PC that went to
+// sleep half-way, and is still short enough that a person is not left with a bar that never changes.
+const launchedLimit = 20 * time.Minute
+
+// launchTimeoutNote is the plain-words note for the person after a launch timed out, or nil. It is only about the "ready" state it
+// left behind: any later step (a new download, a new launch) moves the state on and the note no longer applies. A note the late
+// setup program wrote after all (res newer than the launch) says more than this one and is shown instead.
+func (u *Updater) launchTimeoutNote(res *update.ApplyResult) *UpdateNotice {
+	u.inst.mu.Lock()
+	defer u.inst.mu.Unlock()
+	n := u.inst.note
+	if n == nil || u.inst.info.State != "ready" || u.inst.info.Version != n.To {
+		return nil
+	}
+	if res != nil && res.At.After(u.inst.launchedAt) {
+		return nil
+	}
+	c := *n
+	return &c
+}
+
+// expireStaleLaunch ends the wait for a setup program that left no result (RV-SUP-1): it was killed, crashed, or the PC slept through
+// it. The state goes from "launched" back to "ready" with a note, and the automatic apply may then try again after its wait.
+// It changes state and a note only. It never starts anything, never writes a result and never reports an update as done: a start
+// goes only through the normal Install path, which checks the file and the feed again.
+//
+// It applies only to the no-window launch (silent set): there the person has nothing open and the bar would say "being applied"
+// forever. With a windowed installer "launched" means "the updater window is open", which a person may leave open for a long time and
+// may press again at any moment, so it is left alone.
+//
+// res is the result note on disk (read by the caller with no lock held). A note written after the launch is that run's own: it stays
+// the one thing that decides (Status turns a bad one into "failed"). A note from before the launch is an earlier run's and is ignored.
+func (u *Updater) expireStaleLaunch(res *update.ApplyResult) {
+	if u.silent == nil {
+		return
+	}
+	at, ver, total, ok := u.staleLaunch(res)
+	if !ok {
+		return
+	}
+	if probe := u.setupAlive; probe != nil && probe() {
+		return // the setup program is still running: it is working, not lost
+	}
+	u.inst.mu.Lock()
+	// Look again: it may have moved on while the probe ran (another launch, a download, a check that dropped the offer), and the
+	// run may have written its result in that window. The file is read once more under the lock, so a result that exists at the
+	// moment of the flip always wins and nothing flips. (A small file read; nothing else takes inst.mu around a disk wait.)
+	if now := u.readApplyResult(); now != nil && now.At.After(u.inst.launchedAt) {
+		u.inst.mu.Unlock()
+		return
+	}
+	if !u.inst.launchedAt.Equal(at) || u.inst.info.State != "launched" || u.inst.info.Version != ver || u.inst.running || u.inst.busy {
+		u.inst.mu.Unlock()
+		return
+	}
+	// launchedAt is kept: resultIsFromThisLaunch still needs it to call an older note old.
+	u.inst.info = InstallInfo{State: "ready", Version: ver, Done: total, Total: total}
+	u.inst.note = &UpdateNotice{Outcome: "failed", From: version.Version, To: ver, Message: launchTimeoutMessage}
+	u.inst.mu.Unlock()
+	u.auto.mu.Lock()
+	u.auto.failedByAuto = false // this "ready" is not a launch failure that autoStep should turn back; the back-off below paces the retry
+	if u.auto.lnFor != ver {
+		u.auto.lnFor, u.auto.lnFails = ver, 0
+	}
+	u.auto.lnFails++
+	u.auto.lnNext = u.now().Add(dlBackoff(u.auto.lnFails))
+	u.auto.mu.Unlock()
+}
+
+// launchTimeoutMessage is shown to the person when a started update never reported back.
+const launchTimeoutMessage = "The update has not reported back after 20 minutes. Unravis is still on the old version for now. You can try again with Apply now."
+
+// staleLaunch says whether the launch is old enough and still without a result of its own.
+func (u *Updater) staleLaunch(res *update.ApplyResult) (at time.Time, ver string, total int64, ok bool) {
+	u.inst.mu.Lock()
+	defer u.inst.mu.Unlock()
+	if u.inst.info.State != "launched" || u.inst.running || u.inst.busy || u.inst.launchedAt.IsZero() {
+		return
+	}
+	if u.now().Sub(u.inst.launchedAt) < launchedLimit {
+		return
+	}
+	if res != nil && res.At.After(u.inst.launchedAt) {
+		return // this run left its own note
+	}
+	return u.inst.launchedAt, u.inst.info.Version, u.inst.info.Total, true
+}
+
+// now is the clock of this updater (the real one unless a test sets it).
+func (u *Updater) now() time.Time {
+	if u.clock != nil {
+		return u.clock()
+	}
+	return time.Now()
 }
 
 // The count of automatic applies per version is kept in auto-tries.json beside the settings. A try that closes the app and ends in a

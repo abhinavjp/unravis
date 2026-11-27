@@ -436,6 +436,77 @@ func TestSnapshotCommand(t *testing.T) {
 	}
 }
 
+func TestConfigShowListsEveryCollector(t *testing.T) {
+	r := newRig(t)
+	// Written directly, so the test does not depend on the Windows install path.
+	cfg := blackbox.Default()
+	cfg.Name = "box-1"
+	cfg.Folder = filepath.Join(r.dir, "rec")
+	cfg.LogPaths = []string{r.dir}
+	off := false
+	cfg.Collectors = map[string]blackbox.CollectorSetting{"host.tcp": {On: &off}, "web.iis": {EverySec: 60}}
+	path := filepath.Join(r.dir, "bb.json")
+	if err := blackbox.SaveConfig(path, cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path) //nolint:gosec // test file
+	// Read-only: no admin needed, and nothing is written.
+	r.env.admin = false
+	c, out, errs := r.do("config", "show", "--json", "--config", path)
+	if c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	var got struct {
+		OK         bool `json:"ok"`
+		Collectors []struct {
+			ID       string `json:"id"`
+			On       bool   `json:"on"`
+			EverySec int    `json:"everySec"`
+		} `json:"collectors"`
+		Config struct {
+			Name string `json:"name"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || !got.OK || got.Config.Name != "box-1" {
+		t.Fatalf("%v %s", err, out)
+	}
+	if len(got.Collectors) != len(blackbox.Catalogue()) {
+		t.Fatalf("collectors %d, catalogue %d", len(got.Collectors), len(blackbox.Catalogue()))
+	}
+	for _, col := range got.Collectors {
+		// Every collector runs every sample unless the settings or the collector's own default say otherwise.
+		wantOn, wantEvery := col.ID != "host.tcp", int(cfg.CollectorEvery(col.ID)/time.Second)
+		if col.ID == "web.iis" {
+			wantEvery = 60
+		}
+		if col.ID == "paths.files" || col.ID == "host.facts" {
+			wantEvery = 3600
+		}
+		if col.ID == "web.http" && wantEvery != blackbox.DefaultIntervalSecond {
+			t.Errorf("web.http should run every sample, got %d s", wantEvery)
+		}
+		if col.On != wantOn || col.EverySec != wantEvery {
+			t.Errorf("%s: %+v, want on=%v every %d s", col.ID, col, wantOn, wantEvery)
+		}
+	}
+	// The plain text shows ids too, and a bare "config" or any other word is a usage error.
+	if c, out, _ := r.do("config", "show", "--config", path); c != 0 || !strings.Contains(out, "host.tcp") || !strings.Contains(out, "on (always)") || !strings.Contains(out, "off") {
+		t.Fatalf("%d %s", c, out)
+	}
+	if c, _, _ := r.do("config"); c != exitUsage {
+		t.Fatalf("config alone: %d", c)
+	}
+	if c, _, _ := r.do("config", "set", "host.tcp", "off"); c != exitFail { // nothing is installed here
+		t.Fatalf("config set without an installed recorder must fail: %d", c)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) { //nolint:gosec // test file
+		t.Fatal("config show changed the settings file")
+	}
+	if c, out, _ := r.do("config", "show", "--json", "--config", filepath.Join(r.dir, "missing.json")); c != exitFail || !strings.Contains(out, `"ok":false`) {
+		t.Fatalf("missing file: %d %s", c, out)
+	}
+}
+
 func TestRunPassesSettingsAndReportsRefusal(t *testing.T) {
 	r := newRig(t)
 	_, _, _ = r.do(append([]string{"install", "--name", "box-1"}, r.args...)...)

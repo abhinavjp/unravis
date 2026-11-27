@@ -70,7 +70,9 @@ type Updater struct {
 	auto        autoState
 	resultDir   string // where the setup program leaves the result of an unattended update
 	inst        installState
-	saveMu      sync.Mutex // one settings save at a time
+	clock       func() time.Time // nil: the real clock; a test sets it to move time without sleeping
+	setupAlive  func() bool      // nil in production: the time limit alone decides (see expireStaleLaunch)
+	saveMu      sync.Mutex       // one settings save at a time
 	rnd         *rand.Rand
 }
 
@@ -133,14 +135,48 @@ func cleanUpdaterSettings(s UpdaterSettings, def int) (UpdaterSettings, error) {
 	return s, nil
 }
 
+// errSettingsInvalid marks a refusal that is the person's input, not a failure to save (the screen answers 400, not 500).
+type errSettingsInvalid struct{ error }
+
+// SettingsPatch is a change to the settings: a field left nil keeps its current value.
+type SettingsPatch struct {
+	Auto            *bool `json:"auto"`
+	IntervalMinutes *int  `json:"intervalMinutes"`
+	ApplyAuto       *bool `json:"applyAuto"`
+}
+
+func (p SettingsPatch) applyTo(s UpdaterSettings) UpdaterSettings {
+	if p.Auto != nil {
+		s.Auto = *p.Auto
+	}
+	if p.IntervalMinutes != nil {
+		s.IntervalMinutes = *p.IntervalMinutes
+	}
+	if p.ApplyAuto != nil {
+		s.ApplyAuto = *p.ApplyAuto
+	}
+	return s
+}
+
 // SetSettings validates, saves and applies new settings. A failed save is an error: the person sees that the choice was not kept.
 func (u *Updater) SetSettings(s UpdaterSettings) (UpdaterSettings, error) {
-	s, err := cleanUpdaterSettings(s, defaultUpdateMinutes(u.channel))
-	if err != nil {
-		return s, err
-	}
+	return u.change(func(UpdaterSettings) UpdaterSettings { return s })
+}
+
+// PatchSettings merges a partial change into the current settings and saves the result. The read, the merge and the write happen under
+// one lock, so two requests that change different fields both keep their change.
+func (u *Updater) PatchSettings(p SettingsPatch) (UpdaterSettings, error) {
+	return u.change(p.applyTo)
+}
+
+// change reads the current settings, builds the new ones with next, validates, saves and applies them, all under saveMu.
+func (u *Updater) change(next func(UpdaterSettings) UpdaterSettings) (UpdaterSettings, error) {
 	u.saveMu.Lock()
 	defer u.saveMu.Unlock()
+	s, err := cleanUpdaterSettings(next(u.currentSettings()), defaultUpdateMinutes(u.channel))
+	if err != nil {
+		return s, errSettingsInvalid{err}
+	}
 	b, _ := json.Marshal(s)
 	if err := os.MkdirAll(u.dir, 0o700); err != nil {
 		return s, errors.New("could not save the update settings")
@@ -214,17 +250,16 @@ type UpdateNotice struct {
 // Status is the last known answer plus the settings. It makes no network call.
 func (u *Updater) Status() UpdateStatus {
 	// The result file is read before the lock is taken: a slow disk must not hold up the check loop and the minute tick.
-	var lastRes *update.ApplyResult
-	if u.resultDir != "" {
-		if r, ok := update.ReadApplyResult(u.resultDir); ok {
-			lastRes = &r
-		}
-	}
+	lastRes := u.readApplyResult()
+	u.expireStaleLaunch(lastRes) // a "launched" that never got a result becomes "ready" again (RV-SUP-1)
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	st := UpdateStatus{Status: "none", Current: version.Version, Channel: u.channel, Auto: u.settings.Auto, IntervalMinutes: u.settings.IntervalMinutes, ApplyAuto: u.settings.ApplyAuto, InUse: u.InUse()}
 	if lastRes != nil {
 		st.Result = &UpdateNotice{Outcome: lastRes.Outcome, From: lastRes.From, To: lastRes.To, Message: lastRes.Message}
+	}
+	if n := u.launchTimeoutNote(lastRes); n != nil {
+		st.Result = n // newer than an earlier run's note on disk: it is about the launch that just timed out
 	}
 	if u.channel == "" {
 		st.Status = "dev"

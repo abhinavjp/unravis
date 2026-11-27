@@ -12,9 +12,9 @@ import (
 func diagErrCode(err error) string {
 	switch {
 	case errors.Is(err, errHostSlow):
-		return "host-slow"
+		return codeHostSlow
 	case errors.Is(err, errHostBusy):
-		return "host-busy"
+		return codeHostBusy
 	case errors.Is(err, errGroupPanic):
 		return "panic"
 	case errors.Is(err, os.ErrPermission):

@@ -125,7 +125,7 @@ func TestPullScrubsHashesAndLeavesNoRawSecretOnDisk(t *testing.T) {
 		}
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "job1", "a.log"))
-	want := "ok line\n[removed] here\nconnect [removed] now\nlast line no newline\n"
+	want := "ok line\n[removed]\nconnect [removed] now\nlast line no newline\n"
 	if string(got) != want {
 		t.Errorf("a.log = %q", got)
 	}

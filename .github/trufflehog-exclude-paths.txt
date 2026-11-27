@@ -8,6 +8,7 @@
 ^internal/applog/secretforms_test\.go$
 ^internal/codemode/privacy/review2_test\.go$
 ^internal/codemode/privacy/scrub_test\.go$
+^internal/crashlog/crashlog_test\.go$
 ^internal/evidence/secretforms_test\.go$
 ^internal/evidence/secretscrub_test\.go$
 ^internal/localci/checkout_test\.go$

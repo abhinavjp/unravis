@@ -45,13 +45,19 @@ const NOTE_TITLES: Record<string, { title: string; tone: Tone }> = {
   'paused-disk-low': { title: 'Recording paused: the drive was nearly full', tone: 'warn' },
   resumed: { title: 'Recording resumed', tone: 'info' },
   housekeeping: { title: 'Old recordings were removed', tone: 'info' },
+  'host-slow': { title: 'Reading this PC was slow', tone: 'warn' },
+  'host-still-slow': { title: 'Reading this PC is still slow', tone: 'warn' },
+  'host-recovered': { title: 'Reading this PC is back to normal', tone: 'info' },
   'collect-failed': { title: 'A reading failed', tone: 'warn' },
   'write-failed': { title: 'A sample could not be saved', tone: 'bad' },
   'collect-still-failing': { title: 'Readings are still failing', tone: 'warn' },
   'collect-recovered': { title: 'Readings work again', tone: 'info' },
   'write-still-failing': { title: 'Samples still cannot be saved', tone: 'bad' },
   'write-recovered': { title: 'Samples are being saved again', tone: 'info' },
-  'settings-applied': { title: 'New settings were applied', tone: 'info' }
+  'settings-applied': { title: 'New settings were applied', tone: 'info' },
+  'diag-log-stopped': { title: "The recorder's diagnostics file stopped growing", tone: 'warn' },
+  'diag-log-resumed': { title: "The recorder's diagnostics file is growing again", tone: 'info' },
+  'recorder-crashed': { title: 'The recorder crashed and was started again', tone: 'bad' }
 };
 const RESTART_DETAIL: Record<string, string> = {
   'after-stop': 'The earlier run had stopped cleanly.',
@@ -61,6 +67,8 @@ const RESTART_DETAIL: Record<string, string> = {
 /** Why a reading or a save failed, from the recorder's fixed codes. Anything else is not repeated. */
 const FAILURE_CAUSE: Record<string, string> = {
   'collect-failed': 'the Windows counters could not be read',
+  'host-slow': 'reading this PC took too long',
+  'host-busy': 'an earlier reading of this PC was still running',
   'write-failed': 'the sample could not be written',
   'permission-denied': 'permission was denied',
   'disk-full': 'the drive is full'
@@ -73,15 +81,25 @@ const roundsWords = (n: number) => n + (n === 1 ? ' round' : ' rounds');
  */
 export function failureDetail(kind: string, detail: unknown): string {
   if (typeof detail !== 'string') return '';
-  if (kind === 'collect-still-failing' || kind === 'write-still-failing') {
+  if (kind === 'diag-log-stopped') return detail === 'diag-log-stuck' ? 'Your recordings are not affected. Another program may be holding the file diagnostics.log in the recordings folder. The recorder checks again every minute and adds a note here when it is writing to the file again.' : '';
+  if (kind === 'diag-log-resumed') return detail === 'diag-log-ok' ? 'The recorder can write to the file diagnostics.log in the recordings folder again.' : '';
+  const slow = kind === 'host-still-slow' || kind === 'host-recovered';
+  if (kind === 'collect-still-failing' || kind === 'write-still-failing' || kind === 'host-still-slow') {
     const m = /^code=([a-z-]{1,30}) rounds=(\d{1,9})$/.exec(detail);
     if (!m) return '';
     const cause = own(FAILURE_CAUSE, m[1]);
-    return (cause ? 'Latest cause: ' + cause + '. ' : '') + roundsWords(Number(m[2])) + ' failed since the last note.';
+    return (cause ? 'Latest cause: ' + cause + '. ' : '') + roundsWords(Number(m[2])) + (slow ? ' had no reading of this PC since the last note.' : ' failed since the last note.');
   }
-  if (kind === 'collect-recovered' || kind === 'write-recovered') {
+  if (kind === 'recorder-crashed') {
+    const m = /^crashes=([0-9]{1,6}) at=/.exec(detail);
+    if (!m) return '';
+    const n = Number(m[1]);
+    return (n === 1 ? 'A crash file was saved' : n + ' crash files were saved') + ' in the "crash" folder inside the recordings folder. Keep it: it shows what the recorder was doing when it stopped.';
+  }
+  if (kind === 'collect-recovered' || kind === 'write-recovered' || kind === 'host-recovered') {
     const m = /^rounds=(\d{1,9}) seconds=(\d{1,9})$/.exec(detail);
-    return m ? 'It failed for ' + roundsWords(Number(m[1])) + ' over ' + lengthWords(Number(m[2])) + ', then worked again.' : '';
+    if (!m) return '';
+    return slow ? 'It was slow for ' + roundsWords(Number(m[1])) + ' over ' + lengthWords(Number(m[2])) + ', then was back to normal.' : 'It failed for ' + roundsWords(Number(m[1])) + ' over ' + lengthWords(Number(m[2])) + ', then worked again.';
   }
   return '';
 }

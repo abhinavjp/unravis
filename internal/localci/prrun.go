@@ -38,10 +38,11 @@ type PROptions struct {
 	// is not all the owner's. A pull request of anybody else into another base is refused, whatever Workflow
 	// says. When empty, the keys of Workflows are the trusted bases.
 	TrustedBases []string
-	// TrustOwnerBranch skips the per-commit author check for a pull request the owner opened from a branch in
-	// the same repository. It is for a run the owner starts by hand at their own console (the agent never sets
-	// it): commits made by tools often carry no GitHub login, and without it the pull request would run from
-	// the base branch's runner definition.
+	// TrustOwnerBranch skips the per-commit author check (CommitsByOwner) for a pull request the owner opened
+	// from a branch in the same repository. It is for a run the owner starts by hand at their own console (the
+	// agent never sets it): commits made by tools often carry no GitHub login, and without it the pull request
+	// would run from the base branch's runner definition. It does NOT skip the check of who pushed to the
+	// branch (HeadPushedByOwner), which always runs.
 	TrustOwnerBranch bool
 	// Keep leaves the worktree in place after the run.
 	Keep bool
@@ -249,6 +250,15 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 			note("not every commit of the branch was written and committed by %s: treated like a collaborator's pull request", owner)
 		}
 	}
+	if !trust.FromBase {
+		// The logins in a commit are text, and TrustOwnerBranch only waives that check. Whatever the flag, the
+		// owner's trust needs the host's own record to show that nobody but the owner ever pushed to the branch;
+		// any doubt, a failed lookup included, is the untrusted path.
+		if ok, why := HeadPushedByOwner(ctx, o.Host, o.Repo, owner, pr); !ok {
+			trust.FromBase = true
+			note("%s: treated like a collaborator's pull request", why)
+		}
+	}
 	if trust.FromBase && !TrustedBase(pr.BaseRef, o.trustedBases()) {
 		reason := fmt.Sprintf("the code is not all the owner's and %q is not a base branch this PC trusts for that", pr.BaseRef)
 		note("not run: %s", reason)
@@ -331,7 +341,7 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 	// 4. run
 	o.logf("running %s on the merge of %s into %s (%s)", file, shortSHA(wt.HeadSHA), pr.BaseRef, shortSHA(wt.Commit))
 	run, err := Run(ctx, RunOptions{
-		Workflow: wf, Config: cfg, Workdir: wt.Path, StateDir: runDir, GitHub: prGitHubContext(o.Repo, pr, wt, wf.Name, start),
+		Workflow: wf, Config: cfg, Workdir: wt.Path, StateDir: runDir, LockDir: filepath.Join(o.Store.Dir, "locks"), GitHub: prGitHubContext(o.Repo, pr, wt, wf.Name, start),
 		Vars: o.Vars, Env: env, Slots: o.Slots, Log: o.Log, Redact: o.Redact, Now: o.Now, Progress: o.Progress,
 		JobTree: func(c context.Context, name string) (string, func(), error) {
 			jt, err := co.JobTree(c, wt, name, trust.FromBase, o.Protect)

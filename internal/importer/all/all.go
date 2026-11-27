@@ -5,6 +5,7 @@ import (
 	"api-audit-explorer/internal/importer"
 	"api-audit-explorer/internal/importer/accesslog"
 	"api-audit-explorer/internal/importer/appinsights"
+	"api-audit-explorer/internal/importer/bbsource"
 	"api-audit-explorer/internal/importer/dotnetcounters"
 	"api-audit-explorer/internal/importer/iis"
 	"api-audit-explorer/internal/importer/linuxperf"
@@ -65,7 +66,8 @@ func Importers() []importer.Importer {
 		mel.NewConsole(),
 		mel.NewJSON(),
 		mel.NewStdout(),
-		winlive.New(), // internal: written by the live sampler, never detected, refused over HTTP
+		bbsource.New(), // the Blackbox's own hourly recordings
+		winlive.New(),  // internal: written by the live sampler, never detected, refused over HTTP
 	}
 }
 

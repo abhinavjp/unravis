@@ -102,16 +102,21 @@ jobs:
       - name: Checks that always run (tests of the CI tools, action pins)
         run: |
           set -euo pipefail
+          node tools/ci/test-ci-lint-cache.mjs
           node tools/ci/test-fast-scope.mjs
           node tools/ci/test-diff-cover.mjs
           node tools/ci/test-web-scope.mjs
           node tools/ci/test-compare.mjs
           node tools/ci/test-promote-dist.mjs
+          node tools/ci/test-check-no-e2e-switch.mjs
           node tools/ci/test-compare-e2e.mjs
           node tools/ci/test-backlog-ids.mjs
           node tools/ci/test-whatsnew.mjs
           node tools/ci/test-trufflehog-allowlist.mjs
           node tools/ci/test-windows-risk.mjs
+          node tools/ci/test-no-real-dialogs.mjs
+          node tools/ci/test-ci-gating.mjs
+          node tools/ci/no-real-dialogs.mjs
           node tools/security/check-action-pins.mjs
 
       - name: Scope - what does this change affect?
