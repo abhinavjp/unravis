@@ -22,6 +22,7 @@ import (
 	explorer "api-audit-explorer"
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/sessionproof"
 	"api-audit-explorer/internal/store"
 )
@@ -556,7 +557,7 @@ func (serverTestProtector) Protect(value []byte) ([]byte, error) {
 }
 func (serverTestProtector) Unprotect(value []byte) ([]byte, error) {
 	if !bytes.HasPrefix(value, []byte("protected:")) {
-		return nil, errors.New("bad test data")
+		return nil, fmt.Errorf("%w: bad test data", sealedfile.ErrBadData)
 	}
 	return bytes.TrimPrefix(value, []byte("protected:")), nil
 }
