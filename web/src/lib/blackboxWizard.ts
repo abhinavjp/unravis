@@ -1,6 +1,7 @@
 import {
   INTERVALS,
   defaultSettings,
+  extraCountersProblem,
   folderFault,
   folderKind,
   nameProblem,
@@ -31,6 +32,15 @@ export interface RedisChoice {
   rows: Partial<Record<RedisRowId, boolean>>;
 }
 
+/** The three collector rows of the Record step: Server facts, Extra Windows counters, Log and config file paths. */
+export interface CollectorRows { facts: boolean; counters: boolean; paths: boolean }
+export type CollectorRowId = keyof CollectorRows;
+
+/** What the counters box holds when the row is first switched on. */
+export const COUNTERS_PREFILL = '\\Process(w3wp)\\Page Faults/sec\n\\Memory\\Pool Nonpaged Bytes';
+/** Catalogue ids the server knows these rows by (blackbox.Config collectors). An absent id means on. */
+const COLLECTOR_IDS = { facts: 'host.facts', paths: 'paths.files' } as const;
+
 export interface WizardState {
   step: StepId;
   /** Index of the furthest step reached; the rail unlocks 0..maxSeen. */
@@ -42,6 +52,10 @@ export interface WizardState {
   settings: Settings;
   /** Textarea mirror of settings.logPaths: one folder per line. */
   logPathsText: string;
+  /** Which of the three collector rows are on. Recommended: facts and paths on, counters off. */
+  collectorRows: CollectorRows;
+  /** Textarea for settings.counters.extra: one counter path per line. Only used while collectorRows.counters is on. */
+  countersText: string;
   watchMode: WatchMode;
   /** The owner typed or picked a folder; stop the automatic default. */
   folderTouched: boolean;
@@ -71,7 +85,7 @@ export interface WizardState {
  * Why a step cannot be left. A short code, never prose: the pop-up turns it into words. Null means the step is fine.
  *   name:    name-empty | name-long | name-chars
  *   where:   where-missing
- *   record:  interval | logs
+ *   record:  interval | logs | counters (only while the extra counters row is on)
  *   watch:   targets-many | targets-kind | targets-empty | targets-long | targets-chars | targets-duplicate
  *   keep:    keep | size | free
  *   folder:  folder-invalid (not a full path) | folder-slash (forward slashes) | folder-chars (a character Windows refuses)
@@ -222,6 +236,14 @@ function parseLogPaths(text: string): string[] {
   return out;
 }
 
+/**
+ * The counters typed in the counters box, one per line, trimmed, blanks dropped. Unlike the log folders a repeat is kept:
+ * the server refuses a duplicate, so it is a problem for the owner to fix, not something to hide.
+ */
+function parseCounters(text: string): string[] {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== '');
+}
+
 function logPathsOk(paths: string[]): boolean {
   return paths.length <= LOG_PATHS_MAX && paths.every((p) => /^[A-Za-z]:[\\/]/.test(p));
 }
@@ -243,6 +265,8 @@ export function stepProblem(s: WizardState, id: StepId): StepProblem | null {
       if (!INTERVALS.includes(st.intervalSeconds as 5 | 15 | 30 | 60)) return 'interval';
       // The log folders only matter while the logs catalogue is on; the box is hidden otherwise (B-07).
       if (st.record.logsCatalogue && !logPathsOk(parseLogPaths(s.logPathsText))) return 'logs';
+      // The counters box only matters while its row is on.
+      if (s.collectorRows.counters && extraCountersProblem(parseCounters(s.countersText))) return 'counters';
       return null;
     }
     case 'sql':
@@ -425,16 +449,20 @@ export function setRedisRow(s: WizardState, row: RedisRowId, on: boolean): Wizar
 /* ---------------------------------------------------------------- presets and defaults */
 
 /** The preset the three record switches add up to (B-03). Anything else is Custom. */
-export function presetOf(record: Settings['record']): PresetId {
-  if (record.processes && record.logsCatalogue && !record.copyLogsOnSnapshot) return 'recommended';
-  if (!record.processes && !record.logsCatalogue && !record.copyLogsOnSnapshot) return 'light';
+export function presetOf(record: Settings['record'], rows: CollectorRows): PresetId {
+  if (record.processes && record.logsCatalogue && !record.copyLogsOnSnapshot && rows.facts && !rows.counters && rows.paths) return 'recommended';
+  if (!record.processes && !record.logsCatalogue && !record.copyLogsOnSnapshot && !rows.facts && !rows.counters && !rows.paths) return 'light';
   return 'custom';
 }
 
-/** Sets the three record switches to a preset. Any single change afterwards moves presetOf to custom by itself. */
+/** Sets the three record switches and the three collector rows to a preset. Any single change afterwards moves presetOf to custom by itself. */
 export function applyPreset(s: WizardState, p: Exclude<PresetId, 'custom'>): WizardState {
   const on = p === 'recommended';
-  return { ...s, settings: { ...s.settings, record: { processes: on, logsCatalogue: on, copyLogsOnSnapshot: false } } };
+  return {
+    ...s,
+    settings: { ...s.settings, record: { processes: on, logsCatalogue: on, copyLogsOnSnapshot: false } },
+    collectorRows: { facts: on, counters: false, paths: on }
+  };
 }
 
 /**
@@ -462,6 +490,8 @@ export function useDefaultsToReview(s: WizardState, resetKeep = false): WizardSt
     ...s,
     settings,
     logPathsText: d.logPaths.join('\n'),
+    collectorRows: { facts: true, counters: false, paths: true },
+    countersText: COUNTERS_PREFILL,
     watchMode: 'none',
     sqlChoice: { profile: 'standard', text: false },
     redisChoice: { profile: 'standard', rows: {} },
@@ -483,6 +513,8 @@ export function initialState(): WizardState {
     where: null,
     settings: d,
     logPathsText: d.logPaths.join('\n'),
+    collectorRows: { facts: true, counters: false, paths: true },
+    countersText: COUNTERS_PREFILL,
     watchMode: 'none',
     folderTouched: false,
     confirmSystemDrive: false,
@@ -519,6 +551,13 @@ export function buildSettings(s: WizardState): Settings {
   out.port = st.port;
   out.bind = st.bind.trim();
   out.probe = { enabled: false };
+  // Recommended writes nothing here: an absent collector id is on, and no counters block means nothing extra.
+  const rows = s.collectorRows;
+  const off: Record<string, { on: boolean }> = {};
+  if (!rows.facts) off[COLLECTOR_IDS.facts] = { on: false };
+  if (!rows.paths) off[COLLECTOR_IDS.paths] = { on: false };
+  if (Object.keys(off).length > 0) out.collectors = off;
+  if (rows.counters) out.counters = { extra: parseCounters(s.countersText) };
   // The SQL and Redis blocks go in only when their step applies, and a plain Standard choice writes nothing, so a
   // plain install stays plain. Query text exists only in the deep profile.
   if (steps(s).includes('sql')) {

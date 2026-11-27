@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "changes": [
+    "The Record step of Place a Blackbox now lists server facts, extra Windows counters and log and config file paths as their own rows, next to the Light and Recommended choices. Switch a row off, or type the Windows counters you want recorded, one per line, and Review shows what will be recorded."
+  ]
+}
