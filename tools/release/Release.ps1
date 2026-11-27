@@ -42,7 +42,7 @@
 .PARAMETER LastGreen    Release the newest master commit whose CI is green now, instead of waiting for the head's CI.
 .PARAMETER Again        Release even though the newest tag of this channel already holds this commit and finished.
 .PARAMETER CiWaitMinutes  How long to wait for CI on the master head before giving up (default 45).
-.PARAMETER RunWatchMinutes  How long to wait for one GitHub Actions run (the release build, the verify run) before giving up (default 120, 1 to 1440; the build, smoke test and draft take up to 90 minutes in a row, plus queue time). A run still going then is NOT treated as good: the release stays unpublished and the same command can be run again.
+.PARAMETER RunWatchMinutes  How long to wait for one GitHub Actions run (the release build, the verify run) before giving up (default 120, 1 to 170: the lock lease is 180 minutes and the wait sends no heartbeat, so it must end before the lease does; the build, smoke test and draft take up to 90 minutes in a row, plus queue time). A run still going then is NOT treated as good: the release stays unpublished and the same command can be run again.
 .PARAMETER Status    Print where the release machinery is (lock, state, last audit entries) and stop. -Json for a machine-readable form.
 .PARAMETER Pinned    (internal) The commit this run releases. Set only by the bootstrap; do not pass it by hand.
 .PARAMETER LockId    (internal) The release-lock record this run belongs to. Set only by the bootstrap.
@@ -66,7 +66,7 @@ param(
     [switch]$LastGreen,
     [switch]$Again,
     [int]$CiWaitMinutes = 45,
-    [ValidateRange(1, 1440)] [int]$RunWatchMinutes = 120,
+    [ValidateRange(1, 170)] [int]$RunWatchMinutes = 120,
     [switch]$Status,
     [switch]$Json,
     [string]$Pinned,
@@ -177,14 +177,18 @@ function Invoke-ReleaseBootstrap {
             }
             if ($tagOnGitHub) {
                 # The tag exists: the build is of that commit, whatever master has become.
-                $pinned = (git rev-list -n 1 "v$($plan.Version)").Trim(); $how = "resume of v$($plan.Version)"; $fromTag = $true
+                # (A failed git prints nothing, and .Trim() on nothing throws before the exit code is read: so ask first, trim after.)
+                $pinned = git rev-list -n 1 "v$($plan.Version)"
                 if ($LASTEXITCODE -ne 0 -or -not $pinned) { Write-Host "The tag v$($plan.Version) is on GitHub but not in this clone." -ForegroundColor Red; return 1 }
+                $pinned = "$pinned".Trim(); $how = "resume of v$($plan.Version)"; $fromTag = $true
                 # Anyone who can push a tag could name a commit of their own here, and its scripts would then run with the passphrase.
                 # The commit must be the one THIS PC's audit log says it tagged for this version.
                 $taggedBefore = Get-AuditTaggedCommit $audit $plan.Version
                 if (-not $taggedBefore -or $taggedBefore -ne $pinned) { Write-Host "Tag v$($plan.Version) is on commit $($pinned.Substring(0, 7)), but this PC's audit log says it tagged $(if ($taggedBefore) { $taggedBefore.Substring(0, 7) } else { 'nothing' }) for that version. Not resuming: someone else made or moved that tag. Run -Status and look at the tag on GitHub." -ForegroundColor Red; return 1 }
             } elseif ($CheckOnly) {
-                $pinned = (git rev-parse "origin/$Branch").Trim(); $how = 'check only (the run itself waits for CI)'
+                $pinned = git rev-parse "origin/$Branch"
+                if ($LASTEXITCODE -ne 0 -or -not $pinned) { Write-Host "git could not find origin/$Branch (git fetch?). Nothing was done." -ForegroundColor Red; return 1 }
+                $pinned = "$pinned".Trim(); $how = 'check only (the run itself waits for CI)'
             } else {
                 $started = Get-Date; $lastBeat = $started; $stop = $started.AddMinutes($CiWaitMinutes); $n = 0; $said = $false
                 while ($true) {
@@ -233,8 +237,9 @@ function Invoke-ReleaseBootstrap {
                 $kind = if ($Version) { if ($Version.Contains('-')) { 'rc' } else { 'stable' } } else { $asked }
                 $kindTags = @($tags | Where-Object { (ConvertTo-SemVer $_) -and ($_.Contains('-') -eq ($kind -eq 'rc')) })
                 $nt = Get-NewestVersion $kindTags
-                $ntc = if ($nt) { (git rev-list -n 1 "v$nt").Trim() } else { '' }
+                $ntc = if ($nt) { git rev-list -n 1 "v$nt" } else { '' }
                 if ($nt -and ($LASTEXITCODE -ne 0 -or -not $ntc)) { Write-Host "git could not find the commit of v$nt." -ForegroundColor Red; return 1 }
+                $ntc = "$ntc".Trim()
                 $ar = Get-AlreadyReleased $kind $(if ($nt) { "v$nt" } else { '' }) $ntc $pinned $state
                 if ($ar -eq 'done') { Write-Host "Nothing new: $($pinned.Substring(0,7)) is already released as v$nt ($kind). Nothing was done. Merge something first, or pass -Again." -ForegroundColor Green; $code = 0; return 0 }
                 if ($ar -eq 'withdrawn') { Write-Host "v$nt holds this same commit and was WITHDRAWN. Releasing it again would build the same files. Merge the fix first, or pass -Again." -ForegroundColor Red; return 1 }
@@ -510,13 +515,15 @@ try {
     if ($CheckOnly -and $From -ne 'Preflight') { Fail '-CheckOnly only works from Preflight.' }
     function Reach([string]$s) { $order.IndexOf($s) -ge $order.IndexOf($From) }
     $script:stage = $From
-    if (-not $CheckOnly) { Write-AuditEntry $audit @{ event = 'run-start'; version = $Version; from = $From; yes = [bool]$Yes; machine = [Environment]::MachineName; user = [Environment]::UserName; head = (git rev-parse HEAD).Trim() } }
+    if (-not $CheckOnly) { Write-AuditEntry $audit @{ event = 'run-start'; version = $Version; from = $From; yes = [bool]$Yes; machine = [Environment]::MachineName; user = [Environment]::UserName; head = "$(git rev-parse HEAD)".Trim() } }
 
     # ---- keys (every run: the Sign stage and a withdraw need them) --------------------------------------------------------------
     $lrTag = git ls-remote --tags origin "refs/tags/$tag"
     if ($LASTEXITCODE -ne 0) { Fail "git could not ask GitHub whether the tag $tag exists (network?). Nothing was tagged or published; run the same command again." }
     $tagExists = [bool]$lrTag
-    $refCommit = if ($tagExists -and (git tag -l $tag)) { (git rev-list -n 1 $tag).Trim() } else { (git rev-parse HEAD).Trim() }
+    $refCommit = if ($tagExists -and (git tag -l $tag)) { git rev-list -n 1 $tag } else { git rev-parse HEAD }
+    if ($LASTEXITCODE -ne 0 -or -not $refCommit) { Fail "git could not find the commit of $tag (or of this checkout's HEAD)." }
+    $refCommit = "$refCommit".Trim()
     if ($tagExists -and $refCommit -ne $Pinned) { Fail "Tag $tag is on commit $($refCommit.Substring(0,7)) but this run was pinned to $($Pinned.Substring(0,7)). Another run made that tag; run -Status." }
     $feed = Get-FeedRelease $channel
     if (-not $feed -and -not $FirstRelease) { Fail "The feed has no $channel.json. If this really is the first $channel release, add -FirstRelease." }
@@ -561,7 +568,9 @@ try {
         $dirty = git status --porcelain
         if ($LASTEXITCODE -ne 0) { Fail 'git could not tell whether the release worktree is clean.' }
         if ($dirty) { Fail 'The release worktree has changes. A release is built from a clean commit.' }
-        $head = (git rev-parse HEAD).Trim()
+        $head = git rev-parse HEAD
+        if ($LASTEXITCODE -ne 0 -or -not $head) { Fail 'git could not read the commit of the release worktree.' }
+        $head = "$head".Trim()
         if ($head -ne $Pinned) { Fail "This worktree is at $($head.Substring(0,7)), not the pinned commit $($Pinned.Substring(0,7))." }
         git fetch origin $Branch --quiet 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { Fail "git fetch of origin/$Branch failed (network?), so it cannot be checked that the pinned commit is still part of it." }
@@ -576,7 +585,11 @@ try {
         $script:report.go = @{ installed = $goInstalled; used = $goUsed }
         if ($goInstalled -ne $goUsed) { Write-Host "Go: installed '$goInstalled', go.mod asks for '$goUsed' (toolchain fetched and checked by Go)." -ForegroundColor Yellow }
         if ($tagExists) { Fail "Tag $tag is already on GitHub. Run again without -From to continue that release, or pass a newer -Version." }
-        if ((git tag -l $tag) -and (git rev-list -n 1 $tag).Trim() -ne $head) { Fail "A local tag $tag points at another commit. Delete it (git tag -d $tag) if it was never pushed." }
+        if (git tag -l $tag) {
+            $ltc = git rev-list -n 1 $tag
+            if ($LASTEXITCODE -ne 0 -or -not $ltc) { Fail "git could not find the commit of the local tag $tag. Delete it (git tag -d $tag) if it was never pushed." }
+            if ("$ltc".Trim() -ne $head) { Fail "A local tag $tag points at another commit. Delete it (git tag -d $tag) if it was never pushed." }
+        }
         $existing = @((Get-GhJson 'list the existing releases' @('release', 'list', '--repo', $Repo, '--limit', '100', '--json', 'tagName')).tagName)
         if ($existing -contains $tag) { Fail "A release $tag already exists." }
         try { Assert-NextVersion $Version @($tags | Where-Object { $_ -ne $tag }) } catch { Fail $_.Exception.Message }
@@ -679,11 +692,15 @@ try {
         git fetch origin $Branch --quiet 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { Fail "git fetch of origin/$Branch failed (network?). Nothing was tagged; run the same command again." }
         git merge-base --is-ancestor $head "origin/$Branch"
-        if ($LASTEXITCODE -ne 0 -or (git rev-parse HEAD).Trim() -ne $head) { Fail "The pinned commit $($head.Substring(0,7)) is not part of origin/$Branch any more, or this worktree changed. Run again." }
+        if ($LASTEXITCODE -ne 0 -or "$(git rev-parse HEAD)".Trim() -ne $head) { Fail "The pinned commit $($head.Substring(0,7)) is not part of origin/$Branch any more, or this worktree changed. Run again." }
         $remoteTag = (git ls-remote --tags origin "refs/tags/$tag")
         if ($LASTEXITCODE -ne 0) { Fail "git could not ask GitHub whether the tag $tag exists (network?). Nothing was tagged; run the same command again." }
         $localTag = (git tag -l $tag)
-        if ($localTag -and (git rev-list -n 1 $tag).Trim() -ne $head -and -not $remoteTag) { Fail "Local tag $tag points at a different commit than HEAD ($($head.Substring(0,7)))." }
+        if ($localTag -and -not $remoteTag) {
+            $ltc = git rev-list -n 1 $tag
+            if ($LASTEXITCODE -ne 0 -or -not $ltc) { Fail "git could not find the commit of the local tag $tag. Delete it (git tag -d $tag) if it was never pushed." }
+            if ("$ltc".Trim() -ne $head) { Fail "Local tag $tag points at a different commit than HEAD ($($head.Substring(0,7)))." }
+        }
         if (-not $remoteTag) {
             Confirm-Typed $tag "This creates tag $tag on $($head.Substring(0,7)) ($(git log -1 --format=%s)) and pushes it. CI then builds a DRAFT release."
             # Written BEFORE the push: if the push succeeds but its answer is lost, this line is what lets a later run resume that tag.
@@ -702,12 +719,14 @@ try {
     # 3 Wait ------------------------------------------------------------------------------------------------------------------
     if (Reach 'Wait') {
         Stage 'Wait' 'Waiting for the CI build, attestation, smoke test and draft'
-        $sha = (git rev-list -n 1 $tag).Trim()
+        $sha = git rev-list -n 1 $tag
+        if ($LASTEXITCODE -ne 0 -or -not $sha) { Fail "git could not find the commit of the tag $tag in this clone (git fetch --tags?). Run the same command again." }
+        $sha = "$sha".Trim()
         $id = if ($RunId) { $RunId } else { Find-Run 'release.yml' $tag $sha 180 }
         if (-not $id) { Fail 'The release.yml run did not start within 3 minutes. Check the Actions tab.' }
         $runUrl = "https://github.com/$Repo/actions/runs/$id"
         $res = Wait-RunFinished $id $RunWatchMinutes
-        if (-not $res.Done) { Fail "The release.yml run $id $($res.Problem): $runUrl . Release $tag is NOT published and nobody is offered it. Look at the run on GitHub: if it is stuck, cancel it there. Then run the same command again (it continues at this step; add -RunId $id to wait for this same run, or -RunWatchMinutes to wait longer)." }
+        if (-not $res.Done) { Fail "The release.yml run $id $($res.Problem): $runUrl . Release $tag is NOT published and nobody is offered it. Look at the run on GitHub: if it is stuck, cancel it there. Then run the same command again (it continues at this step; add -RunId $id to wait for this same run, or -RunWatchMinutes up to 170 to wait longer)." }
         if ($res.Conclusion -ne 'success') { Fail "release.yml run $id failed ($($res.Conclusion)): $runUrl" }
         $drafts = @(Get-GhJson 'list the releases' @('release', 'list', '--repo', $Repo, '--limit', '30', '--json', 'tagName,isDraft')) | Where-Object { $_.tagName -eq $tag }
         if (-not $drafts) { Fail "CI finished but no release $tag was found." }
@@ -766,6 +785,8 @@ try {
     }
     # 7 Verify ----------------------------------------------------------------------------------------------------------------
     if (Reach 'Verify') {
+        # A pending withdraw is not a verify that can be skipped: skipping would overwrite 'withdraw-pending' and a later run would call the release done.
+        if ($SkipVerify -and $script:withdrawOnly) { Fail '-SkipVerify cannot skip a pending withdraw: the last verify did not pass, so this release still has to be withdrawn. Run the same command again without -SkipVerify.' 'withdraw-pending' }
         if ($SkipVerify) { Write-Host "`nVerify skipped by -SkipVerify. Run the verify-release workflow yourself." -ForegroundColor Yellow; Set-ReleaseState $data $Version 'Feed' 'stopped' 'verify skipped' $script:extra; exit 0 }
         Stage 'Verify' 'Verify on a clean machine (verify-release.yml)'
         $id = $null; $why = $null
@@ -811,6 +832,9 @@ try {
             # Not proven good while every copy is already offered it: withdraw it now (signed control file that blocks this version,
             # keeping any pause or blocks already in force). An unverified release is treated like a failed one.
             Write-Host "`nVERIFY DID NOT PASS: $why" -ForegroundColor Red
+            # Saved before anything else can go wrong (an audit write, Ctrl+C at the passphrase prompt, a killed slot): from here on the only
+            # thing a later run may do with this release is withdraw it, never verify it again.
+            if (-not $script:withdrawOnly) { Set-ReleaseState $data $Version 'Feed' 'withdraw-pending' (Protect-ReasonText $why) $script:extra }   # (a retry already is withdraw-pending, with the first reason)
             if (-not $script:withdrawOnly) { Write-AuditEntry $audit @{ event = 'verify-failed'; version = $Version; run = "$id"; reason = $why } }
             $script:stage = 'Verify'
             Write-Host "Withdrawing $Version (signed control file) so machines that have not installed it are not offered it." -ForegroundColor Yellow

@@ -287,7 +287,11 @@ try {
 
     # ---- RV-SUP-6: a failed gh must stop the run, a stuck run must not hang it (static + fake gh) -----------------------------------
     $relLines = $rel -split "\r?\n"
-    Assert-That 'gh: -RunWatchMinutes exists, default 120, forwarded to the worker (not in the bootstrap skip-list)' ($rel -match '\[ValidateRange\(1, 1440\)\] \[int\]\$RunWatchMinutes = 120' -and $rel -notmatch "-eq 'RunWatchMinutes'")
+    Assert-That 'gh: -RunWatchMinutes exists, default 120, capped at 170 (the lock lease is 180 and the wait sends no heartbeat), not in the bootstrap skip-list' ($rel -match '\[ValidateRange\(1, 170\)\] \[int\]\$RunWatchMinutes = 120' -and $rel -notmatch "-eq 'RunWatchMinutes'")
+    Assert-That 'gh: the cap stays below the lock lease' ($rel -match 'ValidateRange\(1, (\d+)\)\] \[int\]\$RunWatchMinutes' -and [int]$Matches[1] -lt 180 -and (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ReleaseLib.ps1') -Raw) -match 'ReleaseLockLeaseMinutes = 180')
+    # Parameter binding fails before any line of the script runs, so this cannot start a release (-Status is read-only as well).
+    $bindOut = & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $PSScriptRoot 'Release.ps1') -RunWatchMinutes 99999 -Status 2>&1 | Out-String
+    Assert-That 'gh: -RunWatchMinutes above the cap is refused at parameter binding' ($LASTEXITCODE -ne 0 -and $bindOut -match 'RunWatchMinutes' -and $bindOut -match 'range') $bindOut
     Assert-That 'gh: no unbounded gh run watch is left in the code' (-not ($relLines | Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'gh run watch' }))
     Assert-That 'gh: a run that does not finish stops the release and says it is NOT published, with the run URL' ($rel -match '(?s)Wait-RunFinished \$id \$RunWatchMinutes.*?Fail "The release\.yml run[^\r\n]*\$runUrl[^\r\n]*NOT published')
     $unchecked = @()
@@ -398,6 +402,103 @@ try {
             $m = Get-ThrownMessage { Fail 'gh could not list the releases' } 6>$null
             Assert-That 'fail: an ordinary stop is still stopped' ($script:states[1].Status -eq 'stopped')
         } finally { $script:withdrawOnly = $oldW; $script:ownsVersion = $oldO; $script:stage = $oldS; $script:extra = $oldE }
+    }
+
+    & {
+        # The real Verify stage and the bootstrap's parameter forwarding, cut out of Release.ps1 and run against fakes: a fake gh, a fake git,
+        # a fake Set-Control.ps1 (the real one signs and uploads, so its path is swapped), exit becomes a throw.
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Release.ps1'), [ref]$null, [ref]$null)
+        $defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and @('Fail', 'Get-LastDone') -contains $n.Name }, $true)
+        $failText = (($defs | ForEach-Object { $_.Extent.Text }) -join "`n") -replace '\bexit 1\b', "throw 'EXIT1'"
+        . ([scriptblock]::Create($failText))
+        $vif = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -eq "Reach 'Verify'" }, $true))
+        Assert-That 'verify: the Verify stage block is found in Release.ps1' ($vif.Count -eq 1)
+        $fakeControl = Join-Path $root 'Fake-Set-Control.ps1'
+        Set-Content -LiteralPath $fakeControl -Value 'param($Channel, $KeyFile, $Block, $Note, $Repo, $Days, $Yes, $ProtonPassRef, $TrustBaseline, $KeepInForce, $AllowBehindMaster) $global:ControlCalls++; if ($global:ControlThrows) { throw "signing failed" }'
+        $vtext = $vif[0].Clauses[0].Item2.Extent.Text.Trim()
+        $vtext = $vtext.Substring(1, $vtext.Length - 2)   # without the braces of the block
+        $vtext = $vtext.Replace("(Join-Path `$PSScriptRoot 'Set-Control.ps1')", "'$($fakeControl.Replace("'", "''"))'").Replace('.AddMinutes(3)', '.AddSeconds(1)') -replace '\bexit 0\b', "throw 'EXIT0'"
+        Assert-That 'verify: the Set-Control path and the 3 minute deadline were swapped in the cut-out block' ($vtext -match 'Fake-Set-Control' -and $vtext -match 'AddSeconds\(1\)' -and $vtext -notmatch 'PSScriptRoot')
+        $verifyBlock = [scriptblock]::Create($vtext)
+
+        function Stage($n, $d) { }
+        function Run([string]$what, [scriptblock]$cmd) { & $cmd }
+        function Protect-ReasonText([string]$Text) { return $Text }
+        function Set-ReleaseState($d, $v, $done, $status, $reason, $extra) { $script:states.Add([pscustomobject]@{ Done = $done; Status = $status; Reason = $reason }) }
+        function Write-AuditEntry($path, $entry) { if ($script:auditThrows -and $entry.event -eq 'verify-failed') { throw 'audit disk full' }; $script:audits.Add("$($entry.event)") }
+        function Start-Sleep { param([int]$Seconds) Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds 20 }
+        function git { $global:LASTEXITCODE = 0 }   # git status --porcelain: clean
+        function Wait-RunFinished($id, $minutes) { $script:waitCalls++; return $script:waitResult }
+        function gh {
+            $a = @($args); $global:LASTEXITCODE = 0
+            if ($a[0] -eq 'workflow') { $script:nonce = ($a | Where-Object { "$_" -like 'nonce=*' } | Select-Object -First 1) -replace '^nonce=', ''; return }
+            if ($a[0] -eq 'run' -and $a[1] -eq 'list') { $script:listCalls++; return (& $script:listReply $script:listCalls) }
+        }
+        $Repo = 'o/r'; $tag = 'v0.1.0-rc.70'; $Version = '0.1.0-rc.70'; $channel = 'rc'; $Branch = 'master'; $FirstRelease = $false; $Yes = $true
+        $data = 'd'; $audit = 'a'; $CheckOnly = $false; $RunWatchMinutes = 120; $passRef = 'pass://x'
+        $chosen = [pscustomobject]@{ Name = 'k'; Path = 'k.key' }
+        $script:report = @{}
+        $oldW = $script:withdrawOnly; $oldO = $script:ownsVersion; $oldS = $script:stage; $oldE = $script:extra
+        function Reset-VerifyFakes {
+            $script:states = [System.Collections.Generic.List[object]]::new(); $script:audits = [System.Collections.Generic.List[string]]::new()
+            $script:listCalls = 0; $script:waitCalls = 0; $script:nonce = ''; $script:auditThrows = $false; $global:ControlCalls = 0; $global:ControlThrows = $false
+            $script:report = @{}; $script:withdrawOnly = $false
+            $script:waitResult = [pscustomobject]@{ Done = $true; Conclusion = 'success'; Problem = '' }
+            $script:listReply = { param($n) '[{"databaseId":99,"displayTitle":"other run"}]' }
+        }
+        try {
+            $script:ownsVersion = $true; $script:extra = @{ prev_feed = 'v0.1.0-rc.68' }; $script:stage = 'Verify'
+            $Previous = 'v0.1.0-rc.69'   # the upgrade test is on: no release list is read
+
+            # -SkipVerify
+            Reset-VerifyFakes; $SkipVerify = [switch]$true
+            $m = Get-ThrownMessage { & $verifyBlock } 6>$null
+            Assert-That 'verify: -SkipVerify on an ordinary run stops after the feed as before' ($m -eq 'EXIT0' -and $script:states.Count -eq 1 -and $script:states[0].Reason -eq 'verify skipped') "[$m] states=$($script:states.Count)"
+            Reset-VerifyFakes; $script:withdrawOnly = $true; $state = @{ reason = 'the clean-machine check failed' }
+            $m = Get-ThrownMessage { & $verifyBlock } 6>$null
+            Assert-That 'verify: -SkipVerify cannot skip a pending withdraw: the run stops and the state stays withdraw-pending' ($m -eq 'EXIT1' -and $script:states.Count -eq 1 -and $script:states[0].Status -eq 'withdraw-pending' -and $script:states[0].Reason -match 'cannot skip a pending withdraw' -and $global:ControlCalls -eq 0)
+            $SkipVerify = [switch]$false
+
+            # the run lookup: an answer that is not JSON
+            Reset-VerifyFakes; $state = @{ reason = '' }
+            $script:listReply = { param($n) if ($n -eq 1) { '<html>bad gateway' } else { "[{`"databaseId`":42,`"displayTitle`":`"verify $($script:nonce)`"}]" } }
+            $m = Get-ThrownMessage { & $verifyBlock } 6>$null
+            Assert-That 'verify: one non-JSON answer to the run lookup is retried and the verify goes on' ($null -eq $m -and $script:listCalls -eq 2 -and $script:waitCalls -eq 1 -and $script:report.verify -match '/runs/42$' -and $global:ControlCalls -eq 0 -and $script:states.Count -eq 0) "$m"
+            Reset-VerifyFakes
+            $script:listReply = { param($n) '<html>bad gateway' }
+            $m = Get-ThrownMessage { & $verifyBlock } 6>$null
+            Assert-That 'verify: a run lookup that only gets non-JSON does not throw past the withdraw: it withdraws' ($m -eq 'EXIT1' -and $global:ControlCalls -eq 1 -and $script:audits -contains 'verify-failed' -and $script:audits -contains 'withdrawn' -and $script:states[0].Status -eq 'withdraw-pending' -and $script:states[0].Reason -match 'did not show up' -and $script:states[-1].Status -eq 'withdrawn') "$m / $($script:states.Status -join ',')"
+
+            # the state is saved as withdraw-pending before anything else can go wrong
+            Reset-VerifyFakes; $script:auditThrows = $true
+            $script:waitResult = [pscustomobject]@{ Done = $false; Conclusion = ''; Problem = 'did not finish within 120 minutes' }
+            $script:listReply = { param($n) "[{`"databaseId`":42,`"displayTitle`":`"verify $($script:nonce)`"}]" }
+            $m = Get-ThrownMessage { & $verifyBlock } 6>$null
+            Assert-That 'verify: withdraw-pending is saved before the audit write, so a failing audit cannot leave the state running' ($m -eq 'audit disk full' -and $script:states.Count -eq 1 -and $script:states[0].Status -eq 'withdraw-pending' -and $script:states[0].Done -eq 'Feed' -and $script:states[0].Reason -match 'did not finish' -and $global:ControlCalls -eq 0)
+            Reset-VerifyFakes; $global:ControlThrows = $true
+            $script:waitResult = [pscustomobject]@{ Done = $true; Conclusion = 'failure'; Problem = '' }
+            $script:listReply = { param($n) "[{`"databaseId`":42,`"displayTitle`":`"verify $($script:nonce)`"}]" }
+            $m = Get-ThrownMessage { & $verifyBlock } 6>$null
+            Assert-That 'verify: a failed withdraw leaves withdraw-pending (saved first, and again by the stop)' ($m -eq 'EXIT1' -and @($script:states | Where-Object { $_.Status -eq 'withdraw-pending' }).Count -eq 2 -and $script:states[-1].Status -eq 'withdraw-pending' -and $script:states[-1].Reason -match 'withdraw failed')
+            Reset-VerifyFakes; $global:ControlThrows = $true; $script:withdrawOnly = $true; $state = @{ reason = 'the clean-machine check failed' }
+            $m = Get-ThrownMessage { & $verifyBlock } 6>$null
+            Assert-That 'verify: a withdraw-only retry does not save the reason again (it would nest) and does not verify' ($m -eq 'EXIT1' -and $script:states.Count -eq 1 -and $script:states[0].Status -eq 'withdraw-pending' -and $script:waitCalls -eq 0 -and $script:listCalls -eq 0 -and $global:ControlCalls -eq 1)
+            Reset-VerifyFakes
+            $script:listReply = { param($n) "[{`"databaseId`":42,`"displayTitle`":`"verify $($script:nonce)`"}]" }
+            $m = Get-ThrownMessage { & $verifyBlock } 6>$null
+            Assert-That 'verify: a green verify run ends the stage without a withdraw' ($null -eq $m -and $script:report.verify -match '/runs/' -and $script:audits -contains 'verified' -and $global:ControlCalls -eq 0 -and $script:states.Count -eq 0) "$m"
+        } finally { $script:withdrawOnly = $oldW; $script:ownsVersion = $oldO; $script:stage = $oldS; $script:extra = $oldE; Remove-Variable -Name ControlCalls, ControlThrows -Scope Global -ErrorAction SilentlyContinue }
+
+        # The bootstrap's forwarding loop: what the caller passed reaches the worker (-RunWatchMinutes among it), the bootstrap's own parameters do not.
+        $fe = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ForEachStatementAst] -and $n.Variable.VariablePath.UserPath -eq 'kv' -and $n.Condition.Extent.Text -match 'boundParams' }, $true))
+        Assert-That 'forward: the bootstrap forwarding loop is found' ($fe.Count -eq 1)
+        $fwdLoop = [scriptblock]::Create($fe[0].Extent.Text)
+        $fwd = @(); $callerDir = $PWD.Path
+        $boundParams = [ordered]@{ RunWatchMinutes = 150; Version = '0.1.0-rc.70'; Yes = [switch]$true; Again = [switch]$true; LastGreen = [switch]$true; WaitMinutes = 5; CiWaitMinutes = 9; Requester = 'me'; KeyFile = 'k.key'; Previous = '' }
+        . $fwdLoop
+        $fwdText = $fwd -join ' '
+        Assert-That 'forward: -RunWatchMinutes 150 reaches the worker' ($fwdText -match '(^| )-RunWatchMinutes 150( |$)') $fwdText
+        Assert-That 'forward: switches and values go on, the bootstrap-only parameters and empty values do not' ($fwdText -match '-Version 0\.1\.0-rc\.70' -and $fwdText -match '(^| )-Yes( |$)' -and $fwdText -notmatch '-Again|-LastGreen|-WaitMinutes|-CiWaitMinutes|-Requester|-Previous') $fwdText
     }
 
     # ---- release train: the develop side of a promotion merge (real git, throw-away repo, no network) ----------------------------
