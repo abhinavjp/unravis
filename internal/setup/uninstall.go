@@ -156,29 +156,33 @@ func (p *Plan) removeKeeper(ctx context.Context, t *Txn) error {
 func (p *Plan) removeShortcuts(ctx context.Context, t *Txn) error {
 	// Only a link whose target is this installation's program is removed; any other is kept and listed. In the elevated worker no link
 	// inside the user's profile is touched (the setup window or silent mode removes those afterwards, WP-74j).
-	links := []string{p.Layout.StartMenuLink, p.Layout.QuitLink}
+	l := p.Layout
+	type shortcut struct{ path, target string }
+	links := []shortcut{{l.StartMenuLink, l.AppExe}, {l.QuitLink, l.AppExe}}
 	if !p.r.NoProfileLinks {
-		links = append(links, p.Layout.StartupLink, p.Layout.DesktopLink)
+		links = append(links, shortcut{l.StartupLink, l.AppExe}, shortcut{l.DesktopLink, l.AppExe})
 	}
-	links = append(links, p.Layout.ReleasesLink)
-	for _, l := range links {
-		if l == "" || (p.r.NoProfileLinks && p.r.isProfileLink(l)) {
+	if l.ReleasesLink != "" && !(p.r.NoProfileLinks && p.r.isProfileLink(l.ReleasesLink)) {
+		if err := p.r.refuseLink(filepath.Dir(l.ReleasesLink)); err != nil {
+			p.leftf("Shortcuts in %s (%v)", filepath.Dir(l.ReleasesLink), err)
+		} else {
+			links = append(links, shortcut{l.ReleasesLink, l.ReleasesExe}, shortcut{l.legacyReleasesLink(), l.legacyReleasesExe()})
+		}
+	}
+	for _, link := range links {
+		if link.path == "" || (p.r.NoProfileLinks && p.r.isProfileLink(link.path)) {
 			continue
 		}
-		target := p.Layout.AppExe
-		if l == p.Layout.ReleasesLink {
-			target = p.Layout.ReleasesExe
-		}
-		exists, ours := linkIsOurs(l, target)
+		exists, ours := linkIsOurs(link.path, link.target)
 		if !exists {
 			continue
 		}
 		if !ours {
-			p.leftf("Shortcut %s (kept: it points to another program)", l)
+			p.leftf("Shortcut %s (kept: it points to another program)", link.path)
 			continue
 		}
-		if err := os.Remove(l); err != nil && !errors.Is(err, os.ErrNotExist) {
-			p.leftf("Shortcut %s (%v)", l, err)
+		if err := os.Remove(link.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			p.leftf("Shortcut %s (%v)", link.path, err)
 		}
 	}
 	return nil
@@ -204,8 +208,10 @@ func (p *Plan) cliPresent() bool {
 	if p.Layout.CLIDir == "" {
 		return false
 	}
-	if _, err := os.Lstat(p.Layout.CLIExe); err == nil {
-		return true
+	for _, path := range []string{p.Layout.CLIExe, p.Layout.HomestretchExe, p.Layout.HSExe} {
+		if _, err := os.Lstat(path); err == nil {
+			return true
+		}
 	}
 	has, err := p.r.Sys.Env.HasPathEntry(p.cliRoot(), p.Layout.CLIDir)
 	return err != nil || has // a PATH that cannot be read is tried again by the step, which lists what it could not do
@@ -230,22 +236,42 @@ func (p *Plan) removeCLIPath(ctx context.Context, t *Txn) error {
 
 func (p *Plan) removeProgramFiles(ctx context.Context, t *Txn) error {
 	dir := p.Layout.InstallDir
-	for _, f := range []string{p.Layout.AppExe, p.Layout.KeeperExe, p.Layout.BlackboxExe, p.Layout.ReleasesExe, p.Layout.StateFile} {
+	if err := p.r.refuseLink(dir); err != nil {
+		return err
+	}
+	remove := func(f string) {
 		if f == "" {
-			continue
+			return
 		}
 		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
 			p.leftf("File %s (%v)", f, err)
 		}
 	}
-	// The command line program and its bin folder: the folder goes only when it is empty after that.
-	if p.Layout.CLIDir != "" {
-		if err := os.Remove(p.Layout.CLIExe); err != nil && !errors.Is(err, os.ErrNotExist) {
-			p.leftf("File %s (%v)", p.Layout.CLIExe, err)
+	removeProgram := func(f string) {
+		id, err := programFileID(f)
+		if err != nil {
+			p.leftf("File %s (%v)", f, err)
+		} else if name := filepath.Base(f); id != "" && (p.ownsHomestretchFile(name, id) || name == LegacyReleasesExeName && p.legacyDashboardOwned()) {
+			remove(f)
 		}
-		if err := os.Remove(p.Layout.CLIDir); err != nil && !errors.Is(err, os.ErrNotExist) {
-			if ents, rerr := os.ReadDir(p.Layout.CLIDir); rerr == nil && len(ents) > 0 {
-				p.un().kept = append(p.un().kept, "Files you added to "+p.Layout.CLIDir)
+	}
+	for _, f := range []string{p.Layout.AppExe, p.Layout.KeeperExe, p.Layout.BlackboxExe, p.Layout.StateFile} {
+		remove(f)
+	}
+	removeProgram(p.Layout.ReleasesExe)
+	removeProgram(p.Layout.legacyReleasesExe())
+	// The bin folder goes only when it is empty after removing the command line programs.
+	if p.Layout.CLIDir != "" {
+		if err := p.r.refuseLink(p.Layout.CLIDir); err != nil {
+			p.leftf("Folder %s (%v)", p.Layout.CLIDir, err)
+		} else {
+			remove(p.Layout.CLIExe)
+			removeProgram(p.Layout.HomestretchExe)
+			removeProgram(p.Layout.HSExe)
+			if err := os.Remove(p.Layout.CLIDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+				if ents, rerr := os.ReadDir(p.Layout.CLIDir); rerr == nil && len(ents) > 0 {
+					p.un().kept = append(p.un().kept, "Files you added to "+p.Layout.CLIDir)
+				}
 			}
 		}
 	}

@@ -186,14 +186,14 @@ func TestScriptsUseTheNewNames(t *testing.T) {
 	if s := read("tools/release/Promote-Develop.ps1"); !strings.Contains(s, `cmd\homestretch\main.go`) || !strings.Contains(s, "./cmd/homestretch") || strings.Contains(s, "./cmd/unravis-ci") {
 		t.Error("Promote-Develop.ps1 should build ./cmd/homestretch for the hold check")
 	}
-	if s := read("build.ps1"); !strings.Contains(s, "./cmd/homestretch") || !strings.Contains(s, `dist\hs.exe`) || !strings.Contains(s, `dist\unravis-releases.exe`) {
-		t.Error("build.ps1 should build homestretch.exe and hs.exe and still build unravis-releases.exe")
+	if s := read("build.ps1"); !strings.Contains(s, "./cmd/homestretch") || !strings.Contains(s, `dist\hs.exe`) || !strings.Contains(s, `dist\homestretch-app.exe`) {
+		t.Error("build.ps1 should build homestretch.exe, hs.exe and homestretch-app.exe")
 	}
 	// The old launcher forwards to the new one, and the new one starts the dashboard program that setup installs.
 	if s := read("Start Releases.cmd"); !strings.Contains(s, "Start Homestretch.cmd") {
 		t.Error("Start Releases.cmd should call Start Homestretch.cmd")
 	}
-	if s := read("Start Homestretch.cmd"); !strings.Contains(s, `.\cmd\unravis-releases`) || !strings.Contains(s, `dist\unravis-releases.exe`) {
+	if s := read("Start Homestretch.cmd"); !strings.Contains(s, `.\cmd\unravis-releases`) || !strings.Contains(s, `dist\homestretch-app.exe`) {
 		t.Error("Start Homestretch.cmd should build and start the dashboard")
 	}
 	for _, rel := range []string{"Start Homestretch.cmd", "cmd/homestretch/main.go", "cmd/unravis-ci/main.go", "cmd/unravis-releases/main.go"} {

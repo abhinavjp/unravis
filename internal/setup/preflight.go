@@ -423,7 +423,7 @@ func installerOwned(dir string, e os.DirEntry) bool {
 		return workFolderOwned(dir, name)
 	}
 	// Windows itself drops these into a folder the person has opened in Explorer; they are not anybody's data.
-	for _, own := range []string{AppExeName, KeeperExeName, BlackboxExeName, ReleasesExeName, CLIExeName, SetupExeName, StateFileName, "desktop.ini", "thumbs.db"} {
+	for _, own := range []string{AppExeName, KeeperExeName, BlackboxExeName, ReleasesExeName, LegacyReleasesExeName, CLIExeName, SetupExeName, StateFileName, "desktop.ini", "thumbs.db"} {
 		if strings.EqualFold(name, own) {
 			return true
 		}

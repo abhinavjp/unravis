@@ -41,6 +41,8 @@ type Plan struct {
 	unState       *uninstallState
 	// pathAdded is what cliPath found: see State.PathAdded.
 	pathAdded *bool
+	// homestretchFiles holds the IDs of the Homestretch programs placed in this run.
+	homestretchFiles map[string]string
 }
 
 func (p *Plan) backupDir() string {
@@ -132,9 +134,13 @@ func installSteps(p *Plan) []Step {
 		Step{ID: "program-folder", Title: "Make the program folder", Do: p.programFolder},
 		Step{ID: "copy-files", Title: "Copy the program files", Do: p.copyFiles},
 	)
-	// The command line program is optional in the payload: without it there is no bin folder and no PATH step.
-	if p.r.Payload != nil && p.r.Payload.Has(CLIExeName) {
-		steps = append(steps, Step{ID: "cli-path", Title: "Add the unravis command to the path", Do: p.cliPath})
+	if payload := p.r.Payload; payload != nil {
+		for _, name := range cliPayloadNames {
+			if payload.Has(name) {
+				steps = append(steps, Step{ID: "cli-path", Title: "Add the unravis command to the path", Do: p.cliPath})
+				break
+			}
+		}
 	}
 	if p.Opts.Scope == ScopeMachine {
 		steps = append(steps,
@@ -193,15 +199,15 @@ func (p *Plan) closeReleases(t *Txn) {
 	}
 	var found []Process
 	for _, q := range list {
-		if strings.EqualFold(filepath.Base(q.Exe), ReleasesExeName) && (insideFolder(q.Exe, p.Layout.InstallDir) || samePath(q.Exe, p.Layout.ReleasesExe)) {
+		if samePath(q.Exe, p.Layout.ReleasesExe) || samePath(q.Exe, p.Layout.legacyReleasesExe()) {
 			found = append(found, q)
 		}
 	}
 	mine, _ := p.r.splitApps(found)
 	for _, q := range mine {
-		t.Logf("close-app: closing Unravis Releases (process %d)", q.PID)
+		t.Logf("close-app: closing Homestretch (process %d)", q.PID)
 		if err := p.r.Sys.Proc.TerminateIf(q.PID, q.Exe); err != nil && !errors.Is(err, ErrNotFound) {
-			t.Logf("close-app: could not close Unravis Releases (process %d): %v", q.PID, err)
+			t.Logf("close-app: could not close Homestretch (process %d): %v", q.PID, err)
 		}
 	}
 }
@@ -405,8 +411,55 @@ func (p *Plan) wantReleases() bool {
 	if p.Opts.Releases {
 		return true
 	}
-	fi, err := os.Lstat(p.Layout.ReleasesExe)
-	return err == nil && fi.Mode().IsRegular()
+	if p.dashboardInstalled() {
+		return true
+	}
+	id, err := programFileID(p.Layout.legacyReleasesExe())
+	return err == nil && id != "" && p.legacyDashboardOwned()
+}
+
+func (p *Plan) dashboardInstalled() bool {
+	id, err := programFileID(p.Layout.ReleasesExe)
+	return err == nil && id != "" && (p.homestretchFiles[ReleasesExeName] == id || p.ownsHomestretchFile(ReleasesExeName, id))
+}
+
+func (p *Plan) legacyDashboardOwned() bool {
+	// Older state files recorded the installation location but no program IDs.
+	if p.Old != nil && samePath(p.Old.Location, p.Layout.InstallDir) {
+		return true
+	}
+	link := p.Layout.legacyReleasesLink()
+	if p.r.NoProfileLinks && p.r.isProfileLink(link) {
+		return false
+	}
+	if err := p.r.refuseLink(filepath.Dir(link)); err != nil {
+		return false
+	}
+	_, ours := linkIsOurs(link, p.Layout.legacyReleasesExe())
+	return ours
+}
+
+// programFileID reports the ID of a plain program file, or an empty ID when the path is absent.
+func programFileID(path string) (string, error) {
+	fi, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", path)
+	}
+	id, reparse, err := osFileID(path)
+	if reparse {
+		return "", linkError(path)
+	}
+	return id, err
+}
+
+func (p *Plan) ownsHomestretchFile(name, id string) bool {
+	return p.Old != nil && id != "" && p.Old.State.HomestretchFiles[name] == id
 }
 
 // Names of the working folders a setup makes inside the program folder. A run that is cut off (killed, power loss) can leave them.
@@ -454,11 +507,17 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 	names = append(names, BlackboxExeName)
 	// The releases window is an optional companion: staged only when this setup program carries it and the person asked for it (or it
 	// is already installed, so an update keeps it current).
-	if _, ok := p.r.Payload.file(ReleasesExeName); ok && p.wantReleases() {
-		names = append(names, ReleasesExeName)
+	releasesName := ReleasesExeName
+	if !p.r.Payload.Has(releasesName) {
+		releasesName = LegacyReleasesExeName
 	}
-	if _, ok := p.r.Payload.file(CLIExeName); ok {
-		names = append(names, CLIExeName)
+	if p.r.Payload.Has(releasesName) && p.wantReleases() {
+		names = append(names, releasesName)
+	}
+	for _, name := range cliPayloadNames {
+		if p.r.Payload.Has(name) {
+			names = append(names, name)
+		}
 	}
 	for _, n := range names {
 		dst, err := p.stageFile(ctx, staging, n)
@@ -489,8 +548,21 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 	if p.Opts.Scope == ScopeMachine {
 		place = append(place, struct{ name, to string }{KeeperExeName, p.Layout.KeeperExe})
 	}
-	place = append(place, struct{ name, to string }{ReleasesExeName, p.Layout.ReleasesExe}) // skipped below when not staged
-	place = append(place, struct{ name, to string }{CLIExeName, p.Layout.CLIExe})           // skipped below when not staged
+	place = append(place, []struct{ name, to string }{
+		{releasesName, p.Layout.ReleasesExe},
+		{CLIExeName, p.Layout.CLIExe},
+		{HomestretchExeName, p.Layout.HomestretchExe},
+		{HSExeName, p.Layout.HSExe},
+	}...)
+	if p.staged[CLIExeName] != "" || p.staged[HomestretchExeName] != "" || p.staged[HSExeName] != "" {
+		if err := p.r.refuseLink(p.Layout.CLIDir); err != nil {
+			return err
+		}
+		if err := t.MkdirAll(p.Layout.CLIDir); err != nil {
+			return &StepError{Msg: "Could not make the folder " + p.Layout.CLIDir + ": " + err.Error() + ".", Fix: "Close any program using the Unravis folder, then run setup again.", Err: err}
+		}
+	}
+	p.homestretchFiles = make(map[string]string)
 	for _, f := range place {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -499,13 +571,38 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 		if !ok {
 			continue
 		}
-		if f.name == CLIExeName {
-			if err := t.MkdirAll(p.Layout.CLIDir); err != nil {
-				return &StepError{Msg: "Could not make the folder " + p.Layout.CLIDir + ": " + err.Error() + ".", Fix: "Close any program using the Unravis folder, then run setup again.", Err: err}
+		name := filepath.Base(f.to)
+		homestretch := name == ReleasesExeName || name == HomestretchExeName || name == HSExeName
+		if homestretch {
+			id, err := programFileID(f.to)
+			if err != nil {
+				return err
+			}
+			if id != "" && !p.ownsHomestretchFile(name, id) {
+				return &StepError{Msg: f.to + " already exists and was not placed by setup.", Fix: "Move that file to another folder, then run setup again."}
 			}
 		}
 		if err := t.PlaceFile(staged, f.to); err != nil {
 			return &StepError{Msg: "Could not put " + f.to + " in place: " + err.Error() + ".", Fix: "Close any program using the Unravis folder, then run setup again.", Err: err}
+		}
+		if homestretch {
+			id, err := programFileID(f.to)
+			if err != nil {
+				return err
+			}
+			if id == "" {
+				return fmt.Errorf("%s went missing after setup placed it", f.to)
+			}
+			p.homestretchFiles[name] = id
+		}
+	}
+	// Leave the legacy dashboard usable until its replacement is in place.
+	if p.dashboardInstalled() {
+		legacy := p.Layout.legacyReleasesExe()
+		if id, err := programFileID(legacy); err != nil {
+			t.Logf("legacy dashboard kept: %v", err)
+		} else if id != "" && p.legacyDashboardOwned() {
+			return t.RemoveFile(legacy, "legacy dashboard")
 		}
 	}
 	return nil
@@ -865,7 +962,6 @@ func (p *Plan) shortcuts(ctx context.Context, t *Txn) error {
 	quit := Shortcut{Target: l.AppExe, Args: quitLinkArg, WorkDir: l.InstallDir, Description: "Quit Unravis", Icon: l.AppExe}
 	startup := open
 	startup.Args = startupLinkArg
-	releases := Shortcut{Target: l.ReleasesExe, WorkDir: l.InstallDir, Description: "Unravis Releases: read-only release status", Icon: l.ReleasesExe}
 	// write puts one link in place. A link inside a folder that is itself a junction or link (guard) is skipped with a log line; it
 	// never fails the install and never touches the other links.
 	write := func(link string, s Shortcut, guard bool) error {
@@ -888,12 +984,28 @@ func (p *Plan) shortcuts(ctx context.Context, t *Txn) error {
 	for _, c := range []struct {
 		link string
 		s    Shortcut
-	}{{l.StartMenuLink, open}, {l.QuitLink, quit}, {l.ReleasesLink, releases}} {
-		if c.link == "" || (c.link == l.ReleasesLink && p.staged[ReleasesExeName] == "") || (p.r.NoProfileLinks && p.r.isProfileLink(c.link)) {
+	}{{l.StartMenuLink, open}, {l.QuitLink, quit}} {
+		if c.link == "" || (p.r.NoProfileLinks && p.r.isProfileLink(c.link)) {
 			continue
 		}
 		if err := write(c.link, c.s, false); err != nil {
 			return err
+		}
+	}
+	if l.ReleasesLink != "" && !(p.r.NoProfileLinks && p.r.isProfileLink(l.ReleasesLink)) && p.dashboardInstalled() {
+		if err := p.r.refuseLink(filepath.Dir(l.ReleasesLink)); err != nil {
+			t.Logf("shortcut skipped: %v", err)
+		} else {
+			if mayWriteLink(l.ReleasesLink, l.ReleasesExe) {
+				if err := write(l.ReleasesLink, l.releasesShortcut(), false); err != nil {
+					return err
+				}
+			}
+			if _, ours := linkIsOurs(l.legacyReleasesLink(), l.legacyReleasesExe()); ours {
+				if err := t.RemoveFile(l.legacyReleasesLink(), "legacy dashboard shortcut"); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if p.r.NoProfileLinks {
@@ -958,6 +1070,15 @@ func (p *Plan) saveState(ctx context.Context, t *Txn) error {
 	s.PathAdded = p.pathAdded
 	if s.PathAdded == nil && p.Old != nil {
 		s.PathAdded = p.Old.State.PathAdded
+	}
+	s.HomestretchFiles = make(map[string]string)
+	if p.Old != nil {
+		for name, id := range p.Old.State.HomestretchFiles {
+			s.HomestretchFiles[name] = id
+		}
+	}
+	for name, id := range p.homestretchFiles {
+		s.HomestretchFiles[name] = id
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
