@@ -37,7 +37,12 @@ p,.hint,.lead h1{text-wrap:pretty}
 .now:hover{background:var(--surface-2);color:var(--text)}
 .now b{color:var(--text);font-weight:500}
 .fresh{font-size:var(--fs-xs);color:var(--text-2);white-space:nowrap;display:flex;gap:6px;align-items:center}
-.fresh.stale{color:var(--warn)}
+.fresh.stale{color:var(--warn);font-weight:500}
+.stale-note{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;margin-bottom:12px;border:1px solid color-mix(in srgb,var(--warn) 60%,var(--line));background:var(--warn-bg);border-radius:var(--r-chip);font-size:var(--fs-sm)}
+.stale-note .ic{color:var(--warn);margin-top:1px}
+.stale-note .txt{flex:1;min-width:0;max-width:90ch;margin:0}
+.stale-note .txt b{font-weight:600}
+@media(max-width:760px){.stale-note{flex-wrap:wrap}.stale-note .txt{flex-basis:calc(100% - 30px)}}
 .menu{position:absolute;top:38px;left:0;min-width:320px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:var(--r-box);z-index:40;padding:6px}
 .menu.right{left:auto;right:0;min-width:200px}
 .menu[hidden]{display:none}
