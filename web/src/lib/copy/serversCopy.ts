@@ -55,6 +55,7 @@ export const SV_TEXT = {
   savedNotTrusted: 'Not trusted yet',
   savedMachines: (n: number) => n === 1 ? '1 machine chosen' : n + ' machines chosen',
   retry: 'Try again',
+  stepCrashed: 'This step could not be shown. Nothing was changed on the server. Try again.',
 
   /* connect */
   connectTitle: 'Where do you want to get data from?',
@@ -118,7 +119,7 @@ export const SV_TEXT = {
   /* pick */
   pickTitle: 'Which machines do you want data from?',
   pickLead: 'These are the machines the Salt master manages. You can only choose machines that are accepted and on.',
-  pickLoading: 'Asking the Salt master.',
+  pickLoading: 'Asking the Salt master. With many machines this can take up to a minute.',
   pickEmpty: 'The Salt master did not list any machine.',
   pickCount: (accepted: number, online: number, offline: number, notAccepted: number) =>
     accepted + ' accepted, ' + online + ' online, ' + offline + ' off, ' + notAccepted + ' not accepted or refused.',

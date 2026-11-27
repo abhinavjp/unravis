@@ -339,6 +339,23 @@ test('correcting a new untrusted connection removes only the earlier entry creat
   assert.deepEqual(flow.list.map(({ id }) => id), ['older', 'correct.example.test']);
 });
 
+test('machine duplicates keep the strongest state and the first position and equal entry', () => {
+  const m = (id, state, chosen = false) => ({ id, state, chosen });
+  const accepted = { ...m('a', 'accepted', true), online: true };
+  assert.deepEqual(sv.dedupeMachines([m('a', 'denied'), m('b', 'rejected'), accepted, m('b', 'pending'), m('a', 'accepted')]), [accepted, m('b', 'pending')]);
+});
+
+test('request deadline reports timeout and parent cancellation stays an abort', async () => {
+  const parent = new AbortController();
+  let timedSignal;
+  await assert.rejects(sv.withTimeout(parent.signal, 5, (signal) => { timedSignal = signal; return new Promise(() => {}); }), (e) => e.failure?.reason === 'timeout');
+  assert.equal(timedSignal.aborted, true);
+  const other = new AbortController();
+  const pending = sv.withTimeout(other.signal, 1000, () => new Promise(() => {}));
+  other.abort();
+  await assert.rejects(pending, (e) => e.name === 'AbortError');
+});
+
 test('Linux machine listing keeps sudo on after a successful retry and rolls it back after failure', async () => {
   const original = { status: 502, reason: 'salt-master', error: 'The original refusal.' };
   for (const succeeds of [true, false]) {
@@ -361,6 +378,7 @@ test('Linux machine listing keeps sudo on after a successful retry and rolls it 
     assert.deepEqual(flow.picks, succeeds ? ['web-1'] : []);
     assert.equal(flow.note, succeeds ? SV_TEXT.pickSudoSwitched : '');
     assert.equal(flow.error, succeeds ? null : original);
+    assert.equal(flow.busy, '');
   }
 });
 

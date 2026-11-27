@@ -264,6 +264,36 @@ export function caseRangeProblem(range: CaseRange): string {
 
 /* -------------------------------------------------------------- machines */
 
+/** Keep the strongest entry for each id, in the order ids first appeared. */
+export function dedupeMachines(machines: MachineView[]): MachineView[] {
+  const rank: Record<string, number> = { accepted: 4, pending: 3, rejected: 2, denied: 1 };
+  const positions = new Map<string, number>();
+  const result: MachineView[] = [];
+  for (const machine of machines) {
+    const index = positions.get(machine.id);
+    if (index === undefined) { positions.set(machine.id, result.length); result.push(machine); }
+    else if ((rank[machine.state] ?? 0) > (rank[result[index].state] ?? 0)) result[index] = machine;
+  }
+  return result;
+}
+
+/** Run a request with a deadline while preserving cancellation by the caller. */
+export async function withTimeout<T>(parent: AbortSignal, ms: number, request: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout>;
+  let onAbort: () => void = () => {};
+  const cancelled = new Promise<never>((_, reject) => {
+    onAbort = () => { controller.abort(); reject(new DOMException('Cancelled', 'AbortError')); };
+    if (parent.aborted) onAbort(); else parent.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new ServersError({ status: 0, reason: 'timeout', error: FAILURE_TEXT.timeout }));
+    }, ms);
+  });
+  try { return await Promise.race([cancelled, Promise.resolve().then(() => request(controller.signal))]); }
+  finally { clearTimeout(timer!); parent.removeEventListener('abort', onAbort); }
+}
+
 /** At most this many machines may be ticked for one server. */
 export const MAX_MACHINES = 20;
 

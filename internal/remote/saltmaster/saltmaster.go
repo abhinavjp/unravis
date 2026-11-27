@@ -183,12 +183,14 @@ func (m Master) Machines(ctx context.Context) ([]Machine, error) {
 		return nil, ErrBadReply
 	}
 	var list []Machine
-	for field, state := range map[string]string{"minions": "accepted", "minions_pre": "pending", "minions_denied": "denied", "minions_rejected": "rejected"} {
-		for _, id := range keys[field] {
-			if grammar.MinionID(id) != "" {
+	seen := make(map[string]bool)
+	for _, pair := range []struct{ field, state string }{{"minions", "accepted"}, {"minions_pre", "pending"}, {"minions_rejected", "rejected"}, {"minions_denied", "denied"}} {
+		for _, id := range keys[pair.field] {
+			if grammar.MinionID(id) != "" || seen[id] {
 				continue // an id we would never target is not offered
 			}
-			list = append(list, Machine{ID: id, State: state})
+			seen[id] = true
+			list = append(list, Machine{ID: id, State: pair.state})
 		}
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })

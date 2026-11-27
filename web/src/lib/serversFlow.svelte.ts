@@ -2,7 +2,7 @@ import { serversApi } from './serversApi';
 import { SV_TEXT } from './copy/serversCopy';
 import {
   FAILURE_TEXT, ServersError, buildAddBody, buildPatchBody, buildPullBody, caseRange, caseRangeProblem, connectProblems, emptyConnectForm, findConnection,
-  folderKindInfo, initialPicks, jobPercent, matchesConnection, pullTargets, readableTargets, rangeHours, togglePick, withFolder, withoutFolder,
+  dedupeMachines, folderKindInfo, initialPicks, jobPercent, matchesConnection, pullTargets, readableTargets, rangeHours, togglePick, withFolder, withoutFolder, withTimeout,
   type AuthKind, type ConnectForm, type Failure, type FolderMap, type HostKey, type JobView, type MachineView, type PlanView, type PullTarget, type RangeChoice,
   type ServerEntry, type TestResult
 } from './servers';
@@ -298,7 +298,7 @@ export class ServersFlow {
       await this.sudoRetries.get(server.id)?.catch(() => {});
       signal.throwIfAborted();
       try {
-        return await serversApi.machines(server.id, signal);
+        return await withTimeout(signal, 100_000, (timed) => serversApi.machines(server.id, timed));
       } catch (e) {
         signal.throwIfAborted();
         if (!autoSudo || server.os !== 'linux' || this.sudo || failureOf(e).reason !== 'salt-master') throw e;
@@ -312,8 +312,8 @@ export class ServersFlow {
         this.sudo = true;
         this.note = SV_TEXT.pickSudoSwitched;
       }
-      this.machines = machines;
-      this.picks = initialPicks(machines);
+      this.machines = dedupeMachines(machines);
+      this.picks = initialPicks(this.machines);
     });
   }
 
@@ -323,12 +323,13 @@ export class ServersFlow {
       // Let the settings write settle so backing out can still undo it.
       entry = await serversApi.patch(id, buildPatchBody({ saltSudo: true }));
       signal.throwIfAborted();
-      const { machines } = await serversApi.machines(id, signal);
+      const { machines } = await withTimeout(signal, 100_000, (timed) => serversApi.machines(id, timed));
       signal.throwIfAborted();
       return { machines, entry };
-    } catch {
-      if (entry) await serversApi.patch(id, buildPatchBody({ saltSudo: false })).catch(() => {});
-      throw original;
+    } catch (e) {
+      if (entry) await withTimeout(new AbortController().signal, 5_000, (timed) => serversApi.patch(id, buildPatchBody({ saltSudo: false }), timed)).catch(() => {});
+      signal.throwIfAborted();
+      throw failureOf(e).reason === 'timeout' ? e : original;
     }
   }
 

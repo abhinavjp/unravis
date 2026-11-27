@@ -35,6 +35,8 @@
 
   {#if flow.busy === 'machines'}
     <p class="sv-note" role="status">{T.pickLoading}</p>
+  {:else if flow.error && !flow.busy}
+    <div class="sv-actions"><button type="button" class="secondary-button" onclick={() => flow.loadMachines()}>{T.retry}</button></div>
   {:else if flow.machines.length === 0}
     <p class="sv-note">{T.pickEmpty}</p>
     <div class="sv-actions"><button type="button" class="secondary-button" disabled={!!flow.busy} onclick={() => flow.loadMachines()}>{T.retry}</button></div>

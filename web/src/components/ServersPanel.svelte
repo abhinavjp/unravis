@@ -84,6 +84,7 @@
       </div>
     {/if}
 
+    <svelte:boundary onerror={(error) => console.error(error)}>
     {#if flow.step === 'connect'}
       <ConnectStep {flow} />
     {:else if flow.step === 'trust'}
@@ -99,6 +100,13 @@
     {:else}
       <LandStep {flow} onOpenBlackbox={openBlackbox} />
     {/if}
+    {#snippet failed(_error, reset)}
+      <div class="notice" role="alert">
+        <p>{T.stepCrashed}</p>
+        <button type="button" class="secondary-button" onclick={() => { reset(); if (flow.step === 'pick') void flow.loadMachines(); }}>{T.retry}</button>
+      </div>
+    {/snippet}
+    </svelte:boundary>
   </div>
 </div>
 

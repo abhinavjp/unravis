@@ -25,8 +25,9 @@ type fakeMaster struct {
 	data   []byte
 	link   string // when set, realpath answers with this instead
 	down   bool
-	garble bool // chunk answers are an error text
-	short  bool // chunk answers lose their last byte
+	garble bool   // chunk answers are an error text
+	short  bool   // chunk answers lose their last byte
+	keys   string // optional salt-key reply
 }
 
 func (f *fakeMaster) reply(v any) []byte {
@@ -42,6 +43,9 @@ func (f *fakeMaster) Exec(_ context.Context, cmd string, _ int) ([]byte, error) 
 	f.cmds = append(f.cmds, cmd)
 	switch {
 	case strings.Contains(cmd, "salt-key"):
+		if f.keys != "" {
+			return []byte(f.keys), nil
+		}
 		return []byte(`{"minions":["web-01","db-01","bad id"],"minions_pre":["new-01"],"minions_denied":[],"minions_rejected":["old-01"]}`), nil
 	case strings.Contains(cmd, "salt-run"):
 		return []byte("[WARNING] something\n" + `{"up":["web-01"],"down":["db-01"]}`), nil
@@ -134,6 +138,21 @@ func TestMachinesListsKeysAndOnline(t *testing.T) {
 	}
 	if strings.Contains(f.cmds[0], "--static") {
 		t.Fatal("salt-key takes no --static")
+	}
+}
+
+func TestMachinesDeduplicatesStates(t *testing.T) {
+	f := newFake(1)
+	f.keys = `{"minions_denied":["web-01"],"minions":["web-01"],"minions_pre":["new-01"],"minions_rejected":["new-01"]}`
+	got, err := master(f).Machines(context.Background())
+	if err != nil || len(got) != 2 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if got[0].ID != "new-01" || got[0].State != "pending" || got[0].Online != nil {
+		t.Fatalf("pending: %+v", got[0])
+	}
+	if got[1].ID != "web-01" || got[1].State != "accepted" || got[1].Online == nil || !*got[1].Online {
+		t.Fatalf("accepted: %+v", got[1])
 	}
 }
 
