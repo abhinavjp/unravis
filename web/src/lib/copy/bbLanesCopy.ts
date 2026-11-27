@@ -6,7 +6,7 @@ import type { LintEntry } from './copylint';
  */
 export const BBL_TEXT = {
   heading: 'Blackbox lanes',
-  intro: 'The Blackbox is a small recorder installed on the server. It writes down many figures, all the time. Each lane below is one figure on the same clock as your API calls. Times are in your chosen time zone.',
+  intro: 'The Blackbox is a small recorder installed on the server. It writes down many figures at regular intervals. Each lane below is one figure on the same clock as your API calls. Times are in your chosen time zone.',
   summary: (shown: number, max: number): string => shown + (shown === 1 ? ' lane' : ' lanes') + ' shown, ' + max + ' at most',
   choose: 'Choose lanes',
   reset: 'Reset to the starting lanes',
@@ -34,7 +34,6 @@ export const BBL_TEXT = {
   firstHeading: 'Which lane moved first?',
   firstHelp: 'The shown lanes that left their own normal range, earliest first. This is a clue and not proof.',
   firstNone: 'No shown lane left its own normal range in this window.',
-  firstAt: (name: string, time: string): string => name + ' at ' + time,
   pickerTitle: 'Choose lanes',
   searchLabel: 'Search lanes',
   searchHint: 'Search: cpu, deadlock, redis, queue',
@@ -55,7 +54,7 @@ export const BBL_TEXT = {
   groupLog: 'Error log and crash dumps',
   evRecorderStart: 'The recorder started again (new run)',
   evGap: 'The recorder was not running',
-  evWin: 'Windows wrote an application error to its log',
+  evWin: 'Windows wrote an entry to its event log',
   evDump: 'A new crash dump file appeared',
   evDeadlock: 'SQL Server ended one query in a deadlock',
   evNonYield: 'SQL Server reported a scheduler that stopped yielding',
@@ -103,7 +102,6 @@ export function bbLanesCopyEntries(): LintEntry[] {
     undid: BBL_TEXT.undid('Host CPU busy'),
     scale: BBL_TEXT.scale('83 %'),
     scaleLow: BBL_TEXT.scaleLow('1.09 GB', '6.91 GB'),
-    firstAt: BBL_TEXT.firstAt('Host CPU busy', '15:21'),
     pickerAvail: BBL_TEXT.pickerAvail(24),
     pickerRule: BBL_TEXT.pickerRule(10),
     pickerFoot: BBL_TEXT.pickerFoot(8, 10),

@@ -204,7 +204,7 @@
               <div class="plot">
                 {#each gaps as g, i (i)}<div class="gap" style:left="{xOf(g.from) / 10}%" style:width="{(xOf(g.to) - xOf(g.from)) / 10}%" aria-hidden="true"></div>{/each}
                 <svg viewBox="0 0 1000 54" preserveAspectRatio="none" role="img" aria-label="{laneName(v.def.id)} over time">
-                                    {#if v.points.length > 0}<path d={path(v, 54)} fill="none" stroke={colour(v.def.group)} stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round" />{/if}
+                  {#if v.points.length > 0}<path d={path(v, 54)} fill="none" stroke={colour(v.def.group)} stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round" />{/if}
                   {#each marks as m, i (i)}<line x1={xOf(m.start)} x2={xOf(m.start)} y1="0" y2="54" class="mark" vector-effect="non-scaling-stroke" />{/each}
                 </svg>
                 <button type="button" class="rm" aria-label={BBL_TEXT.hide(laneName(v.def.id))} title={BBL_TEXT.hideTitle} onclick={() => hideLane(v.def.id)}>&times;</button>
@@ -263,10 +263,10 @@
   .name small { color: var(--text-2); font-size: var(--fs-2); overflow-wrap: anywhere; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
   .plot { position: relative; min-width: 0; }
-  svg { display: block; width: 100%; height: 100%; min-height: 54px; }
+  svg { position: relative; z-index: 1; display: block; width: 100%; height: 100%; min-height: 54px; }
   .gap { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, var(--line) 0 2px, transparent 2px 7px); opacity: 0.8; pointer-events: none; }
   .mark { stroke: var(--bad); stroke-opacity: 0.45; stroke-width: 1; }
-  .rm { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-2); cursor: pointer; }
+  .rm { position: absolute; z-index: 2; top: 4px; right: 4px; width: 28px; height: 28px; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-2); cursor: pointer; }
   .cross { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text-2); opacity: 0.6; pointer-events: none; }
   .tip { position: absolute; top: 4px; z-index: 2; display: grid; gap: 2px; padding: var(--space-2); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); pointer-events: none; max-width: 280px; transform: translateX(8px); }
   .tip.flip { transform: translateX(calc(-100% - 8px)); }
