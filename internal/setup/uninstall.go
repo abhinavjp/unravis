@@ -162,7 +162,7 @@ func (p *Plan) removeShortcuts(ctx context.Context, t *Txn) error {
 	if !p.r.NoProfileLinks {
 		links = append(links, shortcut{l.StartupLink, l.AppExe}, shortcut{l.DesktopLink, l.AppExe})
 	}
-	if l.ReleasesLink != "" && !(p.r.NoProfileLinks && p.r.isProfileLink(l.ReleasesLink)) {
+	if l.ReleasesLink != "" && (!p.r.NoProfileLinks || !p.r.isProfileLink(l.ReleasesLink)) {
 		if err := p.r.refuseLink(filepath.Dir(l.ReleasesLink)); err != nil {
 			p.leftf("Shortcuts in %s (%v)", filepath.Dir(l.ReleasesLink), err)
 		} else {

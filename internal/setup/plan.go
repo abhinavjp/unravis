@@ -992,7 +992,7 @@ func (p *Plan) shortcuts(ctx context.Context, t *Txn) error {
 			return err
 		}
 	}
-	if l.ReleasesLink != "" && !(p.r.NoProfileLinks && p.r.isProfileLink(l.ReleasesLink)) && p.dashboardInstalled() {
+	if l.ReleasesLink != "" && (!p.r.NoProfileLinks || !p.r.isProfileLink(l.ReleasesLink)) && p.dashboardInstalled() {
 		if err := p.r.refuseLink(filepath.Dir(l.ReleasesLink)); err != nil {
 			t.Logf("shortcut skipped: %v", err)
 		} else {

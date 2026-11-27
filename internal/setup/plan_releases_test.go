@@ -210,7 +210,8 @@ func TestSetupKeepsForeignFilesWithHomestretchNames(t *testing.T) {
 	}
 	e.mustRun(OpUninstall, o, UninstallOptions{})
 	for path, want := range map[string]string{l.HomestretchExe: "replacement", l.HSExe: "standalone alias"} {
-		if data, err := os.ReadFile(path); err != nil || string(data) != want {
+		data, err := os.ReadFile(path) //nolint:gosec // test reads its own temp-dir path
+		if err != nil || string(data) != want {
 			t.Errorf("foreign file %s changed: %q, %v", path, data, err)
 		}
 	}

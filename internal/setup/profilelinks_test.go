@@ -178,7 +178,8 @@ func TestWriteProfileLinksKeepsAForeignTmpFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("want the write error")
 	}
-	if data, err := os.ReadFile(tmp); err != nil || string(data) != "foreign file" {
+	data, err := os.ReadFile(tmp) //nolint:gosec // test reads its own temp-dir path
+	if err != nil || string(data) != "foreign file" {
 		t.Fatalf("the foreign temporary file changed: %q, %v", data, err)
 	}
 	if !exists(l.DesktopLink) {
