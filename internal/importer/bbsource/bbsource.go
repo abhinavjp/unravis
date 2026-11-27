@@ -56,9 +56,9 @@ const (
 
 // Fixed known-gap sentences. Each passes evidence.LintCausal.
 const (
-	GapGroupsNotRead = "Of a Blackbox recording the host figures, the SQL host counters, the HTTP request queues, the IIS worker figures, the TCP figures, the Redis INFO figures, slow commands and latency spikes, event log counts, SQL log counts and new dump files, " +
-		"the start of each recorder run (sample 1 of a run) and the gaps are read so far; its process, disk, CLR and other groups are not in the timeline yet."
-	GapGroupCut     = "A sample with more than 16 SQL instances, 64 HTTP queues or IIS workers, 128 Redis slow commands or 32 Redis latency spikes shows the first of them only."
+	GapGroupsNotRead = "Of a Blackbox recording the host figures, the SQL host counters, the HTTP request queues, the IIS worker figures, the TCP figures, the ASP.NET, memory pressure, virtual machine and disk and CPU detail figures, the busiest processes, the Redis INFO figures, slow commands and latency spikes, event log counts, SQL log counts and new dump files, " +
+		"the start of each recorder run (sample 1 of a run) and the gaps are read so far; its per-program, CLR and other groups are not in the timeline yet."
+	GapGroupCut     = "A sample with more than 16 SQL instances, 64 HTTP queues or IIS workers, 128 processes, 128 Redis slow commands or 32 Redis latency spikes shows the first of them only."
 	GapGroupDamaged = "A group of a sample that could not be read is left out; the host figures of that sample are kept."
 	GapPartialSum   = "A TCP figure that the recorder marked as covering only some network adapters is left out, not shown as a machine-wide total."
 	GapRedisEdges   = "Redis figures that need an earlier sample (a CPU rate, a restart read from the uptime) are not shown for the first sample of a file, " +
@@ -99,7 +99,7 @@ func (*imp) Name() string { return Name }
 // intervals it spans.
 func (*imp) AllowedAttrs() map[string]bool {
 	return map[string]bool{"object": true, "counter": true, "instance": true, "sqlinstance": true, "intervals": true, "log": true, "error_number": true, "sql_severity": true,
-		"metric": true, "role": true, "command": true, "id": true, "event": true}
+		"metric": true, "process": true, "pid": true, "role": true, "command": true, "id": true, "event": true}
 }
 
 func (*imp) DefaultLimits() importer.Limits {
@@ -150,6 +150,13 @@ type line struct {
 	Events  json.RawMessage `json:"events"`
 	SQLLog  json.RawMessage `json:"sqlLog"`
 	Dumps   json.RawMessage `json:"dumps"`
+
+	// Host-wide groups: one set of figures per sample, no client names.
+	ASPNET      json.RawMessage `json:"aspnet"`
+	MemPressure json.RawMessage `json:"memPressure"`
+	VM          json.RawMessage `json:"vm"`
+	DiskCPU     json.RawMessage `json:"diskCpu"`
+	Procs       json.RawMessage `json:"procs"`
 }
 
 // figure is one number of a sample and how the timeline names it. The names are the Windows counter names, so a recording
@@ -359,6 +366,9 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 	if nt.dumpsSeen {
 		acc.Gap(GapDumpsExisting)
 	}
+	if nt.procsSeen {
+		acc.Gap(GapProcs)
+	}
 	if nt.eventsSeen {
 		acc.Gap(GapNoProvider)
 	}
@@ -413,6 +423,13 @@ func buildEvents(l *line, t time.Time, no int64, opts importer.Options, host str
 	}
 	for i, r := range rs {
 		add(r, len(figures)+1+i)
+	}
+	if len(l.Procs) > 0 {
+		pe, pbad := procEvents(l.Procs, t, no, opts, host, notes)
+		evs = append(evs, pe...)
+		if pbad {
+			bad = importer.ReasonBadNumber
+		}
 	}
 	if len(l.Redis) > 0 {
 		evs = append(evs, redisEvents(l.Redis, t, no, opts, host, notes)...)
