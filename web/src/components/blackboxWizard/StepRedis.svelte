@@ -45,7 +45,7 @@
     <p class="hint">{W['redis.customLine'](changes)}</p>
   {/if}
 
-  <section class="list" aria-label={W['redis.rowsHeading']}>
+  <section class="list">
     <h3>{W['redis.rowsHeading']}</h3>
     <div class="row locked">
       <span class="mark" aria-hidden="true">✓</span>

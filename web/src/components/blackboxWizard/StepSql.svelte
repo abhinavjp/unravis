@@ -7,6 +7,7 @@
   import { BBW_TEXT } from '../../lib/copy/blackboxWizardCopy';
 
   let { wizard = $bindable() }: { wizard: WizardState } = $props();
+  const uid = $props.id();
 
   const sqlGroups = RECORD_GROUPS.filter((group) => group.sqlHost);
   const total = sqlGroups.reduce((n, group) => n + group.figures.length, 0);
@@ -34,10 +35,10 @@
   <p class="hint">{BBW_TEXT['sql.startHint']}</p>
   {#if deep}
     <p class="hint">{BBW_TEXT['sql.deepNote']}</p>
-    <label class="tick">
-      <input type="checkbox" checked={wizard.sqlChoice.text} onchange={(e) => { wizard = setSqlText(wizard, e.currentTarget.checked); }} />
-      <span><b>{BBW_TEXT['sql.textTick']}</b><span class="warn">{BBW_TEXT['sql.textWarn']}</span></span>
-    </label>
+    <div class="tick">
+      <input id="{uid}-text" type="checkbox" checked={wizard.sqlChoice.text} aria-describedby="{uid}-warn" onchange={(e) => { wizard = setSqlText(wizard, e.currentTarget.checked); }} />
+      <span><label for="{uid}-text"><b>{BBW_TEXT['sql.textTick']}</b></label><span class="warn" id="{uid}-warn">{BBW_TEXT['sql.textWarn']}</span></span>
+    </div>
   {:else}
     <p class="hint">{BBW_TEXT['sql.textDeepOnly']}</p>
   {/if}

@@ -438,8 +438,7 @@ export function applyPreset(s: WizardState, p: Exclude<PresetId, 'custom'>): Wiz
 }
 
 /**
- * "Use defaults, go to review": the Record, SQL and Watch answers go back to the defaults (the SQL step holds no
- * choice), then Review. Refused until the name and the place are answered. Every step is then reached.
+ * "Use defaults, go to review": the Record, SQL, Redis and Watch answers go back to the defaults, then Review. Refused until the name and the place are answered. Every step is then reached.
  * The Keep answers (days, size, free space) are not part of the shortcut unless the shortcut is taken from the Keep
  * step itself (resetKeep): there the owner asks for the defaults of that very step.
  */
