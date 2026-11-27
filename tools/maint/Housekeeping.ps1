@@ -13,7 +13,8 @@
     2. A session whose transcript (or subagent folder) changed within -IdleMinutes (default 120) is treated as alive and kept, whatever
        the age of its scratch. A running process that names the session id or the folder also keeps it (Clean-Scratch rules).
     3. Registered worktrees of this repository under D:\Scratch, the Temp\claude root or <repo>\.claude\worktrees (agent worktrees; one
-       whose own Claude project folder, at any depth, changed within the last day also stays) are removed with a plain
+       with a Claude project folder under its own name that changed, or cannot be read, within the last day also stays, though a
+       subagent's transcript usually lives under its parent session's folder instead) are removed with a plain
        `git worktree remove` (never forced, never deleting a branch) only when: clean (no untracked files), no process names the
        path, untouched for a day, HEAD contained in origin/develop or origin/master after a fresh fetch (a failed fetch keeps
        everything), not the main checkout or the checkout running this script. Missing worktree folders are pruned.
@@ -36,8 +37,10 @@
 .PARAMETER Install    Copy the scripts to %LOCALAPPDATA%\Unravis\maint, save the repository folder, and register the hourly user-level task
                       'Unravis-Housekeeping' (this is what makes the cleanup run on a checkout that does not have the hooks yet). Re-run after
                       the scripts change. It also removes the older daily 'Unravis-CleanScratch' task. Run it from a NORMAL terminal:
-                      it refuses inside the Claude desktop app, whose sandbox redirects LocalAppData to a Packages\Claude_* folder, so
-                      the installed copy would land there and the hourly task would keep running the old one.
+                      it refuses when the process has a package identity (the Claude desktop app, whose sandbox
+                      redirects file writes to Packages\Claude_*\LocalCache while $env:LOCALAPPDATA still shows the real path), and when the
+                      script itself sits in such a redirect folder, because the installed copy would land there and the hourly task would
+                      keep running the old one.
 .PARAMETER Uninstall  Remove that task.
 .PARAMETER Worker     Internal: a hook started this process in the background.
 .PARAMETER GoCacheLimitGB  Clean each Go build cache over this size (default 8, the runner cache cap). 0 turns the Go cache step off.
@@ -162,17 +165,22 @@ function Get-WorktreeKeepReason {
         $ov = Get-OwnerVerdict -Id $sm.Groups[1].Value -OwnerDirs $OwnerDirs -IdleMinutes $IdleMinutes -Clock $Clock
         if ($ov -like 'its transcript changed*') { return 'its Claude session may be alive' }
     }
-    # A worktree that has its own Claude project folder (an agent worktree) is in use while anything in that folder (transcripts and
-    # subagent folders included, at any depth) changed within the same -AgeHours window the worktree itself must have been quiet for.
+    # If a Claude project folder exists under this worktree's own name, anything in it (at any depth) that changed within the same
+    # -AgeHours window the worktree itself must have been quiet for keeps the worktree. A folder that cannot be read keeps it too.
+    # This is only a partial guard: a subagent's transcript lives under the PARENT session's project folder, so for most agent
+    # worktrees no such folder exists. The protection that always applies is the worktree's own recent-change check below, a process
+    # naming the path, and the rename probe.
     if ($null -ne $OwnerDirs) {
         $own = ConvertTo-ProjectName $Path
         $since = $Clock.ToUniversalTime().AddHours(-$AgeHours)
         foreach ($d in $OwnerDirs) {
             if ((Split-Path -Leaf $d) -ine $own) { continue }
-            $dd = Get-Item -LiteralPath $d -Force -ErrorAction SilentlyContinue
-            if ($dd -and $dd.LastWriteTimeUtc -ge $since) { return 'its Claude session may be alive' }
-            $hit = Get-ChildItem -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTimeUtc -ge $since } | Select-Object -First 1
-            if ($hit) { return 'its Claude session may be alive' }
+            try {
+                $dd = Get-Item -LiteralPath $d -Force -ErrorAction Stop
+                if ($dd.LastWriteTimeUtc -ge $since) { return 'its Claude session may be alive' }
+                $hit = Get-ChildItem -LiteralPath $d -Recurse -Force -ErrorAction Stop | Where-Object { $_.LastWriteTimeUtc -ge $since } | Select-Object -First 1
+                if ($hit) { return 'its Claude session may be alive' }
+            } catch { return 'its Claude project folder could not be read' }
         }
     }
     $newest = $it.LastWriteTimeUtc
@@ -344,14 +352,36 @@ function Get-RepoFolder {
     return $null
 }
 
-# Get-InstallRefusal: why -Install must not run here, or $null. Inside the Claude desktop app the sandbox redirects %LOCALAPPDATA% to
-# Packages\Claude_*\LocalCache\Local, so the "installed" copy would land in that private folder and the hourly task would keep running
-# the old copy from the real one.
+# Get-PackageIdentityCode asks Windows whether THIS process has a package identity (kernel32 GetCurrentPackageFullName with an empty
+# buffer): 15700 (APPMODEL_ERROR_NO_PACKAGE) means a plain process; anything else (122 = a package name did not fit the empty buffer) means
+# it runs inside an MSIX package such as the Claude desktop app, whose sandbox redirects file-system writes to Packages\<name>\LocalCache.
+# Returns $null when the question itself could not be asked.
+function Get-PackageIdentityCode {
+    try {
+        if (-not ('Unravis.PkgId' -as [type])) {
+            Add-Type -Namespace Unravis -Name PkgId -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern int GetCurrentPackageFullName(ref int length, System.Text.StringBuilder name);'
+        }
+        $len = 0
+        return [int][Unravis.PkgId]::GetCurrentPackageFullName([ref]$len, $null)
+    } catch { return $null }
+}
+
+# Get-InstallRefusal: why -Install must not run here, or $null. Inside the Claude desktop app $env:LOCALAPPDATA still shows the REAL path
+# while the sandbox redirects the file system underneath, so the "installed" copy would land in Packages\Claude_*\LocalCache\Local and the
+# hourly task would keep running the old copy from the real folder. Guard 1: the process has a package identity (-PackageCode is the test
+# hook for what Get-PackageIdentityCode would return; omit it to ask Windows). Guard 2: the script or LocalAppData path is itself inside a
+# Packages\<name>\LocalCache redirect root (a repository at D:\src\Packages\repo is not).
 function Get-InstallRefusal {
-    param([string]$Self, [string]$LocalAppData)
+    param([string]$Self, [string]$LocalAppData, [object]$PackageCode = $null)
+    $how = 'Open a normal terminal (Windows Terminal or PowerShell, not the Claude app) and run -Install again from the repository.'
+    $code = if ($null -ne $PackageCode) { [int]$PackageCode } else { Get-PackageIdentityCode }
+    if ($null -eq $code) { return "Housekeeping.ps1 -Install could not tell whether it runs inside the Claude desktop app sandbox (the package identity check failed), so it stops rather than install into a redirected folder. $how" }
+    if ($code -ne 15700) {
+        return "Housekeeping.ps1 -Install was started inside a packaged app (the Claude desktop app sandbox, package identity code $code). The sandbox redirects file writes to Packages\Claude_*\LocalCache, so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. $how"
+    }
     foreach ($p in $Self, $LocalAppData) {
-        if ($p -and ([IO.Path]::GetFullPath($p) -match '(?i)\\Packages\\')) {
-            return "Housekeeping.ps1 -Install was started inside the Claude desktop app sandbox ($p is under a Packages folder), which redirects LocalAppData, so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. Open a normal terminal (Windows Terminal or PowerShell, not the Claude app) and run -Install again from the repository."
+        if ($p -and ([IO.Path]::GetFullPath($p) -match '(?i)\\AppData\\Local\\Packages\\[^\\]+\\LocalCache(\\|$)')) {
+            return "Housekeeping.ps1 -Install was started from inside a redirected app folder ($p), so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. $how"
         }
     }
     return $null

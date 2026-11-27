@@ -205,6 +205,19 @@ try {
     $null = RunAg
     Check (Test-Path $agSubAgent) 'agent worktree: a subagent transcript changed 5 hours ago (inside the 24 hour window) keeps it'
     Check (-not (Test-Path $agStale)) 'agent worktree: its Claude project folder untouched for 3 days does not keep it'
+    # A project folder that cannot be read is NOT treated as idle: the worktree stays. (The folder is old, so only the failed read can keep it.)
+    $agDeny = New-AgentWt 'agent-denied'
+    $agDenyProj = Join-Path $projects (ConvertTo-ProjectName $agDeny); New-Item -ItemType Directory -Force -Path (Join-Path $agDenyProj 'sess') | Out-Null
+    foreach ($x in @((Join-Path $agDenyProj 'sess'), $agDenyProj)) { (Get-Item -LiteralPath $x).LastWriteTimeUtc = $clock.AddDays(-3) }
+    $denied = $false
+    try {
+        & icacls $agDenyProj /deny "$($env:USERNAME):(RD)" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { try { $null = Get-ChildItem -LiteralPath $agDenyProj -Force -ErrorAction Stop } catch { $denied = $true } }
+        if ($denied) {
+            $null = RunAg
+            Check (Test-Path $agDeny) 'agent worktree: a Claude project folder that cannot be read keeps it (a failed read is not idle)'
+        } else { Write-Host 'skip  unreadable project folder (could not deny read on this machine)' }
+    } finally { & icacls $agDenyProj /remove:d "$($env:USERNAME)" 2>&1 | Out-Null }
     $null = Run $true $running
     Check (Test-Path $agUnmerged) 'agent worktree: not removed by a run whose roots do not include .claude\worktrees'
 
@@ -267,6 +280,17 @@ try {
     Check ((-not (Test-Path (Join-Path $lo 'c3.deleting-deadbeef'))) -and (-not (Test-Path (Join-Path $lo 'log.txt.deleting-deadbeef')))) 'go cache sweep: leftover <hex>.deleting-<8 hex> folders and files are removed'
     Check ((Test-Path (Join-Path $lo '3f\x-d')) -and (Test-Path (Join-Path $lo 'zz.deleting-deadbeef')) -and (Test-Path (Join-Path $lo 'mod.deleting-deadbeef'))) 'go cache sweep: live cache folders and names that are not Go leftovers are left alone'
 
+    # a cache UNDER the limit still gets its leftovers swept (only when applying), and its live folders stay
+    $under = Join-Path $gcRoot 'under-leftover'; New-FakeCache $under 2
+    New-Item -ItemType Directory -Force -Path (Join-Path $under 'e5.deleting-0badf00d') | Out-Null; [IO.File]::WriteAllBytes((Join-Path $under 'e5.deleting-0badf00d\x'), (New-Object byte[] (1MB)))
+    New-Item -ItemType Directory -Force -Path (Join-Path $under 'zz.deleting-0badf00d') | Out-Null
+    $underLoc = @([pscustomobject]@{ Label = 'under'; Path = $under })
+    $null = Invoke-GoCacheClean -DoApply $false -LimitGB $lim -Running @() -Locations $underLoc -UseGo $false 6>$null
+    Check (Test-Path (Join-Path $under 'e5.deleting-0badf00d\x')) 'go cache under the limit: a dry run deletes no leftover'
+    $g = Invoke-GoCacheClean -DoApply $true -LimitGB $lim -Running @() -Locations $underLoc -UseGo $false 6>$null
+    Check ((-not (Test-Path (Join-Path $under 'e5.deleting-0badf00d'))) -and ($g.Locations[0].Status -eq 'under limit') -and ($g.Locations[0].FreedBytes -ge 1MB)) 'go cache under the limit: an old .deleting-* leftover is swept and counted as freed'
+    Check ((Test-Path (Join-Path $under '3f\x-d')) -and (Test-Path (Join-Path $under 'zz.deleting-0badf00d')) -and (Test-Path (Join-Path $under 'README'))) 'go cache under the limit: live folders, README and non-Go names are left alone'
+
     if (Get-Command go -ErrorAction SilentlyContinue) {
         $loGo = Join-Path $gcRoot 'leftovers-go'; New-FakeCache $loGo 8
         New-Item -ItemType Directory -Force -Path (Join-Path $loGo 'd4.deleting-cafe0123') | Out-Null; Set-Content -LiteralPath (Join-Path $loGo 'd4.deleting-cafe0123\x') -Value '1'
@@ -310,11 +334,21 @@ try {
     $normalLocal = 'C:\Users\Someone\AppData\Local'
     $sandboxLocal = 'C:\Users\Someone\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local'
     $selfOk = 'D:\Projects\unravis\tools\maint\Housekeeping.ps1'
-    Check ($null -eq (Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal)) 'install: a normal terminal (real LocalAppData) is allowed'
-    $why = Get-InstallRefusal -Self $selfOk -LocalAppData $sandboxLocal
-    Check ($why -and $why -match 'normal terminal' -and $why -match 'Packages') 'install: LocalAppData under Packages is refused with a clear message'
-    Check ([bool](Get-InstallRefusal -Self ($sandboxLocal + '\x\Housekeeping.ps1') -LocalAppData $normalLocal)) 'install: a script running from under Packages is refused'
-    if ([bool](Get-InstallRefusal -Self $selfOk -LocalAppData $sandboxLocal)) {
+    # the real decision: a package identity (the Claude app) is refused even though LocalAppData and the script path look normal
+    $noPkg = 15700   # APPMODEL_ERROR_NO_PACKAGE
+    Check ($null -eq (Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageCode $noPkg)) 'install: a plain process (no package identity) with ordinary paths is allowed'
+    $why = Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageCode 122
+    Check ($why -and $why -match 'normal terminal' -and $why -match 'package identity code 122') 'install: a process with a package identity (code 122, as measured in the Claude app) is refused even with a real-looking LocalAppData'
+    Check ([bool](Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageCode 0)) 'install: any code other than 15700 is refused'
+    $why = Get-InstallRefusal -Self $selfOk -LocalAppData $sandboxLocal -PackageCode $noPkg
+    Check ($why -and $why -match 'normal terminal' -and $why -match 'redirected') 'install: LocalAppData inside a Packages\<name>\LocalCache redirect root is refused with a clear message'
+    Check ([bool](Get-InstallRefusal -Self ($sandboxLocal + '\x\Housekeeping.ps1') -LocalAppData $normalLocal -PackageCode $noPkg)) 'install: a script running from under the redirect root is refused'
+    Check ($null -eq (Get-InstallRefusal -Self 'D:\src\Packages\repo\tools\maint\Housekeeping.ps1' -LocalAppData $normalLocal -PackageCode $noPkg)) 'install: a repository in a folder that is merely named Packages is not refused'
+    # and the live question to Windows answers, and agrees with the decision for ordinary paths
+    $liveCode = Get-PackageIdentityCode
+    Check ($null -ne $liveCode) 'install: the package identity check can be asked of Windows (P/Invoke works)'
+    Check (([bool](Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal)) -eq ($liveCode -ne 15700)) 'install: with no hook the answer follows what Windows says about this very process'
+    if ([bool](Get-InstallRefusal -Self $selfOk -LocalAppData $sandboxLocal -PackageCode $noPkg)) {
         $savedLocal = $env:LOCALAPPDATA; $thrown = $null
         try { $env:LOCALAPPDATA = $sandboxLocal; try { Register-HousekeepingTask -RepoFolder $repo } catch { $thrown = $_.Exception.Message } } finally { $env:LOCALAPPDATA = $savedLocal }
         Check ($thrown -and $thrown -match 'normal terminal') 'install: Register-HousekeepingTask throws before copying anything or registering a task'

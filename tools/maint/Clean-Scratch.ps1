@@ -413,7 +413,19 @@ function Invoke-GoCacheClean {
             $rec.Status = 'not a go cache'; Write-Host "go cache: $full does not look like a Go build cache, skipped"; continue
         }
         $rec.Bytes = Get-FolderBytes $full
-        if ($rec.Bytes -le $LimitGB * 1GB) { $rec.Status = 'under limit'; Write-Host ("go cache: {0} {1} is under the {2} GB limit, left alone" -f $full, (Format-Size $rec.Bytes), $LimitGB); continue }
+        if ($rec.Bytes -le $LimitGB * 1GB) {
+            $rec.Status = 'under limit'; Write-Host ("go cache: {0} {1} is under the {2} GB limit, left alone" -f $full, (Format-Size $rec.Bytes), $LimitGB)
+            # Leftovers of an earlier killed delete ("<entry>.deleting-<8 hex>", already renamed away from Go) are swept even here. Only those names.
+            if ($DoApply -and -not $busy) {
+                $left = @(Get-ChildItem -LiteralPath $full -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.deleting-' -and (Test-GoCacheEntry $_) })
+                if ($left.Count -gt 0) {
+                    Remove-GoCacheEntries -Dir $full -LeftoversOnly $true
+                    $rec.FreedBytes = [math]::Max(0L, $rec.Bytes - (Get-FolderBytes $full)); $out.FreedBytes += $rec.FreedBytes
+                    Write-Host ("go cache: swept {0} leftover entries in {1} [{2} freed]" -f $left.Count, $full, (Format-Size $rec.FreedBytes))
+                }
+            }
+            continue
+        }
         if ($busy) {
             $rec.Status = 'busy'; Write-Host ("go cache: {0} [{1}] is over the limit but a Go build is running, skipped" -f $full, (Format-Size $rec.Bytes))
             if ($rec.Bytes -gt 3 * $LimitGB * 1GB) { $out.Notes += ('go cache over limit but a build is running: {0} {1} (over 3x the {2} GB limit)' -f $rec.Label, (Format-Size $rec.Bytes), $LimitGB) }
