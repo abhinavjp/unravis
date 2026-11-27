@@ -45,6 +45,7 @@ type ServersService interface {
 	ReplaceKey(ctx context.Context, id, oldFingerprint, newFingerprint string) error
 	Machines(ctx context.Context, id string) ([]service.MachineView, error)
 	Test(ctx context.Context, id, machine string) (service.TestResult, error)
+	Discover(ctx context.Context, id, machine string) (service.Discovery, error)
 	Browse(ctx context.Context, id, machine, dir string) ([]transport.FileInfo, error)
 	Plan(ctx context.Context, id, machine string, req pull.Request) (pull.Plan, error)
 	Pull(ctx context.Context, id, machine string, req pull.Request, jobID string, progress func(pull.Progress)) (service.Pulled, error)
@@ -150,6 +151,7 @@ func init() {
 		srvRoute("/api/servers/{id}/replace-key", srvPath("replace-key"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvReplaceKey(w, r, srvID(a)) })),
 		srvRoute("/api/servers/{id}/machines", srvPath("machines"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvMachines(w, r, srvID(a)) })),
 		srvRoute("/api/servers/{id}/test", srvPath("test"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvTest(w, r, srvID(a)) })),
+		srvRoute("/api/servers/{id}/sources", srvPath("sources"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvSources(w, r, srvID(a)) })),
 		srvRoute("/api/servers/{id}/browse", srvPath("browse"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvBrowse(w, r, srvID(a)) })),
 		srvRoute("/api/servers/{id}/plan", srvPath("plan"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvPlan(w, r, srvID(a)) })),
 		srvRoute("/api/servers/{id}/pulls", srvPath("pulls"), map[string]routeFunc{
@@ -582,6 +584,25 @@ func (h *handler) srvTest(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	h.event(r, "servers.tested", "server", id)
+	writeJSON(w, http.StatusOK, res, 1<<18)
+}
+
+func (h *handler) srvSources(w http.ResponseWriter, r *http.Request, id string) {
+	if !h.srvReady(w) || !h.srvAllow(w) {
+		return
+	}
+	var b srvBrowseBody
+	if r.ContentLength != 0 && !decodeJSON(w, r, &b) {
+		return
+	}
+	ctx, cancel := srvAction(r)
+	defer cancel()
+	res, err := h.servers.deps.Svc.Discover(ctx, id, b.Machine)
+	if err != nil {
+		h.srvFail(w, r, err)
+		return
+	}
+	h.event(r, "servers.sources", "server", id)
 	writeJSON(w, http.StatusOK, res, 1<<18)
 }
 

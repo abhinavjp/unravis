@@ -170,6 +170,7 @@ var routeCases = []routeCase{
 	{"/api/servers/{id}/pin", "/api/servers/srv-0123456789abcdef01234567/pin", "POST"},
 	{"/api/servers/{id}/replace-key", "/api/servers/srv-0123456789abcdef01234567/replace-key", "POST"},
 	{"/api/servers/{id}/test", "/api/servers/srv-0123456789abcdef01234567/test", "POST"},
+	{"/api/servers/{id}/sources", "/api/servers/srv-0123456789abcdef01234567/sources", "POST"},
 	{"/api/servers/{id}/machines", "/api/servers/srv-0123456789abcdef01234567/machines", "POST"},
 	{"/api/servers/{id}/browse", "/api/servers/srv-0123456789abcdef01234567/browse", "POST"},
 	{"/api/servers/{id}/plan", "/api/servers/srv-0123456789abcdef01234567/plan", "POST"},

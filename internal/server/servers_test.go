@@ -71,6 +71,11 @@ func (f *fakeSrvSvc) Test(_ context.Context, _, machine string) (service.TestRes
 	return service.TestResult{Folders: []service.FolderCheck{{Kind: "iis", Path: `C:\inetpub\logs`, OK: true, Files: 3}}}, f.testErr
 }
 
+func (f *fakeSrvSvc) Discover(_ context.Context, _, machine string) (service.Discovery, error) {
+	f.lastMachine = machine
+	return service.Discovery{Machine: machine, Found: true}, f.testErr
+}
+
 func (f *fakeSrvSvc) Browse(context.Context, string, string, string) ([]transport.FileInfo, error) {
 	return f.files, nil
 }
@@ -461,5 +466,23 @@ func TestServersSaltMachinesAndErrors(t *testing.T) {
 	for _, c := range cases {
 		s.svc.machinesErr = c.err
 		srvFailed(t, s.e.json(http.MethodPost, "/api/servers/"+e.ID+"/machines", ""), c.code, c.reason)
+	}
+}
+
+func TestServerSourcesRoute(t *testing.T) {
+	s := newSrvEnv(t, false)
+	path := "/api/servers/srv-0123456789abcdef01234567/sources"
+	for _, suffix := range []string{"test", "sources"} {
+		p := "/api/servers/srv-0123456789abcdef01234567/" + suffix
+		if res := request(s.e.h, http.MethodPost, p, "", false); res.Code != http.StatusUnauthorized {
+			t.Errorf("%s unauthenticated = %d", suffix, res.Code)
+		}
+		if res := s.e.json(http.MethodGet, p, ""); res.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s GET = %d", suffix, res.Code)
+		}
+	}
+	res := s.e.json(http.MethodPost, path, `{"machine":"web-01"}`)
+	if res.Code != http.StatusOK || s.svc.lastMachine != "web-01" || !strings.Contains(res.Body.String(), `"found":true`) {
+		t.Fatalf("sources = %d %s", res.Code, res.Body)
 	}
 }
