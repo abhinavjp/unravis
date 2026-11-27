@@ -407,6 +407,9 @@ type HSActivityEntry struct {
 	Action string `json:"action"`
 	Target string `json:"target,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// Outcome is done, refused, failed, invalid or error; absent on entries written before actions logged it (done).
+	Outcome string `json:"outcome,omitempty"`
+	Detail  string `json:"detail,omitempty"` // why an attempt did not end done
 }
 
 // HSActivity is the answer of /api/activity.
@@ -432,7 +435,8 @@ func (v *ciView) Activity(actor string, limit int) HSActivity {
 		return out
 	}
 	for _, e := range es {
-		out.Entries = append(out.Entries, HSActivityEntry{Time: tstr(e.Time), Actor: e.Actor, Person: v.rdPerson(e.Person), Action: v.rd(e.Action), Target: v.rd(e.Target), Reason: v.rd(e.Reason)})
+		out.Entries = append(out.Entries, HSActivityEntry{Time: tstr(e.Time), Actor: e.Actor, Person: v.rdPerson(e.Person), Action: v.rd(e.Action), Target: v.rd(e.Target), Reason: v.rd(e.Reason),
+			Outcome: e.Outcome, Detail: v.rd(e.Detail)})
 	}
 	return out
 }

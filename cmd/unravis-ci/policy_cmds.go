@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"api-audit-explorer/internal/hsaction"
 	"api-audit-explorer/internal/localci"
 )
 
@@ -75,36 +76,33 @@ func cmdPolicySet(args []string, stdout, stderr io.Writer, environ []string) int
 		_, _ = fmt.Fprintln(stderr, "policy set: give exactly one of --any, --only m1,m2 or --except m1")
 		return exitUsage
 	}
-	var pp localci.ProjectPolicy
+	pa := hsaction.PolicySetArgs{Project: pos[0], Confirm: *force, DryRun: *dry}
 	switch {
 	case *anyM:
-		pp, err = localci.NewProjectPolicy(localci.PolicyAny, nil)
+		pa.Mode = localci.PolicyAny
 	case *only != "":
-		pp, err = localci.NewProjectPolicy(localci.PolicyOnly, splitNames(*only))
+		pa.Mode, pa.Machines = localci.PolicyOnly, splitNames(*only)
 	default:
-		pp, err = localci.NewProjectPolicy(localci.PolicyExcept, splitNames(*except))
+		pa.Mode, pa.Machines = localci.PolicyExcept, splitNames(*except)
 	}
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "policy set:", err)
-		return exitUsage
-	}
-	return applyPolicyEdit("policy set", dirOf(environ), pos[0], func(localci.ProjectPolicy) (localci.ProjectPolicy, error) { return pp, nil },
-		*force, *dry, *asJSON, nil, stdout, stderr)
+	return applyPolicyEdit("policy set", dirOf(environ), "policy.set", pa, *asJSON, stdout, stderr, environ)
 }
 
-// applyPolicyEdit runs one edit through ChangePolicy and prints the outcome. notes are extra lines (text) or
-// the "notes" field (JSON).
-func applyPolicyEdit(cmd, dir, project string, edit func(localci.ProjectPolicy) (localci.ProjectPolicy, error), force, dry, asJSON bool,
-	notes []string, stdout, stderr io.Writer) int {
-	ch, err := localci.ChangePolicy(dir, project, edit, force, dry)
+// applyPolicyEdit runs one policy action (policy.set, machines.allow or machines.deny) and prints the outcome:
+// its notes as extra lines (text) or the "notes" field (JSON).
+func applyPolicyEdit(cmd, dir, id string, args any, asJSON bool, stdout, stderr io.Writer, environ []string) int {
+	env, err := cliEnv(dir, "", environ)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s: %v\n", cmd, err)
 		return exitUsage
 	}
-	code := exitOK
-	if ch.Refused {
-		code = exitFailed
+	res, code := runAction(env, id, args)
+	d, ok := res.Data.(hsaction.PolicyEdit)
+	if !ok {
+		_, _ = fmt.Fprintf(stderr, "%s: %s\n", cmd, errorText(res))
+		return finishAction(cmd, res, code, stderr)
 	}
+	ch := d.Change
 	if asJSON {
 		type out struct {
 			localci.PolicyChange
@@ -112,12 +110,12 @@ func applyPolicyEdit(cmd, dir, project string, edit func(localci.ProjectPolicy) 
 			Line   string   `json:"line"`
 			Notes  []string `json:"notes"`
 		}
-		if c := writeJSON(cmd, stdout, stderr, out{PolicyChange: ch, DryRun: dry, Line: ch.Impact.Line(), Notes: nonNil(notes)}); c != exitOK {
+		if c := writeJSON(cmd, stdout, stderr, out{PolicyChange: ch, DryRun: d.DryRun, Line: ch.Impact.Line(), Notes: nonNil(d.Notes)}); c != exitOK {
 			return c
 		}
-		return code
+		return finishAction(cmd, res, code, stderr)
 	}
-	for _, n := range notes {
+	for _, n := range d.Notes {
 		_, _ = fmt.Fprintln(stdout, "note:", n)
 	}
 	switch {
@@ -134,7 +132,7 @@ func applyPolicyEdit(cmd, dir, project string, edit func(localci.ProjectPolicy) 
 			_, _ = fmt.Fprintf(stdout, "  forced: %s wait until the rule or the machines change\n", strings.Join(ch.Impact.Stranded, ", "))
 		}
 	}
-	return code
+	return finishAction(cmd, res, code, stderr)
 }
 
 // policyShowJSON is the output of `policy show --json`. The field names are part of the command's interface;
@@ -332,32 +330,11 @@ func cmdMachinesAllowDeny(allow bool, args []string, stdout, stderr io.Writer, e
 		_, _ = fmt.Fprintf(stderr, "%s: expected one machine name and --project owner/name\n", cmd)
 		return exitUsage
 	}
-	name := pos[0]
-	if !localci.ValidAgentName(name) {
-		_, _ = fmt.Fprintf(stderr, "%s: %q is not a machine name\n", cmd, name)
-		return exitUsage
+	id := "machines.deny"
+	if allow {
+		id = "machines.allow"
 	}
-	dir := dirOf(environ)
-	var notes []string
-	hbs, err := localci.ReadAgents(dir)
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "%s: %v\n", cmd, err)
-		return exitUsage
-	}
-	known := false
-	for _, h := range hbs {
-		known = known || strings.EqualFold(h.Name, name)
-	}
-	if !known {
-		notes = append(notes, fmt.Sprintf("no machine named %s is known in this folder yet; the rule applies when it starts", name))
-	}
-	edit := func(pp localci.ProjectPolicy) (localci.ProjectPolicy, error) {
-		if allow {
-			return pp.AllowMachine(name), nil
-		}
-		return pp.DenyMachine(name), nil
-	}
-	return applyPolicyEdit(cmd, dir, *project, edit, *force, *dry, *asJSON, notes, stdout, stderr)
+	return applyPolicyEdit(cmd, dirOf(environ), id, hsaction.MachineRuleArgs{Name: pos[0], Project: *project, Confirm: *force, DryRun: *dry}, *asJSON, stdout, stderr, environ)
 }
 
 func cmdMachinesResume(args []string, stdout, stderr io.Writer, environ []string) int {
@@ -373,52 +350,29 @@ func cmdMachinesResume(args []string, stdout, stderr io.Writer, environ []string
 		_, _ = fmt.Fprintln(stderr, "machines resume: expected one machine name")
 		return exitUsage
 	}
-	name := pos[0]
-	dir := dirOf(environ)
-	cleared, err := localci.ResumeAgent(dir, name)
+	env, err := cliEnv(dirOf(environ), "", environ)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "machines resume:", err)
 		return exitUsage
 	}
-	hbs, err := localci.ReadAgents(dir)
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "machines resume:", err)
-		return exitUsage
-	}
-	var hb *localci.Heartbeat
-	for i := range hbs {
-		if hbs[i].Name == name {
-			hb = &hbs[i]
-		}
-	}
-	now := time.Now()
-	live := hb != nil && hb.Fresh(now, agentStale)
-	var outcome, text string
-	code := exitOK
-	switch {
-	case cleared && live:
-		outcome, text = "resumed", name+": the drain is withdrawn; it takes requests again"
-	case cleared:
-		outcome, text, code = "not-running", name+": the drain mark is cleared, but the machine is not running; start it again with unravis-ci serve", exitFailed
-	case live && hb.State == "draining":
-		outcome, text, code = "cannot-resume", name+": it is draining because it was stopped in its own window (Ctrl-C); start it again with unravis-ci serve once it exits", exitFailed
-	case hb != nil:
-		outcome, text = "not-draining", name+": it is not draining; nothing changed"
-	default:
-		outcome, text, code = "unknown", name+": no machine of that name is known in "+dir, exitFailed
+	res, code := runAction(env, "machines.resume", hsaction.MachineArgs{Name: pos[0]})
+	d, ok := res.Data.(hsaction.Resumed)
+	if !ok {
+		_, _ = fmt.Fprintln(stderr, "machines resume:", res.Message)
+		return finishAction("machines resume", res, code, stderr)
 	}
 	if *asJSON {
-		if c := writeJSON("machines resume", stdout, stderr, map[string]any{"name": name, "outcome": outcome, "cleared": cleared, "text": text}); c != exitOK {
+		if c := writeJSON("machines resume", stdout, stderr, map[string]any{"name": d.Name, "outcome": d.Outcome, "cleared": d.Cleared, "text": res.Message}); c != exitOK {
 			return c
 		}
-		return code
+		return finishAction("machines resume", res, code, stderr)
 	}
-	if code == exitOK {
-		_, _ = fmt.Fprintln(stdout, text)
+	if res.OK {
+		_, _ = fmt.Fprintln(stdout, res.Message)
 	} else {
-		_, _ = fmt.Fprintln(stderr, "machines resume: "+text)
+		_, _ = fmt.Fprintln(stderr, "machines resume: "+res.Message)
 	}
-	return code
+	return finishAction("machines resume", res, code, stderr)
 }
 
 func sortedStrings(s []string) []string {

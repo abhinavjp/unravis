@@ -104,6 +104,16 @@ func (s Store) Path() string { return filepath.Join(s.Dir, FileName) }
 // ErrNotFound is returned by Lift for an id that is not in the store.
 var ErrNotFound = errors.New("no hold with that id")
 
+// ErrStoreBroken is matched (errors.Is) by the error of a holds.json that is not JSON, has the wrong types, an entry
+// with no id or end, or a newer format version: the store is broken, the request is not wrong.
+var ErrStoreBroken = errors.New("the hold store is broken")
+
+type brokenStore struct{ err error }
+
+func (e brokenStore) Error() string        { return e.err.Error() }
+func (e brokenStore) Unwrap() error        { return e.err }
+func (e brokenStore) Is(target error) bool { return target == ErrStoreBroken }
+
 // List reads every hold, oldest first. A store folder without the file has no holds. A file that cannot be read or
 // parsed, or one written by a newer version, is an error: the caller must treat that as "held" (fail closed).
 func (s Store) List() ([]Hold, error) {
@@ -117,14 +127,14 @@ func (s Store) List() ([]Hold, error) {
 	}
 	var f file
 	if err := json.Unmarshal(b, &f); err != nil {
-		return nil, fmt.Errorf("the hold store %s is not valid JSON: %w", s.Path(), err)
+		return nil, brokenStore{fmt.Errorf("the hold store %s is not valid JSON: %w", s.Path(), err)}
 	}
 	if f.Version < 1 || f.Version > Version {
-		return nil, fmt.Errorf("the hold store %s has format version %d; this program reads version 1 to %d", s.Path(), f.Version, Version)
+		return nil, brokenStore{fmt.Errorf("the hold store %s has format version %d; this program reads version 1 to %d", s.Path(), f.Version, Version)}
 	}
 	for i, h := range f.Holds {
 		if h.ID == "" || h.End.IsZero() {
-			return nil, fmt.Errorf("the hold store %s: entry %d has no id or no end", s.Path(), i+1)
+			return nil, brokenStore{fmt.Errorf("the hold store %s: entry %d has no id or no end", s.Path(), i+1)}
 		}
 	}
 	return f.Holds, nil
