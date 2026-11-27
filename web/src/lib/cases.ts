@@ -4,6 +4,7 @@ import { REQUEST_FAILED_MESSAGE } from './copy/requestFailedCopy';
 import { WRONG_CASE_KEY_REASON, signalIfAppLocked } from './lockSignal';
 import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
 import { pacedSleep } from './visibility';
+import { noteAnswered, noteRefused, noteUnreachable } from './livenessCore';
 import { parseTimelineView, type TimelineView } from './timeline';
 import { readBinaryBody } from './binaryBody';
 import { parseResource, parseSeries, parseSeriesBinary, type ResourceView, type SeriesView } from './resource';
@@ -219,16 +220,19 @@ async function sendOnce(path: string, init: RequestInit, signal: AbortSignal | u
     response = await fetch(base + path, { ...init, headers, credentials: 'same-origin', signal });
   } catch (error) {
     if (isAbortLike(error)) throw error;
+    noteUnreachable(); // three in a row make the page say the app has stopped (liveness.svelte.ts)
     throw new CaseApiError('The server could not be reached.', 0, 'unreachable');
   }
   if (response.status === 401) {
     // A wrong case key is also a 401 (reason wrong-case-key): the token is fine, so it is kept and the refusal goes to the caller.
     const refused = await refusal(response);
-    if (refused.reason === WRONG_CASE_KEY_REASON) throw refused;
+    if (refused.reason === WRONG_CASE_KEY_REASON) { noteAnswered(); throw refused; }
     // The dashboard refused the token: forget it so nothing keeps sending it, and show the usual message.
+    noteRefused();
     forgetSession();
     throw new CaseApiError(NO_SESSION_MESSAGE, 401, 'no_session');
   }
+  noteAnswered(); // any answer means the app is there
   // 423: the master key is locked. Tell the app so it shows the unlock screen; the caller still gets the refusal.
   await signalIfAppLocked(response);
   if (!response.ok) throw await refusal(response);

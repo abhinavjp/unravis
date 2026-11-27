@@ -32,6 +32,26 @@ test('lostServer: a failed fetch or an unknown session is a lost app; a refusal 
   assert.equal(lostServer(new Error('plain')), false);
 });
 
+test('lostServer: the request layer own lost-connection error (code unreachable, status 0) is a lost app', () => {
+  const { lostServer } = loadTypeScript('src/lib/updateLink.ts');
+  assert.equal(lostServer(apiError('Unravis could not be reached.', 'unreachable', 0)), true);
+  assert.equal(lostServer(apiError('That took too long.', 'timeout', 0)), false, 'a time limit says nothing about the app');
+});
+
+test('W-02: a lost update read tells the page at once, so the stopped banner shows and the bar steps aside', async (t) => {
+  const core = loadTypeScript('src/lib/livenessCore.ts');
+  core.resetLiveness();
+  let error = apiError('That took too long.', 'timeout', 0);
+  const h = setup(t, { updateStatus: async () => { throw error; } });
+  try {
+    await h.mod.refreshUpdateStatus();
+    assert.equal(core.livenessSnapshot().stopped, false, 'a timeout is not a lost app');
+    error = apiError('Unravis could not be reached.', 'unreachable', 0);
+    await h.mod.refreshUpdateStatus();
+    assert.equal(core.livenessSnapshot().stopped, true, 'one lost update read says stopped without waiting for the 20-second check');
+  } finally { core.resetLiveness(); h.done(); }
+});
+
 test('launched, then the app stops answering: the bar says the app is gone after two misses, not one', async (t) => {
   let alive = true;
   const h = setup(t, { updateStatus: async () => { if (!alive) throw netError(); return launched; } });
