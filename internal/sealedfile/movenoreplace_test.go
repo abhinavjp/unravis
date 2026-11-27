@@ -20,7 +20,7 @@ func TestMoveNoReplaceMovesToAFreeName(t *testing.T) {
 	if _, err := os.Stat(from); !os.IsNotExist(err) {
 		t.Fatalf("the source is still there: %v", err)
 	}
-	if got, _ := os.ReadFile(to); string(got) != "one" {
+	if got, _ := os.ReadFile(to); string(got) != "one" { //nolint:gosec // test reads its own temp file
 		t.Fatalf("moved content = %q", got)
 	}
 }
@@ -37,10 +37,10 @@ func TestMoveNoReplaceRefusesAnExistingTarget(t *testing.T) {
 	if err := MoveNoReplace(from, to); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("move onto an existing file = %v, want os.ErrExist", err)
 	}
-	if got, _ := os.ReadFile(from); string(got) != "new" {
+	if got, _ := os.ReadFile(from); string(got) != "new" { //nolint:gosec // test reads its own temp file
 		t.Fatalf("the source changed: %q", got)
 	}
-	if got, _ := os.ReadFile(to); string(got) != "old" {
+	if got, _ := os.ReadFile(to); string(got) != "old" { //nolint:gosec // test reads its own temp file
 		t.Fatalf("the existing target was replaced: %q", got)
 	}
 }
