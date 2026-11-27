@@ -163,7 +163,7 @@ func PackReadme(cfg Config) string {
 	b.WriteString("   shows it again.\r\n\r\n")
 	b.WriteString("Settings in this pack (blackbox.json)\r\n-------------------------------------\r\n")
 	fmt.Fprintf(&b, "Recordings folder: %s\r\n", cfg.Folder)
-	fmt.Fprintf(&b, "Keep: %d days, at most %.1f GB, never below %d%% free space\r\n", cfg.KeepDays, cfg.MaxGB, cfg.MinFreePercent)
+	fmt.Fprintf(&b, "Keep: %d days, at most %.1f GB, older files are removed to keep %d%% free space (the newest 24 hours are always kept)\r\n", cfg.KeepDays, cfg.MaxGB, cfg.MinFreePercent)
 	fmt.Fprintf(&b, "Status page: port %d, listening on %s\r\n", cfg.Port, cfg.Bind)
 	if cfg.Bind == DefaultBind {
 		b.WriteString("The status page answers on this server only until you opt in. To let Unravis on\r\n")
