@@ -85,6 +85,10 @@ type Dash struct {
 	// stop itself when its window is closed.
 	OnRequest func()
 	OnBye     func()
+	// Person names who acts from the page in the activity log (default: the user name of this PC). Now is the clock of
+	// actions (default time.Now). Tests set both.
+	Person string
+	Now    func() time.Time
 
 	mu       sync.Mutex
 	feeds    []Feed

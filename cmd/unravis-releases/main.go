@@ -1,7 +1,8 @@
-// Command unravis-releases is a small read-only dashboard for Unravis releases: every release, its channel, the release
+// Command unravis-releases is a small dashboard for Unravis releases: every release, its channel, the release
 // manager's step by step status, the verify result and withdrawn versions. It is a separate program from Unravis. It reads the
-// release manager's log on this PC, the public GitHub release list and the signed update feed, and changes nothing.
-// It never touches a signing key or passphrase.
+// release manager's log on this PC, the public GitHub release list and the signed update feed. The only things it changes are
+// the local CI store's queue, machines, policy and holds, through the Homestretch actions (internal/hsaction), each one logged.
+// It never promotes or releases, and it never touches a signing key or passphrase.
 package main
 
 import (
@@ -87,7 +88,7 @@ func run(args []string) error {
 		return err
 	}
 	link := fmt.Sprintf("http://127.0.0.1:%d/?t=%s", ln.Addr().(*net.TCPAddr).Port, token)
-	fmt.Println("Unravis releases (read only). Link:\n  " + link + "\nPress Ctrl+C to stop.")
+	fmt.Println("Unravis releases. Link:\n  " + link + "\nPress Ctrl+C to stop.")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	// Without a console (the Windows build) nobody can press Ctrl+C, so the program must end by itself when its page is gone.
