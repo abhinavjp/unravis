@@ -152,3 +152,38 @@ test('all wizard and catalogue copy passes the screen-string lint and uses no em
   for (const entry of entries) assert.equal(entry.text.includes('\u2014'), false, entry.id + ' contains an em dash');
   assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
 });
+
+test('the three collector groups carry the approved words, a collector row and no record switch (BL-698)', () => {
+  const byId = (id) => RECORD_GROUPS.find((group) => group.id === id);
+  const facts = byId('hostFacts');
+  const counters = byId('extraCounters');
+  const paths = byId('filePaths');
+  assert.deepEqual([facts.row, counters.row, paths.row], ['facts', 'counters', 'paths']);
+  for (const group of [facts, counters, paths]) assert.equal(group.toggle, undefined, group.id + ' has no record boolean');
+  assert.deepEqual(facts.figures.map((f) => f.label), [
+    'Versions and install paths', 'Services and their state', 'Certificate expiry dates', 'Time sync and pending reboot'
+  ]);
+  assert.deepEqual(counters.figures.map((f) => [f.label, f.hint]), [
+    ['Counters you add', 'One counter path per line, up to 50. A path that does not exist is skipped and reported.']
+  ]);
+  assert.deepEqual(paths.figures.map((f) => f.label), [
+    'IIS, HTTP.sys and failed request tracing folders', 'SQL Server and Redis logs and settings', 'Salt minion log', 'Unravis and Blackbox own logs'
+  ]);
+  assert.equal(facts.figures[2].hint, 'Subject, thumbprint and end date for the computer store. Never private keys.');
+  assert.match(facts.figures[0].details.stored, /never read/);
+  assert.match(paths.figures[0].details.stored, /never read/);
+});
+
+test('the collector row words are the approved ones, and the counters hint and error read plainly (BL-698)', () => {
+  assert.equal(BBW_TEXT['record.title.facts'], 'Server facts');
+  assert.equal(BBW_TEXT['record.desc.facts'], 'Versions, services, certificate expiry dates, time sync and pending reboot. Once an hour.');
+  assert.equal(BBW_TEXT['record.title.counters'], 'Extra Windows counters');
+  assert.equal(BBW_TEXT['record.desc.counters'], 'Any counter you name, read the same way Performance Monitor reads it.');
+  assert.equal(BBW_TEXT['record.title.paths'], 'Log and config file paths');
+  assert.equal(BBW_TEXT['record.desc.paths'], 'Where the logs and settings files are. Path, size and time only, never what is in them.');
+  assert.equal(BBW_TEXT['record.tag.new'], 'new');
+  assert.equal(BBW_TEXT['record.counters'], 'Counters');
+  assert.equal(BBW_TEXT['record.countersHelp'], 'Use the English counter name, such as \\Process(w3wp)\\Page Faults/sec.');
+  assert.match(BBW_TEXT['record.countersError'], /one counter per line/);
+  assert.match(BBW_TEXT['record.countersError'], /no more than 50/);
+});

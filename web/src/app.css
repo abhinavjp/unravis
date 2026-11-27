@@ -604,7 +604,7 @@ th.numeric { text-align: right; }
 .recent-username { display: grid; gap: 2px; margin: 4px 0; min-width: 0; }
 .recent-username span { color: var(--text-2); font-size: 12px; }
 .recent-username b { font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
-.recent-card-actions { display: flex; gap: 5px; margin-left: -6px; }
+.recent-card-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-left: -6px; }
 .saved-badge { justify-self: start; margin-top: 3px; padding: 2px 6px; border-radius: var(--radius-sm); color: var(--text-2); background: var(--surface); border: 1px solid var(--line); font-size: 12px; }
 .saved-password-note { color: var(--text-2); }
 .source-form { display: grid; gap: 6px; padding: 6px 1px 20px; }

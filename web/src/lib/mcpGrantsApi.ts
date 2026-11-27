@@ -1,4 +1,5 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
+import { REQUEST_FAILED_MESSAGE } from './copy/requestFailedCopy';
 import { parseList, parseProfile, type ApproveBody, type McpList, type McpProfile } from './mcpGrants';
 
 /**
@@ -16,12 +17,20 @@ import { parseList, parseProfile, type ApproveBody, type McpList, type McpProfil
 export class McpApiError extends Error {
   readonly status: number;
   readonly code: string;
-  constructor(message: string, status: number, code: string) {
+  /** True only when the server wrote the message. False for the page's own sentences (no session, not reached, no message from the server). */
+  readonly fromServer: boolean;
+  constructor(message: string, status: number, code: string, fromServer = false) {
     super(message);
     this.name = 'McpApiError';
     this.status = status;
     this.code = code;
+    this.fromServer = fromServer;
   }
+}
+
+/** The panel's own sentence, then the reason the server gave, only when the server sent one (never a status number or the page's own fallback). */
+export function sentenceWithReason(sentence: string, error: unknown): string {
+  return error instanceof McpApiError && error.fromServer && error.message.trim() ? sentence + ' ' + error.message.trim() : sentence;
 }
 
 const SAFE_ID = /^[a-z0-9-]{1,32}$/;
@@ -46,8 +55,9 @@ async function call(method: 'GET' | 'POST', path: string, body?: unknown, signal
   }
   if (!response.ok) {
     const fields = parsed && typeof parsed === 'object' ? (parsed as { error?: unknown; code?: unknown }) : {};
-    const message = typeof fields.error === 'string' && fields.error ? fields.error : 'The request was refused (' + response.status + ').';
-    throw new McpApiError(message, response.status, typeof fields.code === 'string' ? fields.code : '');
+    const fromServer = typeof fields.error === 'string' && fields.error !== '';
+    const message = typeof fields.error === 'string' && fields.error ? fields.error : REQUEST_FAILED_MESSAGE;
+    throw new McpApiError(message, response.status, typeof fields.code === 'string' ? fields.code : '', fromServer);
   }
   return parsed;
 }

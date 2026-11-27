@@ -3,7 +3,7 @@
   import { api } from '../lib/api';
   import { MCP_TEXT as T, toolLabel } from '../lib/copy/mcpGrantsCopy';
   import { approveBody, chipOf, defaultDraft, groupProfiles, inFuture, ago, scopeLine, sourceNames, type McpDraft, type McpList, type McpProfile } from '../lib/mcpGrants';
-  import { McpApiError, listHosts, mcpApi } from '../lib/mcpGrantsApi';
+  import { McpApiError, listHosts, mcpApi, sentenceWithReason } from '../lib/mcpGrantsApi';
   import { visiblePoll } from '../lib/visibility';
   import Drawer from './Drawer.svelte';
   import McpApprovalCard from './McpApprovalCard.svelte';
@@ -116,14 +116,14 @@
     try {
       const result = await mcpApi.stop();
       if (!result.saved) stopWarn = T.stopNotSaved;
-    } catch { stopError = T.stopFailed; }
+    } catch (error) { stopError = sentenceWithReason(T.stopFailed, error); }
     finally { stopBusy = ''; }
     await load();
   }
   async function resume() {
     if (stopBusy) return;
     stopBusy = 'resume'; stopError = ''; stopWarn = '';
-    try { await mcpApi.resume(); } catch { stopError = T.resumeFailed; }
+    try { await mcpApi.resume(); } catch (error) { stopError = sentenceWithReason(T.resumeFailed, error); }
     finally { stopBusy = ''; }
     await load();
   }

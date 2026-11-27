@@ -11,7 +11,7 @@ import { bumpEpoch } from './evidenceMemo';
 import { defaultQuery } from './time';
 import { initialComparison, kindLabel, queryFingerprint, resultNotes, rankComparisons, stateLabel } from './presentation';
 import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, serializeRecordFilters, shouldSelectAddedSource, writeInvestigationSnapshot, type InvestigationSnapshot } from './investigation';
-import { buildWorkspace, classifyRestoreFailure, createWorkspaceSaver, parseWorkspace, planRestore, pruneWorkspace, queueWorkspace, RESTORE_TIMEOUT_MS, sourceMatches, workspaceFailureNote, workspaceSaveAllowed, type Workspace, type WorkspaceDatabase } from './caseWorkspace';
+import { buildWorkspace, classifyRestoreFailure, createWorkspaceSaver, parseWorkspace, planRestore, pruneWorkspace, queueWorkspace, RESTORE_TIMEOUT_MS, sourceMatches, workspaceFailureNote, workspaceNoteAfter, workspaceSaveAllowed, type Workspace, type WorkspaceDatabase } from './caseWorkspace';
 import { forgetSavedRecord, forgetSourceSaved, registerSourceSaved, resolveSavedRecent, savedIdFor, suggestedConnectionLabel } from './sourceSaved';
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
@@ -20,6 +20,7 @@ import { afterUnlock, CASE_CALL_MARK, CASE_TRACING_MARK, createRoute, go as move
 import { onCasesLocked } from './lockSignal';
 import { requestCase, requestFilesView } from './startIntent';
 import { CASE_RESTORE_TEXT, restoreFailureNote } from './copy/caseRestoreCopy';
+import { closeUnlessBusy } from './drawerBusy';
 import { isSourceExists } from './wizardAuditAdd';
 import { draftHasContent, readSavedDraft } from './wizardDraftStore';
 import { holdLedger, setLedgerCase } from './ledgerStore.svelte';
@@ -27,6 +28,8 @@ import { parseCallTarget, encodeCallTarget, withCall, type SlowCallTarget } from
 import { forgetSources, parseStoredSourceChoice, type SourceSelection } from './tracing/sources';
 import { forgetWindows, parseStoredWindows, pickWindowFields, type WindowFields } from './tracing/windows';
 import { getMasterKeyStatus, lockMasterKey } from './masterKeyApi';
+import { damagedInfo, isSavedFileDamaged } from './savedFile';
+import { keptNote } from './copy/savedFileCopy';
 import type { KeyStatus, LockState } from './masterKey';
 import { KEY_TEXT } from './copy/masterKeyCopy';
 import { theme } from './theme.svelte';
@@ -196,6 +199,13 @@ let sessionCredentialIds = new Set<string>();
 let rememberPassword = $state(false);
 let recentConnections = $state<RecentConnection[]>([]);
 let recentHistoryError = $state('');
+// RV-DAT-1: the saved connections file cannot be read (the server's own code, not a guess). The drawer then offers the way out; the note
+// says where the kept copy went after it was used.
+let recentFileDamaged = $state(false);
+let recentSetAsideNote = $state('');
+// The server's own sentence for the damaged file (it names the real folder), and whether the list is the whole PC's.
+let recentDamagedDetail = $state('');
+let recentDamagedShared = $state(false);
 let recentSaveError = $state('');
 let recentSaveSuccess = $state('');
 let recentSaveErrorStage = $state('');
@@ -533,8 +543,8 @@ export async function initialize() {
     try {
       const recents = await api.recentConnections();
       recentConnections = Array.isArray(recents) ? recents.filter(isRecentConnection).slice(0, 20) : [];
-    } catch {
-      recentHistoryError = 'Recent connections could not be loaded. You can still test and add a connection.';
+    } catch (cause) {
+      noteRecentsFailure(cause);
     }
   } catch (cause) {
     // A failure after the app info arrived keeps the screen the app always showed (the connect prompt and the Retry banner).
@@ -869,13 +879,18 @@ async function restoreCaseWorkspace(id: string) {
   const run = ++restoreSequence;
   const alive = () => run === restoreSequence && activeCaseId === id;
   restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null; savedWindows = null; savedTraceSources = null;
+  workspaceNote = workspaceNoteAfter('restore-start', !!info?.demo, workspaceNote); // a note from an earlier read must not outlive a new one
   workspaceSaver.cancel(); workspaceSaver.forget();
   const ctx: RestoreRun = { id, run, workspace: null, keepTab, databases: [], recent: null };
   restoreRun = ctx;
   setRestore('working');
   restoreTimer = setTimeout(() => expireRestore(run), RESTORE_TIMEOUT_MS);
   let workspace: Workspace | null;
-  try { workspace = parseWorkspace(await api.caseWorkspace(id)); } catch { if (alive()) { restoreRun = null; setRestore('idle'); } return; }
+  try { workspace = parseWorkspace(await api.caseWorkspace(id)); } catch {
+    // Not read: nothing is saved over the case's own settings, and the person must hear that their changes are not kept. The demo has no workspace, so it stays quiet; a superseded run (not alive) is no one's business.
+    if (alive()) { restoreRun = null; setRestore('idle'); workspaceNote = workspaceNoteAfter('workspace-unreadable', !!info?.demo, workspaceNote); }
+    return;
+  }
   if (!alive()) return;
   if (!workspace) { restoreRun = null; setRestore('idle'); return; }
   ctx.workspace = workspace; savedWindows = workspace.windows ?? null; savedTraceSources = workspace.traceSources ? parseStoredSourceChoice(workspace.traceSources) : null;
@@ -884,7 +899,7 @@ async function restoreCaseWorkspace(id: string) {
   try {
     const fresh = await api.recentConnections();
     if (Array.isArray(fresh)) recentConnections = fresh.filter(isRecentConnection).slice(0, 20);
-  } catch { /* the list already on the page is used */ }
+  } catch { /* silent on purpose: this only refreshes the recent-connections list, and the list already on the page is used for the plan below */ }
   if (!alive()) return;
   const plan = planRestore({ workspace, sources, recents: recentConnections, sessionIds: sessionCredentialIds });
   if (plan.kind === 'none') { finishRestore(id, workspace, keepTab); return; }
@@ -964,6 +979,7 @@ export function setActiveCase(id: string, options: { restore?: boolean } = {}) {
   workspaceSaver.flush();
   restoreSequence++;
   restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null; restoreRun = null; savedWindows = null; savedTraceSources = null;
+  workspaceNote = workspaceNoteAfter('case-changed', !!info?.demo, workspaceNote); // the note was about the case being left
   setRestore('idle');
   activeCaseId = id;
   if (id) importCaseHint = false;
@@ -1046,6 +1062,7 @@ export async function openCreatedCase(id: string) {
   setActiveCase(id, { restore: false });
   // A case just made has no workspace yet, so there is nothing to restore; what it connects from now on is saved with it.
   restoredCaseId = id;
+  workspaceNote = workspaceNoteAfter('case-changed', !!info?.demo, workspaceNote); // also when the case id did not change: a fresh read follows
   let hasSources = sources.length > 0;
   try {
     const loaded = (await api.sources()) ?? [];
@@ -1057,7 +1074,10 @@ export async function openCreatedCase(id: string) {
       autoRan = false;
     }
     hasSources = loaded.length > 0;
-  } catch { /* the list could not be read: the analysis screen still opens and its own connect step can add sources */ }
+  } catch {
+    // The list could not be read: the screen still opens, but it may show the old sources without the new ones, so the person is told (RV-UI-8).
+    workspaceNote = workspaceNoteAfter('sources-unreadable', !!info?.demo, workspaceNote);
+  }
   if (go('case') && !hasSources) showImportPopup(null);
 }
 /** "Create a new one": the guided flow when it exists, otherwise the import panel over the working screen. */
@@ -1125,8 +1145,37 @@ export function loadRecent(recent: RecentConnection) {
   manualDatabase = false; connectionTestedSignature = ''; connectionWarning = ''; connectionError = '';
   recentSaveError = ''; recentSaveSuccess = ''; recentSaveErrorStage = ''; sourceError = ''; sourceSuccess = '';
 }
-export async function forgetRecent(recent: RecentConnection) {
-  if (connectionTesting || sourceBusy || historyMutationBusy) return;
+// A failed read of the saved list: an unreadable file gets its own way out (no "Try again"), anything else keeps the old message.
+function noteRecentsFailure(cause: unknown) {
+  recentFileDamaged = isSavedFileDamaged(cause);
+  const info = damagedInfo(cause);
+  recentDamagedDetail = info.detail; recentDamagedShared = info.shared;
+  recentHistoryError = recentFileDamaged ? '' : 'Recent connections could not be loaded. You can still test and add a connection.';
+}
+/** The damaged file was set aside (name, in folder) or turned out to read fine (''). Read the saved list again; it starts empty after a set-aside. */
+export async function finishRecentSetAside(name: string, folder = '') {
+  recentFileDamaged = false; recentHistoryError = '';
+  recentSetAsideNote = keptNote(name, folder);
+  try {
+    const fresh = await api.recentConnections();
+    recentConnections = Array.isArray(fresh) ? fresh.filter(isRecentConnection).slice(0, 20) : [];
+  } catch (cause) { noteRecentsFailure(cause); }
+}
+/**
+ * A set-aside failed and left the file as it was. Read the saved list again so the way out is offered only while the file really cannot be read:
+ * if it reads now the drawer says so, and if the read fails for another reason the drawer shows that instead.
+ */
+export async function recheckRecents() {
+  try {
+    const fresh = await api.recentConnections();
+    recentConnections = Array.isArray(fresh) ? fresh.filter(isRecentConnection).slice(0, 20) : [];
+    recentFileDamaged = false; recentHistoryError = '';
+    recentSetAsideNote = keptNote('');
+  } catch (cause) { noteRecentsFailure(cause); }
+}
+// True once the saved connection is gone. A failure returns false and leaves the row: the Remove button beside the row says so (W-16).
+export async function forgetRecent(recent: RecentConnection): Promise<boolean> {
+  if (connectionTesting || sourceBusy || historyMutationBusy) return false;
   recentHistoryError = '';
   recentBusyId = recent.id;
   forgetInProgress = true;
@@ -1141,8 +1190,9 @@ export async function forgetRecent(recent: RecentConnection) {
       connectionTestedSignature = ''; discoveredDatabases = []; completedDatabases = []; selectedDatabases = [];
       connectionWarning = ''; connectionError = '';
     }
-  } catch (cause) {
-    recentHistoryError = `Could not remove this recent connection: ${message(cause)}`;
+    return true;
+  } catch {
+    return false;
   } finally { recentBusyId = ''; forgetInProgress = false; historyMutationBusy = false; }
 }
 async function rememberConnection(connection: ConnectionInput, label: string, collection: string, keepPassword: boolean, mode: 'tested' | 'manual'): Promise<boolean> {
@@ -1159,6 +1209,7 @@ async function rememberConnection(connection: ConnectionInput, label: string, co
     });
     if (!isRecentConnection(saved)) throw new Error('The server returned an invalid recent connection record.');
     recentConnections = [saved, ...recentConnections.filter(item => item.id !== saved.id)].slice(0, 20);
+    recentSetAsideNote = '';
     if (connection.savedConnectionId) {
       if (keepPassword) {
         sessionCredentialIds.delete(saved.id);
@@ -1711,6 +1762,8 @@ function closeDrawerById(id: string) {
   if (id === 'glossary') void closeGlossary();
   else if (id === 'coverage') void closeCoverage();
   else if (id === 'side') void closeSidePanel();
+  // Left unguarded on purpose (W-20): this is Browser Back, and the history entry is already gone when it is called, so refusing here would leave the
+  // drawer open with no entry behind it. Closing only hides the drawer; the adding goes on in the app state.
   else if (id === 'connections') void closeConnections();
 }
 export function onWindowKey(event: KeyboardEvent) {
@@ -1721,7 +1774,8 @@ export function onWindowKey(event: KeyboardEvent) {
   if (glossaryOpen) { void closeGlossary(); return; }
   if (coverageSource) { void closeCoverage(); return; }
   if (sidePanel) { void closeSidePanel(); return; }
-  if (connectionsOpen) { void closeConnections(); return; }
+  // Adding databases is still running: the drawer stays (the drawer itself shows why).
+  if (connectionsOpen) { closeUnlessBusy(sourceBusy, () => void closeConnections()); return; }
   const target = event.target;
   // Esc inside a text field belongs to the field (the Custom window boxes, any INPUT/TEXTAREA/contenteditable): it stays with the field and never closes the screen. SELECT and .popover keep their own exemption.
   if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.closest('.popover'))) return;
@@ -2037,6 +2091,10 @@ export const conn = {
   get rememberPassword() { return rememberPassword; }, set rememberPassword(value) { rememberPassword = value; },
   get recentConnections() { return recentConnections; }, set recentConnections(value) { recentConnections = value; },
   get recentHistoryError() { return recentHistoryError; }, set recentHistoryError(value) { recentHistoryError = value; },
+  get recentFileDamaged() { return recentFileDamaged; },
+  get recentSetAsideNote() { return recentSetAsideNote; },
+  get recentDamagedDetail() { return recentDamagedDetail; },
+  get recentDamagedShared() { return recentDamagedShared; },
   get recentSaveError() { return recentSaveError; }, set recentSaveError(value) { recentSaveError = value; },
   get recentSaveSuccess() { return recentSaveSuccess; }, set recentSaveSuccess(value) { recentSaveSuccess = value; },
   get recentSaveErrorStage() { return recentSaveErrorStage; }, set recentSaveErrorStage(value) { recentSaveErrorStage = value; },

@@ -95,14 +95,14 @@ function paintChrome() {
     <div class="note">${ico('plus')} To add a project, list it in the projects file and restart. Each project keeps its own runs, releases and machines.</div></div>`;
   const nR = D.runsTotal || D.runs.length; const nRel = D.snapshot && D.snapshot.releases ? D.snapshot.releases.length : '';
   const nM = D.machines && D.machines.machines ? D.machines.machines.length : '';
-  const cur = R.name === 'run' ? 'runs' : R.name;
-  $('#tabs').innerHTML = [['overview', 'Overview', ''], ['runs', 'Runs', nR], ['releases', 'Releases', nRel], ['machines', 'Machines', nM]]
+  const cur = R.name === 'run' ? 'runs' : R.name; const oc = Ops.counts();
+  $('#tabs').innerHTML = [['overview', 'Overview', ''], ['runs', 'Runs', nR], ['queue', 'Queue', oc.queue], ['releases', 'Releases', nRel], ['machines', 'Machines', nM], ['holds', 'Holds', oc.holds], ['activity', 'Activity', oc.activity]]
     .map(([k, l, n]) => `<a class="tab" href="#/${k}" ${cur === k ? 'aria-current="page"' : ''}>${l}${n !== '' ? `<span class="n">${esc(n)}</span>` : ''}</a>`).join('');
   const run = o ? (o.running || []).length : 0; const wait = o ? (o.waiting || []).length : 0;
   $('#now').innerHTML = run ? `<span class="c-running sic-wrap">${ico('running', 'spin')}</span><b>${run} running</b> · ${wait} waiting` : `<span class="dot"></span>Nothing running · ${wait} waiting`;
-  const u = D.machines && D.machines.updated ? ts(D.machines.updated) : D.at; const age = u ? (Date.now() - u) / 1000 : 0;
-  const f = $('#fresh'); f.className = 'fresh' + (age > 120 ? ' stale' : '');
-  f.textContent = !u ? '' : age > 120 ? 'Data is ' + rel(u).replace(' ago', '') + ' old' : 'Updated ' + rel(u);
+  const fc = Fresh.chip(Date.now()); // the older of the two read times; the warning style after 3 missed polls of either
+  const f = $('#fresh'); f.className = 'fresh' + (fc.stale ? ' stale' : ''); f.title = fc.title;
+  f.innerHTML = fc.text ? (fc.stale ? ico('clock') : '') + esc(fc.text) : '';
   $('#themesw').innerHTML = Appearance.html(S.menu === 'theme');
   Appearance.bind($('#themesw'), { toggle: () => { S.menu = S.menu === 'theme' ? null : 'theme'; paintChrome(); }, changed: () => paintChrome(), toast });
   $('#swb').onclick = (e) => { e.stopPropagation(); S.menu = S.menu === 'proj' ? null : 'proj'; paintChrome(); };
@@ -170,6 +170,7 @@ function viewOverview() {
       <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">PR ${esc(r.pr)}</a><small class="mono" title="${esc(r.branch)}">${esc(r.branch)}</small></td><td class="clip"><div>${whereHtml(r)}</div></td>
       <td class="hide-s">${d ? '<span class="chip warn">No: GitHub passed</span>' : '<span class="muted" title="The run on GitHub is compared about every 10 minutes. Only differences are listed.">No difference found</span>'}</td><td class="num">${when(r.start)}</td></tr>`; };
   return `<div class="lead">${sic(hs, 'lg')}<div><h1>${esc(head)}</h1><p>${esc(sub)}</p></div></div>
+  ${Ops.holdLine()}
   <div class="nowline"><span>${sic('waiting')}<b>${(o.waiting || []).length} waiting</b></span>
     <span>${ico('pc')} <b>${online} of ${ag.length}</b> machine${ag.length === 1 ? '' : 's'} online, ${free} free slot${free === 1 ? '' : 's'}</span>
     ${rl ? `<span>${ico('tag')} Latest release <b class="mono">${esc(rl.version)}</b> ${rl.verify === 'passed' ? 'verified' : rl.verify === 'failed' ? 'failed verify' : 'not verified yet'} ${when(rl.published)}</span>` : ''}</div>
@@ -190,6 +191,7 @@ function viewOverview() {
       <p class="muted">GitHub still decides merges. After ${sh.gate || 20} agreeing pull requests in a row, the local result can take over.</p></div>
     <div class="card"><h3>Machines</h3><a href="#/machines">All machines</a>
       ${ag.length ? ag.map((a) => `<div class="mrow">${ico('pc')}<b>${esc(a.name)}</b>${a.fresh ? '<span class="chip ok">Online</span>' : '<span class="chip warn">Not heard from</span>'}<span class="muted">${(a.jobs || []).length ? (a.jobs || []).length + ' busy' : 'idle'} · ${a.slots || 0} slot${a.slots === 1 ? '' : 's'}</span></div><p class="muted">Heard from ${when(a.lastSeen)}. ${a.posted || 0} result${a.posted === 1 ? '' : 's'} sent to GitHub, ${a.postFailed || 0} failed.</p>`).join('') : '<p class="muted">No machine has reported yet.</p>'}</div>
+    ${Ops.queueCard()}
   </aside></div>`;
 }
 
@@ -466,6 +468,7 @@ function viewReleases() {
     <td>${vst(x.verify)}</td><td class="num hide-s">${(() => { const t = stepsOf(x).filter((y) => isFinite(y.t)); return t.length > 1 ? esc(dur(t[t.length - 1].t - t[0].t)) : '–'; })()}</td><td class="num">${when(x.published)}</td></tr>`;
   const withSteps = rs.filter((x) => (x.steps || []).length).length;
   return `<div class="ph"><h1>Releases</h1><p>Each release runs ${names.length} steps, from ${esc(names[0])} to ${esc(names[names.length - 1])}. Today releases are still built on GitHub; this page reads them.</p></div>
+  ${Fresh.noteHtml('releases', Date.now())}
   ${sn.github && sn.github.ok === false ? `<p class="empty"><b>GitHub could not be reached.</b> ${esc(sn.github.detail || '')}</p>` : ''}
   <div class="chan">${lane('rc')}<div class="arrow" aria-hidden="true">→</div>${lane('stable')}</div>
   <div class="split"><section><div class="sh"><h2>All releases</h2><span class="muted">${rs.length} on GitHub, ${withSteps} with step records on this PC</span></div>
@@ -480,7 +483,6 @@ function bindReleases() {
     tr.onclick = pick; tr.onkeydown = (e) => { if (e.key === 'Enter') pick(); };
   });
   $$('[data-dlg]').forEach((b) => { b.onclick = () => dialog(b.dataset.dlg, b.dataset.v); });
-  $$('[data-check]').forEach((b) => { b.onclick = () => { toast('Checking again…'); Data.tick(true); }; });
   const rs = sn.releases || []; const sel = route().q.get('v') || S.rel || (rs[0] && rs[0].version);
   Legacy.renderDetail(rs.find((x) => x.version === sel) || rs[0] || null, { releases: rs, snap: sn });
 }
@@ -518,26 +520,27 @@ function viewMachines() {
       <div><div class="lbl">Last hour</div><div class="val">${x.self ? `${mine.length} run${mine.length === 1 ? '' : 's'}, ${mine.filter((r) => norm(r.status) === 'failed').length} failed` : '<span class="muted">Not reported by other PCs</span>'}</div></div>
       <div><div class="lbl">Wait for a slot</div><div class="val">${pc(0.5)} median</div><div class="muted fs-xs">slowest 1 in 20 waited ${pc(0.95)} or more, over the runs loaded</div></div>
       <div><div class="lbl">Results to GitHub</div><div class="val">${a ? `${a.posted || 0} sent${a.postFailed ? ', ' + a.postFailed + ' failed' : ', none failed'}${a.postWaiting ? ', ' + a.postWaiting + ' waiting' : ''}` : '<span class="muted">Not reported</span>'}</div><div class="muted fs-xs">Shadow mode: reported as <span class="mono">local/*</span>, does not gate merges</div></div>
-      <div>${x.self ? laterBtn('btn sm', ico('pause'), 'Pause', WHY.pause) : '<span class="muted fs-xs">Other PCs cannot be paused from here</span>'}</div></div>`;
+      <div>${Ops.machineCell(x)}</div></div>`;
   };
   const cmd = `unravis-ci serve --repo ${REPO()}`;
   return `<div class="ph"><h1>Machines</h1><p>A machine is a PC that runs checks. Each slot runs one job at a time. A machine that has not reported for about 3 minutes shows as Quiet.</p></div>
   ${ms.length ? `<div class="panel">${ms.map(card).join('')}</div>` : '<div class="empty"><b>No machine has reported yet.</b></div>'}
   <section class="sec"><div class="sh"><h2>Add a machine</h2></div><p class="muted lede">A second machine lets two pull requests check at the same time, and keeps checks going when this PC is off. On that machine, run the agent for this project:</p>
     <div class="cmd"><code>${esc(cmd)}</code><button type="button" class="btn sm" data-copy="${esc(cmd)}">${ico('copy')} Copy</button></div>
-    <p class="muted m0">It shows up here within about a minute. It needs a GitHub token that can write repository contents, or it stops at start.</p></section>`;
+    <p class="muted m0">It shows up here within about a minute. It needs a GitHub token that can write repository contents, or it stops at start.</p></section>
+  ${Ops.machinesExtra()}`;
 }
 
 // ---------- keys ----------
 function keysDialog() {
-  const rows = [['g', 'then o Overview, r Runs, l Releases, m Machines'], ['/', 'Search the runs, or the log on a run page'], ['e', 'Go to the first error of a failed run'], ['f', 'Next failed job'], ['Enter', 'In log search: next match (Shift for previous)'], ['Esc', 'Close a menu, dialog or full-screen log']];
+  const rows = [['g', 'then o Overview, r Runs, q Queue, l Releases, m Machines, h Holds, a Activity'], ['/', 'Search the runs, or the log on a run page'], ['e', 'Go to the first error of a failed run'], ['f', 'Next failed job'], ['Enter', 'In log search: next match (Shift for previous)'], ['Esc', 'Close a menu, dialog or full-screen log']];
   $('#layer').innerHTML = `<div class="scrim" id="scrim"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgt"><header><h2 id="dlgt">Keyboard shortcuts</h2></header><div class="body"><div class="keys">${rows.map(([k, t]) => `<kbd>${esc(k)}</kbd><span>${esc(t)}</span>`).join('')}</div></div><footer><button type="button" class="btn primary" id="dlgc">Close</button></footer></div></div>`;
   const close = () => { $('#layer').innerHTML = ''; };
   $('#dlgc').onclick = close; $('#scrim').onclick = (e) => { if (e.target.id === 'scrim') close(); }; $('#dlgc').focus();
 }
 
 // ---------- render ----------
-const TITLES = { overview: 'Overview', runs: 'Runs', run: 'Run', releases: 'Releases', machines: 'Machines' };
+const TITLES = { overview: 'Overview', runs: 'Runs', run: 'Run', releases: 'Releases', machines: 'Machines', queue: 'Queue', holds: 'Holds', activity: 'Activity' };
 function render() {
   loadDis(); paintChrome();
   const R = route(); const main = $('#main'); const w = worst();
@@ -550,9 +553,14 @@ function render() {
   else if (R.name === 'run' && R.id) html = viewRun(R.id);
   else if (R.name === 'releases') html = viewReleases();
   else if (R.name === 'machines') html = viewMachines();
+  else if (R.name === 'queue') html = Ops.viewQueue();
+  else if (R.name === 'holds') html = Ops.viewHolds();
+  else if (R.name === 'activity') html = Ops.viewActivity();
   else html = '<div class="empty"><b>No such page.</b> <a href="#/overview">Back to the overview</a>.</div>';
-  const banner = D.err && D.loaded ? `<div class="empty"><b>The last refresh failed.</b> ${esc(D.err)} Showing the last answer.</div>` : '';
+  // Older data is named at the top of the page; the Releases page puts its own note under its heading (viewReleases).
+  const banner = (R.name === 'releases' ? '' : Fresh.noteHtml(R.name, Date.now())) || (D.err && D.loaded && !D.at ?`<div class="empty"><b>The last refresh failed.</b> ${esc(D.err)}</div>` : '');
   main.innerHTML = banner + html;
+  $$('[data-check]', main).forEach((b) => { b.onclick = () => { toast('Checking again…'); Data.tick(true); }; });
   $$('table.tbl th', main).forEach((th) => th.setAttribute('scope', 'col'));
   $$('table.tbl', main).forEach((t) => { if (t.parentElement.className !== 'tw') { const d = document.createElement('div'); d.className = 'tw'; t.replaceWith(d); d.appendChild(t); } });
   applyDyn(main);
@@ -561,7 +569,8 @@ function render() {
     else if (R.name === 'runs') bindRuns();
     else if (R.name === 'run' && R.id) bindRun();
     else if (R.name === 'releases') bindReleases();
-    else if (R.name === 'machines') bindMenus();
+    else if (R.name === 'machines') { bindMenus(); Ops.bind(); }
+    else if (['queue', 'holds', 'activity'].includes(R.name)) Ops.bind();
   }
   document.title = ({ failed: 'Failing · ', running: 'Running · ', passed: 'Passing · ' }[w]) + (TITLES[R.name] || 'Homestretch') + ' · ' + (P().name || 'Homestretch') + ' · Homestretch';
 }
@@ -585,6 +594,7 @@ function start() {
     $('#layer').innerHTML = ''; S.menu = null;
     const p = location.hash.split('?')[0];
     if (p !== lastPath) { S.step = null; S.logQ = ''; S.logHit = 0; S.full = false; S.pin = null; S.lineTop = 0; S.runErr = ''; scrollTo(0, 0); }
+    if (p !== lastPath) Ops.reset();
     lastPath = p;
     render();
     if (route().name === 'run') refreshRun().then((c) => { if (c) render(); });
@@ -597,6 +607,7 @@ function start() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if ($('#layer').children.length) { $('#layer').innerHTML = ''; return; }
+      if (Ops.escape()) return;
       if (S.full) { S.full = false; render(); return; }
       if (S.menu) { S.menu = null; paintChrome(); $$('.rowmenu .menu').forEach((x) => { x.hidden = true; }); }
       return;
@@ -605,7 +616,7 @@ function start() {
     if (e.key === '/') { const t = $('#lq') || $('#q'); if (t) { e.preventDefault(); t.focus(); } return; }
     if (e.key === '?') { keysDialog(); return; }
     if (e.key === 'g') { gPending = Date.now(); return; }
-    if (gPending && Date.now() - gPending < 1200) { const t = { o: 'overview', r: 'runs', l: 'releases', m: 'machines' }[e.key]; gPending = 0; if (t) { go('/' + t); return; } }
+    if (gPending && Date.now() - gPending < 1200) { const t = { o: 'overview', r: 'runs', q: 'queue', l: 'releases', m: 'machines', h: 'holds', a: 'activity' }[e.key]; gPending = 0; if (t) { go('/' + t); return; } }
     if (route().name === 'run') { if (e.key === 'e') gotoError(); else if (e.key === 'f') nextFailedJob(); }
   });
   render();

@@ -6,7 +6,7 @@
   import { listensOnAll, packFileName, targetNamesByKind } from '../../lib/blackbox';
   import { RECORD_GROUPS } from '../../lib/blackboxCatalogue';
   import { BBW_TEXT as W } from '../../lib/copy/blackboxWizardCopy';
-  import { buildSettings, changeStep, driveOfPath, presetOf, steps } from '../../lib/blackboxWizard';
+  import { buildSettings, changeStep, driveOfPath, presetOf, redisPresetNow, redisRowOn, steps } from '../../lib/blackboxWizard';
   import type { StepId, WizardState } from '../../lib/blackboxWizard';
 
   let {
@@ -25,11 +25,20 @@
   const payload = $derived(buildSettings(wizard));
   const pc = $derived(wizard.where === 'pc');
   const showSql = $derived(steps(wizard).includes('sql'));
-  const preset = $derived(presetOf(payload.record));
+  const showRedis = $derived(steps(wizard).includes('redis'));
+  const sqlProfileWords = $derived(W[('sql.profile' + wizard.sqlChoice.profile[0].toUpperCase() + wizard.sqlChoice.profile.slice(1)) as 'sql.profileStandard'] + (wizard.sqlChoice.text ? ', with query text' : ''));
+  const redisSetWords = $derived.by((): string => {
+    const now = redisPresetNow(wizard.redisChoice);
+    return now === 'standard' ? W['redis.standard'] : now === 'everything' ? W['redis.everything'] : W['redis.custom'] + ', based on ' + (wizard.redisChoice.profile === 'everything' ? W['redis.everything'] : W['redis.standard']);
+  });
+  const redisIncludes = $derived(
+    [W['redis.serverTitle'], ...(['slowlog', 'latency', 'clients', 'slowArgs'] as const).filter((r) => redisRowOn(wizard.redisChoice, r)).map((r) => W[('redis.' + r + 'Title') as 'redis.slowlogTitle'])].join(', ')
+  );
+  const preset = $derived(presetOf(payload.record, wizard.collectorRows));
   const presetWords = $derived(preset === 'recommended' ? W['record.recommended'] : preset === 'light' ? W['record.light'] : W['record.custom']);
   const allFigures = RECORD_GROUPS.reduce((count, group) => count + group.figures.length, 0);
   const recordedFigures = $derived(RECORD_GROUPS.reduce(
-    (count, group) => count + (group.toggle && !payload.record[group.toggle] ? 0 : group.figures.length), 0
+    (count, group) => count + ((group.toggle && !payload.record[group.toggle]) || (group.row && !wizard.collectorRows[group.row]) ? 0 : group.figures.length), 0
   ));
   const groups = $derived(targetNamesByKind(payload.targets));
   const watchWords = $derived(payload.targets.length === 0 ? W['review.watchNone'] : W['review.watchText'](groups.appPools, groups.services));
@@ -48,6 +57,11 @@
       .filter((key) => payload.record[key])
       .map((key) => toggleTitle(key))
   );
+
+  // The three collector rows, read from the payload so Review shows what is sent: an absent id is on.
+  const rowFacts = $derived(payload.collectors?.['host.facts']?.on !== false);
+  const rowPaths = $derived(payload.collectors?.['paths.files']?.on !== false);
+  const extraCounters = $derived(payload.counters?.extra ?? []);
 
   function change(id: StepId): void {
     if (disabled) return;
@@ -90,6 +104,16 @@
           {/if}
         </dd>
       {/if}
+      <dt>{W['review.rowFacts']}</dt>
+      <dd>{rowFacts ? W['review.on'] : W['review.off']}</dd>
+      <dt>{W['review.rowCounters']}</dt>
+      <dd>{extraCounters.length > 0 ? W['review.on'] : W['review.off']}</dd>
+      {#if extraCounters.length > 0}
+        <dt>{W['review.counters']}</dt>
+        <dd>{extraCounters.join(', ')}</dd>
+      {/if}
+      <dt>{W['review.rowPaths']}</dt>
+      <dd>{rowPaths ? W['review.on'] : W['review.off']}</dd>
       <dt>{W['review.every']}</dt>
       <dd>{payload.intervalSeconds} {W['review.seconds']}</dd>
     </dl>
@@ -109,8 +133,24 @@
       <dl>
         <dt>{W['review.counters']}</dt>
         <dd>{W['review.sqlAutomatic']}</dd>
+        <dt>{W['review.sqlSet']}</dt>
+        <dd>{sqlProfileWords}</dd>
         <dt>{W['review.safety']}</dt>
         <dd>{W['sql.deeperChecks']}</dd>
+      </dl>
+    </section>
+  {/if}
+
+  {#if showRedis}
+    <section class="card" aria-labelledby="rv-redis">
+      <header><h3 id="rv-redis">{W['review.redis']}</h3>{@render changeLink('redis', W['review.redis'])}</header>
+      <dl>
+        <dt>{W['review.redisSet']}</dt>
+        <dd>{redisSetWords}</dd>
+        <dt>{W['review.redisIncludes']}</dt>
+        <dd>{redisIncludes}</dd>
+        <dt>{W['review.redisPassword']}</dt>
+        <dd>{W['review.redisPasswordText']}</dd>
       </dl>
     </section>
   {/if}

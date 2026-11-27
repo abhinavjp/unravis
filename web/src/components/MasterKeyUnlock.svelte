@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { finishUnlock, noteKeyStatus } from '../lib/appState.svelte';
-  import { unlockFailureOf, unlockMessage } from '../lib/masterKey';
+  import { unlockFailureOf, unlockMessage, unlockProblemBeforeSend } from '../lib/masterKey';
   import { getMasterKeyStatus, unlockMasterKey } from '../lib/masterKeyApi';
   import { KEY_TEXT } from '../lib/copy/masterKeyCopy';
   import HelpNote from './HelpNote.svelte';
@@ -26,7 +26,10 @@
     if (busy) return;
     const attempt = pass;
     pass = '';
-    if (!attempt) { problem = unlockMessage({ kind: 'wrong-key' }); return; }
+    // An empty box is not a wrong key: nothing was sent, so say what to do and keep focus in the box.
+    const empty = unlockProblemBeforeSend(attempt);
+    // Cleared first, then set after the page updated, so a repeated press announces the same sentence again.
+    if (empty) { problem = ''; await tick(); problem = empty; field?.focus(); return; }
     busy = true;
     problem = '';
     try {

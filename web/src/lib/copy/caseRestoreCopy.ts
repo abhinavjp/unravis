@@ -19,7 +19,11 @@ export const CASE_RESTORE_TEXT = {
   unreachable: 'The server this case used did not answer in time. Check the network or VPN, then try again.',
   tryAgainButton: 'Try again',
   cancelButton: 'Cancel',
-  partial: 'Some databases did not open. The others are ready.'
+  partial: 'Some databases did not open. The others are ready.',
+  // The case's saved filters and connection could not be read (RV-UI-8). Saving is held until a read works, so the sentence says changes are not kept.
+  workspaceUnreadable: 'The filters and connection saved with this case could not be read, so the screen shows the defaults. Changes you make now are not saved with the case. Open the case again to try once more.',
+  // A case just made: its databases could not be listed, so a stale list may be on screen (RV-UI-8).
+  sourcesUnreadable: 'The databases of the new case could not be loaded just now, so the list on screen may be missing some. Open the case again to try once more.'
 } as const;
 
 /** "This case used MongoDB database orders. Sign in to reconnect." */

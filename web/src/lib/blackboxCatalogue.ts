@@ -18,6 +18,8 @@ export interface RecordGroup {
   always: boolean;
   toggle?: 'processes' | 'logsCatalogue' | 'copyLogsOnSnapshot';
   sqlHost?: true;
+  /** The collector row that switches the group on and off (Record step, wizard.collectorRows). Not a record boolean, so no `toggle`. */
+  row?: 'facts' | 'counters' | 'paths';
   figures: Figure[];
 }
 
@@ -490,6 +492,132 @@ export const RECORD_GROUPS: RecordGroup[] = [
           why: 'Many forwarded records can add work to table reads.',
           watch: 'A high value compared with batch requests or the usual level for this server.',
           stored: SQL_NUMBERS
+        }
+      }
+    ]
+  },
+  // source: internal/blackbox collector host.facts (once an hour).
+  {
+    id: 'hostFacts',
+    title: 'Server facts',
+    always: false,
+    row: 'facts',
+    figures: [
+      {
+        id: 'facts.versions',
+        label: 'Versions and install paths',
+        hint: 'Windows, .NET, IIS, SQL Server and Redis versions, and where they are installed.',
+        details: {
+          what: 'The versions of Windows, .NET, IIS, SQL Server and Redis, and the folder of each.',
+          why: 'Servers on other versions can act in other ways.',
+          watch: 'A version that changed between two recordings, or that differs from a server that works.',
+          stored: 'Product names, version numbers and folder paths, once an hour. Content of files and secrets are never read.'
+        }
+      },
+      {
+        id: 'facts.services',
+        label: 'Services and their state',
+        hint: 'Name, state and start type. Never accounts or passwords.',
+        details: {
+          what: 'Each Windows service with its name, whether it is running, and how it starts.',
+          why: 'A service that stopped, or was set to start by hand, can be the start of a problem.',
+          watch: 'A service that is stopped but should start on its own.',
+          stored: 'Service name, state and start type, once an hour. Never the account a service runs as, and never passwords.'
+        }
+      },
+      {
+        id: 'facts.certificates',
+        label: 'Certificate expiry dates',
+        hint: 'Subject, thumbprint and end date for the computer store. Never private keys.',
+        details: {
+          what: 'Each certificate in the computer store, with the date it ends.',
+          why: 'An expired certificate can stop sites and connections from working.',
+          watch: 'A certificate that ends soon, or that has already ended.',
+          stored: 'Subject, thumbprint and end date, once an hour. Never private keys, and never what the certificate protects.'
+        }
+      },
+      {
+        id: 'facts.timeReboot',
+        label: 'Time sync and pending reboot',
+        hint: 'How far the clock is off, and whether Windows waits for a restart.',
+        details: {
+          what: 'How far this server clock is from its time source, and a yes or no for a restart that is still due.',
+          why: 'A clock that is off can confuse logins and make times in different logs disagree. A waiting restart means an update is not finished.',
+          watch: 'A clock that is off by more than a few seconds, or a restart that stays due for days.',
+          stored: 'The clock offset and a yes or no for the restart, once an hour. Nothing else is read.'
+        }
+      }
+    ]
+  },
+  // source: internal/blackbox/extracounters.go counters.extra.
+  {
+    id: 'extraCounters',
+    title: 'Extra Windows counters',
+    always: false,
+    row: 'counters',
+    figures: [
+      {
+        id: 'counters.extra',
+        label: 'Counters you add',
+        hint: 'One counter path per line, up to 50. A path that does not exist is skipped and reported.',
+        details: {
+          what: 'Any Windows counter you name, read the same way Performance Monitor reads it.',
+          why: 'Some problems show up in a counter the built-in figures do not include.',
+          watch: 'A counter that rises or falls at the time of the problem.',
+          stored: 'One number per counter and sample. A counter that does not exist is skipped and reported, never saved as 0.'
+        }
+      }
+    ]
+  },
+  // source: internal/blackbox collector paths.files.
+  {
+    id: 'filePaths',
+    title: 'Log and config file paths',
+    always: false,
+    row: 'paths',
+    figures: [
+      {
+        id: 'paths.web',
+        label: 'IIS, HTTP.sys and failed request tracing folders',
+        hint: 'Which folders hold the web logs.',
+        details: {
+          what: 'The folders where IIS, HTTP.sys and failed request tracing write their logs.',
+          why: 'Knowing where the web logs are saves time when you need to open them.',
+          watch: 'A log folder that moved, or that is on a drive that is nearly full.',
+          stored: 'Folder paths, sizes and times only. The content of files is never read.'
+        }
+      },
+      {
+        id: 'paths.sqlRedis',
+        label: 'SQL Server and Redis logs and settings',
+        hint: 'ERRORLOG, redis.windows.conf and the Redis log.',
+        details: {
+          what: 'Where the SQL Server error log, the Redis settings file and the Redis log are.',
+          why: 'These files often hold the reason a database or cache misbehaved.',
+          watch: 'A log with a recent time when the problem started.',
+          stored: 'Path, size and time only. The content of files and any secret in them are never read.'
+        }
+      },
+      {
+        id: 'paths.salt',
+        label: 'Salt minion log',
+        hint: 'Path and time of the last write.',
+        details: {
+          what: 'Where the Salt minion log is, and when it was last written to.',
+          why: 'A recent write shows that Salt was active near the time of a change.',
+          watch: 'Salt activity just before the problem started.',
+          stored: 'Path and time of the last write only. The content of the log is never read.'
+        }
+      },
+      {
+        id: 'paths.own',
+        label: 'Unravis and Blackbox own logs',
+        hint: 'Path, size and time.',
+        details: {
+          what: 'Where the Unravis and Blackbox logs are, with their size and last write time.',
+          why: 'These logs say what the recorder itself did, such as a figure it could not read.',
+          watch: 'A log that grows fast, or that stopped being written.',
+          stored: 'Path, size and time only. The content of files is never read.'
         }
       }
     ]

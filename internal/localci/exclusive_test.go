@@ -189,3 +189,85 @@ jobs:
 		t.Fatalf("job %s:\n%s", got, h.logText())
 	}
 }
+
+// A run that is cancelled while a step stands in line for the resource is cancelled, not failed: it says nothing
+// about the code, so the comparison with GitHub must not count it as a failure.
+func TestCancelWhileWaitingForTheResourceIsCancelledNotFailed(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: m
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: guarded
+        run: echo guarded-ran
+`)
+	h.opts.LockDir = t.TempDir()
+	cfg, err := ParseLocalConfig([]byte("jobs:\n  wf.yml:\n    j:\n      step-exclusive:\n        guarded: a-name\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.opts.Config = cfg
+	held, err := acquireExclusive(context.Background(), "a-name", h.opts.LockDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan *RunResult, 1)
+	go func() {
+		res, _ := Run(ctx, h.opts)
+		done <- res
+	}()
+	deadline := time.Now().Add(20 * time.Second)
+	for !strings.Contains(h.logText(), "waiting for the exclusive resource") {
+		if time.Now().After(deadline) {
+			t.Fatalf("the guarded step never waited:\n%s", h.logText())
+		}
+		time.Sleep(50 * time.Millisecond) // winok: polls a log condition under a 20 s deadline
+	}
+	cancel()
+	res := <-done
+	if res.Conclusion != "cancelled" {
+		t.Fatalf("run %s, want cancelled:\n%s", res.Conclusion, h.logText())
+	}
+	if got := job(t, res, "j").Status; got != "cancelled" {
+		t.Fatalf("job %s, want cancelled", got)
+	}
+}
+
+// Time spent standing in line for the resource does not use up the job's timeout-minutes.
+func TestWaitingForTheResourceDoesNotUseTheJobTimeout(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: m
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: guarded
+        run: echo guarded-ran
+`)
+	h.opts.LockDir = t.TempDir()
+	h.opts.jobTimeoutOverride = 3 * time.Second
+	cfg, err := ParseLocalConfig([]byte("jobs:\n  wf.yml:\n    j:\n      step-exclusive:\n        guarded: a-name\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.opts.Config = cfg
+	held, err := acquireExclusive(context.Background(), "a-name", h.opts.LockDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan *RunResult, 1)
+	go func() { done <- h.run() }()
+	time.Sleep(4 * time.Second) // winok: stands in line for longer than the whole job limit
+	held()
+	res := <-done
+	if got := job(t, res, "j").Status; got != "success" {
+		t.Fatalf("job %s after the wait, want success:\n%s", got, h.logText())
+	}
+}

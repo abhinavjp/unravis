@@ -12,7 +12,7 @@
   } from '../lib/blackbox';
   import { fetchDrives } from '../lib/blackboxDrives';
   import {
-    applyDefaultFolder, back, buildSettings, changeStep, goTo, initialState, next, setSqlSeen, stepProblem, steps, useDefaultsToReview, whereChoices,
+    applyDefaultFolder, back, buildSettings, changeStep, goTo, initialState, next, setRedisSeen, setSqlSeen, stepProblem, steps, useDefaultsToReview, whereChoices,
     type StepId, type WizardState
   } from '../lib/blackboxWizard';
   import { BB_REFUSAL, BB_TEXT, refusedSetting } from '../lib/copy/blackboxCopy';
@@ -24,6 +24,7 @@
   import StepWhere from './blackboxWizard/StepWhere.svelte';
   import StepRecord from './blackboxWizard/StepRecord.svelte';
   import StepSql from './blackboxWizard/StepSql.svelte';
+  import StepRedis from './blackboxWizard/StepRedis.svelte';
   import StepWatch from './blackboxWizard/StepWatch.svelte';
   import StepKeep from './blackboxWizard/StepKeep.svelte';
   import StepFolder from './blackboxWizard/StepFolder.svelte';
@@ -51,6 +52,8 @@
   const FALLBACK_FOLDER = defaultSettings().folder;
   // The default Windows service names of SQL Server: the default instance and every named instance (B-01).
   const SQL_SERVICE = /^(MSSQLSERVER|MSSQL\$.+)$/i;
+  // Redis for Windows runs as "Redis"; Memurai as "Memurai" (or a name that starts with it).
+  const REDIS_SERVICE = /^(Redis|Memurai.*)$/i;
 
   const uid = $props.id();
   const titleId = uid + '-title';
@@ -82,20 +85,21 @@
   const finished = $derived(phase.kind === 'installed' || phase.kind === 'pack' || partial);
   const showingResult = $derived(phase.kind === 'installed' || phase.kind === 'pack' || phase.kind === 'failed');
   const problem = $derived(stepProblem(wizard, wizard.step));
-  // The rail always shows all eight steps (the wireframe): a step this path does not need, such as SQL, stays in place, greyed.
-  const ALL: StepId[] = ['name', 'where', 'record', 'sql', 'watch', 'keep', 'folder', 'review'];
+  // The rail always shows all nine steps (the wireframe): a step this path does not need, such as SQL, stays in place, greyed.
+  const ALL: StepId[] = ['name', 'where', 'record', 'sql', 'redis', 'watch', 'keep', 'folder', 'review'];
   const railSteps = $derived(ALL.map((id) => ({ id, label: W[('rail.' + id) as `rail.${StepId}`], skipped: wizard.where !== null && !list.includes(id) })));
   const railCurrent = $derived(ALL.indexOf(wizard.step));
   const railMax = $derived(ALL.indexOf(list[Math.min(wizard.maxSeen, list.length - 1)] ?? 'name'));
 
   const TITLE: Record<StepId, string> = {
-    name: W['step.name.title'], where: W['step.where.title'], record: W['step.record.title'], sql: W['step.sql.title'],
+    name: W['step.name.title'], where: W['step.where.title'], record: W['step.record.title'], sql: W['step.sql.title'], redis: W['step.redis.title'],
     watch: W['step.watch.title'], keep: W['step.keep.title'], folder: W['step.folder.title'], review: W['step.review.title']
   };
   // The SQL and Folder leads say "this PC" or "the other server" by the answer on the Where step.
   const LEAD = $derived<Record<StepId, string>>({
     name: W['step.name.lead'], where: W['step.where.lead'], record: W['step.record.lead'],
     sql: wizard.where === 'pack' ? W['step.sql.leadPack'] : W['step.sql.lead'],
+    redis: wizard.where === 'pack' ? W['step.redis.leadPack'] : W['step.redis.lead'],
     watch: W['step.watch.lead'], keep: W['step.keep.lead'],
     folder: wizard.where === 'pack' ? W['step.folder.leadPack'] : W['step.folder.lead'],
     review: W['step.review.lead']
@@ -119,7 +123,7 @@
   function ownerOf(code: string): StepId {
     if (code.startsWith('name-')) return 'name';
     if (code === 'where-missing') return 'where';
-    if (code === 'interval' || code === 'logs') return 'record';
+    if (code === 'interval' || code === 'logs' || code === 'counters') return 'record';
     if (code.startsWith('targets-')) return 'watch';
     if (code === 'keep' || code === 'size' || code === 'free') return 'keep';
     return 'folder';
@@ -318,7 +322,7 @@
   const canBack = $derived(!showingResult && index > 0);
   const canDefaults = $derived(
     !showingResult && wizard.returnTo === null &&
-    (wizard.step === 'record' || wizard.step === 'sql' || wizard.step === 'watch')
+    (wizard.step === 'record' || wizard.step === 'sql' || wizard.step === 'redis' || wizard.step === 'watch')
   );
   // Enter must never place or build from the page: on Review only the Place or Build button itself acts (its own click).
   const enterNeedsButton = $derived(wizard.step === 'review' && phase.kind === 'idle');
@@ -351,6 +355,7 @@
     blackboxApi.targets(controller.signal).then(
       (answer) => {
         if (answer.services.some((s) => SQL_SERVICE.test(s.name))) wizard = setSqlSeen(wizard, true);
+        if (answer.services.some((s) => REDIS_SERVICE.test(s.name))) wizard = setRedisSeen(wizard, true);
       },
       () => { /* not read: the SQL step simply stays out of the pc path */ }
     );
@@ -401,7 +406,9 @@
       {:else if wizard.step === 'record'}
         <StepRecord bind:wizard />
       {:else if wizard.step === 'sql'}
-        <StepSql />
+        <StepSql bind:wizard />
+      {:else if wizard.step === 'redis'}
+        <StepRedis bind:wizard />
       {:else if wizard.step === 'watch'}
         <StepWatch bind:wizard problem={watchProblem} />
       {:else if wizard.step === 'keep'}

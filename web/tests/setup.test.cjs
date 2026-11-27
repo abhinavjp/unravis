@@ -235,6 +235,51 @@ test('the Welcome screen reaches the folder box and the folder from a failed Pro
   assert.match(api, /openFolder: \(folder: string\)[^\n]*'open-folder'/);
 });
 
+// W-21 (RV-UXS-1): the progress watch gives up after 20 failed reads in a row.
+test('the progress watch keeps going through 19 failed reads in a row and stops at the 20th', () => {
+  let failures = 0;
+  for (let n = 1; n <= 19; n++) {
+    const next = logic.watchDecision(failures, { ok: false, status: 500 });
+    assert.equal(next.action, 'continue', 'failure ' + n + ' keeps going');
+    assert.equal(next.failures, n);
+    failures = next.failures;
+  }
+  const last = logic.watchDecision(failures, { ok: false, status: 500 });
+  assert.deepEqual(last, { action: 'stop', reason: 'lost', failures: 20 });
+  assert.equal(logic.PROGRESS_FAILURE_LIMIT, 20);
+});
+
+test('a successful read in between puts the count back to zero', () => {
+  let failures = 0;
+  for (let n = 0; n < 19; n++) failures = logic.watchDecision(failures, { ok: false, status: 502 }).failures;
+  const ok = logic.watchDecision(failures, { ok: true });
+  assert.deepEqual(ok, { action: 'continue', failures: 0 });
+  failures = ok.failures;
+  for (let n = 0; n < 19; n++) {
+    const next = logic.watchDecision(failures, { ok: false, status: 502 });
+    assert.equal(next.action, 'continue');
+    failures = next.failures;
+  }
+  assert.equal(logic.watchDecision(failures, { ok: false, status: 502 }).action, 'stop');
+});
+
+test('Setup gone (status 0) or a refused key (401) still stops at once with the error own words', () => {
+  assert.deepEqual(logic.watchDecision(0, { ok: false, status: 0 }), { action: 'stop', reason: 'gone', failures: 1 });
+  assert.deepEqual(logic.watchDecision(3, { ok: false, status: 401 }), { action: 'stop', reason: 'gone', failures: 4 });
+  assert.equal(logic.watchDecision(0, { ok: false, status: -1 }).action, 'continue', 'a non-API error counts as one failure');
+});
+
+test('the progress-lost words do not say the install failed and never offer a second install', () => {
+  assert.equal(logic.PROGRESS_LOST_HEADING, 'Setup lost sight of the install');
+  assert.equal(logic.PROGRESS_LOST_MESSAGE, 'Setup could not read its progress. The install may still be running. Wait a minute, then open Unravis Setup again to see the result.');
+  const words = logic.PROGRESS_LOST_HEADING + ' ' + logic.PROGRESS_LOST_MESSAGE;
+  assert.doesNotMatch(words, /fail|try again|retry|install again|start again|reinstall/i);
+  const app = read('setup/App.svelte');
+  assert.match(app, /watchDecision\(failures/, 'the watch loop asks the pure function');
+  assert.match(app, /decision\.reason === 'lost'[\s\S]{0,120}PROGRESS_LOST_HEADING[\s\S]{0,80}PROGRESS_LOST_MESSAGE/);
+  assert.match(app, /<h1>\{fatalHeading\}<\/h1><p role="alert">\{fatal\}<\/p>/, 'the fatal screen shows only a heading and the message: no button to install again');
+});
+
 test('Try again is offered only when repeating the run can change the result', () => {
   assert.equal(logic.retryHelps({ outcome: 'rolled-back', fix: 'Free the port and try again.' }), true);
   assert.equal(logic.retryHelps({ outcome: 'rolled-back', fix: 'Pick another port in Options, then press Next.' }), false);

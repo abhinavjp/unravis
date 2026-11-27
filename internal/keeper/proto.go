@@ -70,6 +70,8 @@ const (
 	CodePasswordAgain = "password-again" // a blank-password re-save asked for weaker encryption: the password must be typed again
 	CodeDuplicate     = "duplicate"
 	CodeCorrupt       = "corrupt"
+	CodeNotDamaged    = "not-damaged"    // mongo.setaside: the saved file reads fine, so there is nothing to set aside
+	CodeSetAsideFull  = "set-aside-full" // mongo.setaside: three damaged copies are already kept
 	CodeUnavailable   = "unavailable"
 	CodeConnect       = "connect"       // SQL Server: Detail is {code, message} from dbhealth.ClassifyConnect
 	CodeMongoConnect  = "mongo-connect" // MongoDB: Detail is {stage, code, message} (audit.ConnectionError)
@@ -108,6 +110,7 @@ const (
 	OpMongoHealth   = "mongo.health"
 	OpMongoLane     = "mongo.lane"
 	OpMongoImport   = "mongo.import"
+	OpMongoSetAside = "mongo.setaside"
 
 	OpBBList        = "bb.list"
 	OpBBGet         = "bb.get"

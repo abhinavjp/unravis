@@ -110,6 +110,7 @@ PUT /api/code/settings	planned	OPS-15
 GET /api/code/types	cli	code.types
 GET /api/connections/recent	ui-only	connection credential
 DELETE /api/connections/recent/{id}	ui-only	connection credential
+POST /api/connections/recent/set-aside	ui-only	connection credential
 POST /api/connections/remember	ui-only	connection credential
 POST /api/connections/test	ui-only	connection credential
 GET /api/daily	ui-only	undecided, no plan item yet

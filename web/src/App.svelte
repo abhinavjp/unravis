@@ -1,13 +1,15 @@
 <script lang="ts">
   import { comparisonLabel, STARTUP_TEXT, STARTUP_TITLE } from './lib/copy/startupCopy';
   import { scopeProblem } from './lib/autorun';
-  import { VALIDATION_MESSAGE } from './lib/api';
+  import { api, VALIDATION_MESSAGE } from './lib/api';
   import { WAIT_TEXT } from './lib/copy/waitCopy';
   import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeImportPopup, closeSidePanel, onWindowKey, openCaseHome, openCaseImport, openTracing, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
   import { codeUi } from './lib/codeModeUi.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import UpdateBanner from './components/UpdateBanner.svelte';
-  import { checkWhatsNewOnStart, startUpdateWatch, updates, whatsNew } from './lib/updateState.svelte';
+  import LivenessBanner from './components/LivenessBanner.svelte';
+  import { liveness, startLivenessWatch } from './lib/liveness.svelte';
+  import { checkWhatsNewOnStart, refreshUpdateStatus, startUpdateWatch, updates, whatsNew } from './lib/updateState.svelte';
   import { loadNotes, normalizeVersion, parseableVersion } from './lib/updateNotes';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
@@ -56,6 +58,16 @@
   const info = $derived(app.info);
   // Read the update status once the app is up, then every ten minutes. It is a local call; the program's own timer does the checking.
   $effect(() => { if (info) return startUpdateWatch(); });
+  // Every 20 seconds while the page is visible, one light read of the app (its version), so a stopped or restarted app is noticed even
+  // when nobody presses anything. Three lost requests in a row say the same sooner (liveness.svelte.ts).
+  $effect(() => { if (info) return startLivenessWatch(() => api.version()); });
+  // When the app answers again after a stop, the update bar's last answer is old: read it afresh instead of waiting up to ten minutes.
+  let wasStopped = false;
+  $effect(() => {
+    const stopped = liveness.stopped;
+    if (wasStopped && !stopped) void refreshUpdateStatus();
+    wasStopped = stopped;
+  });
   // After an update the tour opens once, but only when the bundled notes know the installed version. A missing notes file keeps it quiet.
   const installedVersion = $derived(updates.reply?.current ?? '');
   $effect(() => {
@@ -129,6 +141,7 @@
   <!-- The page heading comes first in the document (before the header and the filter panel), so the outline starts at h1 and a screen reader meets the page name first. It is hidden, so nothing moves. -->
   <h1 class="visually-hidden">{pageHeading}</h1>
   <AppHeader />
+  <LivenessBanner />
   <UpdateBanner />
 
   {#if app.initError}<div class="banner error-banner init-banner" role="alert"><strong>{STARTUP_TITLE}</strong><span>{app.initError}</span>{#if app.initCanRetry}<button class="secondary-button" onclick={() => { app.initError = ''; void initialize(); }}>Retry</button>{/if}</div>{/if}

@@ -22,6 +22,8 @@ export const BB_TEXT = {
   scanFailed: 'This PC could not be asked whether a Blackbox is installed. Press Scan this PC again. If it fails again, restart Unravis.',
   loading: 'Loading the Blackbox list.',
   loadFailed: 'The Blackbox list could not be loaded.',
+  // Shown after loadFailed when an earlier list is still on screen.
+  loadStale: 'The list below is the last one that loaded, and it may be out of date.',
   reload: 'Reload this page',
   retry: 'Try again',
 
@@ -154,6 +156,10 @@ export const BB_TEXT = {
   applyFolderWarn: 'Old recordings stay in the old folder and are not moved. A case or reader must use the new folder.',
   applyIntervalWarn: 'Unravis can still slow recording when the PC is busy.',
   applyNoChange: 'Nothing is changed yet.',
+  // Beside Apply while it is off (RV-UI-11). Unreadable reuses applyUnreadable.
+  applyWaitLoading: "Loading this PC's settings.",
+  applyWaitBusy: 'Another change is being applied.',
+  applyWaitNotInstalled: 'No Blackbox service is installed on this PC.',
   applyUnreadable: 'The settings of the service on this PC could not be read, so they cannot be changed here.',
   applied: 'Applied. The service restarted with the new settings.',
   appliedNoRestart: 'Applied. The service was stopped, so the new settings are used when it next starts.',
@@ -260,6 +266,7 @@ export const BB_TEXT = {
     port: 'Use a port from 1 to 65535.',
     bind: 'Listens on needs an address such as 127.0.0.1, or a server name. Spaces and other symbols are not allowed.',
     logs: 'Each log folder must be a full path.',
+    counters: 'Check the extra counters. Use up to 50, each like \\Process(w3wp)\\Page Faults/sec, with no wildcard and no computer name.',
     targets: 'Check the targets. Use up to 32 names, each 1 to 128 characters, with no \\ / : * ? " < > | and no name twice.'
   } as Record<SettingsProblem, string>,
 

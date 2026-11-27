@@ -291,7 +291,7 @@
     try {
       const shared = (await api.ledgerSharedList()) ?? [];
       if (!signal.aborted) sharedCount = shared.length;
-    } catch { /* the offer simply does not show */ }
+    } catch { /* silent on purpose: the one-time offer of old theories is a convenience; without it nothing is wrong or stuck */ }
   }
 
   async function copyShared() {
