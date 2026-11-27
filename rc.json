@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "product": "unravis",
+  "version": "0.1.0-rc.69",
+  "channel": "rc",
+  "published": "2026-11-27T20:45:14Z",
+  "expires": "2027-05-26T20:45:14Z",
+  "seq": 4501,
+  "commit": "bd077e59227161696711e8e86ca2220fc867cae2",
+  "assets": {
+    "app": {
+      "name": "unravis-v0.1.0-rc.69-windows-x64.zip",
+      "sha256": "937f60b17ab0b1124b45a88e5b5ed06b36c5a2ff50ff2489f088b89b0aa5be56",
+      "size": 18610821
+    },
+    "blackbox": {
+      "name": "unravis-blackbox-v0.1.0-rc.69-windows-x64.zip",
+      "sha256": "912bbb20aa8873e54847e0b4f8da7937227d6008c733410cacdee6812ee6b361",
+      "size": 5261352
+    },
+    "lite": {
+      "name": "unravis-lite-v0.1.0-rc.69-windows-x64.zip",
+      "sha256": "88de8d8c57fd97b454a0d4d8b84673ebcd25b7c9dc090f4a59ebb2c8f303d0f9",
+      "size": 12182921
+    },
+    "setup": {
+      "name": "unravis-setup-v0.1.0-rc.69-windows-x64.exe",
+      "sha256": "07e348553676ce385d3e204cbc94f7bb941ce57d0f56229e1df67533abf25a96",
+      "size": 118551040
+    }
+  },
+  "blackboxExeSha256": "836fa36e50ea9d0cb28514e19eb6b15619b11ccc764b260227f92adc348611ba"
+}
