@@ -25,10 +25,10 @@ func TestGHRunRoute(t *testing.T) {
 			if status != "completed" {
 				jobStatus, jobConclusion, end = "queued", "", ""
 			}
-			fmt.Fprintf(w, `{"jobs":[{"id":1,"name":"go-tests (2/3)","status":%q,"conclusion":%q,"started_at":"2026-01-01T00:00:00Z","completed_at":%q,"html_url":"%sactions/runs/123/job/1","steps":[{"number":1,"name":"Skipped","status":"completed","conclusion":"skipped"},{"number":2,"name":"Build","status":%q,"conclusion":%q}]},{"id":2,"name":"B","status":"completed","conclusion":"success","html_url":"https://evil.example/"},{"id":3,"name":"C","status":"completed","conclusion":"success"},{"id":4,"name":"D","status":"completed","conclusion":"success"}]}`, jobStatus, jobConclusion, end, RepoURL, jobStatus, jobConclusion)
+			_, _ = fmt.Fprintf(w, `{"jobs":[{"id":1,"name":"go-tests (2/3)","status":%q,"conclusion":%q,"started_at":"2026-01-01T00:00:00Z","completed_at":%q,"html_url":"%sactions/runs/123/job/1","steps":[{"number":1,"name":"Skipped","status":"completed","conclusion":"skipped"},{"number":2,"name":"Build","status":%q,"conclusion":%q}]},{"id":2,"name":"B","status":"completed","conclusion":"success","html_url":"https://evil.example/"},{"id":3,"name":"C","status":"completed","conclusion":"success"},{"id":4,"name":"D","status":"completed","conclusion":"success"}]}`, jobStatus, jobConclusion, end, RepoURL, jobStatus, jobConclusion)
 			return
 		}
-		fmt.Fprintf(w, `{"name":"Release","event":"push","head_branch":"v0.1.0-rc.66","head_sha":"abc123","status":%q,"conclusion":%q,"created_at":"2026-01-01T00:00:00Z","run_started_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:02:00Z","path":".github/workflows/ci.yml","html_url":"%sactions/runs/123","actor":{"login":"person"}}`, status, conclusion, RepoURL)
+		_, _ = fmt.Fprintf(w, `{"name":"Release","event":"push","head_branch":"v0.1.0-rc.66","head_sha":"abc123","status":%q,"conclusion":%q,"created_at":"2026-01-01T00:00:00Z","run_started_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:02:00Z","path":".github/workflows/ci.yml","html_url":"%sactions/runs/123","actor":{"login":"person"}}`, status, conclusion, RepoURL)
 	}))
 	defer server.Close()
 	d := New(t.TempDir(), "", nil)
@@ -39,7 +39,7 @@ func TestGHRunRoute(t *testing.T) {
 		t.Helper()
 		r := httptest.NewRequest(method, "http://"+host+url, nil)
 		if token != "" {
-			r.AddCookie(&http.Cookie{Name: cookieName, Value: token})
+			r.AddCookie(&http.Cookie{Name: cookieName, Value: token}) //nolint:gosec // a request cookie in a test
 		}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
