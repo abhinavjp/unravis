@@ -196,7 +196,7 @@ func (d *Dash) logf(format string, args ...any) {
 		d.Logf(format, args...)
 		return
 	}
-	log.Printf(format, args...)
+	log.Printf(format, args...) //nolint:gosec // G706: callers pass a registry action id, our own errors, and the request path and method quoted with %q
 }
 
 // logRefusal notes a request refused before it reached an action: why, the method, the path (quoted, so it cannot
@@ -206,7 +206,7 @@ func (d *Dash) logRefusal(r *http.Request, why string) {
 	if len(path) > 120 {
 		path = path[:120] + "..."
 	}
-	d.logf("homestretch: refused an action request: %s (%s %q from %s)", why, r.Method, path, r.RemoteAddr)
+	d.logf("homestretch: refused an action request: %s (%q %q from %s)", why, r.Method, path, r.RemoteAddr)
 }
 
 // person is the user name of this PC, the person behind the page.
