@@ -3,6 +3,7 @@ package releasedash
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -150,6 +151,67 @@ func TestHSQueueExposesRunIDAndNeededLabelsForTheButtons(t *testing.T) {
 	}
 	if !gotLabels || !gotRun {
 		t.Fatalf("labels %v run %v: %+v", gotLabels, gotRun, out)
+	}
+}
+
+func TestHSQueueShowsCoveredPushes(t *testing.T) {
+	for _, tt := range []struct {
+		name, display string
+		titles        []string
+		numbers       []int
+	}{
+		{"with numbers", "Covers #463, #465, 3333333",
+			[]string{"Merge pull request #463 from o/f", "Fix lint (#465)", "Hide " + fxTokenSecret}, []int{463, 465, 0}},
+		{"without numbers", "Covers 1111111, 2222222", make([]string, 2), make([]int, 2)},
+		{"overflow", "Covers 1111111, 2222222, 3333333, 4444444, 5555555, 6666666 and 3 more", make([]string, 9), make([]int, 9)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newCIFixture(t)
+			q := hsQueueOf(t, f)
+			push := localci.Request{Kind: localci.KindPush, Repo: "o/r", Ref: "develop", Workflow: "fast-gate.yml"}
+			var oldestID string
+			var want []HSCovered
+			for i, title := range tt.titles {
+				digit := strconv.Itoa(i + 1)
+				push.SHA, push.Title = strings.Repeat(digit, 40), title
+				older, added, err := q.Enqueue(push)
+				must(t, err)
+				if !added {
+					t.Fatalf("older push %d was not added", i)
+				}
+				if i == 0 {
+					oldestID = older.ID
+				}
+				want = append(want, HSCovered{SHA: strings.Repeat(digit, 7), Number: tt.numbers[i], Title: strings.ReplaceAll(title, fxTokenSecret, "<token hidden>")})
+			}
+			push.SHA, push.Title = strings.Repeat("f", 40), ""
+			newest, added, err := q.Enqueue(push)
+			must(t, err)
+			if !added {
+				t.Fatal("newest push was not added")
+			}
+			_, err = q.MoveToTop(newest.ID)
+			must(t, err)
+			out := decode[HSQueue](t, f.get(t, "/api/queue"))
+			if len(out.Queued) == 0 || out.Queued[0].ID != newest.ID || out.Queued[0].Display != tt.display || !slices.Equal(out.Queued[0].Covers, want) {
+				t.Fatalf("queued = %+v, want display %q and covers %+v", out.Queued, tt.display, want)
+			}
+			wantReplaced := "Replaced by a newer request (" + newest.ID + ")"
+			if !slices.ContainsFunc(out.Done, func(r HSRequest) bool { return r.ID == oldestID && r.Display == wantReplaced }) {
+				t.Fatalf("oldest request in %+v, want display %q", out.Done, wantReplaced)
+			}
+			claimed, err := q.Claim("a1", nil)
+			must(t, err)
+			if claimed == nil || claimed.ID != newest.ID {
+				t.Fatalf("claim = %+v, want %s", claimed, newest.ID)
+			}
+			out = decode[HSQueue](t, f.get(t, "/api/queue"))
+			if !slices.ContainsFunc(out.Running, func(r HSRequest) bool {
+				return r.ID == newest.ID && r.Display == tt.display && slices.Equal(r.Covers, want)
+			}) {
+				t.Fatalf("running = %+v, want display %q and covers %+v", out.Running, tt.display, want)
+			}
+		})
 	}
 }
 
