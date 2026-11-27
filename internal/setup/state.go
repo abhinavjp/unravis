@@ -40,8 +40,10 @@ type State struct {
 	SharedRoot    string           `json:"sharedRoot,omitempty"`
 	// PathAdded says whether this install put the bin folder on the PATH (true) or found it there already (false). Nil: the state is from
 	// before this was kept, so uninstall takes the entry off as it always did.
-	PathAdded *bool     `json:"pathAdded,omitempty"`
-	Installed time.Time `json:"installed"`
+	PathAdded *bool `json:"pathAdded,omitempty"`
+	// HomestretchFiles records the file IDs of the programs setup placed under the new names.
+	HomestretchFiles map[string]string `json:"homestretchFiles,omitempty"`
+	Installed        time.Time         `json:"installed"`
 }
 
 // Options returns the choices of the install the state describes (for an upgrade or a repair, which keep them).
@@ -142,11 +144,16 @@ type Payload struct {
 	Manifest Manifest
 }
 
-// CLIExeName is the thin command line program in the payload. It is optional: a payload without it installs as before, with no bin
-// folder and no PATH entry. It is placed as bin\unravis.exe (CLIInstalledName).
+// CLIExeName is the thin command line program in the payload. When present, it is placed as bin\unravis.exe (CLIInstalledName).
 const CLIExeName = "unravis-cli.exe"
 
-var payloadNames = map[string]bool{AppExeName: true, KeeperExeName: true, BlackboxExeName: true, ReleasesExeName: true, CLIExeName: true}
+var payloadNames = map[string]bool{
+	AppExeName: true, KeeperExeName: true, BlackboxExeName: true,
+	ReleasesExeName: true, LegacyReleasesExeName: true,
+	CLIExeName: true, HomestretchExeName: true, HSExeName: true,
+}
+
+var cliPayloadNames = [...]string{CLIExeName, HomestretchExeName, HSExeName}
 
 // LoadPayload reads the manifest. Only the known program names are accepted, so a damaged manifest cannot make setup write anywhere
 // else.

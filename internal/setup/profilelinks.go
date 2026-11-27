@@ -69,10 +69,14 @@ func profileLinkData(l Layout, quit, startup bool) ([]byte, error) {
 	return profileLinkDataFor(l, quit, startup, false)
 }
 
+func (l Layout) releasesShortcut() Shortcut {
+	return Shortcut{Target: l.ReleasesExe, WorkDir: l.InstallDir, Icon: l.ReleasesExe, Description: "Homestretch: release and CI dashboard"}
+}
+
 // profileLinkDataFor is profileLinkData, or the releases window's link when releases is true.
 func profileLinkDataFor(l Layout, quit, startup, releases bool) ([]byte, error) {
 	if releases {
-		return Shortcut{Target: l.ReleasesExe, WorkDir: l.InstallDir, Icon: l.ReleasesExe, Description: "Unravis Releases: read-only release status"}.Bytes()
+		return l.releasesShortcut().Bytes()
 	}
 	s := Shortcut{Target: l.AppExe, WorkDir: l.InstallDir, Icon: l.AppExe, Description: "Unravis"}
 	switch {
@@ -90,13 +94,22 @@ func writeLinkFile(link string, data []byte) (err error) {
 		return err
 	}
 	tmp := link + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // tmp is link + ".tmp", a path the installer itself builds
+	if err != nil {
+		return err
+	}
 	defer func() {
 		if err != nil {
 			_ = os.Remove(tmp)
 		}
 	}()
-	if err = os.WriteFile(tmp, data, 0o644); err != nil {
+	_, err = f.Write(data)
+	closeErr := f.Close()
+	if err != nil {
 		return err
+	}
+	if closeErr != nil {
+		return closeErr
 	}
 	return os.Rename(tmp, link)
 }
@@ -133,10 +146,23 @@ func (r *Runner) WriteProfileLinks(l Layout, startAtSignIn bool, onLog func(stri
 	if l.QuitLink != "" && r.isProfileLink(l.QuitLink) {
 		write(l.QuitLink, true, false)
 	}
-	// The releases link is written only when the releases window is really there (an older setup program does not carry it).
+	// Upgrade the profile's dashboard link after the worker has committed the new executable.
 	if l.ReleasesLink != "" && r.isProfileLink(l.ReleasesLink) {
-		if fi, err := os.Stat(l.ReleasesExe); err == nil && fi.Mode().IsRegular() {
-			write(l.ReleasesLink, false, false, true)
+		state, _ := ReadState(l.StateFile)
+		if id, err := programFileID(l.ReleasesExe); err == nil && id != "" && state.HomestretchFiles[ReleasesExeName] == id {
+			if err := r.refuseLink(filepath.Dir(l.ReleasesLink)); err != nil {
+				log("shortcut skipped: " + err.Error())
+			} else {
+				if mayWriteLink(l.ReleasesLink, l.ReleasesExe) {
+					write(l.ReleasesLink, false, false, true)
+				}
+				legacy := l.legacyReleasesLink()
+				if _, ours := linkIsOurs(legacy, l.legacyReleasesExe()); ours {
+					if err := os.Remove(legacy); err != nil && !errors.Is(err, os.ErrNotExist) && first == nil {
+						first = fmt.Errorf("%s: %w", legacy, err)
+					}
+				}
+			}
 		}
 	}
 	if l.DesktopLink != "" && mayWriteLink(l.DesktopLink, l.AppExe) {
@@ -156,11 +182,11 @@ func (r *Runner) WriteProfileLinks(l Layout, startAtSignIn bool, onLog func(stri
 // elsewhere, or cannot be read, is kept. It returns one line per problem; empty when all is well.
 func (r *Runner) RemoveProfileLinks(l Layout) []string {
 	var lines []string
-	remove := func(link string) {
+	remove := func(link, target string) {
 		if link == "" {
 			return
 		}
-		exists, ours := linkIsOurs(link, l.AppExe)
+		exists, ours := linkIsOurs(link, target)
 		if !exists {
 			return
 		}
@@ -173,20 +199,19 @@ func (r *Runner) RemoveProfileLinks(l Layout) []string {
 		}
 	}
 	if r.isProfileLink(l.StartMenuLink) {
-		remove(l.StartMenuLink)
+		remove(l.StartMenuLink, l.AppExe)
 	}
 	if r.isProfileLink(l.QuitLink) {
-		remove(l.QuitLink)
+		remove(l.QuitLink, l.AppExe)
 	}
-	remove(l.DesktopLink)
-	remove(l.StartupLink)
+	remove(l.DesktopLink, l.AppExe)
+	remove(l.StartupLink, l.AppExe)
 	if r.isProfileLink(l.ReleasesLink) {
-		if exists, ours := linkIsOurs(l.ReleasesLink, l.ReleasesExe); exists {
-			if !ours {
-				lines = append(lines, "Shortcut "+l.ReleasesLink+" (kept: it points to another program)")
-			} else if err := os.Remove(l.ReleasesLink); err != nil && !errors.Is(err, os.ErrNotExist) {
-				lines = append(lines, "Shortcut "+l.ReleasesLink+" ("+err.Error()+")")
-			}
+		if err := r.refuseLink(filepath.Dir(l.ReleasesLink)); err != nil {
+			lines = append(lines, "Shortcuts in "+filepath.Dir(l.ReleasesLink)+" ("+err.Error()+")")
+		} else {
+			remove(l.ReleasesLink, l.ReleasesExe)
+			remove(l.legacyReleasesLink(), l.legacyReleasesExe())
 		}
 	}
 	return lines

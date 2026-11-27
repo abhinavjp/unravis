@@ -58,7 +58,7 @@ type Options struct {
 	CloseRunningApp bool `json:"closeRunningApp"`
 	// ReadKeyFile is where silent mode writes the Blackbox read key (current user only). Empty in the window, which shows the key.
 	ReadKeyFile string `json:"readKeyFile,omitempty"`
-	// Releases asks for the read-only Unravis Releases window (an optional companion, off for a normal install). Once it is installed
+	// Releases asks for the Homestretch dashboard (an optional companion, off for a normal install). Once it is installed
 	// it is kept and updated whatever this says; see Plan.wantReleases.
 	Releases bool `json:"releases,omitempty"`
 }
