@@ -283,8 +283,10 @@ func (s *Service) SetAside() (string, error) {
 		return "", ErrUnavailable
 	}
 	kept := 0
+	prefix := base + setAsideInfix
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), base+setAsideInfix) {
+		// Windows file names are not case sensitive, so a copy renamed to another case still counts.
+		if len(entry.Name()) >= len(prefix) && strings.EqualFold(entry.Name()[:len(prefix)], prefix) {
 			kept++
 		}
 	}
@@ -296,24 +298,25 @@ func (s *Service) SetAside() (string, error) {
 		clock = time.Now
 	}
 	stamp := clock().Format("20060102-150405")
-	// os.Rename replaces an existing target on Windows, so the name is checked first and a second set-aside in the same second gets a suffix.
+	// The move itself refuses to replace a file that is already there (one system call, no check first), so a second set-aside in the same
+	// second, or a file made at that name a moment ago, can never be overwritten: the next name is tried instead.
 	target := ""
-	for n := 0; n < 100; n++ {
-		name := base + setAsideInfix + stamp
+	for n := 0; n < 100 && target == ""; n++ {
+		name := prefix + stamp
 		if n > 0 {
 			name = fmt.Sprintf("%s-%d", name, n+1)
 		}
-		if _, err := os.Lstat(filepath.Join(dir, name)); errors.Is(err, os.ErrNotExist) {
+		err := sealedfile.MoveNoReplace(s.path, filepath.Join(dir, name))
+		switch {
+		case err == nil:
 			target = name
-			break
-		} else if err != nil {
-			return "", ErrUnavailable
+		case errors.Is(err, os.ErrExist):
+		default:
+			// Held open by another program (antivirus, a backup, an editor), no permission, a full disk: the file stays where it was.
+			return "", fmt.Errorf("%w: %v", ErrUnavailable, err)
 		}
 	}
 	if target == "" {
-		return "", ErrUnavailable
-	}
-	if err := os.Rename(s.path, filepath.Join(dir, target)); err != nil {
 		return "", ErrUnavailable
 	}
 	for id := range s.sessionSecrets {
@@ -531,3 +534,6 @@ func (s *Service) Import(records []Record) (int, error) {
 
 // Path is the sealed file this service reads.
 func (s *Service) Path() string { return s.path }
+
+// Folder is the folder that holds the saved file, and so the set-aside copies. shared is false: this is one person's own file.
+func (s *Service) Folder() (dir string, shared bool) { return filepath.Dir(s.path), false }

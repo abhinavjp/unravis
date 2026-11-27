@@ -28,7 +28,7 @@ import { parseCallTarget, encodeCallTarget, withCall, type SlowCallTarget } from
 import { forgetSources, parseStoredSourceChoice, type SourceSelection } from './tracing/sources';
 import { forgetWindows, parseStoredWindows, pickWindowFields, type WindowFields } from './tracing/windows';
 import { getMasterKeyStatus, lockMasterKey } from './masterKeyApi';
-import { isSavedFileDamaged } from './savedFile';
+import { damagedInfo, isSavedFileDamaged } from './savedFile';
 import { keptNote } from './copy/savedFileCopy';
 import type { KeyStatus, LockState } from './masterKey';
 import { KEY_TEXT } from './copy/masterKeyCopy';
@@ -203,6 +203,9 @@ let recentHistoryError = $state('');
 // says where the kept copy went after it was used.
 let recentFileDamaged = $state(false);
 let recentSetAsideNote = $state('');
+// The server's own sentence for the damaged file (it names the real folder), and whether the list is the whole PC's.
+let recentDamagedDetail = $state('');
+let recentDamagedShared = $state(false);
 let recentSaveError = $state('');
 let recentSaveSuccess = $state('');
 let recentSaveErrorStage = $state('');
@@ -1145,15 +1148,29 @@ export function loadRecent(recent: RecentConnection) {
 // A failed read of the saved list: an unreadable file gets its own way out (no "Try again"), anything else keeps the old message.
 function noteRecentsFailure(cause: unknown) {
   recentFileDamaged = isSavedFileDamaged(cause);
+  const info = damagedInfo(cause);
+  recentDamagedDetail = info.detail; recentDamagedShared = info.shared;
   recentHistoryError = recentFileDamaged ? '' : 'Recent connections could not be loaded. You can still test and add a connection.';
 }
-/** The damaged file was set aside (name) or turned out to read fine (''). Read the saved list again; it starts empty after a set-aside. */
-export async function finishRecentSetAside(name: string) {
+/** The damaged file was set aside (name, in folder) or turned out to read fine (''). Read the saved list again; it starts empty after a set-aside. */
+export async function finishRecentSetAside(name: string, folder = '') {
   recentFileDamaged = false; recentHistoryError = '';
-  recentSetAsideNote = keptNote(name);
+  recentSetAsideNote = keptNote(name, folder);
   try {
     const fresh = await api.recentConnections();
     recentConnections = Array.isArray(fresh) ? fresh.filter(isRecentConnection).slice(0, 20) : [];
+  } catch (cause) { noteRecentsFailure(cause); }
+}
+/**
+ * A set-aside failed and left the file as it was. Read the saved list again so the way out is offered only while the file really cannot be read:
+ * if it reads now the drawer says so, and if the read fails for another reason the drawer shows that instead.
+ */
+export async function recheckRecents() {
+  try {
+    const fresh = await api.recentConnections();
+    recentConnections = Array.isArray(fresh) ? fresh.filter(isRecentConnection).slice(0, 20) : [];
+    recentFileDamaged = false; recentHistoryError = '';
+    recentSetAsideNote = keptNote('');
   } catch (cause) { noteRecentsFailure(cause); }
 }
 // True once the saved connection is gone. A failure returns false and leaves the row: the Remove button beside the row says so (W-16).
@@ -2076,6 +2093,8 @@ export const conn = {
   get recentHistoryError() { return recentHistoryError; }, set recentHistoryError(value) { recentHistoryError = value; },
   get recentFileDamaged() { return recentFileDamaged; },
   get recentSetAsideNote() { return recentSetAsideNote; },
+  get recentDamagedDetail() { return recentDamagedDetail; },
+  get recentDamagedShared() { return recentDamagedShared; },
   get recentSaveError() { return recentSaveError; }, set recentSaveError(value) { recentSaveError = value; },
   get recentSaveSuccess() { return recentSaveSuccess; }, set recentSaveSuccess(value) { recentSaveSuccess = value; },
   get recentSaveErrorStage() { return recentSaveErrorStage; }, set recentSaveErrorStage(value) { recentSaveErrorStage = value; },

@@ -76,3 +76,11 @@ func TestMongoSetAsideThroughTheKeeper(t *testing.T) {
 		t.Fatalf("the fourth damaged file was moved: %v", err)
 	}
 }
+
+// The shared list names the keeper's own folder (so the page can say where the kept file is) and says it is shared.
+func TestMongoStoreNamesTheKeeperFolder(t *testing.T) {
+	h := newHarness(t, nil)
+	if dir, shared := NewMongoStore(h.client).WithFolder(`C:\ProgramData\Unravis\keeper`).Folder(); dir != `C:\ProgramData\Unravis\keeper` || !shared {
+		t.Fatalf("Folder = %q %v", dir, shared)
+	}
+}

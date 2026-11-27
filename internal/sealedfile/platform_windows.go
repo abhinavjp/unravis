@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -196,6 +197,28 @@ func Replace(from, to string) error {
 	}
 	ok, _, callErr := moveFileEx.Call(uintptr(unsafe.Pointer(source)), uintptr(unsafe.Pointer(destination)), 0x1|0x8)
 	if ok == 0 {
+		return callErr
+	}
+	return nil
+}
+
+// MoveNoReplace renames from to to and refuses, with an error that satisfies errors.Is(err, os.ErrExist), when to already exists. The check
+// and the move are one system call (MoveFileEx without MOVEFILE_REPLACE_EXISTING), so nothing can be created at to between a check and the
+// move. A file held open without delete sharing makes the move fail with a sharing violation, and from is then left where it was.
+func MoveNoReplace(from, to string) error {
+	source, err := syscall.UTF16PtrFromString(from)
+	if err != nil {
+		return err
+	}
+	destination, err := syscall.UTF16PtrFromString(to)
+	if err != nil {
+		return err
+	}
+	ok, _, callErr := moveFileEx.Call(uintptr(unsafe.Pointer(source)), uintptr(unsafe.Pointer(destination)), 0x8)
+	if ok == 0 {
+		if errno, isErrno := callErr.(syscall.Errno); isErrno && (errno == syscall.ERROR_ALREADY_EXISTS || errno == syscall.ERROR_FILE_EXISTS) {
+			return os.ErrExist
+		}
 		return callErr
 	}
 	return nil

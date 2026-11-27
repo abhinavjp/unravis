@@ -12,8 +12,8 @@
   import SqlConnectionForm from './SqlConnectionForm.svelte';
   import StateSticker from './StateSticker.svelte';
   import SavedFileDamaged from './SavedFileDamaged.svelte';
-  import { isSavedFileDamaged } from '../../lib/savedFile';
-  import { keptNote } from '../../lib/copy/savedFileCopy';
+  import { damagedInfo, isSavedFileDamaged } from '../../lib/savedFile';
+  import { SAVED_FILE_TEXT, keptNote } from '../../lib/copy/savedFileCopy';
   import KeeperCard from './KeeperCard.svelte';
   import { app } from '../../lib/appState.svelte';
   import { finishRecentSetAside } from '../../lib/appState.svelte';
@@ -34,6 +34,8 @@
   let demo = $state(false);
   // RV-DAT-1: the saved MongoDB file cannot be read. The page offers to set it aside; SQL connections still show.
   let mongoDamaged = $state(false);
+  // The server's own sentence for it (it names the real folder), and whether the list is the whole PC's.
+  let damaged = $state({ detail: '', shared: false });
   let tests = $state.raw<Record<string, TestResult>>(recallTests());
   let testing = $state('');
   let asking = $state('');
@@ -70,10 +72,17 @@
     const keeperDown = [a, b].some(r => r.status === 'rejected' && isKeeperDown(r.reason));
     // An unreadable saved MongoDB file also answers 503, but it is not the demo: the server names it, and the page offers the way out.
     mongoDamaged = b.status === 'rejected' && isSavedFileDamaged(b.reason);
+    damaged = b.status === 'rejected' ? damagedInfo(b.reason) : { detail: '', shared: false };
     const refused = (r: PromiseSettledResult<unknown>) => r.status === 'rejected' && (r.reason as { status?: number } | null)?.status === 503 && !isSavedFileDamaged(r.reason);
     demo = refused(a) && refused(b) && !keeperDown;
-    loadFailed = a.status === 'rejected' && b.status === 'rejected' && !demo && !keeperDown;
+    // The damaged file has its own way out; the generic "Try again" would sit beside it and cannot help.
+    loadFailed = a.status === 'rejected' && b.status === 'rejected' && !demo && !keeperDown && !mongoDamaged;
     loaded = true;
+  }
+  // A set-aside failed and left the file as it was: read the list again, so the way out is offered only while the file really is unreadable.
+  async function recheckDamaged() {
+    await load(false);
+    if (!mongoDamaged && !loadFailed) notice = SAVED_FILE_TEXT.readsFine;
   }
   // The Connections drawer can set the damaged file aside while this page is open behind it: read the list again so it does not offer it twice.
   onMount(() => { void load(); return onConnectionsChanged(() => { if (mongoDamaged) void load(false); }); });
@@ -177,7 +186,7 @@
     {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{/if}
   {/if}
   {#if notice !== ''}<p class="say" role="status" data-notice>{notice}</p>{/if}
-  {#if mongoDamaged}<SavedFileDamaged page onDone={async (name) => { notice = keptNote(name); await finishRecentSetAside(name); await load(false); announceConnectionsChanged(); }} />{/if}
+  {#if mongoDamaged}<SavedFileDamaged page detail={damaged.detail} shared={damaged.shared} onRecheck={recheckDamaged} onDone={async (name, folder) => { notice = keptNote(name, folder); await finishRecentSetAside(name, folder); await load(false); announceConnectionsChanged(); }} />{/if}
 
   {#if demo}
     <div class="empty" data-demo><p class="lead">{CONN_TEXT.demo}</p></div>

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -105,13 +106,118 @@ func TestSetAsideRouteRefusesAFourthCopyWithPlainWords(t *testing.T) {
 	}
 	h := New(&fakeRepository{}, nil, testToken, false, WithHistory(service))
 	res := request(h, http.MethodPost, "/api/connections/recent/set-aside", "", true)
-	if res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), `"code":"set-aside-full"`) || !strings.Contains(res.Body.String(), "Three damaged files are already set aside") {
+	if res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), `"code":"set-aside-full"`) || !strings.Contains(res.Body.String(), "Three unreadable files are already set aside") {
 		t.Fatalf("fourth = %d %s", res.Code, res.Body)
+	}
+	// The words name the real folder, and a person's own file is theirs to open (no administrator needed).
+	folder := strings.ReplaceAll(filepath.Dir(path), `\`, `\\`)
+	if !strings.Contains(res.Body.String(), folder) || strings.Contains(res.Body.String(), "administrator") {
+		t.Fatalf("the full message must name %s and not ask for an administrator: %s", folder, res.Body)
 	}
 	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, damaged) {
 		t.Fatalf("the damaged file moved: %v", err)
 	}
 }
+
+// failingAside is a saved list whose read fails for a reason other than "unreadable". It records whether set-aside was ever reached.
+type failingAside struct {
+	fakeHistory
+	listErr     error
+	asideCalled bool
+}
+
+func (f *failingAside) List() ([]history.Recent, error) { return nil, f.listErr }
+func (f *failingAside) SetAside() (string, error)       { f.asideCalled = true; return "x", nil }
+
+// A read that fails for any reason other than "unreadable" says nothing about the file: it is never answered "not damaged" (409) and never
+// set aside. The key keeper being stopped or not trusted keeps its own words and code.
+func TestSetAsideRouteDoesNotCallAnOtherFailureHealthy(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		wantCode string
+	}{
+		{"busy or locked file", history.ErrUnavailable, ""},
+		{"lock timeout", context.DeadlineExceeded, ""},
+		{"keeper stopped", keeper.ErrNotRunning, "keeper-stopped"},
+		{"keeper impostor", keeper.ErrImpostor, "keeper-impostor"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := &failingAside{listErr: c.err}
+			h := New(&fakeRepository{}, nil, testToken, false, WithHistory(store))
+			res := request(h, http.MethodPost, "/api/connections/recent/set-aside", "", true)
+			if res.Code != http.StatusServiceUnavailable {
+				t.Fatalf("%s = %d %s, want 503", c.name, res.Code, res.Body)
+			}
+			if strings.Contains(res.Body.String(), "saved-file-not-damaged") || strings.Contains(res.Body.String(), "can be read") {
+				t.Fatalf("%s was called a healthy file: %s", c.name, res.Body)
+			}
+			if c.wantCode != "" && !strings.Contains(res.Body.String(), `"code":"`+c.wantCode+`"`) {
+				t.Fatalf("%s lost its code %s: %s", c.name, c.wantCode, res.Body)
+			}
+			if c.wantCode == "" && !strings.Contains(res.Body.String(), "left as it was") {
+				t.Fatalf("%s: the plain failure must say the file was left as it was: %s", c.name, res.Body)
+			}
+			if store.asideCalled {
+				t.Fatalf("%s reached SetAside", c.name)
+			}
+		})
+	}
+}
+
+// A store whose set-aside itself fails (a file held open) answers 503 "left as it was", and the unreadable file is untouched.
+func TestSetAsideRouteReportsAFailedMoveAsLeftAsItWas(t *testing.T) {
+	service, path, damaged := damagedHistory(t)
+	h := New(&fakeRepository{}, nil, testToken, false, WithHistory(&blockedAside{Service: service}))
+	res := request(h, http.MethodPost, "/api/connections/recent/set-aside", "", true)
+	if res.Code != http.StatusServiceUnavailable || !strings.Contains(res.Body.String(), "left as it was") {
+		t.Fatalf("a failed move = %d %s", res.Code, res.Body)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, damaged) {
+		t.Fatalf("the unreadable file changed: %v", err)
+	}
+}
+
+// The shared list's words name the keeper's folder, say an administrator opens it, and say the new list is for everyone on this PC.
+func TestSetAsideWordsForTheSharedList(t *testing.T) {
+	full := setAsideFullText(`C:\ProgramData\Unravis\keeper`, true)
+	if !strings.Contains(full, `C:\ProgramData\Unravis\keeper`) || !strings.Contains(full, "administrator") {
+		t.Fatalf("shared full text = %q", full)
+	}
+	damaged := savedFileDamagedText(`C:\ProgramData\Unravis\keeper`, true)
+	for _, want := range []string{"on this account or by this version of Unravis", `C:\ProgramData\Unravis\keeper`, "everyone who uses Unravis on this PC", "not deleted"} {
+		if !strings.Contains(damaged, want) {
+			t.Fatalf("shared damaged text lacks %q: %q", want, damaged)
+		}
+	}
+	if own := savedFileDamagedText(`C:\Users\me\cfg`, false); strings.Contains(own, "everyone") || strings.Contains(setAsideFullText(`C:\Users\me\cfg`, false), "administrator") {
+		t.Fatalf("a personal file talks about everyone or an administrator: %q", own)
+	}
+}
+
+// sharedDamaged is an unreadable saved list that is the whole PC's (the key keeper's), with a known folder.
+type sharedDamaged struct{ failingAside }
+
+func (sharedDamaged) Folder() (string, bool) { return `C:\ProgramData\Unravis\keeper`, true }
+
+// The page is told when the unreadable list is shared (reason "shared"), so its question says everyone is affected; a personal file says nothing.
+func TestListRecentTellsThePageWhenTheDamagedListIsShared(t *testing.T) {
+	shared := New(&fakeRepository{}, nil, testToken, false, WithHistory(&sharedDamaged{failingAside{listErr: history.ErrCorrupt}}))
+	res := request(shared, http.MethodGet, "/api/connections/recent", "", true)
+	if res.Code != http.StatusServiceUnavailable || !strings.Contains(res.Body.String(), `"reason":"shared"`) || !strings.Contains(res.Body.String(), "everyone who uses Unravis on this PC") {
+		t.Fatalf("shared damaged list = %d %s", res.Code, res.Body)
+	}
+	service, _, _ := damagedHistory(t)
+	own := request(New(&fakeRepository{}, nil, testToken, false, WithHistory(service)), http.MethodGet, "/api/connections/recent", "", true)
+	if own.Code != http.StatusServiceUnavailable || strings.Contains(own.Body.String(), `"reason"`) {
+		t.Fatalf("personal damaged list = %d %s", own.Code, own.Body)
+	}
+}
+
+type blockedAside struct{ *history.Service }
+
+func (b *blockedAside) SetAside() (string, error) { return "", history.ErrUnavailable }
 
 // The shared layout: the saved list is the key keeper's. The unreadable file is the keeper's, and the same route sets it aside there.
 func TestSetAsideThroughTheKeeper(t *testing.T) {
