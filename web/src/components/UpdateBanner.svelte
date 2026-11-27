@@ -1,12 +1,16 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { liveness } from '../lib/liveness.svelte';
   import { appLink, checkAppAgain, dismissUpdate, dismissUpdateResult, installing, startUpdateDownload, startUpdateInstall, updateBarVisible, updates } from '../lib/updateState.svelte';
   import { SERVER_GONE_NOTE, STILL_GONE_NOTE } from '../lib/updateLink';
   import { downloadPercent, installAnnouncement, installNote, isOwnReleaseUrl, updateCheckNote } from '../lib/updateCheck';
 
   // The bar under the header when a newer, signed version exists. Nothing downloads or installs until the person presses a button.
   const reply = $derived(updates.reply);
-  const show = $derived(updateBarVisible(reply, updates.dismissed));
+  // While the page says the app has stopped (or was started again), the bar steps aside: it can only show what the app said before it went,
+  // such as "The update is being applied", and two bars that disagree help nobody (RV-UI-2). It comes back when the app answers again.
+  const appGone = $derived(liveness.stopped || liveness.earlier);
+  const show = $derived(!appGone && updateBarVisible(reply, updates.dismissed));
   const step = $derived(reply?.install);
   const stage = $derived(step?.state ?? 'idle');
   const percent = $derived(step ? downloadPercent(step.done, step.total) : 0);
@@ -23,7 +27,7 @@
   }
 </script>
 
-{#if reply?.result}
+{#if reply?.result && !appGone}
   <div class="notice update-bar update-result" role="status" tabindex="-1" data-testid="update-result" data-outcome={reply.result.outcome}>
     <span class="update-bar-text" data-testid="update-result-text">{reply.result.message}</span>
     <button type="button" class="quiet-button" data-testid="update-result-dismiss" onclick={() => dismissUpdateResult()}>OK</button>
