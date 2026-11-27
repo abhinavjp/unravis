@@ -170,6 +170,90 @@ try {
     Check (((G $repo worktree list --porcelain) -join ' ') -match 'gone-wt') 'a missing worktree outside the roots keeps its registration'
     Move-Item -LiteralPath $wtGoneMoved -Destination $wtGone
 
+    # ---- agent worktrees under <repo>\.claude\worktrees follow the same safety rules (the script adds that root itself)
+    $agentRoot = Join-Path $repo '.claude\worktrees'
+    $agRoots = @($scratch, $agentRoot)
+    function RunAg { param([string[]]$Protect = @()) Invoke-HousekeepingRun -Repo $repo -DoApply $true -Clock $clock -TempRoot $temp -ProjectsRoot $projects -ScratchRoots $agRoots -Running $running -Protect $Protect -GoCacheLimitGB 0 6>$null }
+    function New-AgentWt { param([string]$Name) $w = Join-Path $agentRoot $Name; G $repo worktree add -q -b ("b-" + $Name) $w | Out-Null; Set-Worktree-Time $w $now.AddDays(-2); return $w }
+    $agMerged = New-AgentWt 'agent-merged'
+    $agDirty = New-AgentWt 'agent-dirty'; Set-Content -LiteralPath (Join-Path $agDirty 'n.txt') -Value 'x'
+    $agUnmerged = New-AgentWt 'agent-unmerged'; Set-Content -LiteralPath (Join-Path $agUnmerged 'u.txt') -Value 'u'; G $agUnmerged add u.txt | Out-Null; G $agUnmerged commit -q -m work | Out-Null; Set-Worktree-Time $agUnmerged $now.AddDays(-2)
+    $agNamed = New-AgentWt 'agent-named'
+    $agSub = New-AgentWt 'agent-cwdsub'; New-Item -ItemType Directory -Force -Path (Join-Path $agSub 'sub') | Out-Null; Set-Worktree-Time $agSub $now.AddDays(-2)
+    $agLive = New-AgentWt 'agent-live'
+    $agLiveProj = Join-Path $projects (ConvertTo-ProjectName $agLive); New-Item -ItemType Directory -Force -Path $agLiveProj | Out-Null
+    $lt = Join-Path $agLiveProj 'sess.jsonl'; Set-Content -LiteralPath $lt -Value '{}'; (Get-Item -LiteralPath $lt).LastWriteTimeUtc = $clock.AddMinutes(-10)
+    $running = $running + @("C:\tool\x.exe --cwd $agNamed")
+    $r = RunAg @((Join-Path $agSub 'sub'))
+    Check (-not (Test-Path $agMerged)) 'agent worktree: merged, clean, idle worktree under .claude\worktrees is removed'
+    Check ((G $repo branch --list b-agent-merged) -match 'b-agent-merged') 'agent worktree: its branch is never deleted'
+    Check (Test-Path (Join-Path $agDirty 'n.txt')) 'agent worktree: an untracked file keeps it'
+    Check (Test-Path $agUnmerged) 'agent worktree: unmerged commits keep it'
+    Check (Test-Path $agNamed) 'agent worktree: a process naming it keeps it'
+    Check (Test-Path $agSub) 'agent worktree: a protected checkout inside it (current directory in a subfolder) keeps it'
+    Check (Test-Path $agLive) 'agent worktree: a recently changed transcript of its own Claude project keeps it'
+    Check (Test-Path $repo) 'agent worktree: the main checkout is never removed'
+    $null = Run $true $running
+    Check (Test-Path $agUnmerged) 'agent worktree: not removed by a run whose roots do not include .claude\worktrees'
+
+    # ---- the Go build cache: every location, per-location report, cap, fallback, never a real cache
+    function New-FakeCache {
+        param([string]$Dir, [int]$MB, [bool]$Readme = $true)
+        New-Item -ItemType Directory -Force -Path (Join-Path $Dir '3f') | Out-Null
+        if ($Readme) { Set-Content -LiteralPath (Join-Path $Dir 'README') -Value 'This directory holds cached build artifacts from the Go build system. Run "go clean -cache" if the directory is getting too large.' }
+        [IO.File]::WriteAllBytes((Join-Path $Dir '3f\x-d'), (New-Object byte[] ($MB * 1MB)))
+    }
+    $gcRoot = Join-Path $base 'gocaches'
+    $gcLocal = Join-Path $gcRoot 'Local'; $gcHome = Join-Path $gcRoot 'Home'
+    $gcA = Join-Path $gcLocal 'go-build'
+    $gcPkg1 = Join-Path $gcHome 'AppData\Local\Packages\Claude_abc123\LocalCache\Local\go-build'
+    $gcPkg2 = Join-Path $gcHome 'AppData\Local\Packages\Claude_zzz999\LocalCache\Local\go-build'
+    $gcOtherPkg = Join-Path $gcHome 'AppData\Local\Packages\Other_xyz\LocalCache\Local\go-build'
+    $gcExtra = Join-Path $gcRoot 'GoCache\build'
+    foreach ($c in $gcA, $gcPkg1, $gcPkg2, $gcOtherPkg, $gcExtra) { New-FakeCache $c 2 }
+    $found = @(Get-GoCacheLocations -GoEnvDir $gcA -LocalAppData $gcLocal -UserProfile $gcHome -ExtraDirs @($gcExtra, (Join-Path $gcRoot 'missing\build')))
+    Check ($found.Count -eq 4) 'go cache locations: go env + localappdata (same folder once), two Claude_* packages and the extra folder; a missing one is skipped'
+    Check (($found.Path -contains $gcPkg1) -and ($found.Path -contains $gcPkg2) -and ($found.Path -contains $gcExtra) -and ($found.Path -contains $gcA)) 'go cache locations: the Packages\Claude_* folders are found by glob'
+    Check (-not ($found.Path -contains $gcOtherPkg)) 'go cache locations: a package that is not Claude_* is never touched'
+
+    $lim = 0.005   # GB, about 5 MB, so 8 MB is over and 2 MB is under
+    $big = Join-Path $gcRoot 'big'; $small = Join-Path $gcRoot 'small'; $nonCache = Join-Path $gcRoot 'notgo'; $bigGo = Join-Path $gcRoot 'biggo'; $huge = Join-Path $gcRoot 'huge'
+    New-FakeCache $big 8; New-FakeCache $small 2; New-FakeCache $nonCache 8 $false; New-FakeCache $bigGo 8; New-FakeCache $huge 20
+    $locs = @([pscustomobject]@{ Label = 'pkg-big'; Path = $big }, [pscustomobject]@{ Label = 'small'; Path = $small }, [pscustomobject]@{ Label = 'notgo'; Path = $nonCache })
+    $modDir = Join-Path $gcRoot 'modcache'; New-Item -ItemType Directory -Force -Path $modDir | Out-Null; [IO.File]::WriteAllBytes((Join-Path $modDir 'm.bin'), (New-Object byte[] (3MB)))
+
+    $g = Invoke-GoCacheClean -DoApply $false -LimitGB $lim -Running @() -Locations $locs -UseGo $false -ModCacheDir $modDir 6>$null
+    Check ((Test-Path (Join-Path $big '3f\x-d')) -and $g.WouldFreeBytes -ge 8MB -and $g.FreedBytes -eq 0) 'go cache dry run: reports what it would free and deletes nothing'
+    Check (($g.Locations | Where-Object Label -eq 'pkg-big').Status -eq 'would clean') 'go cache dry run: the over-limit location is marked'
+    $g = Invoke-GoCacheClean -DoApply $true -LimitGB $lim -Running @() -Locations $locs -UseGo $false -ModCacheDir $modDir 6>$null
+    Check ((-not (Test-Path (Join-Path $big '3f\x-d'))) -and (Test-Path (Join-Path $big 'README'))) 'go cache cap: a location over the limit is emptied (rename and delete), README kept'
+    Check ((Test-Path (Join-Path $small '3f\x-d'))) 'go cache cap: a location under the limit is left alone'
+    Check ((Test-Path (Join-Path $nonCache '3f\x-d'))) 'go cache: a folder without the Go README is never touched'
+    Check ((($g.Locations | Where-Object Label -eq 'pkg-big').FreedBytes -ge 8MB) -and (($g.Locations | Where-Object Label -eq 'small').FreedBytes -eq 0)) 'go cache: GB freed is reported per location'
+    Check ((Test-Path (Join-Path $modDir 'm.bin')) -and $g.ModCacheBytes -ge 3MB) 'go module cache: measured and reported, never deleted'
+
+    if (Get-Command go -ErrorAction SilentlyContinue) {
+        $envBefore = $env:GOCACHE
+        $g = Invoke-GoCacheClean -DoApply $true -LimitGB $lim -Running @() -Locations @([pscustomobject]@{ Label = 'viago'; Path = $bigGo }) -ModCacheDir $modDir 6>$null
+        Check (-not (Test-Path (Join-Path $bigGo '3f\x-d'))) 'go cache: go clean -cache with GOCACHE set to the location empties it'
+        Check ($env:GOCACHE -eq $envBefore) 'go cache: GOCACHE is restored after the call'
+    } else { Write-Host 'skip  go clean path (go is not installed)' }
+
+    New-FakeCache $big 8
+    $goBusy = @('C:\Program Files\Go\bin\go.exe test ./...')
+    $g = Invoke-GoCacheClean -DoApply $true -LimitGB $lim -Running $goBusy -Locations @([pscustomobject]@{ Label = 'pkg-big'; Path = $big }, [pscustomobject]@{ Label = 'pkg-huge'; Path = $huge }) -UseGo $false 6>$null
+    Check ((Test-Path (Join-Path $big '3f\x-d')) -and (Test-Path (Join-Path $huge '3f\x-d'))) 'go cache: nothing is cleaned while a Go build runs'
+    Check (@($g.Notes).Count -eq 1 -and ($g.Notes[0] -match 'go cache over limit but a build is running') -and ($g.Notes[0] -match 'pkg-huge')) 'go cache: a cache over 3x the limit with a build running is called out (one over 1x is not)'
+    $g = Invoke-GoCacheClean -DoApply $true -LimitGB 0 -Running @() -Locations @([pscustomobject]@{ Label = 'huge'; Path = $huge }) -UseGo $false 6>$null
+    Check ((Test-Path (Join-Path $huge '3f\x-d')) -and $g.Locations.Count -eq 0) 'go cache: limit 0 turns the step off'
+
+    $rg = Invoke-HousekeepingRun -Repo $repo -DoApply $true -Clock $clock -TempRoot $temp -ProjectsRoot $projects -ScratchRoots @($scratch) -Running $goBusy -GoCacheLimitGB $lim -GoLocations @([pscustomobject]@{ Label = 'pkg-huge'; Path = $huge }) -UseGo $false -ModCacheDir $modDir 6>$null
+    $line = Format-RunLine -Ev 'periodic' -DoApply $true -R $rg
+    Check ($line -match 'go cache over limit but a build is running' -and $line -match 'go freed \[pkg-huge 0\.00 GB\]' -and $line -match 'modcache 0\.0[0-9] GB') 'run line: names the blocked cache, the GB freed per location and the module cache size'
+    $rg = Invoke-HousekeepingRun -Repo $repo -DoApply $true -Clock $clock -TempRoot $temp -ProjectsRoot $projects -ScratchRoots @($scratch) -Running @() -GoCacheLimitGB $lim -GoLocations @([pscustomobject]@{ Label = 'pkg-huge'; Path = $huge }) -UseGo $false 6>$null
+    $line = Format-RunLine -Ev 'periodic' -DoApply $true -R $rg
+    Check ((-not (Test-Path (Join-Path $huge '3f\x-d'))) -and $line -match 'go freed \[pkg-huge 0\.0[1-9] GB\]') 'run line: a cleaned location shows its freed GB'
+
     # ---- owner filter edge cases
     $script:ProcessLinesOverride = $null
     Check ([bool](Get-OwnerVerdict -Id 'x' -OwnerDirs @() -IdleMinutes 5 -Clock $clock)) 'an empty owner list keeps every session'
@@ -185,7 +269,7 @@ try {
         New-Item -ItemType Directory -Force -Path $state | Out-Null
         Set-Content -LiteralPath (Join-Path $state 'housekeeping.state') -Value 'x'
         $before = (Get-Item (Join-Path $state 'housekeeping.state')).LastWriteTimeUtc
-        $o = & $pw -NoProfile -NonInteractive -File $hk -Event stop 2>&1
+        $o = & $pw -NoProfile -NonInteractive -File $hk -GoCacheLimitGB 0 -Event stop 2>&1
         Check ($LASTEXITCODE -eq 0 -and -not $o) 'stop hook inside the throttle window: exit 0, prints nothing'
         Check ((Get-Item (Join-Path $state 'housekeeping.state')).LastWriteTimeUtc -eq $before) 'throttled hook does no work (state untouched)'
         Remove-Item (Join-Path $state 'housekeeping.state')
@@ -193,10 +277,10 @@ try {
         # lock: a second run exits at once while the first holds the lock
         $lk = [IO.File]::Open((Join-Path $state 'housekeeping.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
         try {
-            $o = & $pw -NoProfile -NonInteractive -File $hk -Event periodic -Repo $repo 2>&1
+            $o = & $pw -NoProfile -NonInteractive -File $hk -GoCacheLimitGB 0 -Event periodic -Repo $repo 2>&1
             Check ($LASTEXITCODE -eq 0 -and -not $o) 'a second run while the lock is held exits 0 silently'
             Check (-not (Test-Path (Join-Path $state 'housekeeping.log'))) 'and does no work (no log line)'
-            $o = & $pw -NoProfile -NonInteractive -File $hk -Event manual -Repo $repo 2>&1
+            $o = & $pw -NoProfile -NonInteractive -File $hk -GoCacheLimitGB 0 -Event manual -Repo $repo 2>&1
             Check (($o -join ' ') -match 'in progress') 'manual run says another run is in progress'
         } finally { $lk.Dispose() }
 
@@ -204,20 +288,23 @@ try {
         $e2eSess = New-Session 'hashC' 'gggggggg-e2e' $true $now.AddDays(-3) $now.AddDays(-3)
         $e2eWt = Join-Path $claude 'wtroot\wt-e2e'; New-Item -ItemType Directory -Force -Path (Split-Path $e2eWt) | Out-Null
         G $repo worktree add -q -b b-e2e $e2eWt | Out-Null; Set-Worktree-Time $e2eWt $now.AddDays(-3)
-        $o = & $pw -NoProfile -NonInteractive -File $hk -Event manual -Repo $repo 2>&1
+        $e2eAg = Join-Path $repo '.claude\worktrees\agent-e2e'; New-Item -ItemType Directory -Force -Path (Split-Path $e2eAg) | Out-Null
+        G $repo worktree add -q -b b-agent-e2e $e2eAg | Out-Null; Set-Worktree-Time $e2eAg $now.AddDays(-3)
+        $o = & $pw -NoProfile -NonInteractive -File $hk -GoCacheLimitGB 0 -Event manual -Repo $repo 2>&1
         Check ($LASTEXITCODE -eq 0) 'manual apply run exits 0'
         Check (-not (Test-Path $e2eSess)) 'end to end: the old session of this repo is deleted'
         Check (-not (Test-Path $e2eWt)) 'end to end: the merged worktree is removed'
+        Check (-not (Test-Path $e2eAg)) 'end to end: the merged agent worktree under <repo>\.claude\worktrees is removed (root added by the script)'
         Check (Test-Path $sLive) 'end to end: the live session is still there'
         $log = Get-Content -LiteralPath (Join-Path $state 'housekeeping.log') -Raw
         Check ($log -match 'manual apply: scratch') 'one summary line is logged'
 
         # dry run through the script
         $e2eSess2 = New-Session 'hashC' 'hhhhhhhh-e2e2' $true $now.AddDays(-3) $now.AddDays(-3)
-        $o = & $pw -NoProfile -NonInteractive -File $hk -Event manual -DryRun -Repo $repo 2>&1
+        $o = & $pw -NoProfile -NonInteractive -File $hk -GoCacheLimitGB 0 -Event manual -DryRun -Repo $repo 2>&1
         Check ((Test-Path $e2eSess2) -and (($o -join ' ') -match 'dry run')) 'script -DryRun deletes nothing and says so'
         Remove-Item -LiteralPath (Join-Path $state 'housekeeping.state') -ErrorAction SilentlyContinue
-        $null = & $pw -NoProfile -NonInteractive -File $hk -Event periodic -DryRun -Repo $repo 2>&1
+        $null = & $pw -NoProfile -NonInteractive -File $hk -GoCacheLimitGB 0 -Event periodic -DryRun -Repo $repo 2>&1
         Check ((Test-Path $e2eSess2) -and ((Get-Content -LiteralPath (Join-Path $state 'housekeeping.log') -Raw) -match 'periodic dry run')) '-DryRun is honoured for a periodic run too'
 
         # log cap
@@ -228,18 +315,20 @@ try {
         Remove-Item -LiteralPath (Join-Path $state 'housekeeping.state') -ErrorAction SilentlyContinue
         $hookSess = New-Session 'hashC' 'iiiiiiii-hook' $true $now.AddDays(-3) $now.AddDays(-3)
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $o = & $pw -NoProfile -NonInteractive -File $hk -Event stop -Repo $repo 2>&1
+        $o = & $pw -NoProfile -NonInteractive -File $hk -GoCacheLimitGB 0 -Event stop -Repo $repo 2>&1
         $took = $sw.Elapsed.TotalSeconds
         Check ($LASTEXITCODE -eq 0 -and -not $o) 'stop hook: exit 0, prints nothing'
         Write-Host ("      (hook returned in {0:N1}s)" -f $took)
         $deadline = [datetime]::UtcNow.AddSeconds(90)
         while ((Test-Path -LiteralPath $hookSess) -and [datetime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 500 }
         Check (-not (Test-Path -LiteralPath $hookSess)) 'stop hook: the background worker ran and deleted the old session'
-        Start-Sleep -Seconds 1
+        # The worker logs after the session step, the worktree step (a fetch) and the go step: wait for the line, do not guess a delay.
+        $deadline = [datetime]::UtcNow.AddSeconds(60)
+        while (-not ((Get-Content -LiteralPath (Join-Path $state 'housekeeping.log') -Raw) -match ' stop apply:') -and [datetime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 500 }
         Check ((Get-Content -LiteralPath (Join-Path $state 'housekeeping.log') -Raw) -match ' stop apply:') 'stop hook: the worker logged its run'
 
         # a broken repo argument never makes a hook fail
-        $o = & $pw -NoProfile -NonInteractive -File $hk -Event periodic -Repo (Join-Path $base 'no-such-repo') 2>&1
+        $o = & $pw -NoProfile -NonInteractive -File $hk -GoCacheLimitGB 0 -Event periodic -Repo (Join-Path $base 'no-such-repo') 2>&1
         Check ($LASTEXITCODE -eq 0 -and -not $o) 'periodic run with a bad repository: exit 0, silent'
     } finally { $env:LOCALAPPDATA = $saveL; $env:USERPROFILE = $saveU; $env:GOCACHE = $saveG }
 } catch {

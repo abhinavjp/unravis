@@ -12,11 +12,16 @@
        (~\.claude\projects\<path with every non-letter/digit as ->). Anything else is another repository's and is left alone.
     2. A session whose transcript (or subagent folder) changed within -IdleMinutes (default 120) is treated as alive and kept, whatever
        the age of its scratch. A running process that names the session id or the folder also keeps it (Clean-Scratch rules).
-    3. Registered worktrees of this repository under D:\Scratch or the Temp\claude root are removed with a plain
+    3. Registered worktrees of this repository under D:\Scratch, the Temp\claude root or <repo>\.claude\worktrees (agent worktrees; one
+       whose own Claude project folder changed within -IdleMinutes also stays) are removed with a plain
        `git worktree remove` (never forced, never deleting a branch) only when: clean (no untracked files), no process names the
        path, untouched for a day, HEAD contained in origin/develop or origin/master after a fresh fetch (a failed fetch keeps
        everything), not the main checkout or the checkout running this script. Missing worktree folders are pruned.
     4. %TEMP%\unravis-probe* and %TEMP%\unravis-dev-* folders, with the Clean-Scratch age, link, in-use and clone-at-risk rules.
+    5. Every Go build cache over -GoCacheLimitGB (default 8): go env GOCACHE, %LOCALAPPDATA%\go-build, the Claude desktop app's
+       Packages\Claude_*\LocalCache\Local\go-build and D:\GoCache\build (Clean-Scratch.ps1 has the rules). The log line shows the GB
+       freed per location and the module cache size (measured, never deleted). A cache over 3x the limit that cannot be cleaned
+       because a Go build is running is logged as "go cache over limit but a build is running"; builds are never killed.
   Not touched: %TEMP%\uci-* and the Homestretch agent's work areas and caches (the agent prunes and caps them itself, see
   docs/ci/LOCAL-PIPELINE.md), other repositories, source, user data. Age alone never deletes anything.
 
@@ -33,6 +38,7 @@
                       the scripts change. It also removes the older daily 'Unravis-CleanScratch' task.
 .PARAMETER Uninstall  Remove that task.
 .PARAMETER Worker     Internal: a hook started this process in the background.
+.PARAMETER GoCacheLimitGB  Clean each Go build cache over this size (default 8, the runner cache cap). 0 turns the Go cache step off.
 #>
 [CmdletBinding()]
 param(
@@ -41,7 +47,8 @@ param(
     [string]$Repo,
     [switch]$Install,
     [switch]$Uninstall,
-    [switch]$Worker
+    [switch]$Worker,
+    [double]$GoCacheLimitGB = 8
 )
 
 $script:HkTask = 'Unravis-Housekeeping'
@@ -136,7 +143,12 @@ function Invoke-TempPatternClean {
 function Get-WorktreeKeepReason {
     param([string]$Path, [string[]]$Running, [datetime]$Clock, [int]$AgeHours, [string[]]$Roots, [string[]]$Protect, [string[]]$OwnerDirs = $null, [int]$IdleMinutes = 120)
     if (-not (Test-UnderAny -Path $Path -Roots $Roots)) { return 'outside the scratch folders' }
-    foreach ($p in $Protect) { if ($p -and ([IO.Path]::GetFullPath($p).TrimEnd('\') -ieq $Path)) { return 'the main checkout or the checkout in use' } }
+    # A protected folder equal to the worktree, or inside it (a session whose working directory is a subfolder), keeps it.
+    foreach ($p in $Protect) {
+        if (-not $p) { continue }
+        $pp = [IO.Path]::GetFullPath($p).TrimEnd('\')
+        if ($pp -ieq $Path -or $pp.StartsWith($Path + '\', [StringComparison]::OrdinalIgnoreCase)) { return 'the main checkout or the checkout in use' }
+    }
     $it = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     if (-not $it) { return $null }
     if ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) { return 'is a link' }
@@ -147,6 +159,16 @@ function Get-WorktreeKeepReason {
     if ($sm.Success -and $null -ne $OwnerDirs) {
         $ov = Get-OwnerVerdict -Id $sm.Groups[1].Value -OwnerDirs $OwnerDirs -IdleMinutes $IdleMinutes -Clock $Clock
         if ($ov -like 'its transcript changed*') { return 'its Claude session may be alive' }
+    }
+    # A worktree that has its own Claude project folder (an agent worktree) is in use while a transcript there changed recently.
+    if ($null -ne $OwnerDirs) {
+        $own = ConvertTo-ProjectName $Path
+        foreach ($d in $OwnerDirs) {
+            if ((Split-Path -Leaf $d) -ine $own) { continue }
+            foreach ($f in @(Get-ChildItem -LiteralPath $d -Force -ErrorAction SilentlyContinue)) {
+                if ($f.LastWriteTimeUtc -ge $Clock.ToUniversalTime().AddMinutes(-$IdleMinutes)) { return 'its Claude session may be alive' }
+            }
+        }
     }
     $newest = $it.LastWriteTimeUtc
     $gitFile = Join-Path $Path '.git'
@@ -238,9 +260,9 @@ function Invoke-HousekeepingRun {
     param(
         [string]$Repo, [bool]$DoApply, [datetime]$Clock, [string]$TempRoot, [string]$ProjectsRoot,
         [string[]]$ScratchRoots, [string[]]$Running, [string[]]$Protect = @(),
-        [int]$IdleMinutes = 120, [int]$AgeDays = 1, [double]$GoCacheLimitGB = 3
+        [int]$IdleMinutes = 120, [int]$AgeDays = 1, [double]$GoCacheLimitGB = 8, [object[]]$GoLocations = $null, [bool]$UseGo = $true, [string]$ModCacheDir = ''
     )
-    $out = [ordered]@{ ScratchFreed = 0L; ScratchWould = 0L; ScratchKept = 0; WtRemoved = 0; WtWould = 0; WtKept = 0; TempFreed = 0L; TempWould = 0L; GoFreed = 0L; GoWould = 0L; Note = ''; Err = '' }
+    $out = [ordered]@{ ScratchFreed = 0L; ScratchWould = 0L; ScratchKept = 0; WtRemoved = 0; WtWould = 0; WtKept = 0; TempFreed = 0L; TempWould = 0L; GoFreed = 0L; GoWould = 0L; GoLocs = @(); GoNotes = @(); ModBytes = -1L; Note = ''; Err = '' }
     $wts = Get-RepoWorktrees -Repo $Repo
     if (-not $wts) { $out.Note = 'git could not list the worktrees: nothing done'; return [pscustomobject]$out }
     $owners = @(Get-OwnerDirs -Worktrees $wts -ProjectsRoot $ProjectsRoot)
@@ -252,19 +274,33 @@ function Invoke-HousekeepingRun {
     } catch { $out.Err = 'worktree step failed: ' + ($_.Exception.Message -replace '\s+', ' ') }
     $t = Invoke-TempPatternClean -TempRoot $TempRoot -DoApply $DoApply -AgeDays $AgeDays -Clock $Clock -Running $Running
     $out.TempFreed = $t.FreedBytes; $out.TempWould = $t.WouldFreeBytes
-    $g = Invoke-GoCacheClean -DoApply $DoApply -LimitGB $GoCacheLimitGB -Running $Running
-    $out.GoFreed = $g.FreedBytes; $out.GoWould = $g.WouldFreeBytes
+    try {
+        $g = Invoke-GoCacheClean -DoApply $DoApply -LimitGB $GoCacheLimitGB -Running $Running -Locations $GoLocations -UseGo $UseGo -ModCacheDir $ModCacheDir
+        $out.GoFreed = $g.FreedBytes; $out.GoWould = $g.WouldFreeBytes; $out.GoLocs = @($g.Locations); $out.GoNotes = @($g.Notes); $out.ModBytes = $g.ModCacheBytes
+    } catch { $out.Err = (($out.Err + '; go cache step failed: ' + ($_.Exception.Message -replace '\s+', ' ')).TrimStart('; ')) }
     return [pscustomobject]$out
+}
+
+# Format-GoPart: "go [label GB, label GB]" with the GB freed (or, in a dry run, that would go) per location, then the module cache size.
+function Format-GoPart {
+    param([bool]$DoApply, $R)
+    $parts = @()
+    foreach ($l in @($R.GoLocs)) { $parts += ('{0} {1}' -f $l.Label, (Format-Size $(if ($DoApply) { $l.FreedBytes } else { $l.WouldBytes }))) }
+    $s = $(if ($DoApply) { 'go freed [' } else { 'go would free [' }) + ($parts -join ', ') + ']'
+    if ($R.ModBytes -ge 0) { $s += '; modcache ' + (Format-Size $R.ModBytes) }
+    return $s
 }
 
 function Format-RunLine {
     param([string]$Ev, [bool]$DoApply, $R)
     if ($R.Note) { return ('{0:yyyy-MM-ddTHH:mmZ} {1} {2}' -f [datetime]::UtcNow, $Ev, $R.Note) }
     $e = if ($R.Err) { '; ' + $R.Err } else { '' }
+    foreach ($n in @($R.GoNotes)) { $e += '; ' + $n }
+    $go = Format-GoPart -DoApply $DoApply -R $R
     if ($DoApply) {
-        return (('{0:yyyy-MM-ddTHH:mmZ} {1} apply: scratch {2} kept {3}; worktrees removed {4} kept {5}; temp {6}; go {7}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchFreed), $R.ScratchKept, $R.WtRemoved, $R.WtKept, (Format-Size $R.TempFreed), (Format-Size $R.GoFreed)) + $e)
+        return (('{0:yyyy-MM-ddTHH:mmZ} {1} apply: scratch {2} kept {3}; worktrees removed {4} kept {5}; temp {6}; {7}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchFreed), $R.ScratchKept, $R.WtRemoved, $R.WtKept, (Format-Size $R.TempFreed), $go) + $e)
     }
-    return (('{0:yyyy-MM-ddTHH:mmZ} {1} dry run: scratch {2} would go; worktrees {3} would go; temp {4}; go {5}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchWould), $R.WtWould, (Format-Size $R.TempWould), (Format-Size $R.GoWould)) + $e)
+    return (('{0:yyyy-MM-ddTHH:mmZ} {1} dry run: scratch {2} would go; worktrees {3} would go; temp {4}; {5}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchWould), $R.WtWould, (Format-Size $R.TempWould), $go) + $e)
 }
 
 # Add-LogLine: one line per run; over the cap the file is cut to its last 100 lines.
@@ -333,6 +369,7 @@ if ($MyInvocation.InvocationName -ne '.') {
             # Claim the slot, start the real work hidden in the background and return at once.
             $a = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $PSCommandPath), '-Event', $Event, '-Worker')
             if ($Repo) { $a += @('-Repo', ('"{0}"' -f $Repo)) }
+            if ($PSBoundParameters.ContainsKey('GoCacheLimitGB')) { $a += @('-GoCacheLimitGB', $GoCacheLimitGB.ToString([Globalization.CultureInfo]::InvariantCulture)) }
             Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList $a -WindowStyle Hidden | Out-Null
             Set-Content -LiteralPath $stateFile -Value ([datetime]::UtcNow.ToString('o'))   # claimed only once the worker really started
             exit 0
@@ -352,7 +389,8 @@ if ($MyInvocation.InvocationName -ne '.') {
             $protect += (Get-Location).Path
             $args2 = @{
                 Repo = $repoFolder; DoApply = $doApply; Clock = [datetime]::UtcNow; TempRoot = (Join-Path $env:LOCALAPPDATA 'Temp')
-                ProjectsRoot = (Join-Path $env:USERPROFILE '.claude\projects'); ScratchRoots = @('D:\Scratch'); Running = $running; Protect = $protect
+                ProjectsRoot = (Join-Path $env:USERPROFILE '.claude\projects'); ScratchRoots = @('D:\Scratch', (Join-Path $repoFolder '.claude\worktrees')); Running = $running; Protect = $protect
+                GoCacheLimitGB = $GoCacheLimitGB
             }
             if ($alwaysZero) { $r = Invoke-HousekeepingRun @args2 6>$null } else { $r = Invoke-HousekeepingRun @args2 }
             $line = Format-RunLine -Ev $Event -DoApply $doApply -R $r

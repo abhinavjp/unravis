@@ -9,7 +9,11 @@
   What it can delete (and nothing else):
     1. Session folders exactly two levels under  %LOCALAPPDATA%\Temp\claude\<project-hash>\<session-id>  that are old (newest write or
        creation time at least -MaxAgeDays ago, default 1) and not in use (see below).
-    2. The Go build cache (`go clean -cache`) when it is larger than -GoCacheLimitGB (default 3 GB) and no Go build is running.
+    2. Every Go build cache, each when larger than -GoCacheLimitGB (default 8 GB, the runner cache cap) and no Go build is running:
+       `go env GOCACHE`, %LOCALAPPDATA%\go-build, %USERPROFILE%\AppData\Local\Packages\Claude_*\LocalCache\Local\go-build (the Claude
+       desktop app redirects LOCALAPPDATA there, so an unattended run does not see it through `go env`) and D:\GoCache\build. A folder
+       must have a README that mentions `go clean -cache`. It is cleaned with `go clean -cache` / `-testcache` (GOCACHE set to that
+       folder for the call only), or by rename-then-delete of its contents when go is absent or fails. The module cache is only measured.
 
   A session folder is KEPT when any of these is true:
     - something in it was written or created recently, or part of it could not be read (so "old" cannot be proven);
@@ -34,7 +38,7 @@
 
 .PARAMETER Apply            Really delete. Without it the script only reports.
 .PARAMETER MaxAgeDays       A session folder is old when its newest write is at least this many days ago. Minimum 1.
-.PARAMETER GoCacheLimitGB   Clean the Go build cache when it is over this size. 0 turns the Go cache step off.
+.PARAMETER GoCacheLimitGB   Clean each Go build cache that is over this size (default 8). 0 turns the Go cache step off.
 .PARAMETER IncludeWorktrees Also delete old folders that hold a linked git worktree (`.git` file). Off by default.
 .PARAMETER LogPath          Append a transcript of the run to this file (the scheduled task uses it).
 .PARAMETER Root             Test hook (dry run only): another root, which must still be named <x>\Temp\claude.
@@ -47,7 +51,7 @@
 param(
     [switch]$Apply,
     [int]$MaxAgeDays = 1,
-    [double]$GoCacheLimitGB = 3,
+    [double]$GoCacheLimitGB = 8,
     [switch]$IncludeWorktrees,
     [string]$LogPath,
     [string]$Root,
@@ -286,35 +290,117 @@ function Invoke-ScratchClean {
     return [pscustomobject]@{ FreedBytes = $freed; WouldFreeBytes = $would; Kept = $kept; Failed = $failed }
 }
 
+# Get-GoCacheLocations: every folder that may hold a Go build cache, deduplicated. A process started by the Claude desktop app has
+# %LOCALAPPDATA% redirected into Packages\Claude_*\LocalCache\Local, so its builds fill a cache that `go env GOCACHE` of an
+# unattended run (the scheduled task) never reports (incident 2026-11-27: 84 GiB). Only existing, non-link folders are returned.
+function Get-GoCacheLocations {
+    param([string]$GoEnvDir, [string]$LocalAppData, [string]$UserProfile, [string[]]$ExtraDirs = @('D:\GoCache\build'))
+    $cands = @()
+    if ($GoEnvDir) { $cands += [pscustomobject]@{ Label = 'go-env'; Path = $GoEnvDir } }
+    if ($LocalAppData) { $cands += [pscustomobject]@{ Label = 'localappdata'; Path = (Join-Path $LocalAppData 'go-build') } }
+    if ($UserProfile) {
+        $pk = Join-Path $UserProfile 'AppData\Local\Packages'
+        if (Test-Path -LiteralPath $pk -PathType Container) {
+            foreach ($d in @(Get-ChildItem -LiteralPath $pk -Directory -Filter 'Claude_*' -Force -ErrorAction SilentlyContinue)) {
+                $cands += [pscustomobject]@{ Label = 'pkg-' + $d.Name; Path = (Join-Path $d.FullName 'LocalCache\Local\go-build') }
+            }
+        }
+    }
+    foreach ($x in $ExtraDirs) { if ($x) { $cands += [pscustomobject]@{ Label = 'extra'; Path = $x } } }
+    $seen = @{}; $found = @()
+    foreach ($c in $cands) {
+        if (-not [IO.Path]::IsPathRooted($c.Path)) { continue }
+        $full = [IO.Path]::GetFullPath($c.Path).TrimEnd('\')
+        $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+        if (-not $item -or -not $item.PSIsContainer) { continue }
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { Write-Host "go cache: $full is a link, skipped"; continue }
+        $k = $full.ToLowerInvariant()
+        if ($seen.ContainsKey($k)) { continue }
+        $seen[$k] = $true
+        $found += [pscustomobject]@{ Label = $c.Label; Path = $full }
+    }
+    return $found
+}
+
+function Get-FolderBytes { param([string]$Dir) return [long](Get-ChildItem -LiteralPath $Dir -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }
+
+# Clear-GoCacheFolder empties one Go cache folder. `go clean -cache` runs with GOCACHE set to that folder for this call only (restored
+# after), then `go clean -testcache`. When go is absent or fails, every entry except README is renamed and then deleted (a rename Windows
+# refuses means the entry is in use and stays). Returns how it was done.
+function Clear-GoCacheFolder {
+    param([string]$Dir, [bool]$UseGo)
+    if ($UseGo) {
+        $oldCache = $env:GOCACHE; $oldTc = $env:GOTOOLCHAIN; $ok = $false
+        Push-Location -LiteralPath $env:USERPROFILE
+        try {
+            $env:GOCACHE = $Dir; $env:GOTOOLCHAIN = 'local'
+            & go clean -cache 2>&1 | Out-Null
+            $ok = ($LASTEXITCODE -eq 0)
+            if ($ok) { & go clean -testcache 2>&1 | Out-Null }
+        } catch { $ok = $false } finally {
+            if ($null -eq $oldCache) { Remove-Item Env:GOCACHE -ErrorAction SilentlyContinue } else { $env:GOCACHE = $oldCache }
+            if ($null -eq $oldTc) { Remove-Item Env:GOTOOLCHAIN -ErrorAction SilentlyContinue } else { $env:GOTOOLCHAIN = $oldTc }
+            Pop-Location
+        }
+        if ($ok) { return 'go clean' }
+        Write-Host "go cache: go clean failed for $Dir, falling back to rename and delete"
+    }
+    foreach ($c in @(Get-ChildItem -LiteralPath $Dir -Force -ErrorAction SilentlyContinue)) {
+        if ($c.Name -ieq 'README') { continue }
+        if ($c.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        $tmpName = $c.Name + '.deleting-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        try { Rename-Item -LiteralPath $c.FullName -NewName $tmpName -ErrorAction Stop } catch { continue }
+        try { Remove-Item -LiteralPath (Join-Path $Dir $tmpName) -Recurse -Force -ErrorAction Stop } catch { Write-Host "go cache: could not fully delete $tmpName in $Dir, the next run retries" }
+    }
+    return 'rename and delete'
+}
+
+# Invoke-GoCacheClean checks EVERY Go build cache location (see Get-GoCacheLocations), cleans each one that is over the limit while no
+# Go build is running, and reports the GB freed per location. GOMODCACHE is measured and reported, never deleted.
+# Test hooks: -Locations replaces the discovery, -UseGo $false forces the rename-and-delete path, -ModCacheDir replaces `go env`.
 function Invoke-GoCacheClean {
-    param([bool]$DoApply, [double]$LimitGB, [string[]]$Running)
-    $out = [pscustomobject]@{ FreedBytes = 0L; WouldFreeBytes = 0L }
+    param([bool]$DoApply, [double]$LimitGB, [string[]]$Running, [object[]]$Locations = $null, [bool]$UseGo = $true, [string]$ModCacheDir = '')
+    $out = [pscustomobject]@{ FreedBytes = 0L; WouldFreeBytes = 0L; Locations = @(); Notes = @(); ModCacheBytes = -1L; ModCachePath = '' }
     if ($LimitGB -le 0) { Write-Host 'go cache: step is off'; return $out }
-    if (-not (Get-Command go -ErrorAction SilentlyContinue)) { Write-Host 'go cache: go is not installed, skipped'; return $out }
-    # Ask Go from a neutral folder and without toolchain downloads.
-    Push-Location -LiteralPath $env:USERPROFILE
-    $oldTc = $env:GOTOOLCHAIN; $env:GOTOOLCHAIN = 'local'
-    try { $dir = (& go env GOCACHE 2>$null | Select-Object -First 1) } finally { $env:GOTOOLCHAIN = $oldTc; Pop-Location }
-    if (-not $dir -or -not [IO.Path]::IsPathRooted($dir) -or -not (Test-Path -LiteralPath $dir -PathType Container)) {
-        Write-Host 'go cache: no cache folder, skipped'; return $out
+    $haveGo = $UseGo -and [bool](Get-Command go -ErrorAction SilentlyContinue)
+    $goEnvDir = $null; $modDir = $ModCacheDir
+    if ($haveGo -and ($null -eq $Locations -or -not $modDir)) {
+        # Ask Go from a neutral folder and without toolchain downloads.
+        Push-Location -LiteralPath $env:USERPROFILE
+        $oldTc = $env:GOTOOLCHAIN; $env:GOTOOLCHAIN = 'local'
+        try { $ge = @(& go env GOCACHE GOMODCACHE 2>$null) } finally { if ($null -eq $oldTc) { Remove-Item Env:GOTOOLCHAIN -ErrorAction SilentlyContinue } else { $env:GOTOOLCHAIN = $oldTc }; Pop-Location }
+        if ($ge.Count -ge 1) { $goEnvDir = [string]$ge[0] }
+        if (-not $modDir -and $ge.Count -ge 2) { $modDir = [string]$ge[1] }
     }
-    $full = [IO.Path]::GetFullPath($dir).TrimEnd('\')
-    $readme = Join-Path $full 'README'
-    if (-not (Test-Path -LiteralPath $readme) -or -not ((Get-Content -LiteralPath $readme -Raw -ErrorAction SilentlyContinue) -match 'go clean -cache')) {
-        Write-Host "go cache: $full does not look like a Go build cache, skipped"; return $out
-    }
-    $bytes = [long](Get-ChildItem -LiteralPath $full -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
-    if ($bytes -le $LimitGB * 1GB) { Write-Host ("go cache: {0} is under the {1} GB limit, left alone" -f (Format-Size $bytes), $LimitGB); return $out }
+    $locs = if ($null -ne $Locations) { @($Locations) } else { @(Get-GoCacheLocations -GoEnvDir $goEnvDir -LocalAppData $env:LOCALAPPDATA -UserProfile $env:USERPROFILE) }
+    if ($locs.Count -eq 0) { Write-Host 'go cache: no cache folder found, skipped' }
     $busy = $Running | Where-Object { $_ -match '(?i)(^|[\\"\s])(go|compile|asm|cgo)(\.exe)?("|\s|$)' }
-    if ($busy) { Write-Host 'go cache: a Go build is running, skipped'; return $out }
-    if (-not $DoApply) { Write-Host ("would clean the go cache {0} [{1}]" -f $full, (Format-Size $bytes)); $out.WouldFreeBytes = $bytes; return $out }
-    Push-Location -LiteralPath $env:USERPROFILE
-    $oldTc2 = $env:GOTOOLCHAIN; $env:GOTOOLCHAIN = 'local'
-    try { & go clean -cache } finally { $env:GOTOOLCHAIN = $oldTc2; Pop-Location }
-    if ($LASTEXITCODE -ne 0) { Write-Host "go cache: go clean failed (exit $LASTEXITCODE)" }
-    $after = [long](Get-ChildItem -LiteralPath $full -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
-    $out.FreedBytes = [math]::Max(0L, $bytes - $after)
-    Write-Host ("cleaned the go cache {0} [{1} freed]" -f $full, (Format-Size $out.FreedBytes))
+    foreach ($l in $locs) {
+        $full = [IO.Path]::GetFullPath($l.Path).TrimEnd('\')
+        $rec = [pscustomobject]@{ Label = $l.Label; Path = $full; Bytes = 0L; FreedBytes = 0L; WouldBytes = 0L; Status = '' }
+        $out.Locations += $rec
+        $readme = Join-Path $full 'README'
+        if (-not (Test-Path -LiteralPath $full -PathType Container)) { $rec.Status = 'missing'; continue }
+        if (-not (Test-Path -LiteralPath $readme) -or -not ((Get-Content -LiteralPath $readme -Raw -ErrorAction SilentlyContinue) -match 'go clean -cache')) {
+            $rec.Status = 'not a go cache'; Write-Host "go cache: $full does not look like a Go build cache, skipped"; continue
+        }
+        $rec.Bytes = Get-FolderBytes $full
+        if ($rec.Bytes -le $LimitGB * 1GB) { $rec.Status = 'under limit'; Write-Host ("go cache: {0} {1} is under the {2} GB limit, left alone" -f $full, (Format-Size $rec.Bytes), $LimitGB); continue }
+        if ($busy) {
+            $rec.Status = 'busy'; Write-Host ("go cache: {0} [{1}] is over the limit but a Go build is running, skipped" -f $full, (Format-Size $rec.Bytes))
+            if ($rec.Bytes -gt 3 * $LimitGB * 1GB) { $out.Notes += ('go cache over limit but a build is running: {0} {1} (over 3x the {2} GB limit)' -f $rec.Label, (Format-Size $rec.Bytes), $LimitGB) }
+            continue
+        }
+        if (-not $DoApply) { $rec.Status = 'would clean'; $rec.WouldBytes = $rec.Bytes; $out.WouldFreeBytes += $rec.Bytes; Write-Host ("would clean the go cache {0} [{1}]" -f $full, (Format-Size $rec.Bytes)); continue }
+        $how = Clear-GoCacheFolder -Dir $full -UseGo $haveGo
+        $rec.FreedBytes = [math]::Max(0L, $rec.Bytes - (Get-FolderBytes $full))
+        $rec.Status = 'cleaned'; $out.FreedBytes += $rec.FreedBytes
+        Write-Host ("cleaned the go cache {0} [{1} freed, {2}]" -f $full, (Format-Size $rec.FreedBytes), $how)
+    }
+    if ($modDir -and [IO.Path]::IsPathRooted($modDir) -and (Test-Path -LiteralPath $modDir -PathType Container)) {
+        $out.ModCachePath = $modDir; $out.ModCacheBytes = Get-FolderBytes $modDir
+        Write-Host ("go module cache: {0} [{1}] (reported only, never deleted)" -f $modDir, (Format-Size $out.ModCacheBytes))
+    }
     return $out
 }
 
