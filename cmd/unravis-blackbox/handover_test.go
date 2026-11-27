@@ -147,7 +147,7 @@ func TestValidHandover(t *testing.T) {
 		{"empty pipe", testHandoverID, "", false},
 		{"bare prefix", testHandoverID, `\\.\pipe\`, false},
 		{"other machine", testHandoverID, `\\server\pipe\UnravisKeeper`, false},
-		{"file path", testHandoverID, `C:\Windows\Temp\x`, false},
+		{"file path", testHandoverID, `C:\Windows\Temp\x`, false}, // winok: only a string handed to the validator, never opened as a path
 		{"path inside", testHandoverID, `\\.\pipe\a\b`, false},
 		{"dot dot", testHandoverID, `\\.\pipe\..`, false},
 		{"dot dot path", testHandoverID, `\\.\pipe\..\x`, false},

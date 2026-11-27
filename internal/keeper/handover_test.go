@@ -266,7 +266,7 @@ func TestHandoverWritesNoFileAnywhereInATempFolder(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMP", tmp)
 	t.Setenv("TEMP", tmp)
-	t.Setenv("TMPDIR", tmp)
+	t.Setenv("TMPDIR", tmp) // winok: TMP and TEMP (what Windows reads) are set on the lines beside it
 	h := newHarness(t, nil)
 	rec := h.saveSQL(sqlconn.AuthSQL)
 	ho, err := NewSQLStore(h.client).HandoverSaved(context.Background(), SQLRef{ID: rec.ID})

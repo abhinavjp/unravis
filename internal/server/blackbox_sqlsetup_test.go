@@ -147,7 +147,7 @@ func newHeldSetup(t *testing.T) (*bbEnv, *heldSQLList, string) {
 	tmp := t.TempDir()
 	t.Setenv("TMP", tmp)
 	t.Setenv("TEMP", tmp)
-	t.Setenv("TMPDIR", tmp)
+	t.Setenv("TMPDIR", tmp) // winok: TMP and TEMP (what Windows reads) are set on the lines above
 	saved := &heldSQLList{fakeSavedSQL: fakeSavedSQL{in: sqlconn.Input{Server: "db01", Auth: "sql", Username: "u", Encrypt: "mandatory"}}}
 	return newBBEnvWith(t, nil, WithSQLConnections(saved)), saved, tmp
 }
