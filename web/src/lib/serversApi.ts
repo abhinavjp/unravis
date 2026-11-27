@@ -1,7 +1,7 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
 import {
   ServersError, failureFromResponse, FAILURE_TEXT, buildMachineBody, buildPinBody, buildReplaceBody, buildSecretBody, pulledFileUrl,
-  type AddBody, type AuthKind, type HostKey, type JobView, type MachineView, type PatchBody, type PlanView, type PullBody, type ServerEntry, type TestResult
+  type AddBody, type AuthKind, type Discovery, type HostKey, type JobView, type MachineView, type PatchBody, type PlanView, type PullBody, type ServerEntry, type TestResult
 } from './servers';
 
 /**
@@ -57,6 +57,7 @@ export const serversApi = {
   replaceKey: (id: string, oldFingerprint: string, newFingerprint: string, signal?: AbortSignal) => call<ServerEntry>('POST', at(id) + '/replace-key', buildReplaceBody(oldFingerprint, newFingerprint), signal),
   machines: (id: string, signal?: AbortSignal) => call<{ machines: MachineView[] }>('POST', at(id) + '/machines', {}, signal),
   test: (id: string, machine: string) => call<TestResult>('POST', at(id) + '/test', buildMachineBody(machine)),
+  sources: (id: string, machine: string) => call<Discovery>('POST', at(id) + '/sources', buildMachineBody(machine)),
   plan: (id: string, body: PullBody) => call<PlanView>('POST', at(id) + '/plan', body),
   startPull: (id: string, body: PullBody) => call<JobView>('POST', at(id) + '/pulls', body),
   pulls: (id: string, signal?: AbortSignal) => call<{ items: JobView[] }>('GET', at(id) + '/pulls', undefined, signal),

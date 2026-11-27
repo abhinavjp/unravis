@@ -1,9 +1,10 @@
 import { serversApi } from './serversApi';
+import { browserStorage, forgetServer, loadMemory, patternFor, recordCheck, recordPatterns, recordPull, saveMemory, type Memory } from './serversMemory';
 import { SV_TEXT } from './copy/serversCopy';
 import {
   FAILURE_TEXT, ServersError, buildAddBody, buildPatchBody, buildPullBody, caseRange, caseRangeProblem, connectProblems, emptyConnectForm, findConnection,
-  dedupeMachines, folderKindInfo, initialPicks, jobPercent, matchesConnection, pullTargets, readableTargets, rangeHours, togglePick, withFolder, withFolders, withoutFolder, withTimeout,
-  type AuthKind, type ConnectForm, type Failure, type FolderMap, type HostKey, type JobView, type MachineView, type PlanView, type PullTarget, type RangeChoice,
+  dedupeMachines, folderKindInfo, initialPicks, jobPercent, matchesConnection, patternsFrom, pullTargets, readableTargets, rangeHours, togglePick, withFolder, withFolders, withoutFolder, withTimeout,
+  type AuthKind, type ConnectForm, type Discovery, type Failure, type FolderMap, type HostKey, type JobView, type MachineView, type PlanView, type PullTarget, type RangeChoice,
   type ServerEntry, type TestResult
 } from './servers';
 import type { WindowFields } from './tracing/windows';
@@ -18,6 +19,7 @@ export const STEP_ORDER: Step[] = ['connect', 'trust', 'pick', 'reach', 'has', '
 
 export interface ChangedKey { pinned: string; presented: string; next: string; error: string }
 export interface TestState { state: 'running' | 'done' | 'failed'; result?: TestResult; failure?: Failure }
+export interface DiscoverState { state: 'running' | 'done' | 'failed'; discovery?: Discovery; failure?: Failure }
 export interface RowState { on: boolean; range: RangeChoice; state: 'idle' | 'loading' | 'ok' | 'failed'; plan: PlanView | null; failure?: Failure; note?: string }
 export interface PullState { state: 'queued' | 'running' | 'done' | 'failed' | 'stopped'; job?: JobView; planned: number; failure?: Failure; stopping?: boolean }
 
@@ -39,6 +41,8 @@ export class ServersFlow {
 
   constructor(env: Env) { this.env = env; }
 
+  private remember(change: (m: Memory) => Memory): void { this.memory = change(this.memory); saveMemory(browserStorage(), this.memory); }
+
   list = $state<ServerEntry[] | null>(null);
   listError = $state('');
   step = $state<Step>('connect');
@@ -58,6 +62,8 @@ export class ServersFlow {
   sudo = $state(false);
 
   tests = $state<Record<string, TestState>>({});
+  discoveries = $state<Record<string, DiscoverState>>({});
+  memory = $state<Memory>(loadMemory(browserStorage()));
   rows = $state<Record<string, RowState>>({});
   targets = $state<PullTarget[]>([]);
   pulls = $state<Record<string, PullState>>({});
@@ -143,7 +149,7 @@ export class ServersFlow {
 
   private clearConnection(): void {
     this.server = null; this.needSecret = false; this.error = null; this.note = ''; this.changed = null; this.hostKeys = [];
-    this.machines = []; this.picks = []; this.sudo = false; this.tests = {}; this.rows = {}; this.targets = []; this.pulls = {}; this.order = [];
+    this.machines = []; this.picks = []; this.sudo = false; this.tests = {}; this.discoveries = {}; this.rows = {}; this.targets = []; this.pulls = {}; this.order = [];
     this.running = false; this.reached = 0;
   }
 
@@ -174,6 +180,7 @@ export class ServersFlow {
 
   async forget(entry: ServerEntry): Promise<void> {
     await this.guard('forget', (signal) => serversApi.forget(entry.id, signal), () => {
+      this.memory = forgetServer(this.memory, entry.id); saveMemory(browserStorage(), this.memory);
       if (this.server?.id === entry.id) this.clearConnection();
       if (this.provisionalServerId === entry.id) this.provisionalServerId = null;
       if (this.list) this.list = this.list.filter((saved) => saved.id !== entry.id);
@@ -354,7 +361,7 @@ export class ServersFlow {
     if (!server || this.picks.length === 0) return;
     await this.guard('save-machines', (signal) => serversApi.patch(server.id, buildPatchBody({ minionIds: this.picks }), signal), (entry) => {
       this.setServer(entry);
-      this.tests = {}; this.rows = {}; this.targets = [];
+      this.tests = {}; this.discoveries = {}; this.rows = {}; this.targets = [];
       this.goto('reach');
     });
   }
@@ -383,22 +390,49 @@ export class ServersFlow {
     return this.saveFolders(withoutFolder(server.folders, kind, path));
   }
 
-  private async saveFolders(next: FolderMap): Promise<boolean> {
+  /** Adding a folder keeps the earlier answers on the page, marked as out of date by the missing line for the new folder. Removing one clears them. */
+  private async saveFolders(next: FolderMap, keepTests = false): Promise<boolean> {
     const server = this.server;
     if (!server) return false;
     return !!(await this.guard('folders', (signal) => serversApi.patch(server.id, buildPatchBody({ folders: next }), signal), (entry) => {
       this.setServer(entry);
-      this.tests = {};
+      if (!keepTests) this.tests = {};
     }));
   }
 
-  async testMachine(machine: string): Promise<void> {
+  /** Adds the folders the recorder named, then checks the machine again so each new folder shows what it holds. */
+  async addSuggestions(machine: string, list: readonly { kind: string; path: string }[]): Promise<void> {
+    if (!this.server || list.length === 0) return;
+    const saved = await this.addFolders(list);
+    if (saved) { this.tests = {}; await this.testMachine(machine, false); }
+  }
+
+  /** Asks the machine's Blackbox where everything is. Never throws; a machine with no list gives `found: false`. */
+  async discover(machine: string): Promise<void> {
+    const server = this.server;
+    if (!server) return;
+    this.discoveries[machine] = { state: 'running' };
+    try {
+      const discovery = await serversApi.sources(server.id, machine);
+      this.discoveries[machine] = { state: 'done', discovery };
+      if (discovery.found) this.remember((m) => recordPatterns(m, server.id, machine, patternsFrom(discovery)));
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return;
+      const f = failureOf(e);
+      if (f.reason === 'host-key-changed') { delete this.discoveries[machine]; this.fail(e); return; }
+      this.discoveries[machine] = { state: 'failed', failure: f };
+    }
+  }
+
+  async testMachine(machine: string, andFind = true): Promise<void> {
     const server = this.server;
     if (!server) return;
     this.tests[machine] = { state: 'running' };
     try {
       const result = await serversApi.test(server.id, machine);
       this.tests[machine] = { state: 'done', result };
+      this.remember((m) => recordCheck(m, server.id, machine, new Date(), result.blackbox ? result.blackbox.ok : undefined));
+      if (andFind && this.discoveries[machine]?.state !== 'running') void this.discover(machine);
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return;
       const f = failureOf(e);
@@ -438,7 +472,7 @@ export class ServersFlow {
     if (hours === null) { row.state = 'failed'; row.plan = null; row.failure = { status: 0, error: caseRangeProblem(this.caseRange()) || 'Choose a time range.', reason: 'invalid' }; return; }
     row.state = 'loading'; row.failure = undefined;
     try {
-      const plan = await serversApi.plan(server.id, buildPullBody(target, hours));
+      const plan = await serversApi.plan(server.id, buildPullBody(target, hours, undefined, patternFor(this.memory, server.id, target.machine, target.dir)));
       row.plan = plan; row.state = 'ok';
       if (plan.files.length === 0 || plan.problem) row.on = false;
     } catch (e) {
@@ -469,7 +503,7 @@ export class ServersFlow {
   private bodyFor(target: PullTarget, resume?: string) {
     const row = this.rows[target.key];
     const hours = row ? rangeHours(row.range, this.caseRange(), this.env.now()) : null;
-    return buildPullBody(target, hours ?? 0, resume);
+    return buildPullBody(target, hours ?? 0, resume, patternFor(this.memory, this.server?.id ?? '', target.machine, target.dir));
   }
 
   /** Copies the chosen items one after the other. One copy runs on a server at a time. */
@@ -507,6 +541,7 @@ export class ServersFlow {
       state.job = job;
       state.state = job.state === 'running' ? 'running' : job.state;
       if (job.state === 'failed' && job.failure) state.failure = job.failure;
+      if (state.state === 'done') this.remember((m) => recordPull(m, server.id, target.machine, new Date()));
     } catch (e) {
       const f = failureOf(e);
       if (f.reason === 'host-key-changed') { state.state = 'stopped'; this.fail(e); return; }

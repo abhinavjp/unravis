@@ -53,6 +53,15 @@ export interface TestResult {
   machine?: string;
 }
 
+/** One place the machine's Blackbox says logs or recordings are kept (from `POST /api/servers/{id}/sources`). */
+export interface Source {
+  id: string; kind: string; label: string; dir: string; pattern: string; origin: string; err: string;
+  exists: boolean; readable: boolean; truncated: boolean; files: number; bytes: number; newestUnix: number;
+  /** The folder group this belongs to (blackbox, iis, sql, redis, other). */
+  folder: string; allowed: boolean;
+}
+export interface Discovery { machine: string; found: boolean; from: string; host: string; version: string; generated: string; sources: Source[] | null; note: string }
+
 export interface PlanFile { name: string; size: number; mtime: string }
 export interface SkippedFile { name: string; reason: string }
 export interface PlanView { kind: string; dir: string; files: PlanFile[]; skipped: SkippedFile[]; bytes: number; problem?: string }
@@ -342,15 +351,14 @@ export interface FolderKindInfo { kind: string; pullKind: string; label: string;
 /** The folder groups the server may allow, with the pull kind each is read as. */
 export const FOLDER_KINDS: FolderKindInfo[] = [
   { kind: 'blackbox', pullKind: 'blackbox', label: 'Blackbox recordings', hint: 'The folder the Blackbox recorder writes to.', suggestions: ['D:\\UnravisBlackbox', 'C:\\UnravisBlackbox'] },
-  { kind: 'iis', pullKind: 'iis', label: 'IIS logs', hint: 'The folder that holds the web site log files.', suggestions: ['C:\\inetpub\\logs\\LogFiles\\W3SVC1'] },
+  { kind: 'iis', pullKind: 'iis', label: 'IIS logs', hint: 'The folder that holds the web site log files.', suggestions: [] },
   { kind: 'sql', pullKind: 'sqlserver', label: 'SQL Server logs', hint: 'The folder that holds the SQL Server error logs.', suggestions: [] },
   { kind: 'redis', pullKind: 'redis', label: 'Redis logs', hint: 'The folder that holds the Redis log files.', suggestions: ['/var/log/redis'] },
   { kind: 'other', pullKind: 'applog', label: 'Other logs', hint: 'Any other log folder you want to read.', suggestions: [] }
 ];
 
 export const QUICK_FOLDERS: { kind: string; path: string }[] = [
-  { kind: 'blackbox', path: 'D:\\UnravisBlackbox' },
-  { kind: 'iis', path: 'C:\\inetpub\\logs\\LogFiles\\W3SVC1' }
+  { kind: 'blackbox', path: 'D:\\UnravisBlackbox' }
 ];
 
 export const folderKindInfo = (kind: string): FolderKindInfo | undefined => FOLDER_KINDS.find((k) => k.kind === kind || k.pullKind === kind);
@@ -418,10 +426,37 @@ export function readableTargets(machine: string, result: Pick<TestResult, 'folde
   const out: PullTarget[] = [];
   for (const f of result.folders) {
     const info = folderKindInfo(f.kind);
-    if (!f.ok || !info) continue;
+    if (!f.ok || f.files <= 0 || !info) continue;
     out.push({ machine, kind: info.kind, pullKind: info.pullKind, label: info.label, dir: f.path, key: machine + '|' + info.kind + '|' + f.path });
   }
   return out;
+}
+
+/* ------------------------------------------------------------- discovery */
+
+export interface Suggestion { kind: string; path: string; label: string; files: number; bytes: number; pattern: string }
+
+const sameDir = (a: string, b: string): boolean => (WIN_ABS.test(a) ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+/**
+ * The folders a machine's Blackbox says hold files that are not on the allowed list yet. A source that is missing, unreadable, empty or
+ * has an unusable path is left out, so every suggestion is a folder worth adding. Allowed-ness is worked out here from the saved folders.
+ */
+export function suggestionsFrom(discovery: Pick<Discovery, 'sources'> | null | undefined, folders: FolderMap | undefined): Suggestion[] {
+  const out: Suggestion[] = [];
+  for (const s of discovery?.sources ?? []) {
+    const kind = FOLDER_KINDS.some((k) => k.kind === s.folder) ? s.folder : 'other';
+    if (!s.exists || !s.readable || s.files <= 0 || folderProblem(s.dir)) continue;
+    if ((folders?.[kind] ?? []).some((d) => sameDir(d, s.dir))) continue;
+    if (out.some((o) => o.kind === kind && sameDir(o.path, s.dir))) continue;
+    out.push({ kind, path: s.dir, label: s.label || folderKindInfo(kind)?.label || 'Folder', files: s.files, bytes: s.bytes, pattern: safePattern(s.pattern) });
+  }
+  return out;
+}
+
+/** Where a folder's file pattern was named, for the pulls that need it: the saved allowed folder and the pattern the recorder gave. */
+export function patternsFrom(discovery: Pick<Discovery, 'sources'> | null | undefined): { dir: string; pattern: string }[] {
+  return (discovery?.sources ?? []).filter((s) => s.dir && safePattern(s.pattern)).map((s) => ({ dir: s.dir, pattern: s.pattern }));
 }
 
 /* ------------------------------------------------------------- the forms */
@@ -499,10 +534,14 @@ export function buildPatchBody(parts: { minionIds?: readonly string[]; saltSudo?
 
 export interface PullBody { machine: string; kind: string; dir: string; pattern: string; sinceHours: number; resume?: string }
 
-/** The body of a plan or a pull. `sinceHours` is a whole number of hours; zero means no limit. */
-export function buildPullBody(target: Pick<PullTarget, 'machine' | 'pullKind' | 'dir'>, sinceHours: number, resume?: string): PullBody {
+const SAFE_PATTERN = /^[A-Za-z0-9_.*?|-]{1,200}$/;
+/** A file pattern the recorder named, or an empty string when it holds anything but name characters, `*`, `?` and `|`. */
+export const safePattern = (pattern: string | undefined): string => (pattern && SAFE_PATTERN.test(pattern) ? pattern : '');
+
+/** The body of a plan or a pull. `sinceHours` is a whole number of hours; zero means no limit. An empty pattern means the backend's default. */
+export function buildPullBody(target: Pick<PullTarget, 'machine' | 'pullKind' | 'dir'>, sinceHours: number, resume?: string, pattern?: string): PullBody {
   const hours = Number.isFinite(sinceHours) ? Math.min(MAX_SINCE_HOURS, Math.max(0, Math.floor(sinceHours))) : 0;
-  const body: PullBody = { machine: target.machine, kind: target.pullKind, dir: target.dir, pattern: '', sinceHours: hours };
+  const body: PullBody = { machine: target.machine, kind: target.pullKind, dir: target.dir, pattern: safePattern(pattern), sinceHours: hours };
   if (resume) body.resume = resume;
   return body;
 }
@@ -524,9 +563,17 @@ export function secretKeysIn(value: unknown, found: string[] = []): string[] {
 
 /* ---------------------------------------------------------------- checks */
 
-export interface CheckLine { id: string; ok: boolean; text: string; note?: string }
+/** `ok` passed, `warn` worked but found nothing to read (it needs a next step), `bad` failed. */
+export type CheckLevel = 'ok' | 'warn' | 'bad';
+export interface CheckLine { id: string; level: CheckLevel; text: string; note?: string }
 
-/** The lines the Reach step shows, built only from what the test answered. */
+/** The sentence under a folder that answered with no files, with the one thing to do next. */
+export function emptyFolderNote(kind: string): string {
+  if (kind === 'iis') return "No files here. IIS keeps each website's logs in its own folder, such as W3SVC1 or W3SVC2. Choose Find folders to list them.";
+  if (kind === 'blackbox') return 'No files here. Check the path, or choose Find folders to ask the recorder where it writes.';
+  return 'No files here. Check the path, or remove this folder.';
+}
+
 /** The system name, unless the machine's own description already says it. */
 function osWord(os: string, description: string): string {
   const word = os === 'windows' ? 'Windows' : os === 'linux' ? 'Linux' : '';
@@ -535,25 +582,34 @@ function osWord(os: string, description: string): string {
 
 export function testChecks(result: TestResult, folderCount: number): CheckLine[] {
   const lines: CheckLine[] = [
-    { id: 'master', ok: true, text: 'The Salt master answered.' },
-    { id: 'machine', ok: true, text: 'The machine answered.', note: [result.host.description, osWord(result.host.os, result.host.description), clockOffsetText(result.host.clockOffset)].filter(Boolean).join('. ') }
+    { id: 'master', level: 'ok', text: 'The Salt master answered.' },
+    { id: 'machine', level: 'ok', text: 'The machine answered.', note: [result.host.description, osWord(result.host.os, result.host.description), clockOffsetText(result.host.clockOffset)].filter(Boolean).join('. ') }
   ];
-  if (folderCount === 0) lines.push({ id: 'no-folders', ok: false, text: 'No folder is allowed yet.', note: 'Add the folders Unravis may read, then check again.' });
-  for (const f of result.folders) {
-    const info = folderKindInfo(f.kind);
-    lines.push({ id: 'folder:' + f.kind + ':' + f.path, ok: f.ok, text: (info?.label ?? 'Folder') + ': ' + f.path, note: f.ok ? countText(f.files, 'file') + ' found.' : (f.error || 'This folder could not be read.') });
-  }
-  if (result.blackbox) lines.push({ id: 'blackbox', ok: result.blackbox.ok, text: 'The Blackbox recorder', note: result.blackbox.ok ? (result.blackbox.status?.state ? 'It says: ' + result.blackbox.status.state + '.' : 'It answered.') : (result.blackbox.error || 'It did not answer.') });
+  if (folderCount === 0) lines.push({ id: 'no-folders', level: 'bad', text: 'No folder is allowed yet.', note: 'Add the folders Unravis may read, then check again.' });
+  for (const f of result.folders) lines.push(folderLine(f));
+  if (result.blackbox) lines.push({ id: 'blackbox', level: result.blackbox.ok ? 'ok' : 'bad', text: 'The Blackbox recorder', note: result.blackbox.ok ? (result.blackbox.status?.state ? 'It says: ' + result.blackbox.status.state + '.' : 'It answered.') : (result.blackbox.error || 'It did not answer.') });
   return lines;
 }
 
-export type Verdict = 'ready' | 'partial' | 'none';
-/** Ready when every folder could be read, partial when some could, none when no folder could. */
+/** One folder's line. A folder that answered with no files is a warning, never a pass. */
+export function folderLine(f: FolderCheck): CheckLine {
+  const info = folderKindInfo(f.kind);
+  const level: CheckLevel = !f.ok ? 'bad' : f.files > 0 ? 'ok' : 'warn';
+  const note = !f.ok ? (f.error || 'This folder could not be read.') : f.files > 0 ? countText(f.files, 'file') + ' found.' : emptyFolderNote(f.kind);
+  return { id: 'folder:' + f.kind + ':' + f.path, level, text: (info?.label ?? 'Folder') + ': ' + f.path, note };
+}
+
+export type Verdict = 'ready' | 'partial' | 'empty' | 'none';
+/**
+ * Ready when every folder has files to read, partial when some do, empty when every folder answered but none has files (nothing can be
+ * pulled until a folder is fixed), none when no folder could be read.
+ */
 export function testVerdict(result: TestResult | null): Verdict {
-  if (!result) return 'none';
-  const ok = result.folders.filter((f) => f.ok).length;
-  if (result.folders.length === 0 || ok === 0) return 'none';
-  return ok === result.folders.length ? 'ready' : 'partial';
+  const folders = result?.folders ?? [];
+  const good = folders.filter((f) => f.ok && f.files > 0).length;
+  if (folders.length > 0 && good === folders.length) return 'ready';
+  if (good > 0) return 'partial';
+  return folders.some((f) => f.ok) ? 'empty' : 'none';
 }
 
 /* ------------------------------------------------------------ plans, jobs */

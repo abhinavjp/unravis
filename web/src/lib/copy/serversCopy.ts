@@ -129,6 +129,23 @@ export const SV_TEXT = {
   pickLimit: 'You can choose up to 20 machines.',
   pickGo: 'Reach these machines',
   pickNone: 'Choose at least one machine.',
+  pickSearch: 'Find a machine',
+  pickSearchHint: 'Type part of a name',
+  pickFilters: 'Show',
+  pickFilterAll: 'All',
+  pickFilterOnline: 'Online',
+  pickFilterBefore: 'Used before',
+  pickFilterBlackbox: 'Has Blackbox',
+  pickAll: 'Choose all shown',
+  pickClear: 'Clear shown',
+  pickShown: (shown: number, total: number, chosen: number) => shown + ' of ' + total + ' shown. ' + chosen + ' chosen.',
+  pickLeftOut: (n: number) => n === 1 ? '1 machine was left out. The most is 20.' : n + ' machines were left out. The most is 20.',
+  pickNoMatch: 'No machine matches. Change the words or the filter.',
+  pickNever: 'Not used yet',
+  pickBlackbox: 'Has Blackbox',
+  pickColMachine: 'Machine',
+  pickColHistory: 'History',
+  pickColNow: 'Right now',
   pickCommands: 'Commands to check the list yourself',
   pickAdmin: 'Message for your server admin',
 
@@ -152,8 +169,25 @@ export const SV_TEXT = {
   foldersWhyShort: 'Unravis only reads the folders on this list. Nothing is copied until you pick files.',
   foldersAddSuggested: 'Add the usual folders',
   reachOkLine: 'Ready to read.',
-  reachPartLine: 'Some folders could not be read.',
+  reachPartLine: 'Some folders need attention.',
+  reachEmptyLine: 'The folders are empty. Find the right folders first.',
   reachNoneLine: 'No folder could be read.',
+  reachFolderOk: 'Ready',
+  reachFolderWarn: 'Needs attention',
+  reachFolderBad: 'Could not read',
+  reachFolderUnchecked: 'Not checked',
+  reachWarnMark: 'Needs attention. ',
+  reachFind: 'Find folders',
+  reachFinding: 'Asking the recorder where everything is.',
+  reachFoundHeading: 'Folders the recorder found',
+  reachFoundNone: 'The recorder did not list any folder that holds files.',
+  reachFoundNotPublished: "This machine's Blackbox did not publish a list of its folders. Use the usual folders or add them yourself.",
+  reachFoundFailed: 'Could not ask the recorder.',
+  reachAddOne: 'Add this folder',
+  reachAddAll: (n: number) => n === 1 ? 'Add 1 folder' : 'Add all ' + n + ' folders',
+  reachAddFolder: 'Add a folder',
+  reachFolderFiles: (n: number) => n === 1 ? '1 file' : n + ' files',
+  reachFolderList: 'Folders Unravis may read',
   reachNoAnswer: 'No answer',
   reachCommands: 'Commands to check access yourself',
   reachAdmin: 'Message for your server admin',
@@ -286,6 +320,8 @@ export function serversCopyEntries(): LintEntry[] {
       else if (key === 'folderSummary' || key === 'chosen' || key === 'connectMachines') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
       else if (key === 'helpLabel') add(key, fn('Address'));
       else if (key === 'pickCount') add(key, fn(5, 3, 1, 2));
+      else if (key === 'pickShown') add(key, fn(4, 27, 2));
+      else if (key === 'pickLeftOut' || key === 'reachAddAll' || key === 'reachFolderFiles') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
       else if (key === 'hasFiles') { add(key + '.1', fn(1, '2 MB')); add(key + '.2', fn(12, '48 MB')); }
       else if (key === 'hasSkipped' || key === 'landVerified' || key === 'landNotChecked' || key === 'landChanged' || key === 'landHidden' || key === 'landDropped') { add(key + '.1', fn(1)); add(key + '.2', fn(4)); }
       else if (key === 'hasTotals') { add(key + '.1', fn(1, 1, '2 MB')); add(key + '.2', fn(3, 40, '2.1 GB')); }

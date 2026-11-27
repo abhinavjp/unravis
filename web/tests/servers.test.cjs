@@ -191,7 +191,7 @@ test('adding and removing a folder gives a new map and leaves the old one alone'
 
 test('bulk folder additions are valid, idempotent and do not mutate the input', () => {
   const before = { other: ['/existing'] };
-  const expected = { other: ['/existing'], blackbox: ['D:\\UnravisBlackbox'], iis: ['C:\\inetpub\\logs\\LogFiles\\W3SVC1'] };
+  const expected = { other: ['/existing'], blackbox: ['D:\\UnravisBlackbox'] };
   const added = sv.withFolders(before, [...sv.QUICK_FOLDERS, { kind: 'iis', path: 'relative' }]);
   assert.deepEqual(added, expected);
   assert.deepEqual(before, { other: ['/existing'] });
@@ -202,7 +202,7 @@ test('bulk folder additions are valid, idempotent and do not mutate the input', 
 test('missing quick folders reflects the folders already listed', () => {
   assert.deepEqual(sv.missingQuickFolders({}), sv.QUICK_FOLDERS);
   assert.deepEqual(sv.missingQuickFolders(sv.withFolders({}, sv.QUICK_FOLDERS)), []);
-  assert.deepEqual(sv.missingQuickFolders({ blackbox: ['D:\\UnravisBlackbox'] }), [sv.QUICK_FOLDERS[1]]);
+  assert.deepEqual(sv.missingQuickFolders({ blackbox: ['D:\\UnravisBlackbox'] }), []);
 });
 
 test('only a folder that could be read becomes something to copy, with the pull kind the backend uses', () => {
@@ -224,7 +224,8 @@ test('the checks of a machine list only what the server answered', () => {
   const result = { host: { os: 'linux', description: 'Ubuntu', clockOffset: 0 }, folders: [{ kind: 'blackbox', path: '/opt/bb', ok: true, files: 2 }, { kind: 'iis', path: '/nope', ok: false, files: 0, error: 'No such folder.' }] };
   const lines = sv.testChecks(result, 2);
   assert.deepEqual(lines.map((l) => l.id), ['master', 'machine', 'folder:blackbox:/opt/bb', 'folder:iis:/nope']);
-  assert.equal(lines[2].ok, true);
+  assert.equal(lines[2].level, 'ok');
+  assert.equal(lines[3].level, 'bad');
   assert.equal(lines[3].note, 'No such folder.');
   assert.equal(sv.testVerdict(result), 'partial');
   assert.equal(sv.testVerdict({ ...result, folders: [result.folders[0]] }), 'ready');
@@ -624,4 +625,108 @@ test('the panel never writes the case windows or keeps a secret in its state', (
   assert.match(connect, /if \(await flow\.connect\([^\n]+\)\) clearSecrets\(\)/);
   assert.match(connect, /if \([^\n]*await flow\.saveSecret\([^\n]+\)\) clearSecrets\(\)/);
   assert.equal(/finally \{[^}]*clearSecrets\(\)/.test(connect), false);
+});
+
+/* ------------------------------------------------- what a folder answer means */
+
+test('a folder that answered with no files is a warning and the verdict is empty', () => {
+  const empty = { host: { os: 'windows', description: 'Windows Server', clockOffset: 0 }, folders: [{ kind: 'iis', path: 'C:\\inetpub\\logs\\LogFiles\\W3SVC1', ok: true, files: 0 }] };
+  const line = sv.folderLine(empty.folders[0]);
+  assert.equal(line.level, 'warn');
+  assert.match(line.note, /Find folders/);
+  assert.equal(sv.testVerdict(empty), 'empty');
+  assert.match(sv.emptyFolderNote('blackbox'), /recorder/);
+  assert.match(sv.emptyFolderNote('other'), /remove/i);
+});
+
+test('suggestions skip sources that are missing, unreadable, empty, unusable or already allowed', () => {
+  const src = (over) => ({ id: 'x', kind: 'iis', label: 'IIS site', dir: 'D:\\Logs\\W3SVC2', pattern: '*.log', origin: 'default', exists: true, readable: true, files: 4, bytes: 10, newestUnix: 0, folder: 'iis', allowed: false, ...over });
+  const discovery = { sources: [src({}), src({ dir: 'D:\\Logs\\W3SVC3', exists: false }), src({ dir: 'D:\\Logs\\W3SVC4', readable: false }), src({ dir: 'D:\\Logs\\W3SVC5', files: 0 }), src({ dir: 'relative' }), src({ dir: 'd:\\logs\\w3svc2' }), src({ dir: 'D:\\Logs\\W3SVC6', folder: 'mystery', label: '' })] };
+  const out = sv.suggestionsFrom(discovery, {});
+  assert.deepEqual(out.map((s) => [s.kind, s.path]), [['iis', 'D:\\Logs\\W3SVC2'], ['other', 'D:\\Logs\\W3SVC6']]);
+  assert.deepEqual(sv.suggestionsFrom(discovery, { iis: ['d:\\logs\\W3SVC2'] }).map((s) => s.path), ['D:\\Logs\\W3SVC6']);
+  assert.deepEqual(sv.suggestionsFrom(null, {}), []);
+  assert.deepEqual(sv.patternsFrom({ sources: [src({}), src({ pattern: '' })] }), [{ dir: 'D:\\Logs\\W3SVC2', pattern: '*.log' }]);
+});
+
+test('a pattern goes into the pull body only when it is safe', () => {
+  const target = { machine: 'm', pullKind: 'iis', dir: 'D:\\Logs' };
+  assert.equal(sv.buildPullBody(target, 5, undefined, '*.log').pattern, '*.log');
+  assert.equal(sv.buildPullBody(target, 5, undefined, '..\\*').pattern, sv.safePattern('..\\*'));
+  assert.equal(sv.buildPullBody(target, 5).pattern, sv.safePattern(undefined));
+});
+
+/* ------------------------------------------------------- remembered machines */
+
+const mem = loadTypeScript('src/lib/serversMemory.ts');
+const pick = loadTypeScript('src/lib/serversPick.ts');
+
+test('machine memory records checks, pulls and patterns without mutating, and survives bad storage', () => {
+  const t1 = new Date('2026-11-27T10:00:00Z');
+  const a = mem.recordCheck({}, 's', 'm1', t1, true);
+  assert.equal(mem.machineMemory(a, 's', 'm1').connected, t1.toISOString());
+  assert.equal(mem.machineMemory(a, 's', 'm1').blackbox, true);
+  const b = mem.recordCheck(a, 's', 'm1', t1, undefined);
+  assert.equal(mem.machineMemory(b, 's', 'm1').blackbox, true);
+  const c = mem.recordPull(b, 's', 'm1', t1);
+  assert.equal(mem.machineMemory(c, 's', 'm1').pulled, t1.toISOString());
+  assert.equal(mem.machineMemory(a, 's', 'm1').pulled, undefined);
+  const d = mem.recordPatterns(c, 's', 'm1', [{ dir: 'D:\\x', pattern: '*.log' }, { dir: 'D:\\y', pattern: '' }]);
+  assert.equal(mem.patternFor(d, 's', 'm1', 'D:\\x'), '*.log');
+  assert.equal(mem.patternFor(d, 's', 'm1', 'D:\\y'), '');
+  assert.equal(mem.recordPatterns(d, 's', 'm1', []), d);
+  assert.deepEqual(mem.forgetServer(d, 's'), {});
+  const store = new Map();
+  const fake = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  mem.saveMemory(fake, d);
+  assert.deepEqual(mem.loadMemory(fake), d);
+  mem.saveMemory({ getItem: () => null, setItem: () => { throw new Error('full'); } }, d);
+  mem.saveMemory(null, d);
+  assert.deepEqual(mem.loadMemory(null), {});
+  store.set(mem.MEMORY_KEY, '{not json');
+  assert.deepEqual(mem.loadMemory(fake), {});
+  assert.deepEqual(mem.cleanMemory({ s: { m: { connected: 'nope', pulled: 5, blackbox: 'yes', patterns: { a: 1, b: '*.x' } }, bad: 3 }, t: 4 }), { s: { m: { patterns: { b: '*.x' } } } });
+  assert.deepEqual(mem.cleanMemory([]), {});
+});
+
+const machine = (id, over = {}) => ({ id, state: 'accepted', online: true, ...over });
+
+test('the machine list searches, filters, orders and selects in bulk', () => {
+  const machines = [machine('web-1'), machine('web-2', { online: false }), machine('db-1'), machine('sql-9', { state: 'pending' })];
+  const T = (h) => new Date(Date.UTC(2026, 10, 27, h)).toISOString();
+  const memory = { s: { 'db-1': { connected: T(8), blackbox: true }, 'web-1': { connected: T(9) } } };
+  assert.equal(pick.matchesQuery('BG-SRV-UK-01', 'srv uk'), true);
+  assert.equal(pick.matchesQuery('web-1', 'db'), false);
+  assert.equal(pick.matchesQuery('web-1', '  '), true);
+  assert.deepEqual(pick.pickRows(machines, memory, 's', '', 'all').map((r) => r.machine.id), ['web-1', 'db-1', 'web-2', 'sql-9']);
+  assert.deepEqual(pick.pickRows(machines, memory, 's', 'web', 'all').map((r) => r.machine.id), ['web-1', 'web-2']);
+  assert.deepEqual(pick.pickRows(machines, memory, 's', '', 'before').map((r) => r.machine.id), ['web-1', 'db-1']);
+  assert.deepEqual(pick.pickRows(machines, memory, 's', '', 'blackbox').map((r) => r.machine.id), ['db-1']);
+  assert.deepEqual(pick.pickRows(machines, memory, 's', '', 'online').map((r) => r.machine.id), ['web-1', 'db-1', 'sql-9']);
+  assert.deepEqual(pick.filterCounts(machines, memory, 's'), { all: 4, online: 3, before: 2, blackbox: 1 });
+  const rows = pick.pickRows(machines, memory, 's', '', 'all');
+  assert.deepEqual(rows.map((r) => r.eligible), [true, true, false, false]);
+  const sel = pick.selectShown(['db-1'], rows);
+  assert.deepEqual(sel.picks, ['db-1', 'web-1']);
+  assert.equal(sel.leftOut, 0);
+  assert.deepEqual(pick.clearShown(['db-1', 'web-1', 'zzz'], rows.slice(0, 2)), ['zzz']);
+  const many = Array.from({ length: 30 }, (_, i) => machine('m' + i));
+  const big = pick.selectShown([], pick.pickRows(many, {}, 's', '', 'all'));
+  assert.equal(big.picks.length, sv.MAX_MACHINES);
+  assert.equal(big.leftOut, 30 - sv.MAX_MACHINES);
+});
+
+test('how long ago reads in plain words', () => {
+  const now = Date.UTC(2026, 10, 27, 12);
+  const ago = (ms) => new Date(now - ms).toISOString();
+  assert.equal(pick.relativeAgo(undefined, now), '');
+  assert.equal(pick.relativeAgo('junk', now), '');
+  assert.equal(pick.relativeAgo(ago(10_000), now), 'just now');
+  assert.equal(pick.relativeAgo(ago(60_000), now), '1 minute ago');
+  assert.equal(pick.relativeAgo(ago(5 * 60_000), now), '5 minutes ago');
+  assert.equal(pick.relativeAgo(ago(3 * HOUR), now), '3 hours ago');
+  assert.equal(pick.relativeAgo(ago(3 * DAY), now), '3 days ago');
+  assert.equal(pick.relativeAgo(ago(90 * DAY), now), new Date(now - 90 * DAY).toISOString().slice(0, 10));
+  assert.equal(pick.historyText({}, now), '');
+  assert.equal(pick.historyText({ connected: ago(5 * 60_000), pulled: ago(2 * HOUR) }, now), 'Connected 5 minutes ago, last pulled 2 hours ago');
 });
