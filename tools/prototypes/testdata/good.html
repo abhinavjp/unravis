@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Good fixture</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 24px; color: #111; background: #fff; }
+  button { font: inherit; padding: 6px 12px; margin-right: 8px; }
+</style>
+</head>
+<body>
+  <h1>Run summary</h1>
+  <p>This run finished in four minutes. Two steps were slow. Open the details to see which ones.</p>
+  <p>Nothing here needs your input right now. You can come back later and the numbers will still be here for you.</p>
+  <p>
+    <button id="toggle" aria-expanded="false" onclick="var d=document.getElementById('d');d.hidden=!d.hidden;this.setAttribute('aria-expanded',String(!d.hidden))">Show details</button>
+    <button data-proto-inert>Coming soon</button>
+  </p>
+  <div id="d" hidden>Step three took the longest. It waited on a slow response.</div>
+</body>
+</html>
