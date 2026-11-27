@@ -137,7 +137,7 @@
       existing = tags.map((t) => ({ kind: t.kind, label: t.label }));
       caseEnvs = [...new Set([...envs, ...tags.map((t) => t.env ?? '')].map((e) => e.trim()).filter((e) => e !== ''))];
       applyEnvs();
-    } catch { /* the list stays as it was */ }
+    } catch { /* silent on purpose: this read only fills the "already in the case" check and the saved environments; nothing is blocked, and the next focus or press reads again */ }
   }
   const applyEnvs = () => { if (owned && !askDiscard) wizard.envText = caseEnvs.join(NL); };
 
