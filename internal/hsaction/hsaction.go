@@ -22,6 +22,7 @@ import (
 
 	"api-audit-explorer/internal/activitylog"
 	"api-audit-explorer/internal/localci"
+	"api-audit-explorer/internal/releasehold"
 )
 
 // Status is how an action ended.
@@ -70,10 +71,15 @@ type Impact struct {
 	Stranded  []string `json:"stranded"`  // queued runs no machine could take after the edit
 	NoMachine int      `json:"noMachine"` // how many of the queued runs that is
 	Line      string   `json:"line"`      // the same in plain words
+	// StrandedCount is len(Stranded). Base is the stamp of the policy the edit was measured against. A confirm from
+	// the page sends Base and Stranded back, and is refused (409) when either changed since.
+	StrandedCount int    `json:"strandedCount"`
+	Base          string `json:"base,omitempty"`
 }
 
-func impactOf(p localci.PolicyImpact) *Impact {
-	return &Impact{Queued: p.Queued, Stranded: append([]string{}, p.Stranded...), NoMachine: p.NoMachine, Line: p.Line()}
+func impactOf(p localci.PolicyImpact, base string) *Impact {
+	return &Impact{Queued: p.Queued, Stranded: append([]string{}, p.Stranded...), NoMachine: p.NoMachine, Line: p.Line(),
+		StrandedCount: len(p.Stranded), Base: base}
 }
 
 // Result is the answer of an action. The JSON fields are what the page gets; the others are for the CLI.
@@ -107,6 +113,9 @@ type Env struct {
 	ShowPaths bool
 	// AgentStale is how long after its last heartbeat a machine counts as gone (0: 3 heartbeats).
 	AgentStale time.Duration
+	// ConfirmNeedsBase makes a confirmed policy edit carry the base and stranded ids of its dry run (the page). The
+	// CLI's --force measures and applies in one step, so it does not need them.
+	ConfirmNeedsBase bool
 }
 
 func (e Env) now() time.Time {
@@ -306,8 +315,10 @@ func isIOError(err error) bool {
 	return errors.As(err, &pe) || errors.As(err, &le) || errors.As(err, &se)
 }
 
+// ioOr is Broken for an error of the file system or of a store file that is corrupt (policy.json or holds.json that
+// is not JSON, has the wrong types or a newer version), and otherwise the given status.
 func ioOr(err error, otherwise Status) Status {
-	if isIOError(err) {
+	if isIOError(err) || errors.Is(err, localci.ErrPolicyBroken) || errors.Is(err, releasehold.ErrStoreBroken) {
 		return Broken
 	}
 	return otherwise

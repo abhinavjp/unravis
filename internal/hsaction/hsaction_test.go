@@ -193,3 +193,136 @@ func TestCancelDefaultReasonNamesTheActorAndLongReasonIsRefused(t *testing.T) {
 		t.Fatalf("long reason: %+v", res)
 	}
 }
+
+func TestConfirmIsTiedToItsDryRun(t *testing.T) {
+	dir, ids := store(t, "m1", "m2")
+	env := Env{Dir: dir, Actor: "ui", Person: "pat", ConfirmNeedsBase: true}
+	only9 := func(cb ConfirmBase, confirm, dry bool) Result {
+		return Run(env, "policy.set", &PolicySetArgs{Project: "o/r", Mode: "only", Machines: []string{"m9"}, Confirm: confirm, DryRun: dry, ConfirmBase: cb})
+	}
+	dry := only9(ConfirmBase{}, false, true)
+	if dry.Impact == nil || dry.Impact.Base == "" || dry.Impact.StrandedCount != 2 || len(dry.Impact.Stranded) != 2 {
+		t.Fatalf("dry run: %+v", dry.Impact)
+	}
+	// The page must send the base back.
+	if res := only9(ConfirmBase{}, true, false); res.Status != Invalid || res.Field != "base" {
+		t.Fatalf("confirm without base: %+v", res)
+	}
+	// Another run is queued after the dry run: the impact the person saw is stale.
+	q, err := localci.OpenQueue(localci.QueueDir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := q.Enqueue(localci.Request{Kind: localci.KindPR, Repo: "o/r", Ref: "f", Base: "develop", Number: 9,
+		SHA: strings.Repeat("e", 40), Workflow: "fast-gate.yml"}); err != nil {
+		t.Fatal(err)
+	}
+	seen := ConfirmBase{Base: dry.Impact.Base, Stranded: dry.Impact.Stranded}
+	res := only9(seen, true, false)
+	if res.Status != Refused || res.Status.HTTPStatus() != 409 || res.Changed || res.Impact == nil || res.Impact.StrandedCount != 3 {
+		t.Fatalf("stale impact: %+v", res)
+	}
+	if p, err := localci.LoadPolicy(dir); err != nil || p.Projects["o/r"].Mode == localci.PolicyOnly {
+		t.Fatal("a stale confirm was written")
+	}
+	// The policy itself changed after a fresh dry run (someone else edited it): refused too.
+	dry = only9(ConfirmBase{}, false, true)
+	if r := Run(env, "policy.set", &PolicySetArgs{Project: "o/other", Mode: "only", Machines: []string{"m1"}}); !r.OK || !r.Changed {
+		t.Fatalf("other edit: %+v", r)
+	}
+	if res := only9(ConfirmBase{Base: dry.Impact.Base, Stranded: dry.Impact.Stranded}, true, false); res.Status != Refused || res.Changed {
+		t.Fatalf("stale base: %+v", res)
+	}
+	// A confirm with what the latest dry run showed applies.
+	dry = only9(ConfirmBase{}, false, true)
+	if res := only9(ConfirmBase{Base: dry.Impact.Base, Stranded: dry.Impact.Stranded}, true, false); !res.OK || !res.Changed {
+		t.Fatalf("fresh confirm: %+v", res)
+	}
+	_ = ids
+	// The CLI's --force needs no base.
+	cli := Env{Dir: dir, Actor: "cli"}
+	if res := Run(cli, "policy.set", &PolicySetArgs{Project: "o/r", Mode: "only", Machines: []string{"m8"}, Confirm: true}); !res.OK {
+		t.Fatalf("cli force: %+v", res)
+	}
+}
+
+func TestCancelReasonIsOneLine(t *testing.T) {
+	dir, ids := store(t, "m1")
+	for _, bad := range []string{"ok\nforged line", "tab\there", "cr\rhere", "nul\x00"} {
+		res := Run(Env{Dir: dir, Actor: "ui"}, "queue.cancel", CancelArgs{Target: Target{ID: ids[0]}, Reason: bad})
+		if res.Status != Invalid || res.Field != "reason" || res.Changed {
+			t.Fatalf("%q: %+v", bad, res)
+		}
+	}
+	for _, e := range entries(t, dir) {
+		if strings.ContainsAny(e.Reason, "\n\r\t\x00") {
+			t.Fatalf("a control character reached the log: %q", e.Reason)
+		}
+	}
+	if res := Run(Env{Dir: dir, Actor: "ui"}, "queue.cancel", CancelArgs{Target: Target{ID: ids[0]}, Reason: "  plain  "}); !res.OK {
+		t.Fatalf("plain reason: %+v", res)
+	}
+}
+
+func TestCorruptStoreFilesAreBroken(t *testing.T) {
+	for name, body := range map[string]string{"syntax": "{", "types": `{"v":"x","projects":[]}`, "version": `{"v":99,"projects":{}}`} {
+		dir, _ := store(t, "m1")
+		if err := os.WriteFile(localci.PolicyPath(dir), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res := Run(Env{Dir: dir, Actor: "ui"}, "policy.set", &PolicySetArgs{Project: "o/r", Mode: "any"})
+		if res.Status != Broken || res.Status.HTTPStatus() != 500 || res.Status.Outcome() != "error" {
+			t.Errorf("policy %s: %v %+v", name, res.Status, res)
+		}
+		if res := Run(Env{Dir: dir, Actor: "ui"}, "machines.deny", &MachineRuleArgs{Name: "m1", Project: "o/r"}); res.Status != Broken {
+			t.Errorf("deny with policy %s: %v", name, res.Status)
+		}
+	}
+	for name, body := range map[string]string{"syntax": "[", "types": `{"version":"1","holds":{}}`, "version": `{"version":99,"holds":[]}`,
+		"no id": `{"version":1,"holds":[{"project":"unravis"}]}`} {
+		dir, _ := store(t, "m1")
+		if err := os.WriteFile(filepath.Join(dir, "holds.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res := Run(Env{Dir: dir, Actor: "ui", Person: "pat"}, "hold.add", &HoldAddArgs{Project: "unravis", Until: "2h", Reason: "r"})
+		if res.Status != Broken {
+			t.Errorf("hold.add with holds %s: %v %+v", name, res.Status, res)
+		}
+		if res := Run(Env{Dir: dir, Actor: "ui", Person: "pat"}, "hold.lift", &HoldLiftArgs{ID: "h1", Reason: "r"}); res.Status != Broken {
+			t.Errorf("hold.lift with holds %s: %v %+v", name, res.Status, res)
+		}
+	}
+}
+
+func TestHoldDaysAreCapped(t *testing.T) {
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	if got, err := ParseWhen("3650d", now, true); err != nil || !got.Equal(now.AddDate(0, 0, 3650)) {
+		t.Fatalf("3650d: %v %v", got, err)
+	}
+	for _, s := range []string{"3651d", "106752d", "9223372036854775807d", "87601h", "2562047h"} {
+		if _, err := ParseWhen(s, now, true); err == nil {
+			t.Errorf("%s was accepted", s)
+		}
+	}
+	dir, _ := store(t, "m1")
+	env := Env{Dir: dir, Actor: "ui", Person: "pat", Now: func() time.Time { return now }}
+	if res := Run(env, "hold.add", &HoldAddArgs{Project: "unravis", Until: "9999-12-31", Reason: "r"}); res.Status != Invalid || res.Field != "until" {
+		t.Fatalf("far date: %+v", res)
+	}
+	if res := Run(env, "hold.add", &HoldAddArgs{Project: "unravis", Until: "3650d", Reason: "r"}); !res.OK {
+		t.Fatalf("3650d hold: %+v", res)
+	}
+}
+
+func TestOverLongRunIDIsRefusedLikeAnUnknownRun(t *testing.T) {
+	dir, _ := store(t, "m1")
+	res := Run(Env{Dir: dir, Actor: "cli"}, "queue.retry", RetryArgs{Run: strings.Repeat("r", maxRunID+1)})
+	if res.Status != Refused || res.Status.ExitCode() != 1 || res.Changed {
+		t.Fatalf("over-long id: %+v", res)
+	}
+	for _, e := range entries(t, dir) {
+		if len(e.Target) > maxRunID {
+			t.Fatalf("the whole id reached the log: %d characters", len(e.Target))
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package hsaction
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -112,6 +113,13 @@ type MachineRuleArgs struct {
 	Confirm bool `json:"confirm,omitempty"`
 	// DryRun only measures the edit.
 	DryRun bool `json:"dryRun,omitempty"`
+	ConfirmBase
+}
+
+// ConfirmBase is what a confirm saw in its dry run: Impact.Base and Impact.Stranded, sent back unchanged.
+type ConfirmBase struct {
+	Base     string   `json:"base,omitempty"`
+	Stranded []string `json:"stranded,omitempty"`
 }
 
 // PolicySetArgs is the arguments of policy.set.
@@ -121,9 +129,13 @@ type PolicySetArgs struct {
 	Machines []string `json:"machines,omitempty"` // for only and except
 	Confirm  bool     `json:"confirm,omitempty"`
 	DryRun   bool     `json:"dryRun,omitempty"`
+	ConfirmBase
 }
 
 const maxMachines = 64
+
+// maxStrandedEcho caps the run ids a confirm sends back (the body is at most 16 KiB anyway).
+const maxStrandedEcho = 500
 
 func policySet(env Env, a *PolicySetArgs) step {
 	if len(a.Machines) > maxMachines {
@@ -148,7 +160,7 @@ func policySet(env Env, a *PolicySetArgs) step {
 	if err != nil {
 		return step{res: Result{Status: Invalid, Field: "machines", Message: err.Error()}}
 	}
-	return policyEdit(env, a.Project, func(localci.ProjectPolicy) (localci.ProjectPolicy, error) { return pp, nil }, a.Confirm, a.DryRun, nil)
+	return policyEdit(env, a.Project, func(localci.ProjectPolicy) (localci.ProjectPolicy, error) { return pp, nil }, a.Confirm, a.DryRun, a.ConfirmBase, nil)
 }
 
 func machineRule(env Env, a *MachineRuleArgs, allow bool) step {
@@ -174,23 +186,37 @@ func machineRule(env Env, a *MachineRuleArgs, allow bool) step {
 		}
 		return pp.DenyMachine(name), nil
 	}
-	return policyEdit(env, a.Project, edit, a.Confirm, a.DryRun, notes)
+	return policyEdit(env, a.Project, edit, a.Confirm, a.DryRun, a.ConfirmBase, notes)
 }
 
 // policyEdit runs one edit through localci.ChangePolicy, which measures it first and refuses one that strands queued
 // runs unless confirm is set. A dry run is not logged; a refused or applied edit is.
-func policyEdit(env Env, project string, edit func(localci.ProjectPolicy) (localci.ProjectPolicy, error), confirm, dry bool, notes []string) step {
+func policyEdit(env Env, project string, edit func(localci.ProjectPolicy) (localci.ProjectPolicy, error), confirm, dry bool, cb ConfirmBase, notes []string) step {
 	if _, ok := localci.ProjectKey(project); !ok {
 		return step{res: Result{Status: Invalid, Field: "project", Message: fmt.Sprintf("%q is not a project (owner/name)", project)}}
 	}
-	ch, err := localci.ChangePolicy(env.Dir, project, edit, confirm, dry)
+	if len(cb.Stranded) > maxStrandedEcho {
+		return step{res: Result{Status: Invalid, Field: "stranded", Message: fmt.Sprintf("at most %d run ids", maxStrandedEcho)}}
+	}
+	var expect *localci.PolicyExpect
+	switch {
+	case confirm && !dry && cb.Base != "":
+		expect = &localci.PolicyExpect{Base: cb.Base, Stranded: cb.Stranded}
+	case confirm && !dry && env.ConfirmNeedsBase:
+		return step{res: Result{Status: Invalid, Field: "base", Message: "a confirm sends back the base and stranded runs of its dry run; run the dry run first"}, target: project}
+	}
+	ch, err := localci.ChangePolicyExpect(env.Dir, project, edit, confirm, dry, expect)
+	if errors.Is(err, localci.ErrPolicyMoved) {
+		st := step{res: Result{Status: Refused, Message: err.Error() + " (" + ch.Impact.Line() + ")", Impact: impactOf(ch.Impact, ch.Base)}, target: project}
+		return st
+	}
 	if err != nil {
 		st := fail(ioOr(err, Invalid), "%v", err)
 		st.target = project
 		return st
 	}
 	d := PolicyEdit{Change: ch, DryRun: dry, Notes: notes}
-	res := Result{Data: d, Impact: impactOf(ch.Impact), DryRun: dry, Changed: ch.Applied}
+	res := Result{Data: d, Impact: impactOf(ch.Impact, ch.Base), DryRun: dry, Changed: ch.Applied}
 	from, to := ch.Before.Describe(), ch.After.Describe()
 	switch {
 	case ch.Unchanged:

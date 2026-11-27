@@ -87,7 +87,10 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	link := fmt.Sprintf("http://127.0.0.1:%d/?t=%s", ln.Addr().(*net.TCPAddr).Port, token)
+	// The action key travels only in the fragment (#a=...): a browser never sends a fragment to a server, so another
+	// loopback listener that gets our session cookie still cannot take actions (see internal/releasedash/actions.go).
+	actionToken := releasedash.NewActionToken()
+	link := startLink(ln.Addr().(*net.TCPAddr).Port, token, actionToken)
 	fmt.Println("Unravis releases. Link:\n  " + link + "\nPress Ctrl+C to stop.")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -109,6 +112,7 @@ func run(args []string) error {
 	}
 	dash := releasedash.New(dir, state, keys)
 	dash.Projects = projects
+	dash.ActionToken = actionToken
 	if windowMode {
 		var mu sync.Mutex
 		var timer *time.Timer
@@ -137,6 +141,16 @@ func run(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// startLink is the link the program prints and opens: the session code in the query, which the server reads once and
+// swaps for a cookie, and the action key in the fragment, which only the page reads.
+func startLink(port int, token, actionToken string) string {
+	link := fmt.Sprintf("http://127.0.0.1:%d/?t=%s", port, token)
+	if actionToken != "" {
+		link += "#a=" + actionToken
+	}
+	return link
 }
 
 func openBrowser(u string) {

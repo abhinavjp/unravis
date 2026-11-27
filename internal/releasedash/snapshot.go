@@ -89,6 +89,12 @@ type Dash struct {
 	// actions (default time.Now). Tests set both.
 	Person string
 	Now    func() time.Time
+	// ActionToken is the secret of the write channel (see actions.go). The program puts it only in the fragment of the
+	// start link (#a=...), which no server ever receives; the page keeps it in sessionStorage. Empty turns actions off.
+	ActionToken string
+	// Logf gets one line for every action request refused before it reached an action, and for an activity entry
+	// that could not be written (default: the standard logger, which writes to stderr). No header value is in it.
+	Logf func(format string, args ...any)
 
 	mu       sync.Mutex
 	feeds    []Feed

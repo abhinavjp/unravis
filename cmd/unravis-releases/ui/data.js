@@ -5,6 +5,17 @@
 const D = { projects: [], pid: '', overview: null, runs: [], runsTotal: 0, machines: null, snapshot: null,
   run: {}, logs: {}, at: 0, err: '', loaded: false, projectsErr: '' };
 
+// The action key of the write channel arrives only in the start link's fragment (#a=...), which no server ever sees.
+// Keep it for this tab in sessionStorage and take it out of the address bar, so it is not in history or a copied link.
+const ActionKey = (() => {
+  const K = 'hs-action-key';
+  try {
+    const m = /^#a=([0-9a-f]{64})$/.exec(location.hash || '');
+    if (m) { sessionStorage.setItem(K, m[1]); history.replaceState(null, '', location.pathname + location.search); }
+  } catch (e) { /* no storage: actions answer that the page has no key */ }
+  return () => { try { return sessionStorage.getItem(K) || ''; } catch (e) { return ''; } };
+})();
+
 const Data = (() => {
   const SAVED = 'hs-project';
   let epoch = 0; let onChange = () => {}; let timers = []; let busy = false;
@@ -106,5 +117,16 @@ const Data = (() => {
     // Closing the page lets the program stop itself after a short wait (see --exit-when-closed).
     addEventListener('pagehide', () => { fetch('/api/bye', { credentials: 'same-origin', keepalive: true }).catch(() => {}); });
   }
-  return { api, start, tick, pick, loadRun, loadLog, logKey, get epoch() { return epoch; } };
+  // act runs one Homestretch action (POST /api/action/<id>) and returns its answer {ok, message, impact?, error?}.
+  async function act(id, project, args) {
+    const res = await fetch('/api/action/' + encodeURIComponent(id), {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'X-Homestretch-Token': ActionKey() },
+      body: JSON.stringify({ project, args: args || {} }),
+    });
+    let body = null;
+    try { body = await res.json(); } catch (e) { /* not JSON */ }
+    return Object.assign({ ok: false, message: `The server answered ${res.status}.` }, body || {}, { status: res.status });
+  }
+  return { api, act, start, tick, pick, loadRun, loadLog, logKey, get epoch() { return epoch; } };
 })();

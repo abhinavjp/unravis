@@ -30,11 +30,12 @@ func init() {
 // need the one-time code from the start link once per browser.
 func Handler(d *Dash, token string, ui fs.FS) http.Handler {
 	files := http.FileServer(http.FS(ui))
-	actionToken := newActionToken()
+	actionToken := d.ActionToken
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/session", func(w http.ResponseWriter, r *http.Request) {
-		// The token of the write channel. Only this page can read it: another origin's script cannot read our answers.
-		writeJSON(w, map[string]any{"actionToken": actionToken, "actions": actionList()})
+		// The action list only. The action token is never served: anything holding the session cookie (any loopback
+		// listener the browser sends it to) could read it here. The page has it from the start link's fragment.
+		writeJSON(w, map[string]any{"actions": actionList(), "actionsOn": actionToken != ""})
 	})
 	mux.HandleFunc("/api/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)

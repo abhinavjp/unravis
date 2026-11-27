@@ -17,6 +17,9 @@ func init() {
 	)
 }
 
+// MaxHoldDays is the furthest ahead a duration may reach (ten years).
+const MaxHoldDays = 3650
+
 // ParseWhen reads a time a person typed. A duration (90m, 2h, 3d) counts from now; a date and time without a zone is
 // local time; a bare date is the start of that day, or with endOfDay the end of it (so 2026-12-01 holds the whole of
 // the first).
@@ -30,12 +33,18 @@ func ParseWhen(s string, now time.Time, endOfDay bool) (time.Time, error) {
 	}
 	if strings.HasSuffix(s, "d") {
 		if n, err := strconv.Atoi(strings.TrimSuffix(s, "d")); err == nil && n > 0 {
+			if n > MaxHoldDays { // also keeps n * 24h far from the int64 limit of a Duration
+				return time.Time{}, fmt.Errorf("%q is too far ahead: at most %dd", s, MaxHoldDays)
+			}
 			return now.Add(time.Duration(n) * 24 * time.Hour), nil
 		}
 	}
-	if d, err := time.ParseDuration(s); err == nil {
+	if d, err := time.ParseDuration(s); err == nil { // ParseDuration itself refuses a value past the Duration limit
 		if d <= 0 {
 			return time.Time{}, fmt.Errorf("%q is not a time in the future", s)
+		}
+		if d > MaxHoldDays*24*time.Hour {
+			return time.Time{}, fmt.Errorf("%q is too far ahead: at most %dd", s, MaxHoldDays)
 		}
 		return now.Add(d), nil
 	}
@@ -105,6 +114,11 @@ func holdAdd(env Env, a *HoldAddArgs) step {
 	end, err := ParseWhen(a.Until, now, true)
 	if err != nil {
 		st := fieldFail(Invalid, "until", err)
+		st.target, st.reason = p, a.Reason
+		return st
+	}
+	if end.After(now.AddDate(0, 0, MaxHoldDays)) {
+		st := step{res: Result{Status: Invalid, Field: "until", Message: fmt.Sprintf("a hold ends at most %d days from now", MaxHoldDays)}}
 		st.target, st.reason = p, a.Reason
 		return st
 	}

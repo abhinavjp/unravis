@@ -2,10 +2,14 @@ package releasedash
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"api-audit-explorer/internal/activitylog"
 	"api-audit-explorer/internal/hsaction"
@@ -15,17 +19,103 @@ import (
 
 const fxOrigin = "http://127.0.0.1:80"
 
-// actionToken reads the write channel's token the way the page does.
+// fxActionToken is the fixture's action key. The page has it from the start link's fragment; no route serves it.
+var fxActionToken = strings.Repeat("ab", actionTokenLen)
+
+// actionToken is the key the page holds. It also checks that /api/session, which the session cookie alone opens,
+// does not give it away.
 func (f *ciFixture) actionToken(t *testing.T) string {
 	t.Helper()
+	w := f.get(t, "/api/session")
+	if strings.Contains(w.Body.String(), fxActionToken) || strings.Contains(strings.ToLower(w.Body.String()), "token") {
+		t.Fatalf("/api/session serves the action token: %s", w.Body.String())
+	}
 	s := decode[struct {
-		ActionToken string       `json:"actionToken"`
-		Actions     []ActionInfo `json:"actions"`
-	}](t, f.get(t, "/api/session"))
-	if len(s.ActionToken) != 2*actionTokenLen || len(s.Actions) != len(hsaction.All()) {
+		Actions   []ActionInfo `json:"actions"`
+		ActionsOn bool         `json:"actionsOn"`
+	}](t, w)
+	if len(s.Actions) != len(hsaction.All()) || !s.ActionsOn {
 		t.Fatalf("session: %+v", s)
 	}
-	return s.ActionToken
+	return fxActionToken
+}
+
+// A loopback listener that has our session cookie (cookies are not kept apart by port) gets everything the cookie
+// opens, and still cannot take an action, with or without an Origin.
+func TestSessionCookieDoesNotBuyTheActionToken(t *testing.T) {
+	f := newCIFixture(t)
+	var lines []string
+	f.d.Logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	for _, p := range []string{"/api/session", "/", "/api/overview?project=unravis", "/api/machines?project=unravis"} {
+		if w := f.get(t, p); strings.Contains(w.Body.String(), fxActionToken) {
+			t.Fatalf("%s serves the action token", p)
+		}
+	}
+	for _, q := range []actionReq{
+		{path: "/api/action/queue.pause", cookie: "tok", noOrigin: true, body: body("unravis", "{}")},
+		{path: "/api/action/queue.pause", cookie: "tok", noOrigin: true, fetchSite: "none", body: body("unravis", "{}")},
+		{path: "/api/action/queue.pause", cookie: "tok", body: body("unravis", "{}")},
+	} {
+		if w := f.post(t, q); w.Code != 403 {
+			t.Fatalf("cookie only: %d %s", w.Code, w.Body.String())
+		}
+	}
+	if localci.IsPaused(f.dir) {
+		t.Fatal("the cookie alone paused the queue")
+	}
+	if len(lines) != 3 {
+		t.Fatalf("refusals logged: %q", lines)
+	}
+	for _, l := range lines {
+		if !strings.Contains(l, "refused an action request") || strings.Contains(l, cookieName) || strings.Contains(l, fxActionToken) {
+			t.Fatalf("refusal line: %q", l)
+		}
+	}
+	// Without a key the write channel is off.
+	d := New(f.data, "", nil)
+	d.Projects = f.d.Projects
+	h := Handler(d, "tok", fstest.MapFS{"index.html": {Data: []byte("x")}})
+	r := httptest.NewRequest("POST", "http://127.0.0.1:80/api/action/queue.pause", strings.NewReader(body("unravis", "{}")))
+	r.AddCookie(&http.Cookie{Name: cookieName, Value: "tok"}) //nolint:gosec // a request cookie in a test
+	r.Header.Set("Origin", fxOrigin)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 503 {
+		t.Fatalf("no key: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// An activity entry that cannot be written is said even when the action changed nothing.
+func TestLogErrIsSurfacedWhenNothingChanged(t *testing.T) {
+	f := newCIFixture(t)
+	var lines []string
+	f.d.Logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	// queue.resume on a queue that is not paused changes nothing; an activity log that is a folder cannot be appended to.
+	must(t, os.MkdirAll(filepath.Join(f.dir, "activity.jsonl"), 0o750))
+	w := f.post(t, actionReq{path: "/api/action/queue.resume", cookie: "tok", token: fxActionToken, body: body("unravis", "{}")})
+	var res hsaction.Result
+	must(t, json.Unmarshal(w.Body.Bytes(), &res))
+	if !strings.Contains(res.Message, "activity log could not be written") {
+		t.Fatalf("not surfaced: %d %s", w.Code, w.Body.String())
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "queue.resume") {
+		t.Fatalf("not logged: %q", lines)
+	}
+}
+
+// confirmArgs runs the dry run of a policy edit and returns the confirm's arguments with the base and stranded runs
+// it showed, as the page does. fields is the edit's own JSON fields, without braces.
+func (f *ciFixture) confirmArgs(t *testing.T, id, fields string) string {
+	t.Helper()
+	w := f.post(t, actionReq{path: "/api/action/" + id, cookie: "tok", token: fxActionToken, body: body("unravis", "{"+fields+`,"dryRun":true}`)})
+	var res hsaction.Result
+	must(t, json.Unmarshal(w.Body.Bytes(), &res))
+	if res.Impact == nil || res.Impact.Base == "" {
+		t.Fatalf("%s dry run: %d %s", id, w.Code, w.Body.String())
+	}
+	st, _ := json.Marshal(res.Impact.Stranded)
+	return "{" + fields + `,"confirm":true,"base":"` + res.Impact.Base + `","stranded":` + string(st) + "}"
 }
 
 type actionReq struct {
@@ -133,7 +223,7 @@ func TestActionRejections(t *testing.T) {
 	if localci.IsPaused(f.dir) {
 		t.Fatal("a refused request paused the queue")
 	}
-	// Transport refusals reach no action, so nothing is logged.
+	// Transport refusals reach no action, so nothing is in the activity log (the early ones go to Logf).
 	es, _, _ := (activitylog.Log{Dir: f.dir}).Read(activitylog.Filter{})
 	if len(es) != 0 {
 		t.Fatalf("refused requests logged: %+v", es)
@@ -196,7 +286,7 @@ func TestEveryActionIsCallableOverHTTP(t *testing.T) {
 		{"queue.cancel", func() string { return `{"id":"` + queued + `"}` }, 200},
 		{"queue.retry", func() string { return `{"run":"` + f.passID + `"}` }, 200},
 		{"machines.allow", func() string { return `{"name":"a1","project":"o/r"}` }, 200},
-		{"machines.deny", func() string { return `{"name":"a1","project":"o/r","confirm":true}` }, 200},
+		{"machines.deny", func() string { return f.confirmArgs(t, "machines.deny", `"name":"a1","project":"o/r"`) }, 200},
 		{"policy.set", func() string { return `{"project":"o/r","mode":"any"}` }, 200},
 		{"machines.drain", func() string { return `{"name":"a1"}` }, 200},
 		{"machines.resume", func() string { return `{"name":"a1"}` }, 200},
@@ -275,13 +365,23 @@ func TestActionStrandingPolicyEditNeedsConfirmOverHTTP(t *testing.T) {
 	if p, err := localci.LoadPolicy(f.dir); err != nil || p.Projects["o/r"].Mode == localci.PolicyOnly {
 		t.Fatalf("the refused edit was written: %v", err)
 	}
-	w, res = send(`{"project":"o/r","mode":"only","machines":["m9"],"confirm":true}`)
+	// A confirm from the page must carry what its dry run showed.
+	if w, res = send(`{"project":"o/r","mode":"only","machines":["m9"],"confirm":true}`); w.Code != 400 || res.Field != "base" {
+		t.Fatalf("confirm without base: %d %s", w.Code, w.Body.String())
+	}
+	if w, res = send(`{"project":"o/r","mode":"only","machines":["m9"],"confirm":true,"base":"0123","stranded":[]}`); w.Code != 409 || res.OK {
+		t.Fatalf("confirm with a stale base: %d %s", w.Code, w.Body.String())
+	}
+	if p, err := localci.LoadPolicy(f.dir); err != nil || p.Projects["o/r"].Mode == localci.PolicyOnly {
+		t.Fatalf("a stale confirm was written: %v", err)
+	}
+	w, res = send(f.confirmArgs(t, "policy.set", `"project":"o/r","mode":"only","machines":["m9"]`))
 	if w.Code != 200 || !res.OK {
 		t.Fatalf("confirm: %d %s", w.Code, w.Body.String())
 	}
 	es, _, err := (activitylog.Log{Dir: f.dir}).Read(activitylog.Filter{})
 	must(t, err)
-	if len(es) != 2 || es[0].Outcome != "refused" || es[1].Outcome != "done" {
+	if len(es) != 4 || es[0].Outcome != "refused" || es[1].Outcome != "invalid" || es[2].Outcome != "refused" || es[3].Outcome != "done" {
 		t.Fatalf("entries: %+v", es)
 	}
 }

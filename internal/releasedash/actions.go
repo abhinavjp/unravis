@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -27,9 +28,11 @@ import (
 //   - the session cookie (401), which only the start link sets;
 //   - an Origin that is this server's own loopback origin (403). A request without an Origin is let on only when
 //     Sec-Fetch-Site is absent, same-origin or none, so a browser that says a request is cross-site is refused;
-//   - the per-launch action token in X-Homestretch-Token, compared in constant time (403). The page reads it from
-//     GET /api/session. Cookies are not kept apart by port, so the cookie alone does not prove the page is ours; the
-//     token does, because another origin cannot read our answers;
+//   - the per-launch action token in X-Homestretch-Token, compared in constant time (403). It is a second secret,
+//     apart from the session code: the program puts it only in the fragment of the start link (#a=...), which a
+//     browser never sends to any server, and the page keeps it in sessionStorage. No route serves it. Cookies are not
+//     kept apart by port, so another loopback listener the browser talks to gets our cookie, and could read anything
+//     the cookie opens; it cannot get the fragment;
 //   - Content-Type application/json (415);
 //   - an action id the registry has (404);
 //   - a body of at most 16 KiB (413), one JSON object {"project": "<id>", "args": {...}} with no unknown fields (400).
@@ -43,9 +46,9 @@ const (
 	actionTokenLen = 32
 )
 
-// newActionToken is the per-launch token of the write channel. An empty token (the system has no randomness) turns
-// the write channel off.
-func newActionToken() string {
+// NewActionToken makes the per-launch token of the write channel (Dash.ActionToken). An empty token (the system has
+// no randomness) turns the write channel off.
+func NewActionToken() string {
 	b := make([]byte, actionTokenLen)
 	if _, err := rand.Read(b); err != nil {
 		return ""
@@ -87,6 +90,7 @@ func (d *Dash) serveAction(w http.ResponseWriter, r *http.Request, sessionToken,
 		return
 	}
 	if c, err := r.Cookie(cookieName); err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(sessionToken)) != 1 {
+		d.logRefusal(r, "no session cookie")
 		actionRefuse(w, http.StatusUnauthorized, "Open the link printed by unravis-releases.")
 		return
 	}
@@ -94,15 +98,18 @@ func (d *Dash) serveAction(w http.ResponseWriter, r *http.Request, sessionToken,
 		d.OnRequest()
 	}
 	if !sameOrigin(r) {
+		d.logRefusal(r, "not from this page (Origin or Sec-Fetch-Site)")
 		actionRefuse(w, http.StatusForbidden, "Actions are taken only from this page.")
 		return
 	}
 	if actionToken == "" {
+		d.logRefusal(r, "actions are off (no action token)")
 		actionRefuse(w, http.StatusServiceUnavailable, "Actions are off: this PC could not make a secret for them. Restart unravis-releases.")
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(r.Header.Get(tokenHeader)), []byte(actionToken)) != 1 {
-		actionRefuse(w, http.StatusForbidden, "The page is out of date; reload it and try again.")
+		d.logRefusal(r, "missing or wrong action token")
+		actionRefuse(w, http.StatusForbidden, "This page has no action key. Open the link that unravis-releases printed (the whole link, with the part after #) and try again.")
 		return
 	}
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
@@ -156,6 +163,16 @@ func (d *Dash) serveAction(w http.ResponseWriter, r *http.Request, sessionToken,
 	res := hsaction.Run(d.actionEnv(v.dir), id, args)
 	res.Message = v.rdLines(res.Message)
 	res.Error = v.rdLines(res.Error)
+	if res.LogErr != nil && !errors.Is(res.LogErr, hsaction.ErrNoStore) {
+		d.logf("homestretch: action %s: the activity log could not be written: %v", id, res.LogErr)
+	}
+	if res.LogErr != nil && !res.Changed && !errors.Is(res.LogErr, hsaction.ErrNoStore) {
+		// Nothing changed, so the answer stands, but the person must know the attempt is not in the log.
+		res.Message += " (The activity log could not be written.)"
+		if res.Error != "" {
+			res.Error += " (The activity log could not be written.)"
+		}
+	}
 	if res.LogErr != nil && res.Changed && !errors.Is(res.LogErr, hsaction.ErrNoStore) {
 		res.OK = false
 		res.Error = "The change was saved, but the activity log could not be written."
@@ -171,7 +188,25 @@ func (d *Dash) serveAction(w http.ResponseWriter, r *http.Request, sessionToken,
 
 // actionEnv is the Env of an action taken from the page.
 func (d *Dash) actionEnv(dir string) hsaction.Env {
-	return hsaction.Env{Dir: dir, Actor: activitylog.ActorUI, Person: d.person(), Now: d.Now}
+	return hsaction.Env{Dir: dir, Actor: activitylog.ActorUI, Person: d.person(), Now: d.Now, ConfirmNeedsBase: true}
+}
+
+func (d *Dash) logf(format string, args ...any) {
+	if d.Logf != nil {
+		d.Logf(format, args...)
+		return
+	}
+	log.Printf(format, args...)
+}
+
+// logRefusal notes a request refused before it reached an action: why, the method, the path (quoted, so it cannot
+// forge lines) and the client address. No header value (cookie, token, Origin) is written.
+func (d *Dash) logRefusal(r *http.Request, why string) {
+	path := r.URL.Path
+	if len(path) > 120 {
+		path = path[:120] + "..."
+	}
+	d.logf("homestretch: refused an action request: %s (%s %q from %s)", why, r.Method, path, r.RemoteAddr)
 }
 
 // person is the user name of this PC, the person behind the page.

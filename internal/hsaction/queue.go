@@ -6,6 +6,7 @@ import (
 
 	"api-audit-explorer/internal/activitylog"
 	"api-audit-explorer/internal/localci"
+	"api-audit-explorer/internal/releasehold"
 )
 
 func init() {
@@ -162,12 +163,13 @@ func queueCancel(env Env, a *CancelArgs) step {
 	if st, ok := a.check(); !ok {
 		return st
 	}
-	reason := strings.TrimSpace(a.Reason)
+	// One line of plain text, so a reason cannot forge lines in the request file, the activity log or the screen.
+	reason, err := releasehold.CleanText("the reason", a.Reason, maxCancelReason, true)
+	if err != nil {
+		return step{res: Result{Status: Invalid, Field: "reason", Message: err.Error()}}
+	}
 	if reason == "" {
 		reason = defaultCancelReason(env.Actor)
-	}
-	if n := len([]rune(reason)); n > maxCancelReason {
-		return step{res: Result{Status: Invalid, Field: "reason", Message: fmt.Sprintf("the reason is %d characters; at most %d", n, maxCancelReason)}}
 	}
 	q, err := localci.OpenQueue(localci.QueueDir(env.Dir))
 	if err != nil {
@@ -264,7 +266,10 @@ func queueRetry(env Env, a *RetryArgs) step {
 			return step{res: Result{Status: Invalid, Field: "run", Message: "give the id of a finished run"}}
 		}
 		if len(a.Run) > maxRunID {
-			return step{res: Result{Status: Invalid, Field: "run", Message: "that is not a run id"}}
+			// Refused, not Invalid: no run has an id this long, and the CLI said "no run" (exit 1) before.
+			st := fail(Refused, "no run has an id that long (at most %d characters)", maxRunID)
+			st.target = a.Run[:maxRunID]
+			return st
 		}
 	}
 	store, err := localci.OpenStore(env.Dir)
