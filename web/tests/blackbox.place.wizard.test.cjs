@@ -147,3 +147,38 @@ test('J: the SQL and Folder leads say "the server" on the pack path (defect J)',
   assert.match(wrapper, /folder: wizard\.where === 'pack' \? W\['step\.folder\.leadPack'\] : W\['step\.folder\.lead'\]/);
   assert.match(stepSource('StepReview.svelte'), /W\['review\.packWill'\]\(fileName\)/);
 });
+
+test('the Record step lists Server facts, Extra Windows counters and Log and config file paths after the existing rows, and the counters box shows only while its row is on (BL-698)', () => {
+  const record = stepSource('StepRecord.svelte');
+  const order = ["id: 'sqlHost'", "id: 'facts'", "id: 'counters'", "id: 'paths'"].map((marker) => record.indexOf(marker));
+  assert.ok(order.every((at) => at >= 0), 'all four rows are declared');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'in this order');
+  assert.match(record, /row\.id === 'counters' && wizard\.collectorRows\.counters/);
+  assert.match(record, /BBW_TEXT\['record\.countersError'\]/);
+  assert.match(record, /presetOf\(wizard\.settings\.record, wizard\.collectorRows\)/);
+  assert.doesNotMatch(record, /presetOf\(wizard\.settings\.record\)/);
+});
+
+test('Review shows the three collector rows and an Includes line with the counters (BL-698)', () => {
+  const review = stepSource('StepReview.svelte');
+  for (const key of ['review.rowFacts', 'review.rowCounters', 'review.rowPaths']) assert.ok(review.includes("W['" + key + "']"), key);
+  assert.match(review, /extraCounters\.join\(', '\)/);
+  assert.match(review, /presetOf\(payload\.record, wizard\.collectorRows\)/);
+});
+
+test('review follow-ups: a counters problem is owned by Record, a server refusal maps to it, an empty server config is not a problem', () => {
+  const { loadTypeScript } = require('./helpers/loadTs.cjs');
+  const bb = loadTypeScript('src/lib/blackbox.ts');
+  // A bad counters list found on Review must send the owner back to Record, not to Folder.
+  assert.match(wrapper, /code === 'interval' \|\| code === 'logs' \|\| code === 'counters'\) return 'record'/);
+  // The server's own words for a refused counter name the dotted field.
+  const err = new bb.BlackboxError({ reason: 'invalid-config', error: 'blackbox.json is not valid: "counters.extra" entry "x" must look like \Object\Counter' });
+  assert.equal(bb.refusedField(err), 'counters');
+  assert.equal(bb.stepOfSetting('counters'), 'record');
+  assert.match(loadTypeScript('src/lib/copy/blackboxCopy.ts').refusedSetting('counters'), /extra counters/);
+  // The server accepts an empty block, so the shared check must not flag one.
+  const base = bb.defaultSettings('web-a');
+  assert.equal(bb.settingsProblem({ ...base, counters: {} }), null);
+  assert.equal(bb.settingsProblem({ ...base, counters: { extra: [] } }), null);
+  assert.equal(bb.settingsProblem({ ...base, counters: { extra: ['bad'] } }), 'counters');
+});

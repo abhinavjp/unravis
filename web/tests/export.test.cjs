@@ -121,7 +121,7 @@ test('W-15: after a save the drawer says the download started and keeps the file
   assert.equal(T.fileNameLabel, 'File name');
   assert.equal(T.savedHashLabel, 'SHA-256 of the saved file');
   assert.equal(exp.savedLine, undefined, 'the old "Saved." line is gone');
-  const panel = fs.readFileSync(path.join(root, 'src/components/ExportPanel.svelte'), 'utf8');
+  const panel = fs.readFileSync(path.join(root, 'src/components/ExportPanel.svelte'), 'utf8').replace(/\r\n/g, '\n');
   const saved = panel.slice(panel.indexOf("{#if phase.kind === 'saved'}\n          <p"), panel.indexOf('{:else if !summary.empty}'));
   assert.match(saved, /<p class="export-saved" role="status">\{EXPORT_TEXT\.downloadStarted\}<\/p>/);
   assert.match(saved, /\{EXPORT_TEXT\.fileNameLabel\}<\/dt><dd><code>\{phase\.filename\}<\/code>/);
@@ -146,7 +146,7 @@ test('contentMatches accepts only content whose SHA-256 equals the returned hash
 });
 
 test('the panel checks the hash before saving and keys pseudonym rows by index', () => {
-  const panel = fs.readFileSync(path.join(root, 'src/components/ExportPanel.svelte'), 'utf8');
+  const panel = fs.readFileSync(path.join(root, 'src/components/ExportPanel.svelte'), 'utf8').replace(/\r\n/g, '\n');
   const save = panel.slice(panel.indexOf('async function save()'), panel.indexOf('</script>'));
   assert.ok(save.indexOf('contentMatches(file.content, file.sha256)') > 0, 'save checks the hash');
   assert.ok(save.indexOf('contentMatches(') < save.indexOf('new Blob('), 'the hash is checked before the file is made');
