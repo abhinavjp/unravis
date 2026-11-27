@@ -1,3 +1,5 @@
+import { UNREACHABLE_MESSAGE, isUnreachableError } from './copy/unreachableCopy';
+import { TIMEOUT_CODE } from './requestTimeout';
 import type { UpdateCheckReply } from './types';
 
 export type UpdatePreview = '' | (typeof PREVIEWS)[number];
@@ -22,6 +24,21 @@ export function updateCheckNote(reply: UpdateCheckReply): string {
     default:
       return UNREACHABLE_NOTE;
   }
+}
+
+/** The sentence for any other local failure of the check request. Never a raw error message or a status number. */
+export const UPDATE_CHECK_FAILED_NOTE = 'Something went wrong in Unravis. Try again. If it keeps happening, open Help and copy the error log.';
+
+/**
+ * The sentence when the page's own request for the check failed (it never got an answer). A lost connection says Unravis could not be reached;
+ * a timeout keeps its own plain message; anything else gets one general sentence. A feed that could not be reached is not this case: the server
+ * answers 200 with status "unreachable", and `updateCheckNote` says "Could not check for updates".
+ */
+export function updateCheckFailureNote(error: unknown): string {
+  if (isUnreachableError(error)) return UNREACHABLE_MESSAGE;
+  const carrier = error && typeof error === 'object' ? (error as { code?: unknown; reason?: unknown }) : {};
+  if ((carrier.code === TIMEOUT_CODE || carrier.reason === TIMEOUT_CODE) && error instanceof Error && error.message.trim()) return error.message.trim();
+  return UPDATE_CHECK_FAILED_NOTE;
 }
 
 /** The demo-only preview named in the URL hash, such as #update=available. Any other value gives ''. */
