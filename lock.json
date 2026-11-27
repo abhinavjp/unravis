@@ -1,24 +1,24 @@
 {
   "v": 1,
-  "state": "held",
+  "state": "free",
   "id": "fe8fb24b88794b07ac7b8649b25fb590",
   "host": "9f484c6ac779",
   "pid": 61424,
   "requester": "unnamed-9f484c",
   "started": "2026-11-27T04:27:44.2569422Z",
-  "heartbeat": "2026-11-27T04:27:46.6906403Z",
+  "heartbeat": "2026-11-27T04:28:19.2771671Z",
   "channel": "rc",
   "version": "",
-  "stage": "Pinned",
+  "stage": "idle",
   "commit": "c23e1840c13325b882ab0ffe3427231e477d668b",
   "holdMerges": false,
   "lease_minutes": 180,
   "reason": "",
   "last": {
-    "outcome": "done",
+    "at": "2026-11-27T04:28:18.8880751Z",
     "reason": "",
-    "at": "2026-11-27T02:22:35.8805729Z",
-    "requester": "factory (project thread)",
-    "version": "0.1.0-rc.65"
+    "outcome": "check-only",
+    "version": "",
+    "requester": "unnamed-9f484c"
   }
 }
