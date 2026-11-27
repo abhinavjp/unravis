@@ -1,4 +1,4 @@
-package main
+package cicli
 
 import (
 	"context"
@@ -109,7 +109,7 @@ func cmdRunItem(ctx context.Context, args []string, stdout, stderr io.Writer, en
 	}
 	_, _ = fmt.Fprintf(stdout, "%s: %s%s\n", req.ID, out.Conclusion, noteIf(out.Reason != "", " ("+out.Reason+")"))
 	if out.RunID != "" {
-		_, _ = fmt.Fprintf(stdout, "run id: %s\nlogs:   unravis-ci log %s [job]\n", out.RunID, out.RunID)
+		_, _ = fmt.Fprintf(stdout, "run id: %s\nlogs:   %s log %s [job]\n", out.RunID, EngineProg, out.RunID)
 	}
 	if out.Conclusion == "success" {
 		return exitOK
@@ -234,7 +234,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, environ []string) int {
 	}
 	_, _ = fmt.Fprintln(stdout, "agents:")
 	if len(hbs) == 0 {
-		_, _ = fmt.Fprintln(stdout, "  none (start one with: unravis-ci serve)")
+		_, _ = fmt.Fprintln(stdout, "  none (start one with: "+EngineProg+" serve)")
 	}
 	for _, h := range hbs {
 		st := agentStateOf(h, now)

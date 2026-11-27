@@ -1,4 +1,4 @@
-package main
+package cicli
 
 import (
 	"context"
@@ -419,7 +419,7 @@ func runnerFor(inProcess bool, store *localci.Store, host localci.Host, origin s
 	er := &localci.ExecRunner{
 		StateDir: store.Dir, Env: environ, Log: log, Grace: grace,
 		Argv: func(r localci.Request) []string {
-			argv := []string{exe, "run-item", r.ID, "--child", "--state", store.Dir, "--job-slots", fmt.Sprint(jobSlots)}
+			argv := append(append([]string{exe}, ChildPrefix...), "run-item", r.ID, "--child", "--state", store.Dir, "--job-slots", fmt.Sprint(jobSlots))
 			if origin != "" {
 				argv = append(argv, "--origin", origin)
 			}
