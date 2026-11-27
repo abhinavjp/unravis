@@ -15,8 +15,8 @@
   import { isSavedFileDamaged } from '../../lib/savedFile';
   import { keptNote } from '../../lib/copy/savedFileCopy';
   import KeeperCard from './KeeperCard.svelte';
-  import { app } from '../../lib/appState.svelte';
-  import { announceConnectionsChanged, dropTest, recallTests, rememberTest, type TestResult } from './connectionMemory';
+  import { app, finishRecentSetAside } from '../../lib/appState.svelte';
+  import { announceConnectionsChanged, dropTest, onConnectionsChanged, recallTests, rememberTest, type TestResult } from './connectionMemory';
   import './sources.css';
 
   // Screens 52 and 53: every saved connection in one list, SQL Server and MongoDB. Test says only Works, Failed or Not tested, and the last
@@ -74,7 +74,8 @@
     loadFailed = a.status === 'rejected' && b.status === 'rejected' && !demo && !keeperDown;
     loaded = true;
   }
-  onMount(() => { void load(); });
+  // The Connections drawer can set the damaged file aside while this page is open behind it: read the list again so it does not offer it twice.
+  onMount(() => { void load(); return onConnectionsChanged(() => { if (mongoDamaged) void load(false); }); });
 
   const remember = (key: string, word: ConnectionWord, problem: string) => {
     tests = rememberTest(key, { word, at: new Date().toLocaleString(), problem });
@@ -175,7 +176,7 @@
     {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{/if}
   {/if}
   {#if notice !== ''}<p class="say" role="status" data-notice>{notice}</p>{/if}
-  {#if mongoDamaged}<SavedFileDamaged page onDone={async (name) => { notice = keptNote(name); announceConnectionsChanged(); await load(false); }} />{/if}
+  {#if mongoDamaged}<SavedFileDamaged page onDone={async (name) => { notice = keptNote(name); await finishRecentSetAside(name); await load(false); announceConnectionsChanged(); }} />{/if}
 
   {#if demo}
     <div class="empty" data-demo><p class="lead">{CONN_TEXT.demo}</p></div>

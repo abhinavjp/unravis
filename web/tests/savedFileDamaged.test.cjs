@@ -54,7 +54,7 @@ test('the drawer and the Connections page offer the way out only on that code, a
   assert.match(state, /recentFileDamaged = isSavedFileDamaged\(cause\)/);
   assert.match(state, /export async function finishRecentSetAside/);
   const drawer = read('src/components/ConnectionsDrawer.svelte');
-  assert.match(drawer, /\{#if conn\.recentFileDamaged\}<SavedFileDamaged onDone=\{finishRecentSetAside\} \/>/);
+  assert.match(drawer, /\{#if conn\.recentFileDamaged\}<SavedFileDamaged onDone=\{async \(name\) => \{ await finishRecentSetAside\(name\); announceConnectionsChanged\(\); \}\} \/>/);
   const page = read('src/components/sources/ConnectionsPage.svelte');
   assert.match(page, /mongoDamaged = b\.status === 'rejected' && isSavedFileDamaged\(b\.reason\)/);
   assert.match(page, /\{#if mongoDamaged\}<SavedFileDamaged page /);
