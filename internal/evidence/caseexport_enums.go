@@ -114,6 +114,17 @@ func set(v ...string) map[string]bool {
 
 // fold builds a case-insensitive lookup: lower-case spelling -> the canonical
 // spelling that is exported.
+// union joins enum maps into a new one.
+func union(ms ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range ms {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func fold(v ...string) map[string]string {
 	m := make(map[string]string, len(v))
 	for _, s := range v {
@@ -524,6 +535,8 @@ var (
 		"rejected_connections", "evicted_keys", "expired_keys", "latest_fork_usec", "total_connections_received",
 		"keyspace_hits", "keyspace_misses", "used_cpu_sys", "used_cpu_user", "rdb_bgsave_in_progress",
 		"aof_rewrite_in_progress")
+	// blackboxMetrics: the Redis INFO figures and the process figures of a Blackbox recording (the names do not meet).
+	blackboxMetrics = union(redisInfoMetrics, procMetrics)
 	// redisRoles: redis.log M/S/C/X, and INFO role ("slave" is written as "replica").
 	redisRoles = fold("master", "replica", "child", "sentinel")
 	// redisLogFamilies refines a redis.log kind; W2-i writes "other" for a line

@@ -81,6 +81,7 @@ type notes struct {
 	redisSeen             bool      // a sample had a Redis group
 	sqlLog, dumpsSeen     bool      // a sample had SQL log entries, a dump list
 	eventsSeen            bool      // a sample had an event log group
+	procsSeen             bool      // a sample listed processes
 	recorderLoss          bool      // the recorder marked a group cut, unreadable or lost
 	firstT                time.Time // the time of the first sample of the file
 	redis                 *redisState
