@@ -63,7 +63,7 @@ test('the drawer shows the none-sentences from what was asked, not from the file
 test('the export drawer has no Save button for an empty preview', () => {
   const panel = read('src/components/ExportPanel.svelte');
   const block = panel.slice(panel.indexOf('<div class="export-save">'));
-  const end = block.indexOf('</div>');
+  const end = block.indexOf('\n      </div>'); // the closing tag of the export-save block itself, past the file facts' own rows
   const saveBlock = block.slice(0, end);
   assert.match(saveBlock, /\{:else if !summary\.empty\}/, 'the Save button only exists when the preview has findings');
   assert.ok(saveBlock.indexOf('{:else if !summary.empty}') < saveBlock.indexOf('EXPORT_TEXT.save}'), 'the button sits inside that branch');
