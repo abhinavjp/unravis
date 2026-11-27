@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"math/rand/v2"
 	"net/url"
 	"os"
 	"os/exec"
@@ -373,7 +372,7 @@ func (c *Checkout) addWorktree(ctx context.Context, runID string, wt *Worktree) 
 	return err
 }
 
-// worktreeAdd runs "git worktree add" and tries again (up to three times, after a short random pause) when it fails.
+// worktreeAdd runs "git worktree add" and tries again (up to three times, after a short pause that differs between callers) when it fails.
 // Several jobs, and several agents, add and remove worktrees of the one mirror at the same moment; git then fails an
 // add with exit 1 and no message (a record or lock of a neighbour), and a try a moment later succeeds. A failed try
 // leaves a stale record at worst: a prune runs before the next one.
@@ -385,7 +384,7 @@ func (c *Checkout) worktreeAdd(ctx context.Context, path, commit string) error {
 			select {
 			case <-ctx.Done():
 				return err
-			case <-time.After(time.Duration(200+rand.IntN(600)) * time.Millisecond):
+			case <-time.After(time.Duration(200+time.Now().UnixNano()%600) * time.Millisecond):
 			}
 		}
 		_, _, err = c.git(ctx, c.Store.RepoPath(), nil, "worktree", "add", "--detach", "--quiet", path, commit)
