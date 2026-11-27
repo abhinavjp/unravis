@@ -19,6 +19,7 @@ import (
 	"api-audit-explorer/internal/casestore/storetest"
 	"api-audit-explorer/internal/remote/pull"
 	"api-audit-explorer/internal/remote/registry"
+	"api-audit-explorer/internal/remote/saltmaster"
 	"api-audit-explorer/internal/remote/service"
 	"api-audit-explorer/internal/remote/sshdirect"
 	"api-audit-explorer/internal/remote/transport"
@@ -30,20 +31,24 @@ const srvSecretSentinel = "SENTINEL-server-password-9f3a"
 
 // fakeSrvSvc scripts the service. Each field is the answer of one method; hold blocks a pull until released.
 type fakeSrvSvc struct {
-	mu       sync.Mutex
-	keys     []sshdirect.HostKey
-	keysErr  error
-	pinErr   error
-	testErr  error
-	files    []transport.FileInfo
-	planErr  error
-	pullErr  error
-	pulled   service.Pulled
-	hold     chan struct{}
-	started  chan struct{}
-	pulls    []string
-	pinned   []string
-	lastPlan pull.Request
+	mu          sync.Mutex
+	keys        []sshdirect.HostKey
+	keysErr     error
+	pinErr      error
+	testErr     error
+	files       []transport.FileInfo
+	planErr     error
+	pullErr     error
+	pulled      service.Pulled
+	hold        chan struct{}
+	started     chan struct{}
+	pulls       []string
+	pinned      []string
+	lastPlan    pull.Request
+	lastMachine string
+	pullMachine string
+	machines    []service.MachineView
+	machinesErr error
 }
 
 func (f *fakeSrvSvc) HostKeys(context.Context, string) ([]sshdirect.HostKey, error) {
@@ -59,15 +64,18 @@ func (f *fakeSrvSvc) Pin(_ context.Context, _ string, fp string) error {
 
 func (f *fakeSrvSvc) ReplaceKey(context.Context, string, string, string) error { return f.pinErr }
 
-func (f *fakeSrvSvc) Test(context.Context, string) (service.TestResult, error) {
+func (f *fakeSrvSvc) Test(_ context.Context, _, machine string) (service.TestResult, error) {
+	f.mu.Lock()
+	f.lastMachine = machine
+	f.mu.Unlock()
 	return service.TestResult{Folders: []service.FolderCheck{{Kind: "iis", Path: `C:\inetpub\logs`, OK: true, Files: 3}}}, f.testErr
 }
 
-func (f *fakeSrvSvc) Browse(context.Context, string, string) ([]transport.FileInfo, error) {
+func (f *fakeSrvSvc) Browse(context.Context, string, string, string) ([]transport.FileInfo, error) {
 	return f.files, nil
 }
 
-func (f *fakeSrvSvc) Plan(_ context.Context, _ string, req pull.Request) (pull.Plan, error) {
+func (f *fakeSrvSvc) Plan(_ context.Context, _, _ string, req pull.Request) (pull.Plan, error) {
 	f.mu.Lock()
 	f.lastPlan = req
 	f.mu.Unlock()
@@ -77,9 +85,10 @@ func (f *fakeSrvSvc) Plan(_ context.Context, _ string, req pull.Request) (pull.P
 	return pull.Plan{Kind: req.Kind, Dir: req.Dir, Bytes: 10, Files: []pull.PlanFile{{Name: "a.log", Size: 10}}}, nil
 }
 
-func (f *fakeSrvSvc) Pull(ctx context.Context, id string, req pull.Request, jobID string, progress func(pull.Progress)) (service.Pulled, error) {
+func (f *fakeSrvSvc) Pull(ctx context.Context, id, machine string, req pull.Request, jobID string, progress func(pull.Progress)) (service.Pulled, error) {
 	f.mu.Lock()
 	f.pulls = append(f.pulls, jobID)
+	f.pullMachine = machine
 	f.mu.Unlock()
 	progress(pull.Progress{JobID: jobID, File: "a.log", FilesTotal: 2, FilesDone: 1, JobBytes: 5})
 	if f.started != nil {
@@ -407,5 +416,47 @@ func TestServersOffWithoutWiring(t *testing.T) {
 	e := tagEnv(t, casestore.NewMemory(), &fakeRepository{})
 	if res := e.get("/api/servers"); res.Code == http.StatusOK {
 		t.Fatalf("unwired list answered %d", res.Code)
+	}
+}
+
+func (f *fakeSrvSvc) Machines(context.Context, string) ([]service.MachineView, error) {
+	return f.machines, f.machinesErr
+}
+
+func TestServersSaltMachinesAndErrors(t *testing.T) {
+	s := newSrvEnv(t, false)
+	res := s.e.json(http.MethodPost, "/api/servers", jb(map[string]any{"name": "jump-1", "host": "jump.example.test", "port": 22, "user": "audit", "os": "linux", "auth": "password", "secret": srvSecretSentinel,
+		"transports": []string{"salt"}, "minionIds": []string{"web-01"}, "saltSudo": true, "folders": map[string][]string{"blackbox": {"/var/log/blackbox"}}}))
+	if res.Code != http.StatusCreated {
+		t.Fatalf("add salt server = %d %s", res.Code, res.Body)
+	}
+	var e registry.Entry
+	decodeBody(t, res, &e)
+	if !e.SaltSudo || len(e.MinionIDs) != 1 {
+		t.Fatalf("salt fields lost: %+v", e)
+	}
+	s.svc.machines = []service.MachineView{{Chosen: true}}
+	res = s.e.json(http.MethodPost, "/api/servers/"+e.ID+"/machines", "")
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"machines"`) {
+		t.Fatalf("machines = %d %s", res.Code, res.Body)
+	}
+	s.e.json(http.MethodPost, "/api/servers/"+e.ID+"/test", `{"machine":"web-01"}`)
+	if s.svc.lastMachine != "web-01" {
+		t.Fatalf("machine not passed to test: %q", s.svc.lastMachine)
+	}
+	cases := []struct {
+		err    error
+		code   int
+		reason string
+	}{
+		{service.ErrNeedMachine, 422, "need-machine"},
+		{service.ErrMachineNotListed, 422, "machine-not-listed"},
+		{service.ErrNoSalt, 422, "no-salt"},
+		{saltmaster.ErrOffline, 502, "machine-offline"},
+		{saltmaster.ErrMasterCmd, 502, "salt-master"},
+	}
+	for _, c := range cases {
+		s.svc.machinesErr = c.err
+		srvFailed(t, s.e.json(http.MethodPost, "/api/servers/"+e.ID+"/machines", ""), c.code, c.reason)
 	}
 }

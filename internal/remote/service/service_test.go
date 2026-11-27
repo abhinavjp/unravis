@@ -150,16 +150,16 @@ func (r *rig) pin(t *testing.T) {
 func TestNothingConnectsBeforeTheHostKeyIsPinned(t *testing.T) {
 	r := newRig(t, nil)
 	ctx := context.Background()
-	if _, err := r.svc.Test(ctx, r.id); !errors.Is(err, ErrNeedHostKey) {
+	if _, err := r.svc.Test(ctx, r.id, ""); !errors.Is(err, ErrNeedHostKey) {
 		t.Errorf("Test: %v", err)
 	}
-	if _, err := r.svc.Browse(ctx, r.id, `D:\Blackbox`); !errors.Is(err, ErrNeedHostKey) {
+	if _, err := r.svc.Browse(ctx, r.id, "", `D:\Blackbox`); !errors.Is(err, ErrNeedHostKey) {
 		t.Errorf("Browse: %v", err)
 	}
-	if _, err := r.svc.Plan(ctx, r.id, pull.Request{Kind: "blackbox", Dir: `D:\Blackbox`}); !errors.Is(err, ErrNeedHostKey) {
+	if _, err := r.svc.Plan(ctx, r.id, "", pull.Request{Kind: "blackbox", Dir: `D:\Blackbox`}); !errors.Is(err, ErrNeedHostKey) {
 		t.Errorf("Plan: %v", err)
 	}
-	if _, err := r.svc.Pull(ctx, r.id, pull.Request{Kind: "blackbox", Dir: `D:\Blackbox`}, "j1", nil); !errors.Is(err, ErrNeedHostKey) {
+	if _, err := r.svc.Pull(ctx, r.id, "", pull.Request{Kind: "blackbox", Dir: `D:\Blackbox`}, "j1", nil); !errors.Is(err, ErrNeedHostKey) {
 		t.Errorf("Pull: %v", err)
 	}
 	if _, _, err := r.svc.BlackboxSource(ctx, r.id); !errors.Is(err, ErrNeedHostKey) {
@@ -214,7 +214,7 @@ func TestPinsOnlyAKeyTheServerReallyOffers(t *testing.T) {
 func TestSignInConfigIsBuiltFromTheSealedListAndAllowsOnlyTheListedFolders(t *testing.T) {
 	r := newRig(t, nil)
 	r.pin(t)
-	if _, err := r.svc.Browse(context.Background(), r.id, `D:\Blackbox`); err != nil {
+	if _, err := r.svc.Browse(context.Background(), r.id, "", `D:\Blackbox`); err != nil {
 		t.Fatal(err)
 	}
 	c := r.cfgSeen[0]
@@ -232,7 +232,7 @@ func TestSignInConfigIsBuiltFromTheSealedListAndAllowsOnlyTheListedFolders(t *te
 func TestTestReportsEachFolderAndTheMissingBlackboxKey(t *testing.T) {
 	r := newRig(t, func(in *registry.AddInput) { in.BlackboxID = "" })
 	r.pin(t)
-	res, err := r.svc.Test(context.Background(), r.id)
+	res, err := r.svc.Test(context.Background(), r.id, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestTestReportsEachFolderAndTheMissingBlackboxKey(t *testing.T) {
 func TestBlackboxPullKeepsTheRecordersOwnManifestAndIsReadAsAFolder(t *testing.T) {
 	r := newRig(t, nil)
 	r.pin(t)
-	res, err := r.svc.Pull(context.Background(), r.id, pull.Request{Kind: "blackbox", Dir: `D:\Blackbox`}, "bb1", nil)
+	res, err := r.svc.Pull(context.Background(), r.id, "", pull.Request{Kind: "blackbox", Dir: `D:\Blackbox`}, "bb1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestBlackboxPullKeepsTheRecordersOwnManifestAndIsReadAsAFolder(t *testing.T
 func TestIISPullHasNoBlackboxFolderAndKeepsEveryFile(t *testing.T) {
 	r := newRig(t, nil)
 	r.pin(t)
-	res, err := r.svc.Pull(context.Background(), r.id, pull.Request{Kind: "iis", Dir: `C:\inetpub\logs\LogFiles\W3SVC1`}, "iis1", nil)
+	res, err := r.svc.Pull(context.Background(), r.id, "", pull.Request{Kind: "iis", Dir: `C:\inetpub\logs\LogFiles\W3SVC1`}, "iis1", nil)
 	if err != nil || !res.OK() || res.BlackboxFolder != nil {
 		t.Fatalf("%v %+v", err, res)
 	}
@@ -290,13 +290,13 @@ func TestPullRefusesAFolderThatIsNotOnTheListForThatKind(t *testing.T) {
 	r := newRig(t, nil)
 	r.pin(t)
 	ctx := context.Background()
-	if _, err := r.svc.Pull(ctx, r.id, pull.Request{Kind: "iis", Dir: `D:\Blackbox`}, "x1", nil); !errors.Is(err, ErrFolderNotKind) {
+	if _, err := r.svc.Pull(ctx, r.id, "", pull.Request{Kind: "iis", Dir: `D:\Blackbox`}, "x1", nil); !errors.Is(err, ErrFolderNotKind) {
 		t.Errorf("a Blackbox folder was pulled as IIS: %v", err)
 	}
-	if _, err := r.svc.Plan(ctx, r.id, pull.Request{Kind: "blackbox", Dir: `C:\Windows`}); !errors.Is(err, ErrFolderNotKind) {
+	if _, err := r.svc.Plan(ctx, r.id, "", pull.Request{Kind: "blackbox", Dir: `C:\Windows`}); !errors.Is(err, ErrFolderNotKind) {
 		t.Errorf("an unlisted folder was planned: %v", err)
 	}
-	if _, err := r.svc.Plan(ctx, r.id, pull.Request{Kind: "shell", Dir: `D:\Blackbox`}); err == nil {
+	if _, err := r.svc.Plan(ctx, r.id, "", pull.Request{Kind: "shell", Dir: `D:\Blackbox`}); err == nil {
 		t.Error("an unknown kind was accepted")
 	}
 }
@@ -304,7 +304,7 @@ func TestPullRefusesAFolderThatIsNotOnTheListForThatKind(t *testing.T) {
 func TestPlanListsWhatWouldBeCopiedAndCopiesNothing(t *testing.T) {
 	r := newRig(t, nil)
 	r.pin(t)
-	p, err := r.svc.Plan(context.Background(), r.id, pull.Request{Kind: "blackbox", Dir: `D:\Blackbox`})
+	p, err := r.svc.Plan(context.Background(), r.id, "", pull.Request{Kind: "blackbox", Dir: `D:\Blackbox`})
 	if err != nil || len(p.Files) != 2 || p.Problem != "" {
 		t.Fatalf("%v %+v", err, p)
 	}
@@ -318,7 +318,7 @@ func TestServerWithoutSSHCannotBrowseOrPull(t *testing.T) {
 		in.Transports, in.Folders, in.Auth, in.Secret, in.User = []string{registry.TransportBlackbox}, nil, "", "", ""
 	})
 	ctx := context.Background()
-	if _, err := r.svc.Browse(ctx, r.id, `D:\x`); !errors.Is(err, ErrNoSSH) {
+	if _, err := r.svc.Browse(ctx, r.id, "", `D:\x`); !errors.Is(err, ErrNoSSH) {
 		t.Errorf("Browse: %v", err)
 	}
 	if _, err := r.svc.HostKeys(ctx, r.id); !errors.Is(err, ErrNoSSH) {

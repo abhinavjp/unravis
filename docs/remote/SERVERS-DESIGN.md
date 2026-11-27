@@ -187,7 +187,7 @@ S5 scrub + hash + resume tests (with S4)    S8 schedules    S9 remote update/res
 - S4 pull job: plan, stream, `.part` resume, size limits, hash, scrub, handover to Blackbox view and import jobs.
 - S6 CLI verbs and code-mode read bindings; S7 UI after the owner approves the prototype; S8 schedules; S9 later.
 
-Coordination with the other two threads: the Salt thread (PR 348) keeps its tool read-only and contributes the vectors for S0 and the Salt transport for S2b; the CLI plan thread (PR 346) owns the `unravis ops` root, the exit codes and the audit chain, and S6 adds a `server` group under it. Backlog items: BL-603 (Servers: remote pull layer and screen), listed in `docs/BACKLOG.md`.
+Coordination with the other two threads: the Salt thread (PR 348) keeps its tool read-only and contributes the vectors for S0 and the Salt transport for S2b; the CLI plan thread (PR 346) owns the `unravis ops` root, the exit codes and the audit chain, and S6 adds a `server` group under it. Backlog items: BL-720 (Servers: remote pull layer and screen), listed in `docs/BACKLOG.md`.
 
 ## 10. Prototype v4 and v5 additions (2026-11-26)
 

@@ -18,6 +18,7 @@ import (
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/remote/pull"
 	"api-audit-explorer/internal/remote/registry"
+	"api-audit-explorer/internal/remote/saltmaster"
 	"api-audit-explorer/internal/remote/service"
 	"api-audit-explorer/internal/remote/sshdirect"
 	"api-audit-explorer/internal/remote/transport"
@@ -42,10 +43,11 @@ type ServersService interface {
 	HostKeys(ctx context.Context, id string) ([]sshdirect.HostKey, error)
 	Pin(ctx context.Context, id, fingerprint string) error
 	ReplaceKey(ctx context.Context, id, oldFingerprint, newFingerprint string) error
-	Test(ctx context.Context, id string) (service.TestResult, error)
-	Browse(ctx context.Context, id, dir string) ([]transport.FileInfo, error)
-	Plan(ctx context.Context, id string, req pull.Request) (pull.Plan, error)
-	Pull(ctx context.Context, id string, req pull.Request, jobID string, progress func(pull.Progress)) (service.Pulled, error)
+	Machines(ctx context.Context, id string) ([]service.MachineView, error)
+	Test(ctx context.Context, id, machine string) (service.TestResult, error)
+	Browse(ctx context.Context, id, machine, dir string) ([]transport.FileInfo, error)
+	Plan(ctx context.Context, id, machine string, req pull.Request) (pull.Plan, error)
+	Pull(ctx context.Context, id, machine string, req pull.Request, jobID string, progress func(pull.Progress)) (service.Pulled, error)
 }
 
 // ServersDeps wires the Servers pages. Reg, Svc and StagingRoot are required.
@@ -146,6 +148,7 @@ func init() {
 		srvRoute("/api/servers/{id}/host-keys", srvPath("host-keys"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvHostKeys(w, r, srvID(a)) })),
 		srvRoute("/api/servers/{id}/pin", srvPath("pin"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvPin(w, r, srvID(a)) })),
 		srvRoute("/api/servers/{id}/replace-key", srvPath("replace-key"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvReplaceKey(w, r, srvID(a)) })),
+		srvRoute("/api/servers/{id}/machines", srvPath("machines"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvMachines(w, r, srvID(a)) })),
 		srvRoute("/api/servers/{id}/test", srvPath("test"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvTest(w, r, srvID(a)) })),
 		srvRoute("/api/servers/{id}/browse", srvPath("browse"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvBrowse(w, r, srvID(a)) })),
 		srvRoute("/api/servers/{id}/plan", srvPath("plan"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, a string) { h.srvPlan(w, r, srvID(a)) })),
@@ -180,6 +183,7 @@ type srvAddBody struct {
 	Passphrase   string              `json:"passphrase"`
 	Transports   []string            `json:"transports"`
 	MinionIDs    []string            `json:"minionIds"`
+	SaltSudo     bool                `json:"saltSudo"`
 	Folders      map[string][]string `json:"folders"`
 	BlackboxAddr string              `json:"blackboxAddr"`
 	// BlackboxID names a saved Blackbox that holds the read key. BlackboxKey saves a new one for this server (the key goes to the Blackbox
@@ -192,6 +196,7 @@ type srvPatchBody struct {
 	Name         *string              `json:"name"`
 	Transports   *[]string            `json:"transports"`
 	MinionIDs    *[]string            `json:"minionIds"`
+	SaltSudo     *bool                `json:"saltSudo"`
 	Folders      *map[string][]string `json:"folders"`
 	BlackboxAddr *string              `json:"blackboxAddr"`
 	BlackboxID   *string              `json:"blackboxId"`
@@ -214,10 +219,14 @@ type srvReplaceBody struct {
 }
 
 type srvBrowseBody struct {
+	// Machine is the Salt machine to read; empty for a server read directly.
+	Machine string `json:"machine"`
 	Dir string `json:"dir"`
 }
 
 type srvPullBody struct {
+	// Machine is the Salt machine to read; empty for a server read directly.
+	Machine string `json:"machine"`
 	Kind    string `json:"kind"`
 	Dir     string `json:"dir"`
 	Pattern string `json:"pattern"`
@@ -282,6 +291,22 @@ func srvClassify(err error) (int, srvFailure) {
 		status, reason, text = http.StatusConflict, "key-not-shown", err.Error()
 	case errors.Is(err, service.ErrNoSSH):
 		status, reason, text = http.StatusUnprocessableEntity, "no-ssh", err.Error()
+	case errors.Is(err, service.ErrNoSalt):
+		status, reason, text = http.StatusUnprocessableEntity, "no-salt", err.Error()
+	case errors.Is(err, service.ErrNeedMachine):
+		status, reason, text = http.StatusUnprocessableEntity, "need-machine", err.Error()
+	case errors.Is(err, service.ErrMachineNotListed):
+		status, reason, text = http.StatusUnprocessableEntity, "machine-not-listed", err.Error()
+	case errors.Is(err, service.ErrNoExec):
+		status, reason, text = http.StatusUnprocessableEntity, "no-exec", err.Error()
+	case errors.Is(err, saltmaster.ErrNoMinion), errors.Is(err, saltmaster.ErrOffline):
+		status, reason, text = http.StatusBadGateway, "machine-offline", err.Error()
+		next = "Check that the machine is on and connected to the Salt master, then try again."
+	case errors.Is(err, saltmaster.ErrTooLarge):
+		status, reason, text = http.StatusUnprocessableEntity, "too-many-files", err.Error()
+	case errors.Is(err, saltmaster.ErrBadReply), errors.Is(err, saltmaster.ErrMasterCmd), errors.Is(err, saltmaster.ErrShortChunk):
+		status, reason, text = http.StatusBadGateway, "salt-master", err.Error()
+		next = "If the jump host needs sudo to run salt, tick that option on the server. Otherwise ask whoever runs the Salt master."
 	case errors.Is(err, service.ErrFolderNotKind):
 		status, reason, text = http.StatusUnprocessableEntity, "folder-not-allowed", err.Error()
 	case errors.Is(err, service.ErrNoBlackbox):
@@ -398,7 +423,7 @@ func (h *handler) srvAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	e, err := h.servers.deps.Reg.Add(registry.AddInput{
 		Name: b.Name, Host: b.Host, Port: b.Port, User: b.User, OS: b.OS, Auth: b.Auth, Secret: b.Secret, Passphrase: b.Passphrase,
-		Transports: b.Transports, MinionIDs: b.MinionIDs, Folders: b.Folders, BlackboxAddr: b.BlackboxAddr, BlackboxID: b.BlackboxID,
+		Transports: b.Transports, MinionIDs: b.MinionIDs, SaltSudo: b.SaltSudo, Folders: b.Folders, BlackboxAddr: b.BlackboxAddr, BlackboxID: b.BlackboxID,
 	})
 	if err != nil {
 		h.srvFail(w, r, err)
@@ -417,7 +442,7 @@ func (h *handler) srvPatch(w http.ResponseWriter, r *http.Request, id string) {
 	if !decodeJSON(w, r, &b) {
 		return
 	}
-	p := registry.Patch{Name: b.Name, Transports: b.Transports, MinionIDs: b.MinionIDs, Folders: b.Folders, BlackboxAddr: b.BlackboxAddr, BlackboxID: b.BlackboxID}
+	p := registry.Patch{Name: b.Name, Transports: b.Transports, MinionIDs: b.MinionIDs, SaltSudo: b.SaltSudo, Folders: b.Folders, BlackboxAddr: b.BlackboxAddr, BlackboxID: b.BlackboxID}
 	if b.BlackboxKey != "" && b.BlackboxID == nil {
 		cur, err := h.servers.deps.Reg.Get(id)
 		if err != nil {
@@ -544,15 +569,40 @@ func (h *handler) srvTest(w http.ResponseWriter, r *http.Request, id string) {
 	if !h.srvReady(w) || !h.srvAllow(w) {
 		return
 	}
+	var b srvBrowseBody // the body is optional: a Salt server names the machine in it
+	if r.ContentLength != 0 && !decodeJSON(w, r, &b) {
+		return
+	}
 	ctx, cancel := srvAction(r)
 	defer cancel()
-	res, err := h.servers.deps.Svc.Test(ctx, id)
+	res, err := h.servers.deps.Svc.Test(ctx, id, b.Machine)
 	if err != nil {
 		h.srvFail(w, r, err)
 		return
 	}
 	h.event(r, "servers.tested", "server", id)
 	writeJSON(w, http.StatusOK, res, 1<<18)
+}
+
+// srvMachines lists the machines behind a Salt server's master, with the ones the person ticked marked. It signs in and changes nothing.
+func (h *handler) srvMachines(w http.ResponseWriter, r *http.Request, id string) {
+	if !h.srvReady(w) || !h.srvAllow(w) {
+		return
+	}
+	ctx, cancel := srvAction(r)
+	defer cancel()
+	list, err := h.servers.deps.Svc.Machines(ctx, id)
+	if err != nil {
+		h.srvFail(w, r, err)
+		return
+	}
+	if list == nil {
+		list = []service.MachineView{}
+	}
+	h.event(r, "servers.machines.listed", "server", id)
+	writeJSON(w, http.StatusOK, struct {
+		Machines []service.MachineView `json:"machines"`
+	}{list}, 1<<20)
 }
 
 func (h *handler) srvBrowse(w http.ResponseWriter, r *http.Request, id string) {
@@ -565,7 +615,7 @@ func (h *handler) srvBrowse(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	ctx, cancel := srvAction(r)
 	defer cancel()
-	files, err := h.servers.deps.Svc.Browse(ctx, id, b.Dir)
+	files, err := h.servers.deps.Svc.Browse(ctx, id, b.Machine, b.Dir)
 	if err != nil {
 		h.srvFail(w, r, err)
 		return
@@ -605,7 +655,7 @@ func (h *handler) srvPlan(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	ctx, cancel := srvAction(r)
 	defer cancel()
-	plan, err := h.servers.deps.Svc.Plan(ctx, id, req)
+	plan, err := h.servers.deps.Svc.Plan(ctx, id, b.Machine, req)
 	var tooLarge pull.ErrPlanTooLarge
 	if err != nil && !errors.As(err, &tooLarge) {
 		h.srvFail(w, r, err)
@@ -628,6 +678,7 @@ func (h *handler) srvPlan(w http.ResponseWriter, r *http.Request, id string) {
 // srvJob is one pull, running or finished, kept in memory so the page can follow it. The files stay on disk.
 type srvJob struct {
 	id, server string
+	machine    string // the Salt machine read; empty for a direct read
 	kind, dir  string
 	started    time.Time
 
@@ -721,6 +772,7 @@ type srvProgressView struct {
 type srvJobView struct {
 	ID       string           `json:"id"`
 	Server   string           `json:"server"`
+	Machine  string           `json:"machine,omitempty"`
 	Kind     string           `json:"kind"`
 	Dir      string           `json:"dir"`
 	State    string           `json:"state"`
@@ -738,7 +790,7 @@ type srvJobView struct {
 func (j *srvJob) view() srvJobView {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	v := srvJobView{ID: j.id, Server: j.server, Kind: j.kind, Dir: j.dir, State: j.state, Started: j.started, Result: j.result, Failure: j.failure,
+	v := srvJobView{ID: j.id, Server: j.server, Machine: j.machine, Kind: j.kind, Dir: j.dir, State: j.state, Started: j.started, Result: j.result, Failure: j.failure,
 		BlackboxID: j.bbID, BlackboxName: j.bbName, BlackboxNote: j.bbNote}
 	if !j.finished.IsZero() {
 		f := j.finished
@@ -788,7 +840,7 @@ func (h *handler) srvPullStart(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	job := &srvJob{id: jobID, server: id, kind: req.Kind, dir: req.Dir, started: h.servers.now(), state: "running", cancel: cancel}
+	job := &srvJob{id: jobID, server: id, machine: b.Machine, kind: req.Kind, dir: req.Dir, started: h.servers.now(), state: "running", cancel: cancel}
 	if !h.servers.jobs.add(job) {
 		cancel()
 		writeJSON(w, http.StatusConflict, srvFailure{Error: "A pull is already running on this server.", Reason: "busy", Next: "Wait for it to finish, or stop it."}, 4096)
@@ -801,7 +853,7 @@ func (h *handler) srvPullStart(w http.ResponseWriter, r *http.Request, id string
 
 func (h *handler) srvRunPull(ctx context.Context, job *srvJob, req pull.Request) {
 	defer job.cancel()
-	res, err := h.servers.deps.Svc.Pull(ctx, job.server, req, job.id, func(p pull.Progress) {
+	res, err := h.servers.deps.Svc.Pull(ctx, job.server, job.machine, req, job.id, func(p pull.Progress) {
 		job.mu.Lock()
 		job.progress = p
 		job.mu.Unlock()
@@ -845,7 +897,11 @@ func (h *handler) srvListPulledBlackbox(job *srvJob, res service.Pulled) {
 	default:
 		label := "Pulled " + job.kind
 		if e, err := h.servers.deps.Reg.Get(job.server); err == nil {
-			label = e.Name + " (pulled " + job.started.Local().Format("2 Jan 15:04") + ")"
+			label = e.Name
+			if job.machine != "" {
+				label += " / " + job.machine
+			}
+			label += " (pulled " + job.started.Local().Format("2 Jan 15:04") + ")"
 		}
 		e, err := h.bb.deps.Store.Add(bbsaved.AddInput{Name: label, Location: *res.BlackboxFolder})
 		if err != nil && !errors.Is(err, bbsaved.ErrDuplicate) {

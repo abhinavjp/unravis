@@ -95,6 +95,8 @@ type Entry struct {
 	Transports      []string   `json:"transports"`
 	// MinionIDs are exact Salt minion ids (no wildcards).
 	MinionIDs []string `json:"minionIds,omitempty"`
+	// SaltSudo runs the jump host's salt commands with `sudo -n` (Linux). Many masters let only root or a salt group run them.
+	SaltSudo bool `json:"saltSudo,omitempty"`
 	// Folders is the allowlist of browsable folders, grouped by kind.
 	Folders map[string][]string `json:"folders,omitempty"`
 	// BlackboxAddr is the recorder status address as seen from the server itself (default 127.0.0.1:7790).
@@ -116,6 +118,7 @@ type AddInput struct {
 	Passphrase   string
 	Transports   []string
 	MinionIDs    []string
+	SaltSudo     bool
 	Folders      map[string][]string
 	BlackboxAddr string
 	BlackboxID   string
@@ -339,7 +342,7 @@ func samePlace(a Entry, host string, port int, user string) bool {
 func (s *Store) Add(in AddInput) (Entry, error) {
 	e := Entry{
 		Name: in.Name, Host: in.Host, Port: in.Port, User: in.User, OS: in.OS, Auth: in.Auth,
-		Transports: in.Transports, MinionIDs: in.MinionIDs, Folders: in.Folders,
+		Transports: in.Transports, MinionIDs: in.MinionIDs, SaltSudo: in.SaltSudo, Folders: in.Folders,
 		BlackboxAddr: in.BlackboxAddr, BlackboxID: in.BlackboxID,
 	}
 	normalise(&e)
@@ -439,6 +442,7 @@ type Patch struct {
 	Name         *string
 	Transports   *[]string
 	MinionIDs    *[]string
+	SaltSudo     *bool
 	Folders      *map[string][]string
 	BlackboxAddr *string
 	BlackboxID   *string
@@ -458,6 +462,9 @@ func (s *Store) Update(id string, p Patch) (Entry, error) {
 		}
 		if p.MinionIDs != nil {
 			e.MinionIDs = *p.MinionIDs
+		}
+		if p.SaltSudo != nil {
+			e.SaltSudo = *p.SaltSudo
 		}
 		if p.Folders != nil {
 			e.Folders = *p.Folders

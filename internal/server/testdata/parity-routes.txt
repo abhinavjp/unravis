@@ -194,4 +194,5 @@ POST /api/servers/{id}/plan	ui-only	window only, pull plan
 POST /api/servers/{id}/pulls	ui-only	window only, starts a pull
 POST /api/servers/{id}/replace-key	ui-only	window only, host key replacement
 POST /api/servers/{id}/test	ui-only	holds a secret
+POST /api/servers/{id}/machines	ui-only	holds a secret
 PUT /api/servers/{id}/secret	ui-only	holds a secret

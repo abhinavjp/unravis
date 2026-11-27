@@ -531,6 +531,7 @@ func wireData(f runFlags, demoCfg demoSettings, getenv func(string) string) (dat
 	}
 	serverOptions = append(serverOptions, caseOptions...)
 	serverOptions = append(serverOptions, wireBlackbox(f.demo, demoCfg, getenv, saved.bb)...)
+	serverOptions = append(serverOptions, wireServers(f.demo, getenv, saved.bb)...)
 	return dataWiring{
 		repo:       repo,
 		options:    serverOptions,

@@ -66,7 +66,7 @@ func New(d Deps) (*Service, error) {
 // Plain sentences the screen shows as they are.
 var (
 	ErrNeedHostKey   = errors.New("Check this server's host key first. Unravis connects only to a server whose key you have compared and pinned.")
-	ErrNoSSH         = errors.New("This server is set up without an SSH connection, so there is nothing to browse or pull. Add SSH to use it.")
+	ErrNoSSH         = errors.New("This server is set up without an SSH or Salt connection, so there is nothing to browse or pull. Add one to use it.")
 	ErrKeyNotShown   = errors.New("The server is now presenting a different host key than the one you compared. Nothing was pinned. Compare the key again.")
 	ErrFolderNotKind = errors.New("That folder is not on this server's list for that kind of log. Add it to the allowed folders first.")
 	ErrNoBlackbox    = errors.New("This server has no Blackbox set up. Add its Blackbox key first.")
@@ -106,7 +106,7 @@ func base(e registry.Entry) sshdirect.Config {
 
 // signIn is the config that signs in. It refuses a server whose key is not pinned.
 func (s *Service) signIn(e registry.Entry) (sshdirect.Config, error) {
-	if !hasTransport(e, registry.TransportSSH) {
+	if !hasJump(e) {
 		return sshdirect.Config{}, ErrNoSSH
 	}
 	if e.HostKey == "" {
@@ -146,7 +146,7 @@ func (s *Service) HostKeys(ctx context.Context, id string) ([]sshdirect.HostKey,
 	if err != nil {
 		return nil, err
 	}
-	if !hasTransport(e, registry.TransportSSH) {
+	if !hasJump(e) {
 		return nil, ErrNoSSH
 	}
 	return s.d.FetchKeys(ctx, base(e))
@@ -172,7 +172,7 @@ func (s *Service) Pin(ctx context.Context, id, fingerprint string) error {
 	if err != nil {
 		return err
 	}
-	if !hasTransport(e, registry.TransportSSH) {
+	if !hasJump(e) {
 		return ErrNoSSH
 	}
 	if err := s.presents(ctx, e, fingerprint); err != nil {
@@ -214,19 +214,23 @@ type TestResult struct {
 	Host     transport.HostInfo `json:"host"`
 	Folders  []FolderCheck      `json:"folders"`
 	Blackbox *BlackboxCheck     `json:"blackbox,omitempty"`
+	// Machine is the Salt machine that was read; empty for a server read directly.
+	Machine string `json:"machine,omitempty"`
 }
 
-// Test signs in, reads the host details, lists each allowed folder and asks the recorder for its status. It changes nothing.
-func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
-	if e, err := s.entry(id); err == nil && !hasTransport(e, registry.TransportSSH) && hasTransport(e, registry.TransportBlackbox) {
+// Test signs in, reads the host details, lists each allowed folder and asks the recorder for its status. It changes nothing. On a Salt
+// server, machine names the machine to read (it may be empty when only one is ticked).
+func (s *Service) Test(ctx context.Context, id, machine string) (TestResult, error) {
+	if e, err := s.entry(id); err == nil && !hasJump(e) && hasTransport(e, registry.TransportBlackbox) {
 		return s.testDirect(ctx, e), nil
 	}
-	e, cn, err := s.connect(ctx, id)
+	t, err := s.open(ctx, id, machine)
 	if err != nil {
 		return TestResult{}, err
 	}
-	defer cn.Close()
-	var r TestResult
+	defer t.close()
+	e, cn := t.e, t.tr
+	r := TestResult{Machine: t.machine}
 	if r.Host, err = cn.Probe(ctx); err != nil {
 		return r, err
 	}
@@ -241,9 +245,9 @@ func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
 			r.Folders = append(r.Folders, fc)
 		}
 	}
-	if hasTransport(e, registry.TransportBlackbox) {
+	if t.machine == "" && hasTransport(e, registry.TransportBlackbox) {
 		bc := &BlackboxCheck{}
-		src, err := s.bbSource(cn, e)
+		src, err := s.bbSource(t.conn, e)
 		if err == nil {
 			var st *blackbox.StatusDoc
 			if st, err = src.Status(ctx); err == nil {
@@ -275,7 +279,7 @@ func (s *Service) bbSource(cn Conn, e registry.Entry) (blackbox.Source, error) {
 
 // BlackboxSource opens the recorder on this server as a Blackbox source, through the SSH tunnel. Close the returned closer when done.
 func (s *Service) BlackboxSource(ctx context.Context, id string) (blackbox.Source, io.Closer, error) {
-	if e, err := s.entry(id); err == nil && !hasTransport(e, registry.TransportSSH) && hasTransport(e, registry.TransportBlackbox) {
+	if e, err := s.entry(id); err == nil && !hasJump(e) && hasTransport(e, registry.TransportBlackbox) {
 		src, err := s.directSource(e)
 		return src, noClose{}, err
 	}
@@ -291,14 +295,14 @@ func (s *Service) BlackboxSource(ctx context.Context, id string) (blackbox.Sourc
 	return src, cn, nil
 }
 
-// Browse lists one allowed folder.
-func (s *Service) Browse(ctx context.Context, id, dir string) ([]transport.FileInfo, error) {
-	_, cn, err := s.connect(ctx, id)
+// Browse lists one allowed folder (on the named machine, for a Salt server).
+func (s *Service) Browse(ctx context.Context, id, machine, dir string) ([]transport.FileInfo, error) {
+	t, err := s.open(ctx, id, machine)
 	if err != nil {
 		return nil, err
 	}
-	defer cn.Close()
-	return cn.List(ctx, dir)
+	defer t.close()
+	return t.tr.List(ctx, dir)
 }
 
 // folderKind maps what a pull is for to the allowlist group its folder must come from.
@@ -334,16 +338,16 @@ func (s *Service) request(e registry.Entry, req pull.Request) (pull.Request, err
 }
 
 // Plan says what a pull would copy, without copying anything.
-func (s *Service) Plan(ctx context.Context, id string, req pull.Request) (pull.Plan, error) {
-	e, cn, err := s.connect(ctx, id)
+func (s *Service) Plan(ctx context.Context, id, machine string, req pull.Request) (pull.Plan, error) {
+	t, err := s.open(ctx, id, machine)
 	if err != nil {
 		return pull.Plan{}, err
 	}
-	defer cn.Close()
-	if req, err = s.request(e, req); err != nil {
+	defer t.close()
+	if req, err = s.request(t.e, req); err != nil {
 		return pull.Plan{}, err
 	}
-	return pull.BuildPlan(ctx, cn, req, s.d.Limits)
+	return pull.BuildPlan(ctx, t.tr, req, s.d.Limits)
 }
 
 // Pulled is a finished or interrupted job and where its files are.
@@ -354,23 +358,28 @@ type Pulled struct {
 }
 
 // Pull plans and runs one job. The same jobID resumes an interrupted one.
-func (s *Service) Pull(ctx context.Context, id string, req pull.Request, jobID string, progress func(pull.Progress)) (Pulled, error) {
-	e, cn, err := s.connect(ctx, id)
+func (s *Service) Pull(ctx context.Context, id, machine string, req pull.Request, jobID string, progress func(pull.Progress)) (Pulled, error) {
+	t, err := s.open(ctx, id, machine)
 	if err != nil {
 		return Pulled{}, err
 	}
-	defer cn.Close()
+	defer t.close()
+	e := t.e
 	if req, err = s.request(e, req); err != nil {
 		return Pulled{}, err
 	}
-	plan, err := pull.BuildPlan(ctx, cn, req, s.d.Limits)
+	plan, err := pull.BuildPlan(ctx, t.tr, req, s.d.Limits)
 	if err != nil {
 		return Pulled{}, err
 	}
-	res, err := pull.Run(ctx, cn, req, plan, pull.Options{
+	label := e.Name
+	if t.machine != "" {
+		label += " / " + t.machine
+	}
+	res, err := pull.Run(ctx, t.tr, req, plan, pull.Options{
 		StagingDir: filepath.Join(s.d.StagingRoot, e.ID),
 		JobID:      jobID,
-		Server:     e.Name,
+		Server:     label,
 		Limits:     s.d.Limits,
 		Free:       s.d.Free,
 		Progress:   progress,
