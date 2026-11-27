@@ -1,4 +1,0 @@
-{
-  "schema": 1,
-  "changes": ["A case that holds a Blackbox recording now shows the Resource counters panel, with the host CPU, memory and Redis figures the recorder read."]
-}
