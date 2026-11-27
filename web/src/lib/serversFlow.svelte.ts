@@ -2,7 +2,7 @@ import { serversApi } from './serversApi';
 import { SV_TEXT } from './copy/serversCopy';
 import {
   FAILURE_TEXT, ServersError, buildAddBody, buildPatchBody, buildPullBody, caseRange, caseRangeProblem, connectProblems, emptyConnectForm, findConnection,
-  dedupeMachines, folderKindInfo, initialPicks, jobPercent, matchesConnection, pullTargets, readableTargets, rangeHours, togglePick, withFolder, withoutFolder, withTimeout,
+  dedupeMachines, folderKindInfo, initialPicks, jobPercent, matchesConnection, pullTargets, readableTargets, rangeHours, togglePick, withFolder, withFolders, withoutFolder, withTimeout,
   type AuthKind, type ConnectForm, type Failure, type FolderMap, type HostKey, type JobView, type MachineView, type PlanView, type PullTarget, type RangeChoice,
   type ServerEntry, type TestResult
 } from './servers';
@@ -365,6 +365,15 @@ export class ServersFlow {
     const server = this.server;
     if (!server) return false;
     const next = withFolder(server.folders, kind, path);
+    return this.saveFolders(next);
+  }
+
+  async addFolders(additions: readonly { kind: string; path: string }[]): Promise<boolean> {
+    const server = this.server;
+    if (!server) return false;
+    const next = withFolders(server.folders, additions);
+    const count = (folders: FolderMap | undefined) => Object.values(folders ?? {}).reduce((n, list) => n + list.length, 0);
+    if (count(next) === count(server.folders)) return true;
     return this.saveFolders(next);
   }
 

@@ -348,6 +348,11 @@ export const FOLDER_KINDS: FolderKindInfo[] = [
   { kind: 'other', pullKind: 'applog', label: 'Other logs', hint: 'Any other log folder you want to read.', suggestions: [] }
 ];
 
+export const QUICK_FOLDERS: { kind: string; path: string }[] = [
+  { kind: 'blackbox', path: 'D:\\UnravisBlackbox' },
+  { kind: 'iis', path: 'C:\\inetpub\\logs\\LogFiles\\W3SVC1' }
+];
+
 export const folderKindInfo = (kind: string): FolderKindInfo | undefined => FOLDER_KINDS.find((k) => k.kind === kind || k.pullKind === kind);
 
 const WIN_ABS = /^[A-Za-z]:[\\/]/;
@@ -375,6 +380,15 @@ export function withFolder(folders: FolderMap | undefined, kind: string, path: s
   if (!list.includes(p)) list.push(p);
   next[kind] = list;
   return next;
+}
+
+export function withFolders(folders: FolderMap | undefined, additions: readonly { kind: string; path: string }[]): FolderMap {
+  const copy = Object.fromEntries(Object.entries(folders ?? {}).map(([kind, paths]) => [kind, [...paths]]));
+  return additions.reduce<FolderMap>((next, { kind, path }) => withFolder(next, kind, path), copy);
+}
+
+export function missingQuickFolders(folders: FolderMap | undefined): { kind: string; path: string }[] {
+  return QUICK_FOLDERS.filter(({ kind, path }) => !(folders?.[kind] ?? []).includes(path));
 }
 
 export function withoutFolder(folders: FolderMap | undefined, kind: string, path: string): FolderMap {

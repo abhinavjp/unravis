@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import StepFooter from './StepFooter.svelte';
   import type { ServersFlow } from '../../lib/serversFlow.svelte';
   import { SV_TEXT as T } from '../../lib/copy/serversCopy';
-  import { FOLDER_KINDS, accessCommands, folderProblem, testChecks, testVerdict, failureText } from '../../lib/servers';
+  import { FOLDER_KINDS, missingQuickFolders, accessCommands, folderProblem, testChecks, testVerdict, failureText } from '../../lib/servers';
   import CommandBlock from './CommandBlock.svelte';
 
   // Step 4. First the folders Unravis may read on this server, then a check per machine. A machine's check lists only what the
@@ -15,6 +16,7 @@
   const server = $derived(flow.server);
   const machines = $derived(server?.minionIds ?? []);
   const folderCount = $derived(Object.values(server?.folders ?? {}).reduce((n, list) => n + list.length, 0));
+  let foldersOpen = $state(untrack(() => folderCount === 0));
   const anyReady = $derived(flow.readable.length > 0);
   const commandInput = $derived(server ? { os: server.os, host: server.host, port: server.port, user: server.user, machines, folders: server.folders, sudo: !!server.saltSudo } : null);
 
@@ -31,8 +33,17 @@
   <h3 id="sv-reach-title">{T.reachTitle}</h3>
   <p class="sv-lead">{T.reachLead}</p>
 
-  <details class="sv-folders">
+  {#if folderCount === 0}
+    <div class="notice">
+      <p>{T.foldersWhy}</p>
+      <button type="button" class="primary-button" disabled={!!flow.busy} onclick={() => flow.addFolders(missingQuickFolders(server?.folders))}>{T.foldersAddSuggested}</button>
+      {#if flow.busy === 'folders'}<p class="sv-note" role="status">{T.foldersSaving}</p>{/if}
+    </div>
+  {/if}
+
+  <details class="sv-folders" bind:open={foldersOpen}>
     <summary><strong>{T.foldersHeading}</strong> <span class="sv-note">{T.folderSummary(folderCount)}</span></summary>
+    <p class="sv-note">{T.foldersWhyShort}</p>
     {#each FOLDER_KINDS as info (info.kind)}
       {@const list = server?.folders?.[info.kind] ?? []}
       <div class="sv-folder-kind">

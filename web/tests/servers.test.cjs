@@ -189,6 +189,22 @@ test('adding and removing a folder gives a new map and leaves the old one alone'
   assert.deepEqual(sv.withoutFolder(added, 'iis', 'D:\\Logs\\W3SVC1'), { blackbox: ['/opt/bb'] });
 });
 
+test('bulk folder additions are valid, idempotent and do not mutate the input', () => {
+  const before = { other: ['/existing'] };
+  const expected = { other: ['/existing'], blackbox: ['D:\\UnravisBlackbox'], iis: ['C:\\inetpub\\logs\\LogFiles\\W3SVC1'] };
+  const added = sv.withFolders(before, [...sv.QUICK_FOLDERS, { kind: 'iis', path: 'relative' }]);
+  assert.deepEqual(added, expected);
+  assert.deepEqual(before, { other: ['/existing'] });
+  assert.notEqual(added.other, before.other);
+  assert.deepEqual(sv.withFolders(added, sv.QUICK_FOLDERS), expected);
+});
+
+test('missing quick folders reflects the folders already listed', () => {
+  assert.deepEqual(sv.missingQuickFolders({}), sv.QUICK_FOLDERS);
+  assert.deepEqual(sv.missingQuickFolders(sv.withFolders({}, sv.QUICK_FOLDERS)), []);
+  assert.deepEqual(sv.missingQuickFolders({ blackbox: ['D:\\UnravisBlackbox'] }), [sv.QUICK_FOLDERS[1]]);
+});
+
 test('only a folder that could be read becomes something to copy, with the pull kind the backend uses', () => {
   const result = { folders: [
     { kind: 'blackbox', path: '/opt/bb', ok: true, files: 3 },
@@ -257,6 +273,17 @@ const makeFlow = (serversApi) => {
   const { ServersFlow } = loadTypeScript('src/lib/serversFlow.svelte.ts', { './serversApi': { serversApi } });
   return new ServersFlow({ windows: () => null, now: () => NOW });
 };
+
+test('bulk folder additions save once and skip unchanged maps', async () => {
+  const writes = [];
+  const flow = makeFlow({ patch: async (id, body) => { writes.push({ id, body }); return savedServer(body); } });
+  flow.server = savedServer({ folders: {} });
+  assert.equal(await flow.addFolders(sv.QUICK_FOLDERS), true);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].body.folders, sv.withFolders({}, sv.QUICK_FOLDERS));
+  assert.equal(await flow.addFolders([...sv.QUICK_FOLDERS, { kind: 'iis', path: 'relative' }]), true);
+  assert.equal(writes.length, 1);
+});
 
 test('Back keeps the draft, cancels key fetching, and Next reuses the saved entry', async () => {
   const requests = [];
@@ -543,6 +570,14 @@ test('the copy lint includes every Servers text entry', () => {
     if (typeof value === 'string') assert.equal(entries.get(id), value, id);
     else if (Array.isArray(value)) value.forEach((text, i) => assert.equal(entries.get(`${id}.${i}`), text));
     else assert.ok([...entries].some(([key, text]) => (key === id || key.startsWith(id + '.')) && text), id);
+  }
+});
+
+test('the folder guidance has text and is included in copy lint', () => {
+  const entries = new Map(serversCopyEntries().map(({ id, text }) => [id, text]));
+  for (const key of ['foldersWhy', 'foldersWhyShort', 'foldersAddSuggested', 'reachNoFolders']) {
+    assert.ok(SV_TEXT[key].trim(), key);
+    assert.equal(entries.get('servers.' + key), SV_TEXT[key]);
   }
 });
 
