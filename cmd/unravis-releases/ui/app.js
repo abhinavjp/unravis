@@ -552,7 +552,7 @@ function render() {
   else if (R.name === 'machines') html = viewMachines();
   else html = '<div class="empty"><b>No such page.</b> <a href="#/overview">Back to the overview</a>.</div>';
   // Older data is named at the top of the page; the Releases page puts its own note under its heading (viewReleases).
-  const banner = R.name === 'releases' ? '' : Fresh.noteHtml(R.name, Date.now()) || (D.err && D.loaded && !D.at ? `<div class="empty"><b>The last refresh failed.</b> ${esc(D.err)}</div>` : '');
+  const banner = (R.name === 'releases' ? '' : Fresh.noteHtml(R.name, Date.now())) || (D.err && D.loaded && !D.at ?`<div class="empty"><b>The last refresh failed.</b> ${esc(D.err)}</div>` : '');
   main.innerHTML = banner + html;
   $$('[data-check]', main).forEach((b) => { b.onclick = () => { toast('Checking again…'); Data.tick(true); }; });
   $$('table.tbl th', main).forEach((th) => th.setAttribute('scope', 'col'));

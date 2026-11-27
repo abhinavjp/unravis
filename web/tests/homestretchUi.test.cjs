@@ -188,7 +188,7 @@ test('W-05 chip: shows the older read time and warns after 3 polls of either rea
   assert.equal(h.Fresh.chip(t0 + 200000).text, 'Data is 3 min old');
 });
 
-test('W-05 render: the page draws the note under the Releases heading, the chip with its warning style, and re-reads on Check again', () => {
+test('W-05 wiring: the page source draws the note under the Releases heading, the chip with its warning style, and re-reads on Check again', () => {
   const app = read('app.js');
   assert.match(app, /Fresh\.noteHtml\('releases', Date\.now\(\)\)/);
   assert.match(app, /Fresh\.chip\(Date\.now\(\)\)/);
