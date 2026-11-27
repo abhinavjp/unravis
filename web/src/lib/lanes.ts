@@ -292,6 +292,16 @@ export function newestDay(days: LaneDay[]): LaneDay | null {
 export const readableByDay = (kind: 'sql' | 'mongo'): boolean => kind === 'sql';
 
 /**
+ * What "Add another day" shows (RV-UI-8). A failed read with nothing held yet is 'failed' (never "the case holds nothing"); a read that
+ * worked and found no day by day is 'empty'; anything else is the list, with `stale` set when the last read failed so the list says it may be old.
+ * `cancel` is whether the Cancel button shows: not on the empty page that already offers "read first", and not when a failure hides the empty page.
+ */
+export function dayListView(f: { loaded: boolean; loadFailed: boolean; daysHeld: number; byDayCount: number; canReadSql: boolean }): { view: 'failed' | 'empty' | 'list'; stale: boolean; cancel: boolean } {
+  const view = f.loadFailed && f.daysHeld === 0 ? 'failed' : f.loaded && !f.loadFailed && f.byDayCount === 0 ? 'empty' : 'list';
+  return { view, stale: view === 'list' && f.loadFailed, cancel: !(f.loaded && !f.loadFailed && f.byDayCount === 0 && f.canReadSql) };
+}
+
+/**
  * A read that answered but found nothing to read: no check ran, none failed, and none has a permission to fix.
  * (A missing permission has its own screen: the check says what to grant.) The case is not broken; the hours held nothing.
  */
