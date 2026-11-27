@@ -230,9 +230,6 @@ func validate(e Entry) string {
 			return r
 		}
 	}
-	if seen[TransportSalt] && len(e.MinionIDs) == 0 {
-		return "Salt needs at least one exact server id."
-	}
 	total := 0
 	for kind, list := range e.Folders {
 		if !folderKinds[kind] {

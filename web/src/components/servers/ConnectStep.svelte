@@ -1,4 +1,6 @@
-<script lang="ts">
+﻿<script lang="ts">
+  import HelpTip from './HelpTip.svelte';
+  import StepFooter from './StepFooter.svelte';
   import type { ServersFlow } from '../../lib/serversFlow.svelte';
   import { SV_TEXT as T } from '../../lib/copy/serversCopy';
   import { connectProblems, emptyConnectForm, type AuthKind, type ServerEntry } from '../../lib/servers';
@@ -66,27 +68,30 @@
 
   {#if flow.needSecret && flow.server}
     <p class="sv-lead">{T.secretNeeded}</p>
-    <form class="sv-form" onsubmit={submitSecret} autocomplete="off">
+    <form id="sv-secret-form" class="sv-form" onsubmit={submitSecret} autocomplete="off">
       {#if secretAuth === 'password'}
-        <label class="sv-field"><span>{T.fieldPassword}</span>
-          <input type="password" bind:this={passwordEl} autocomplete="off" oninput={() => { hasSecret = !!passwordEl?.value; }} />
-          <small>{T.fieldPasswordHelp}</small></label>
+        <div class="sv-field"><label for="field-password">{T.fieldPassword}</label>
+          <input id="field-password" type="password" bind:this={passwordEl} autocomplete="off" oninput={() => { hasSecret = !!passwordEl?.value; }} />
+          <HelpTip id={flow.needSecret ? "help-saved-password" : "help-password"} label={T.helpLabel(T.fieldPassword)} text={T.fieldPasswordHelp} /></div>
       {:else}
-        <label class="sv-field"><span>{T.fieldKeyFile}</span>
-          <input type="file" bind:this={keyEl} onchange={() => { hasSecret = !!keyEl?.files?.length; }} />
-          <small>{T.fieldKeyFileHelp}</small></label>
-        <label class="sv-field"><span>{T.fieldPassphrase}</span>
-          <input type="password" bind:this={passphraseEl} autocomplete="off" />
-          <small>{T.fieldPassphraseHelp}</small></label>
+        <div class="sv-field"><label for="field-keyfile">{T.fieldKeyFile}</label>
+          <input id="field-keyfile" type="file" bind:this={keyEl} onchange={() => { hasSecret = !!keyEl?.files?.length; }} />
+          <HelpTip id={flow.needSecret ? "help-saved-keyfile" : "help-keyfile"} label={T.helpLabel(T.fieldKeyFile)} text={T.fieldKeyFileHelp} /></div>
+        <div class="sv-field"><label for="field-passphrase">{T.fieldPassphrase}</label>
+          <input id="field-passphrase" type="password" bind:this={passphraseEl} autocomplete="off" />
+          <HelpTip id={flow.needSecret ? "help-saved-passphrase" : "help-passphrase"} label={T.helpLabel(T.fieldPassphrase)} text={T.fieldPassphraseHelp} /></div>
       {/if}
-      <div class="sv-actions">
-        <button type="submit" class="primary-button" disabled={!hasSecret || !!flow.busy}>{flow.busy ? T.working : T.secretSave}</button>
-        <button type="button" class="quiet-button" onclick={() => flow.reset()}>{T.back}</button>
-      </div>
+
     </form>
+    <StepFooter back={() => flow.reset()} primary={{ label: T.secretSave, form: "sv-secret-form", disabled: !hasSecret || !!flow.busy, busyLabel: flow.busy ? T.working : undefined }} />
   {:else}
     <p class="sv-lead">{T.connectLead}</p>
 
+    <div class="sv-routes" role="group" aria-label={T.fieldType}>
+      <button type="button" class:active={form.os === 'linux'} aria-pressed={form.os === 'linux'} onclick={() => form.os = 'linux'}><strong>{T.routeLinux}</strong><span>{T.routeLinuxHelp}</span></button>
+      <button type="button" class:active={form.os === 'windows'} aria-pressed={form.os === 'windows'} onclick={() => form.os = 'windows'}><strong>{T.routeWindows}</strong><span>{T.routeWindowsHelp}</span></button>
+    </div>
+    <div class="sv-columns">
     <div class="sv-saved">
       <h4>{T.savedHeading}</h4>
       {#if flow.list === null}
@@ -124,48 +129,54 @@
           {/each}
         </ul>
       {/if}
+      <div class="sv-promise-box"><strong>{T.promiseHeading}</strong><ul>{#each T.promises as promise}<li>{promise}</li>{/each}</ul><p>{T.readOnly}</p></div>
     </div>
 
-    <form class="sv-form" onsubmit={submit} autocomplete="off" novalidate>
-      <fieldset class="sv-field sv-radios"><legend>{T.fieldType}</legend>
-        <label><input type="radio" name="sv-os" value="linux" bind:group={form.os} /> {T.typeLinux}</label>
-        <label><input type="radio" name="sv-os" value="windows" bind:group={form.os} /> {T.typeWindows}</label>
-      </fieldset>
-      <label class="sv-field"><span>{T.fieldName}</span><input type="text" bind:value={form.name} autocomplete="off" /><small>{T.fieldNameHelp}</small></label>
+    <form id="sv-connect-form" class="sv-form" onsubmit={submit} autocomplete="off" novalidate>
       <div class="sv-two">
-        <label class="sv-field"><span>{T.fieldHost}</span><input type="text" bind:value={form.host} autocomplete="off" spellcheck="false" /><small>{T.fieldHostHelp}</small></label>
-        <label class="sv-field sv-narrow"><span>{T.fieldPort}</span><input type="text" inputmode="numeric" bind:value={form.port} autocomplete="off" /><small>{T.fieldPortHelp}</small></label>
+        <div class="sv-field"><label for="field-host">{T.fieldHost}</label><HelpTip id="help-host" label={T.helpLabel(T.fieldHost)} text={T.fieldHostHelp} /><input id="field-host" type="text" bind:value={form.host} autocomplete="off" spellcheck="false" /></div>
+        <div class="sv-field sv-narrow"><label for="field-port">{T.fieldPort}</label><HelpTip id="help-port" label={T.helpLabel(T.fieldPort)} text={T.fieldPortHelp} /><input id="field-port" type="text" inputmode="numeric" bind:value={form.port} autocomplete="off" /></div>
+        <div class="sv-field"><label for="field-user">{T.fieldUser}</label><HelpTip id="help-user" label={T.helpLabel(T.fieldUser)} text={T.fieldUserHelp} /><input id="field-user" type="text" bind:value={form.user} autocomplete="off" spellcheck="false" /></div>
       </div>
-      <label class="sv-field"><span>{T.fieldUser}</span><input type="text" bind:value={form.user} autocomplete="off" spellcheck="false" /></label>
-      <fieldset class="sv-field sv-radios"><legend>{T.fieldAuth}</legend>
-        <label><input type="radio" name="sv-auth" value="password" bind:group={form.auth} onchange={() => { clearSecrets(); }} /> {T.authPassword}</label>
-        <label><input type="radio" name="sv-auth" value="key" bind:group={form.auth} onchange={() => { clearSecrets(); }} /> {T.authKey}</label>
-      </fieldset>
+      <fieldset class="sv-field"><legend>{T.fieldAuth}</legend><div class="segmented" role="group" aria-label={T.fieldAuth}>
+        <button type="button" aria-pressed={form.auth === 'password'} onclick={() => { clearSecrets(); form.auth = 'password'; }}>{T.authPassword}</button>
+        <button type="button" aria-pressed={form.auth === 'key'} onclick={() => { clearSecrets(); form.auth = 'key'; }}>{T.authKey}</button>
+      </div></fieldset>
       {#if form.auth === 'password'}
-        <label class="sv-field"><span>{T.fieldPassword}</span>
-          <input type="password" bind:this={passwordEl} autocomplete="new-password" oninput={noteSecret} />
-          <small>{T.fieldPasswordHelp}</small></label>
+        <div class="sv-field"><label for="field-password">{T.fieldPassword}</label>
+          <input id="field-password" type="password" bind:this={passwordEl} autocomplete="new-password" oninput={noteSecret} />
+          <HelpTip id={flow.needSecret ? "help-saved-password" : "help-password"} label={T.helpLabel(T.fieldPassword)} text={T.fieldPasswordHelp} /></div>
       {:else}
-        <label class="sv-field"><span>{T.fieldKeyFile}</span>
-          <input type="file" bind:this={keyEl} onchange={noteSecret} />
-          <small>{T.fieldKeyFileHelp}</small></label>
-        <label class="sv-field"><span>{T.fieldPassphrase}</span>
-          <input type="password" bind:this={passphraseEl} autocomplete="new-password" />
-          <small>{T.fieldPassphraseHelp}</small></label>
+        <div class="sv-field"><label for="field-keyfile">{T.fieldKeyFile}</label>
+          <input id="field-keyfile" type="file" bind:this={keyEl} onchange={noteSecret} />
+          <HelpTip id={flow.needSecret ? "help-saved-keyfile" : "help-keyfile"} label={T.helpLabel(T.fieldKeyFile)} text={T.fieldKeyFileHelp} /></div>
+        <div class="sv-field"><label for="field-passphrase">{T.fieldPassphrase}</label>
+          <input id="field-passphrase" type="password" bind:this={passphraseEl} autocomplete="new-password" />
+          <HelpTip id={flow.needSecret ? "help-saved-passphrase" : "help-passphrase"} label={T.helpLabel(T.fieldPassphrase)} text={T.fieldPassphraseHelp} /></div>
       {/if}
-      <label class="sv-field"><span>{T.fieldMachine}</span><input type="text" bind:value={form.seedMachine} autocomplete="off" spellcheck="false" /><small>{T.fieldMachineHelp}</small></label>
 
       {#if tried && problems.length}
         <ul class="sv-problems" role="alert">{#each problems as p (p)}<li>{p}</li>{/each}</ul>
       {/if}
-      <div class="sv-actions">
-        <button type="submit" class="primary-button" disabled={!!flow.busy}>{flow.busy === 'connect' ? T.connecting : T.connectGo}</button>
-      </div>
+
     </form>
+    </div>
+    <StepFooter primary={{ label: T.connectGo, form: "sv-connect-form", disabled: !!flow.busy, busyLabel: flow.busy === "connect" ? T.connecting : undefined }} />
   {/if}
 </section>
 
 <style>
+  .sv-routes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .sv-routes button { display:grid; gap:6px; text-align:left; padding:14px; color:var(--text); background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); }
+  .sv-routes button.active { border-color:var(--accent); }
+
+  .sv-routes span { color:var(--text-2); font-size:var(--fs-2); }
+  .sv-columns { display:grid; grid-template-columns:minmax(0, 1.4fr) minmax(0, 1fr); gap:24px; align-items:start; }
+  .sv-columns .sv-saved { grid-column:2; grid-row:1; }
+  .sv-columns .sv-form { grid-column:1; grid-row:1; }
+  .sv-promise-box { padding:14px; border:1px solid var(--line); background:var(--surface); }
+  .sv-promise-box ul { padding-left:20px; }
+  @media (max-width:700px) { .sv-columns { display:flex; flex-direction:column-reverse; } .sv-routes { grid-template-columns:1fr; } }
   .sv-saved { display: grid; gap: var(--space-2); }
   .sv-saved h4 { margin: 0; font-size: var(--fs-4); font-weight: 600; }
   .sv-list { display: grid; margin: 0; padding: 0; list-style: none; }
@@ -175,7 +186,11 @@
   .sv-confirm p { margin: 0; font-size: 13px; }
   .sv-two { display: flex; flex-wrap: wrap; gap: var(--space-3); }
   .sv-two > :first-child { flex: 1 1 220px; }
-  .sv-narrow { flex: 0 1 120px; }
+  .sv-narrow { flex: 0 1 90px; }
   .sv-problems { margin: 0; padding-left: var(--space-5); color: var(--bad); font-size: 13px; }
   .sv-chip-live { color: var(--text); border: 1px solid var(--accent); }
 </style>
+
+
+
+

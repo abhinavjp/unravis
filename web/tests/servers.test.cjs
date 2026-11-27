@@ -229,10 +229,9 @@ test('the connect form names what is missing in plain sentences', () => {
   assert.equal(sv.connectProblems({ ...goodForm(), port: '70000' }, true).length, 1);
   assert.equal(sv.connectProblems({ ...goodForm(), port: 'abc' }, true).length, 1);
   assert.equal(sv.connectProblems({ ...goodForm(), user: '' }, true).length, 1);
-  assert.equal(sv.connectProblems({ ...goodForm(), seedMachine: 'bad name' }, true).length, 1);
   assert.match(sv.connectProblems(goodForm(), false)[0], /password/i);
   assert.match(sv.connectProblems({ ...goodForm(), auth: 'key' }, false)[0], /key file/i);
-  assert.equal(sv.connectProblems({ host: '', port: '', user: '', os: 'linux', auth: 'password', name: '', seedMachine: '' }, false).length, 5);
+  assert.equal(sv.connectProblems({ host: '', port: '', user: '', os: 'linux', auth: 'password' }, false).length, 4);
 });
 
 test('a machine name is letters, digits, dots, dashes and underscores', () => {
@@ -250,14 +249,14 @@ test('the add body is the one body that holds the secret and it goes through a S
   const body = sv.buildAddBody(goodForm(), 'the-password', '');
   assert.equal(body.secret, 'the-password');
   assert.deepEqual(body.transports, ['salt']);
-  assert.deepEqual(body.minionIds, ['web-1']);
+  assert.deepEqual(body.minionIds, []);
   assert.equal(body.saltSudo, false);
   assert.equal(body.name, 'salt.example.test');
   assert.equal(body.port, 22);
   assert.equal(body.passphrase, '');
   const key = sv.buildAddBody({ ...goodForm(), auth: 'key', name: ' Main ' }, '-----KEY-----', 'pass');
   assert.equal(key.passphrase, 'pass');
-  assert.equal(key.name, 'Main');
+  assert.equal(key.name, 'salt.example.test');
   // a passphrase is dropped for a password sign in
   assert.equal(sv.buildAddBody(goodForm(), 'x', 'leftover').passphrase, '');
   assert.deepEqual(sv.buildSecretBody('password', 's', 'leftover'), { auth: 'password', secret: 's', passphrase: '' });

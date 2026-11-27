@@ -1,13 +1,16 @@
 <script lang="ts">
+  import StepFooter from './StepFooter.svelte';
   import type { ServersFlow } from '../../lib/serversFlow.svelte';
   import { SV_TEXT as T } from '../../lib/copy/serversCopy';
   import { MAX_MACHINES, accessCommands, machineChoice, machineCounts } from '../../lib/servers';
   import CommandBlock from './CommandBlock.svelte';
 
-  // Step 3. The machines the Salt master manages. Only an accepted machine that is not known to be off can be ticked.
+  // Step 3. The machines the Salt master manages. Only an accepted machine known to be online can be ticked.
   // Unravis never accepts or removes a machine in Salt.
   let { flow }: { flow: ServersFlow } = $props();
 
+  const eligiblePicks = $derived(flow.picks.filter((id) => flow.machines.some((m) => m.id === id && m.state === "accepted" && m.online === true)));
+  $effect(() => { for (const id of [...flow.picks]) if (!eligiblePicks.includes(id)) flow.toggle(id, false); });
   const counts = $derived(machineCounts(flow.machines));
   const server = $derived(flow.server);
   const commandInput = $derived(server ? { os: server.os, host: server.host, port: server.port, user: server.user, machines: flow.picks, folders: server.folders, sudo: flow.sudo } : null);
@@ -24,40 +27,34 @@
     <div class="sv-actions"><button type="button" class="secondary-button" disabled={!!flow.busy} onclick={() => flow.loadMachines()}>{T.retry}</button></div>
   {:else}
     <p class="sv-note">{T.pickCount(counts.accepted, counts.online, counts.offline, counts.waiting + counts.refused)}</p>
-    <ul class="sv-list" aria-label={T.pickTitle}>
+    <div class="sv-table-wrap"><table class="sv-table" aria-label={T.pickTitle}>
+      <thead><tr><th></th><th>{T.machineColumn}</th><th>{T.osColumn}</th><th>{T.statusColumn}</th><th></th></tr></thead><tbody>
       {#each flow.machines as m (m.id)}
         {@const c = machineChoice(m)}
-        <li class="sv-row sv-machine">
-          <label class="sv-check">
-            <input type="checkbox" checked={flow.picks.includes(m.id)} disabled={!c.selectable && !flow.picks.includes(m.id)} onchange={(e) => flow.toggle(m.id, e.currentTarget.checked)} />
-            <strong>{m.id}</strong>
-          </label>
-          <span class="sv-chip sv-tone-{c.tone}">{c.label}</span>
-          <span class="sv-note">{c.note}</span>
-        </li>
+        <tr><td><input type="checkbox" aria-label={m.id} checked={eligiblePicks.includes(m.id)} disabled={!c.selectable || m.online !== true} onchange={(e) => flow.toggle(m.id, e.currentTarget.checked)} /></td>
+          <td><strong>{m.id}</strong></td><td>—</td><td><span class="sv-chip sv-tone-{c.tone}">{m.state === "accepted" && m.online == null ? T.statusUnknown : c.label}</span></td><td class="sv-note">{m.state === "accepted" && m.online == null ? T.unknownNote : c.note}</td></tr>
       {/each}
-    </ul>
+    </tbody></table></div>
     {#if flow.picks.length >= MAX_MACHINES}<p class="sv-note">{T.pickLimit}</p>{/if}
     {#if server?.os === 'linux'}
-      <label class="sv-check"><input type="checkbox" bind:checked={flow.sudo} /> {T.pickSudo}</label>
-      <p class="sv-note">{T.pickSudoHelp}</p>
+      <details><summary>{T.pickSudo}</summary><label class="sv-check"><input type="checkbox" bind:checked={flow.sudo} /> {T.pickSudo}</label><p class="sv-note">{T.pickSudoHelp}</p></details>
     {/if}
     {#if flow.picks.length === 0}<p class="sv-note">{T.pickNone}</p>{/if}
-    <div class="sv-actions">
-      <button type="button" class="primary-button" disabled={flow.picks.length === 0 || !!flow.busy} onclick={() => flow.confirmMachines()}>{flow.busy === 'save-machines' ? T.working : T.pickGo}</button>
-    </div>
+
     {#if commandInput}
-      <div class="sv-help">
+      <details class="sv-help"><summary>{T.pickHelp}</summary>
         <CommandBlock label={T.pickCommands} text={accessCommands('salt', commandInput)} />
         <CommandBlock label={T.pickAdmin} text={accessCommands('admin-salt', commandInput)} />
-      </div>
+      </details>
     {/if}
   {/if}
+  <StepFooter back={() => flow.go("trust")} summary={T.chosen(eligiblePicks.length)} primary={{ label: T.connectMachines(eligiblePicks.length), onclick: () => { for (const id of [...flow.picks]) if (!eligiblePicks.includes(id)) flow.toggle(id, false); flow.confirmMachines(); }, disabled: eligiblePicks.length === 0 || !!flow.busy, busyLabel: flow.busy === "save-machines" ? T.working : undefined }} reason={T.pickNone} />
 </section>
 
 <style>
-  .sv-list { display: grid; margin: 0; padding: 0; list-style: none; }
-  .sv-machine { grid-template-columns: minmax(160px, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-3); }
-  .sv-machine .sv-note { grid-column: 1 / -1; }
   .sv-help { display: grid; gap: var(--space-2); }
 </style>
+
+
+
+

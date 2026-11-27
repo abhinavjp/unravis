@@ -128,7 +128,6 @@ func TestRefusesWhatTheGrammarRefuses(t *testing.T) {
 		"bad auth":          func(a *AddInput) { a.Auth = "none" },
 		"no transport":      func(a *AddInput) { a.Transports = nil },
 		"unknown transport": func(a *AddInput) { a.Transports = []string{"telnet"} },
-		"salt no minion":    func(a *AddInput) { a.Transports = []string{TransportSalt} },
 		"wild minion":       func(a *AddInput) { a.Transports = []string{TransportSalt}; a.MinionIDs = []string{"web-*"} },
 		"dotdot folder":     func(a *AddInput) { a.Folders = map[string][]string{FolderIIS: {`C:\inetpub\..\Windows`}} },
 		"shell folder":      func(a *AddInput) { a.Folders = map[string][]string{FolderIIS: {`C:\x$HOME`}} },
@@ -145,6 +144,16 @@ func TestRefusesWhatTheGrammarRefuses(t *testing.T) {
 	}
 	if list, _ := s.List(); len(list) != 0 {
 		t.Fatalf("a refused server was saved: %v", list)
+	}
+}
+
+func TestSaltCanBeSavedBeforeChoosingMachines(t *testing.T) {
+	s, _ := open(t)
+	in := good()
+	in.Transports = []string{TransportSalt}
+	e, err := s.Add(in)
+	if err != nil || len(e.MinionIDs) != 0 {
+		t.Fatalf("expected a Salt server with no machines: %+v, %v", e, err)
 	}
 }
 

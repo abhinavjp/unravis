@@ -1,4 +1,5 @@
 <script lang="ts">
+  import StepFooter from './StepFooter.svelte';
   import type { ServersFlow } from '../../lib/serversFlow.svelte';
   import { SV_TEXT as T } from '../../lib/copy/serversCopy';
   import { FOLDER_KINDS, accessCommands, folderProblem, testChecks, testVerdict, failureText } from '../../lib/servers';
@@ -30,8 +31,8 @@
   <h3 id="sv-reach-title">{T.reachTitle}</h3>
   <p class="sv-lead">{T.reachLead}</p>
 
-  <div class="sv-folders">
-    <h4>{T.foldersHeading}</h4>
+  <details class="sv-folders">
+    <summary><strong>{T.foldersHeading}</strong> <span class="sv-note">{T.folderSummary(folderCount)}</span></summary>
     {#each FOLDER_KINDS as info (info.kind)}
       {@const list = server?.folders?.[info.kind] ?? []}
       <div class="sv-folder-kind">
@@ -55,32 +56,30 @@
       </div>
     {/each}
     {#if flow.busy === 'folders'}<p class="sv-note" role="status">{T.foldersSaving}</p>{/if}
-  </div>
+  </details>
 
   <div class="sv-machines">
     {#each machines as m (m)}
       {@const t = flow.tests[m]}
-      <div class="sv-machine-card">
-        <div class="sv-row-main"><strong>{m}</strong>
+      <div class="sv-panel">
+        <header><h4>{m}</h4>{#if t?.state === 'done' && t.result?.host.description}<span class="sv-sub">{t.result.host.description}</span>{/if}<span class="sv-sp"></span>
           {#if t?.state === 'done'}
             {@const v = testVerdict(t.result ?? null)}
             <span class="sv-chip sv-tone-{v === 'ready' ? 'ok' : v === 'partial' ? 'pending' : 'bad'}">{v === 'ready' ? T.reachOkLine : v === 'partial' ? T.reachPartLine : T.reachNoneLine}</span>
-          {/if}
-        </div>
-        {#if t?.state === 'running'}
-          <p class="sv-note" role="status">{T.reachChecking}</p>
-        {:else if t?.state === 'failed' && t.failure}
-          <p class="sv-bad" role="alert">{failureText(t.failure)}</p>
+          {:else if t?.state === 'running'}<span class="sv-sub" role="status">{T.reachChecking}</span>{:else if t?.state === 'failed'}<span class="sv-chip sv-tone-bad">{T.reachNoAnswer}</span>{/if}
+          <button type="button" class="secondary-button sv-small" disabled={folderCount === 0 || t?.state === 'running' || !!flow.busy} onclick={() => flow.testMachine(m)}>{t ? T.reachRecheck : T.reachCheck}</button>
+        </header>
+        {#if t?.state === 'failed' && t.failure}
+          <p class="sv-in sv-bad" role="alert">{failureText(t.failure)}</p>
         {:else if t?.state === 'done' && t.result}
           <ul class="sv-checks">
             {#each testChecks(t.result, folderCount) as line (line.id)}
-              <li class:sv-line-bad={!line.ok}><span class="sv-mark" aria-hidden="true">{line.ok ? '+' : '-'}</span><span class="sv-sr">{line.ok ? 'Passed. ' : 'Not passed. '}</span>{line.text}{#if line.note}<span class="sv-note"> {line.note}</span>{/if}</li>
+              <li class:sv-line-bad={!line.ok}><span class="sv-mark" aria-hidden="true">{line.ok ? '✓' : '✕'}</span><span class="sv-sr">{line.ok ? 'Passed. ' : 'Not passed. '}</span><span>{line.text}{#if line.note}<span class="sv-sub"> {line.note}</span>{/if}</span></li>
             {/each}
           </ul>
+        {:else if !t}
+          <p class="sv-in sv-sub">{T.reachNotChecked}</p>
         {/if}
-        <div class="sv-actions">
-          <button type="button" class="secondary-button" disabled={folderCount === 0 || t?.state === 'running' || !!flow.busy} onclick={() => flow.testMachine(m)}>{t ? T.reachRecheck : T.reachCheck}</button>
-        </div>
       </div>
     {/each}
     {#if folderCount === 0}<p class="sv-note">{T.reachNoFolders}</p>{/if}
@@ -93,15 +92,11 @@
     </div>
   {/if}
 
-  <div class="sv-actions">
-    <button type="button" class="primary-button" disabled={!anyReady || !!flow.busy} onclick={() => flow.openHas()}>{T.reachGo}</button>
-    {#if !anyReady}<span class="sv-note">{T.reachNeed}</span>{/if}
-  </div>
+  <StepFooter back={() => flow.go("pick")} primary={{ label: T.reachGo, onclick: () => flow.openHas(), disabled: !anyReady || !!flow.busy }} reason={T.reachNeed} />
 </section>
 
 <style>
   .sv-folders { display: grid; gap: var(--space-3); }
-  .sv-folders h4 { margin: 0; font-size: var(--fs-4); font-weight: 600; }
   .sv-folder-kind { display: grid; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--line); min-width: 0; }
   .sv-folder-head { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; }
   .sv-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
@@ -112,11 +107,15 @@
   .sv-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin: 0; }
   .sv-suggest code { font-family: var(--mono); font-size: 12px; }
   .sv-machines { display: grid; gap: var(--space-3); }
-  .sv-machine-card { display: grid; gap: var(--space-2); padding: var(--space-3) 0; border-top: 1px solid var(--line); min-width: 0; }
-  .sv-checks { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
-  .sv-checks li { display: flex; flex-wrap: wrap; gap: 6px; overflow-wrap: anywhere; }
-  .sv-mark { width: 1ch; font-family: var(--mono); color: var(--tone-ok); }
+  .sv-small { padding: 4px 10px; }
+  .sv-checks { margin: 0; padding: 0 14px; list-style: none; font-size: var(--fs-3); }
+  .sv-checks li { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  .sv-checks li:last-child { border-bottom: 0; }
+  .sv-checks .sv-sub { margin-left: 8px; }
+  .sv-mark { width: 1.2ch; color: var(--tone-ok); font-weight: 700; }
   .sv-line-bad .sv-mark { color: var(--bad); }
   .sv-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .sv-help { display: grid; gap: var(--space-2); }
 </style>
+
+

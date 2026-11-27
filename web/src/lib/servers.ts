@@ -383,17 +383,14 @@ export function readableTargets(machine: string, result: Pick<TestResult, 'folde
 /* ------------------------------------------------------------- the forms */
 
 export interface ConnectForm {
-  name: string;
   host: string;
   port: string;
   user: string;
   os: ServerOs;
   auth: AuthKind;
-  /** One machine behind the master. Salt needs one exact id before it can list the rest. */
-  seedMachine: string;
 }
 
-export const emptyConnectForm = (): ConnectForm => ({ name: '', host: '', port: '22', user: '', os: 'linux', auth: 'password', seedMachine: '' });
+export const emptyConnectForm = (): ConnectForm => ({ host: '', port: '22', user: '', os: 'linux', auth: 'password' });
 
 const MACHINE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export const isMachineId = (id: string): boolean => MACHINE_ID.test(id);
@@ -406,7 +403,6 @@ export function connectProblems(form: ConnectForm, hasSecret: boolean): string[]
   if (!Number.isInteger(port) || port < 1 || port > 65535) out.push('The port is a number from 1 to 65535. Most servers use 22.');
   if (!form.user.trim()) out.push('Type the user name you sign in with.');
   if (!hasSecret) out.push(form.auth === 'password' ? 'Type the password.' : 'Choose the key file your admin gave you.');
-  if (!isMachineId(form.seedMachine.trim())) out.push('Type the exact name of one machine behind the master. Unravis lists the others after you trust the server.');
   return out;
 }
 
@@ -419,8 +415,8 @@ export interface AddBody {
 export function buildAddBody(form: ConnectForm, secret: string, passphrase: string): AddBody {
   const host = form.host.trim();
   return {
-    name: form.name.trim() || host, host, port: Number(form.port) || 22, user: form.user.trim(), os: form.os, auth: form.auth,
-    secret, passphrase: form.auth === 'key' ? passphrase : '', transports: ['salt'], minionIds: [form.seedMachine.trim()], saltSudo: false
+    name: host, host, port: Number(form.port) || 22, user: form.user.trim(), os: form.os, auth: form.auth,
+    secret, passphrase: form.auth === 'key' ? passphrase : '', transports: ['salt'], minionIds: [], saltSudo: false
   };
 }
 
@@ -475,10 +471,16 @@ export function secretKeysIn(value: unknown, found: string[] = []): string[] {
 export interface CheckLine { id: string; ok: boolean; text: string; note?: string }
 
 /** The lines the Reach step shows, built only from what the test answered. */
+/** The system name, unless the machine's own description already says it. */
+function osWord(os: string, description: string): string {
+  const word = os === 'windows' ? 'Windows' : os === 'linux' ? 'Linux' : '';
+  return word && !description.toLowerCase().includes(word.toLowerCase()) ? word : '';
+}
+
 export function testChecks(result: TestResult, folderCount: number): CheckLine[] {
   const lines: CheckLine[] = [
     { id: 'master', ok: true, text: 'The Salt master answered.' },
-    { id: 'machine', ok: true, text: 'The machine answered.', note: [result.host.description, result.host.os === 'windows' ? 'Windows' : result.host.os === 'linux' ? 'Linux' : '', clockOffsetText(result.host.clockOffset)].filter(Boolean).join('. ') }
+    { id: 'machine', ok: true, text: 'The machine answered.', note: [result.host.description, osWord(result.host.os, result.host.description), clockOffsetText(result.host.clockOffset)].filter(Boolean).join('. ') }
   ];
   if (folderCount === 0) lines.push({ id: 'no-folders', ok: false, text: 'No folder is allowed yet.', note: 'Add the folders Unravis may read, then check again.' });
   for (const f of result.folders) {

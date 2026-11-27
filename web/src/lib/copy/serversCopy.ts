@@ -10,8 +10,25 @@ import { FAILURE_TEXT, FOLDER_KINDS, caseRangeProblem, clockOffsetText, machineC
 
 export const SV_TEXT = {
   title: 'Servers',
+  pageTitle: 'Get data from a server',
+  purpose: 'Get Blackbox recordings and logs from a server onto your PC. You do not need to copy files by hand.',
+  purposeDetail: 'You pick the server. Unravis connects, shows what is there, and copies the parts you choose. It only reads; it never changes anything on the server.',
+  promiseHeading: 'What Unravis will and will not do',
+  routeLinux: 'Through a Salt master on a Linux server',
+  routeWindows: 'Through a Salt master on a Windows server',
+  routeLinuxHelp: 'Connect to the Linux server that runs the Salt master, then choose the machines it manages.',
+  routeWindowsHelp: 'The same, when your Salt master runs on Windows.',
+  routeDirect: 'Connect directly to one server',
+  routeUnavailable: 'Direct connections are not available here yet.',
+  folderSummary: (n: number) => n + (n === 1 ? ' folder on the list' : ' folders on the list'),
+  machineColumn: 'Machine',
+  osColumn: 'Operating system',
+  statusColumn: 'Right now',
+  chosen: (n: number) => n + ' chosen',
+  connectMachines: (n: number) => 'Connect to ' + n + (n === 1 ? ' machine' : ' machines'),
   intro: 'Get Blackbox recordings and logs from a remote server onto this PC.',
   close: 'Close the Servers panel',
+  closeButton: 'Close',
   readOnly: 'Unravis only reads. It never changes, restarts or deletes anything on a server.',
   promises: [
     'It never accepts or removes a machine on the Salt master.',
@@ -23,7 +40,7 @@ export const SV_TEXT = {
   steps: ['Connect', 'Trust the key', 'Choose machines', 'Reach them', 'See what they have', 'Copy to your PC', 'In your timeline'],
 
   /* saved servers */
-  savedHeading: 'Saved servers',
+  savedHeading: 'Servers you saved',
   savedLoading: 'Loading your servers.',
   savedFailed: 'The list of servers could not be loaded.',
   savedEmpty: 'No server yet. Add the first one below.',
@@ -41,7 +58,7 @@ export const SV_TEXT = {
 
   /* connect */
   connectTitle: 'Where do you want to get data from?',
-  connectLead: 'Choose the server that runs the Salt master. You sign in to that one server, the way you do in PuTTY. Unravis needs no login on the other machines.',
+  connectLead: 'Choose the server that runs the Salt master.',
   fieldType: 'Type of server',
   typeLinux: 'Linux',
   typeWindows: 'Windows',
@@ -52,18 +69,23 @@ export const SV_TEXT = {
   fieldPort: 'Port',
   fieldPortHelp: 'Most servers use 22.',
   fieldUser: 'User name',
+  fieldUserHelp: 'The user name you use to sign in to this server.',
+  helpLabel: (label: string) => 'Help with ' + label,
+  statusUnknown: 'Status unknown',
+  unknownNote: 'Check whether this machine is online before choosing it.',
+  pickHelp: 'Not sure you have access? Check first.',
+  trustGood: 'What good looks like: the fingerprint matches the one your admin gave you.',
+  trustReason: 'Compare the fingerprint before continuing.',
   fieldAuth: 'How you sign in',
-  authPassword: 'Password',
-  authKey: 'Key file',
+  authPassword: 'Password (like PuTTY)',
+  authKey: 'Key file (optional)',
   fieldPassword: 'Password',
   fieldPasswordHelp: 'It is sent once, sealed on this PC, and never shown again.',
   fieldKeyFile: 'Key file',
   fieldKeyFileHelp: 'The private key file your admin gave you. It is read in this page, sent once and sealed on this PC.',
   fieldPassphrase: 'Key passphrase',
   fieldPassphraseHelp: 'Only if the key has one. Leave it empty if it has none.',
-  fieldMachine: 'One machine behind the master',
-  fieldMachineHelp: 'Type the exact name of one machine the master manages. Unravis lists the others after you trust the server.',
-  connectGo: 'Save and check the key',
+  connectGo: 'Connect and check the key',
   connecting: 'Saving this server.',
   secretNeeded: 'This server has no saved password or key. Add it to go on.',
   secretSave: 'Save it and go on',
@@ -73,12 +95,15 @@ export const SV_TEXT = {
   trustTitle: 'Is this really your server?',
   trustLead: 'Unravis asked the server for its key. It did not send your password. Check the fingerprint below with your server admin. PuTTY asks the same question the first time.',
   trustFetching: 'Asking the server for its key.',
-  trustFingerprint: 'Fingerprint',
+  trustFingerprint: 'Fingerprint the server shows',
+  trustKeyType: 'Key type',
+  trustLater: 'If the fingerprint ever changes later, Unravis stops and tells you. It will not sign in.',
   trustPick: 'The server showed more than one key. Choose the one your admin gave you.',
   trustCompared: 'I compared this with the fingerprint from my server admin',
   trustGo: 'Trust it and list the machines',
   trustAgain: 'Ask the server again',
-  trustHelp: 'Get commands to compare the fingerprint',
+  trustHelp: 'Want to check the fingerprint yourself?',
+  trustHelpSub: 'Run this yourself, or send it to your IT admin. Every line only reads.',
   trustCommands: 'Commands that only read',
   trustAdmin: 'Message for your server admin',
   trustChangedTitle: 'The key of this server changed',
@@ -117,11 +142,13 @@ export const SV_TEXT = {
   foldersSaved: 'Folders saved.',
   reachCheck: 'Check this machine',
   reachChecking: 'Checking',
+  reachNotChecked: 'Not checked yet. Use Check this machine.',
   reachRecheck: 'Check again',
   reachNoFolders: 'Add at least one folder before you check.',
   reachOkLine: 'Ready to read.',
   reachPartLine: 'Some folders could not be read.',
   reachNoneLine: 'No folder could be read.',
+  reachNoAnswer: 'No answer',
   reachCommands: 'Commands to check access yourself',
   reachAdmin: 'Message for your server admin',
   reachGo: 'See what they have',
@@ -150,10 +177,41 @@ export const SV_TEXT = {
   hasGo: (items: number) => items === 1 ? 'Copy 1 item to my PC' : 'Copy ' + items + ' items to my PC',
   hasNothing: 'Tick at least one item that has files.',
   hasReplan: 'Read again',
+  hasSeen: (files: number, machines: number) => 'Unravis read the file list first: ' + (files === 1 ? '1 file' : files + ' files') + ' on ' + (machines === 1 ? '1 machine' : machines + ' machines') + '. Nothing is copied yet.',
+  hasWhyHeading: 'What is this for?',
+  hasForCase: 'For a case',
+  hasNotForCase: 'Not for a case',
+  hasNotForCaseNote: 'Choose a time range for each item below.',
+  hasWindow: 'Investigation window',
+  hasReference: 'Reference range',
+  hasPulledFor: 'Pulled for each item',
+  hasPulledForValue: 'Set per item in the tables below',
+  hasReadOnly: 'Set once in the Investigation timeline, shown here read only.',
+  hasChosen: (size: string) => size + ' chosen',
+  hasWhat: 'What',
+  hasHowMuch: 'How much',
+  hasFound: 'Found',
+  hasSize: 'Size',
+  hasNotFound: 'Not found on this machine',
+  hasFileCount: (n: number) => n === 1 ? '1 file' : n + ' files',
 
   /* pull */
   pullTitle: 'Copying to your PC',
   pullLead: 'Files are copied in pieces and checked against the server. Secrets are hidden before anything reaches a case.',
+  pullHeading: (pct: number, size: string) => pct + '% of ' + size,
+  pullColMachine: 'Machine',
+  pullColWhat: 'What',
+  pullColSize: 'Size',
+  pullColProgress: 'Progress',
+  pullColStatus: 'Status',
+  pullDoneStatus: 'Done, hashes match',
+  pullDoneUnchecked: 'Done',
+  pullStoppedStatus: 'Stopped',
+  pullFailedStatus: 'Failed',
+  pullCopyingStatus: 'Copying',
+  pullDropHeading: 'The connection dropped. Nothing is lost.',
+  pullDropBody: (done: string, total: string) => done + ' of ' + total + ' is already on your PC. Resume continues from the exact byte it stopped at, so nothing is copied twice.',
+  pullChooseAgain: 'Choose again',
   pullQueued: 'Waiting its turn',
   pullStop: 'Stop copying',
   pullStopping: 'Stopping.',
@@ -173,11 +231,20 @@ export const SV_TEXT = {
   landChanged: (n: number) => n === 1 ? '1 file was still growing while it was copied.' : n + ' files were still growing while they were copied.',
   landHidden: (n: number) => n === 1 ? '1 line with a secret was hidden.' : n + ' lines with secrets were hidden.',
   landDropped: (n: number) => n === 1 ? '1 line was left out.' : n + ' lines were left out.',
+  landBlackboxPanel: 'Blackbox view',
+  landBlackboxPanelSub: 'Each machine is its own saved recording set',
+  landLogsPanelSub: 'Save any file to your PC',
+  landNoBlackbox: 'No Blackbox recordings were copied.',
+  landNoLogs: 'No logs were copied.',
+  landSource: 'Timeline source',
+  landHashes: 'Hashes match.',
+  landSets: (files: number, size: string) => (files === 1 ? '1 recording, ' : files + ' recordings, ') + size,
   landBlackbox: 'Saved in the Blackbox view as',
   landOpenBlackbox: 'Open the Blackbox view',
   landBlackboxHelp: 'Open the set there and use it in a case. The timeline can then pick it as a source.',
   landLogs: 'Logs',
   landDownload: 'Save a copy of this file',
+  landFilesSummary: (n: number) => (n === 1 ? 'Save the file (1)' : 'Save a file (' + n + ' files)'),
   landDownloading: 'Saving.',
   landAnother: 'Get more from this server',
   landDone: 'Back to the list of servers',
@@ -208,12 +275,21 @@ export function serversCopyEntries(): LintEntry[] {
     else if (Array.isArray(value)) value.forEach((v, i) => add(key + '.' + i, v));
     else if (typeof value === 'function') {
       const fn = value as (...args: any[]) => string;
-      if (key === 'savedMachines') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
+      if (key === 'landFilesSummary') { add(key + '.1', fn(1)); add(key + '.2', fn(6)); }
+      else if (key === 'savedMachines') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
+      else if (key === 'folderSummary' || key === 'chosen' || key === 'connectMachines') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
+      else if (key === 'helpLabel') add(key, fn('Address'));
       else if (key === 'pickCount') add(key, fn(5, 3, 1, 2));
       else if (key === 'hasFiles') { add(key + '.1', fn(1, '2 MB')); add(key + '.2', fn(12, '48 MB')); }
       else if (key === 'hasSkipped' || key === 'landVerified' || key === 'landNotChecked' || key === 'landChanged' || key === 'landHidden' || key === 'landDropped') { add(key + '.1', fn(1)); add(key + '.2', fn(4)); }
       else if (key === 'hasTotals') { add(key + '.1', fn(1, 1, '2 MB')); add(key + '.2', fn(3, 40, '2.1 GB')); }
       else if (key === 'hasGo') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
+      else if (key === 'hasSeen') add(key, fn(1200, 3));
+      else if (key === 'hasChosen') add(key, fn('2 MB'));
+      else if (key === 'hasFileCount') { add(key + '.1', fn(1)); add(key + '.2', fn(4)); }
+      else if (key === 'pullHeading') add(key, fn(40, '2 GB'));
+      else if (key === 'pullDropBody') add(key, fn('1 GB', '2 GB'));
+      else if (key === 'landSets') { add(key + '.1', fn(1, '2 MB')); add(key + '.2', fn(30, '2 GB')); }
       else if (key === 'pullFile') add(key, fn(2, 5));
       else if (key === 'pullCopied') add(key, fn('12.0 MB'));
     }
@@ -234,3 +310,4 @@ export function serversCopyEntries(): LintEntry[] {
   add('clock.same', clockOffsetText(0));
   return out;
 }
+
