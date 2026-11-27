@@ -311,7 +311,7 @@ test('D-A-34: recent connections are read in the demo too and the demo New tab e
   const drawer = read('src/components/ConnectionsDrawer.svelte');
   assert.match(drawer, /\{#if !app\.info\?\.demo\}<button class="primary-button" onclick=\{startNewConnection\}>Create a connection<\/button>\{\/if\}/);
   assert.match(drawer, /\{#if !app\.info\?\.demo\}<div class="recent-card-actions">/);
-  assert.match(drawer, /'Forget'\}<\/button><\/div>\{\/if\}<\/article>/);
+  assert.match(drawer, /remove=\{\(\) => forgetRecent\(recent\)\} \/><\/div>\{\/if\}<\/article>/);
   assert.match(drawer, /<\/form>\s*\{:else\}\s*<div class="drawer-empty" data-demo-connections><strong>This is the demo<\/strong><p>The demo uses sample data, so new connections cannot be added here\.<\/p><\/div>\s*\{\/if\}\s*\{\/if\}\s*<\/Drawer>/);
   for (const text of ['This is the demo', 'The demo uses sample data, so new connections cannot be added here.']) {
     assert.doesNotMatch(text, /[‒-―−]| - |--/, 'no dash as punctuation');

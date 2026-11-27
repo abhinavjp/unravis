@@ -379,3 +379,26 @@ export function approvalReason(op: Op, options: Pick<Options, 'scope' | 'blackbo
   if (options.blackbox) return 'Placing the Blackbox';
   return 'Installing for everyone on this PC';
 }
+
+/** Reads of the run's progress that may fail one after another before Setup stops waiting. At the 250 ms pace of the watch loop that is about 5 seconds. */
+export const PROGRESS_FAILURE_LIMIT = 20;
+export const FATAL_HEADING = 'Setup cannot go on';
+/** Said when progress cannot be read for a while. It does not say the install failed (it may be running) and it never offers a second install. */
+export const PROGRESS_LOST_HEADING = 'Setup lost sight of the install';
+export const PROGRESS_LOST_MESSAGE = 'Setup could not read its progress. The install may still be running. Wait a minute, then open Unravis Setup again to see the result.';
+
+export type ProgressRead = { ok: true } | { ok: false; status: number };
+export type WatchDecision =
+  | { action: 'continue'; failures: number }
+  /** reason 'gone': Setup itself has stopped (status 0) or the key was refused (401), so the error's own words are shown.
+   *  reason 'lost': too many reads failed in a row, so the progress-lost words are shown. */
+  | { action: 'stop'; reason: 'gone' | 'lost'; failures: number };
+
+/** What the watch loop does after one read of the progress. A success resets the count; any other failure adds one, and the limit-th in a row stops the loop. */
+export function watchDecision(failuresInARow: number, read: ProgressRead): WatchDecision {
+  if (read.ok) return { action: 'continue', failures: 0 };
+  const failures = failuresInARow + 1;
+  if (read.status === 0 || read.status === 401) return { action: 'stop', reason: 'gone', failures };
+  if (failures >= PROGRESS_FAILURE_LIMIT) return { action: 'stop', reason: 'lost', failures };
+  return { action: 'continue', failures };
+}

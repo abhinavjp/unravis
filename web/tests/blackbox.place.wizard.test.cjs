@@ -138,7 +138,7 @@ test('H: every step that starts with a text field marks it, and a step change fo
 });
 
 test('I: the "use defaults, go to review" link shows on Record, SQL and Watch only, as in the wireframe, and still resets the keep numbers when asked on Keep (defect I)', () => {
-  assert.match(wrapper, /wizard\.step === 'record' \|\| wizard\.step === 'sql' \|\| wizard\.step === 'watch'\)/);
+  assert.match(wrapper, /wizard\.step === 'record' \|\| wizard\.step === 'sql' \|\| wizard\.step === 'redis' \|\| wizard\.step === 'watch'\)/);
   assert.match(wrapper, /useDefaultsToReview\(wizard, wizard\.step === 'keep'\)/);
 });
 
