@@ -49,12 +49,12 @@
     <h3>{W['redis.rowsHeading']}</h3>
     <div class="row locked">
       <span class="mark" aria-hidden="true">✓</span>
-      <span class="copy"><b>{W['redis.serverTitle']}</b> <span class="tag">{W['redis.tagAlways']}</span><span class="hint">{W['redis.serverHint']}</span></span>
+      <span class="copy"><span class="title-line"><b>{W['redis.serverTitle']}</b><span class="tag">{W['redis.tagAlways']}</span></span><span class="hint">{W['redis.serverHint']}</span></span>
     </div>
     {#each rows as row (row.id)}
       <label class="row">
         <input type="checkbox" checked={redisRowOn(wizard.redisChoice, row.id)} onchange={(e) => { wizard = setRedisRow(wizard, row.id, e.currentTarget.checked); }} />
-        <span class="copy"><b>{row.title}</b>{#if row.tag} <span class="tag" class:warn={row.warn}>{row.tag}</span>{/if}<span class="hint">{row.hint}</span></span>
+        <span class="copy"><span class="title-line"><b>{row.title}</b>{#if row.tag}<span class="tag" class:warn={row.warn}>{row.tag}</span>{/if}</span><span class="hint">{row.hint}</span></span>
       </label>
     {/each}
   </section>
@@ -73,7 +73,8 @@
   .row { display: grid; grid-template-columns: 20px 1fr; gap: var(--space-3); align-items: start; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); }
   .copy { display: grid; gap: 2px; }
   .hint { color: var(--text-2); font-size: var(--fs-3); }
-  .tag { font-size: var(--fs-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 var(--space-2); color: var(--text-2); }
+  .title-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+  .tag { padding: 1px var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--text-2); font-size: var(--fs-2); white-space: nowrap; }
   .tag.warn { border-color: var(--setup-warn); }
   .mark { color: var(--setup-ok); }
 </style>

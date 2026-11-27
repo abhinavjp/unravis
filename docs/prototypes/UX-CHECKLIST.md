@@ -53,3 +53,7 @@ Test it by looking at the screen with the explanations hidden: cover the title, 
 - [ ] Detail is collapsed by default.
 - [ ] Same pattern for the same thing everywhere.
 - [ ] Squint test: with the text blurred, the layout still shows what matters.
+
+## After the real UI is built
+
+- [ ] Prototype and build compared in the same state (see PIPELINE.md step 9); every difference has a reason; the build was fixed, not the prototype.
