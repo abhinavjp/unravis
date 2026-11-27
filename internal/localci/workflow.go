@@ -796,6 +796,29 @@ func MatrixLabel(job *Job, combo map[string]any) string {
 	if name == "" {
 		name = job.ID
 	}
+	spans, _ := scanExprs(name)
+	var expanded bool
+	var label strings.Builder
+	last := 0
+	for _, sp := range spans {
+		label.WriteString(name[last:sp.start])
+		if strings.HasPrefix(strings.ToLower(sp.src), "matrix.") {
+			expanded = true
+			value, err := EvalExpr(sp.src, &ExprContext{Vars: map[string]any{"matrix": combo}})
+			if err == nil {
+				label.WriteString(stringify(value))
+			} else {
+				label.WriteString(name[sp.start:sp.end])
+			}
+		} else {
+			label.WriteString(name[sp.start:sp.end])
+		}
+		last = sp.end
+	}
+	if expanded {
+		label.WriteString(name[last:])
+		return label.String()
+	}
 	var keys []string
 	seen := map[string]bool{}
 	if job.Strategy != nil {
