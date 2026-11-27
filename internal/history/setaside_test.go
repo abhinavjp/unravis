@@ -52,7 +52,7 @@ func TestSetAsideKeepsTheDamagedFileByteForByte(t *testing.T) {
 			if kept != "connections.dat.unreadable-20261127-143012" {
 				t.Fatalf("kept name = %q", kept)
 			}
-			got, err := os.ReadFile(filepath.Join(filepath.Dir(path), kept))
+			got, err := os.ReadFile(filepath.Join(filepath.Dir(path), kept)) //nolint:gosec // test reads its own temp file
 			if err != nil || !bytes.Equal(got, damaged) {
 				t.Fatalf("set-aside copy differs from the damaged file: err=%v", err)
 			}
@@ -66,7 +66,7 @@ func TestSetAsideKeepsTheDamagedFileByteForByte(t *testing.T) {
 			if _, err := service.Remember("db", testConnection("mongodb://db.example"), "audit", false); err != nil {
 				t.Fatalf("saving after set-aside: %v", err)
 			}
-			if got, err := os.ReadFile(filepath.Join(filepath.Dir(path), kept)); err != nil || !bytes.Equal(got, damaged) {
+			if got, err := os.ReadFile(filepath.Join(filepath.Dir(path), kept)); err != nil || !bytes.Equal(got, damaged) { //nolint:gosec // test reads its own temp file
 				t.Fatalf("the kept copy changed after a new save: %v", err)
 			}
 		})
@@ -84,7 +84,7 @@ func TestSetAsideRefusesAHealthyOrMissingFile(t *testing.T) {
 	if _, err := service.Remember("db", input, "audit", true); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(path)
+	before, err := os.ReadFile(path) //nolint:gosec // test reads its own temp file
 	if err != nil {
 		t.Fatal(err)
 	}

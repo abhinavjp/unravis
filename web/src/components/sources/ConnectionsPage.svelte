@@ -15,7 +15,8 @@
   import { isSavedFileDamaged } from '../../lib/savedFile';
   import { keptNote } from '../../lib/copy/savedFileCopy';
   import KeeperCard from './KeeperCard.svelte';
-  import { app, finishRecentSetAside } from '../../lib/appState.svelte';
+  import { app } from '../../lib/appState.svelte';
+  import { finishRecentSetAside } from '../../lib/appState.svelte';
   import { announceConnectionsChanged, dropTest, onConnectionsChanged, recallTests, rememberTest, type TestResult } from './connectionMemory';
   import './sources.css';
 
