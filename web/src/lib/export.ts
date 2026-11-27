@@ -39,7 +39,10 @@ export const EXPORT_TEXT = {
   saving: 'Saving…',
   saveNote: 'Saving downloads the file to your computer.',
   failedPreview: 'The preview did not finish. Try again.',
-  failedSave: 'The file was not saved. Try again.',
+  failedSave: 'The file could not be saved. Make the preview again.',
+  downloadStarted: "Download started. Check your browser's downloads.",
+  fileNameLabel: 'File name',
+  savedHashLabel: 'SHA-256 of the saved file',
   hashMismatch: 'The file did not match the SHA-256 the server sent, so it was not saved. Preview it again.',
   unavailable: 'Export is not available right now. Try again later.',
   goneSave: 'This preview is no longer available. Preview it again.',
@@ -149,7 +152,13 @@ export function canSave(phase: ExportPhase): boolean {
   return phase.kind === 'preview' && phase.preview.export.body.records.length > 0;
 }
 
-export const savedLine = (sha256: string) => `Saved. SHA-256 of the saved file: ${sha256}`;
+/**
+ * What the drawer shows after a save that failed. The confirm call has used the preview up, so Save is not offered again:
+ * the drawer goes back to its start, where Preview is, and says why.
+ */
+export function failedSaveOutcome(cause: unknown): { phase: ExportPhase; problem: string } {
+  return { phase: { kind: 'idle' }, problem: errorText(cause, 'save') };
+}
 
 /** Lower-case hex SHA-256 of the UTF-8 bytes of text, which are the bytes the saved file holds. */
 export async function sha256Hex(text: string): Promise<string> {

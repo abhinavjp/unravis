@@ -60,6 +60,8 @@ type HSRequest struct {
 	Conclusion    string              `json:"conclusion,omitempty"`
 	Reason        string              `json:"reason,omitempty"`
 	SupersededBy  string              `json:"supersededBy,omitempty"`
+	RunID         string              `json:"runId,omitempty"`   // the finished run this request made, so the page can run it again
+	Labels        []string            `json:"labels,omitempty"`  // what a machine must have to take it (the "Needs" column)
 	Display       string              `json:"display,omitempty"` // a plain line for a request that was replaced
 	Waiting       bool                `json:"waiting,omitempty"` // queued and no machine takes it at its next look
 	Why           *localci.WaitReason `json:"why,omitempty"`     // queued requests: why it has not started
@@ -153,7 +155,7 @@ func (v *ciView) requestOf(r localci.Request) HSRequest {
 	h := HSRequest{ID: v.rd(r.ID), Kind: v.rd(r.Kind), Repo: v.rd(r.Repo), Label: v.rd(r.Label()), Ref: v.rd(r.Ref), Base: v.rd(r.Base), Number: r.Number,
 		SHA: shaOnly(r.SHA), Workflow: v.rd(r.Workflow), State: r.State, Priority: r.Priority, PriorityLabel: hsPriorityNormal,
 		EnqueuedAt: tstr(r.EnqueuedAt), ClaimedBy: v.rd(r.ClaimedBy), ClaimedAt: tstr(r.ClaimedAt), FinishedAt: tstr(r.FinishedAt),
-		Attempts: r.Attempts, Conclusion: v.rd(r.Conclusion), Reason: v.rd(r.Reason), SupersededBy: v.rd(r.SupersededBy)}
+		Attempts: r.Attempts, Conclusion: v.rd(r.Conclusion), Reason: v.rd(r.Reason), SupersededBy: v.rd(r.SupersededBy), RunID: v.rd(r.RunID), Labels: v.rdAll(r.Labels)}
 	if r.Priority < localci.PriorityFor(r.Kind) {
 		h.PriorityLabel = hsPriorityFirst
 	}

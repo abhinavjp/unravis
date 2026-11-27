@@ -1125,8 +1125,9 @@ export function loadRecent(recent: RecentConnection) {
   manualDatabase = false; connectionTestedSignature = ''; connectionWarning = ''; connectionError = '';
   recentSaveError = ''; recentSaveSuccess = ''; recentSaveErrorStage = ''; sourceError = ''; sourceSuccess = '';
 }
-export async function forgetRecent(recent: RecentConnection) {
-  if (connectionTesting || sourceBusy || historyMutationBusy) return;
+// True once the saved connection is gone. A failure returns false and leaves the row: the Remove button beside the row says so (W-16).
+export async function forgetRecent(recent: RecentConnection): Promise<boolean> {
+  if (connectionTesting || sourceBusy || historyMutationBusy) return false;
   recentHistoryError = '';
   recentBusyId = recent.id;
   forgetInProgress = true;
@@ -1141,8 +1142,9 @@ export async function forgetRecent(recent: RecentConnection) {
       connectionTestedSignature = ''; discoveredDatabases = []; completedDatabases = []; selectedDatabases = [];
       connectionWarning = ''; connectionError = '';
     }
-  } catch (cause) {
-    recentHistoryError = `Could not remove this recent connection: ${message(cause)}`;
+    return true;
+  } catch {
+    return false;
   } finally { recentBusyId = ''; forgetInProgress = false; historyMutationBusy = false; }
 }
 async function rememberConnection(connection: ConnectionInput, label: string, collection: string, keepPassword: boolean, mode: 'tested' | 'manual'): Promise<boolean> {
