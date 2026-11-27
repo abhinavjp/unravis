@@ -64,6 +64,12 @@ export interface Facts {
   freePercent?: number;
   /** The recorder's own update state, from its status page. Absent from a recorder that does not report it. */
   update?: { mode?: string; state: string; latest?: string; checked?: string; result?: string };
+  /** Size of the recording files, the recorder's size cap (GB) and keep window (days). Each is absent when it was not read. */
+  bytes?: number;
+  maxGB?: number;
+  keepDays?: number;
+  /** The SQL collector's own four-field status from the recorder's status page. Absent when the recorder does not report it. */
+  sql?: { enabled: boolean; state: string; lastOK?: string; failures?: number };
 }
 
 export type LocationKind = 'folder' | 'share' | 'url';
