@@ -186,6 +186,8 @@ func TestHostGroupsBecomeCountersWithTheWindowsNames(t *testing.T) {
 	}{
 		{"ASP.NET", "Requests Queued", "", "", 2},
 		{"ASP.NET", "Request Wait Time", "", "", 40},
+		// Requests Rejected is a running total in Windows; the recorder gives a rate, so it is not filed as the Windows counter.
+		{"Blackbox ASP.NET", "Requests Rejected", "", "per-sec", 0},
 		{"ASP.NET Applications", "Requests Current", "__Total__", "", 9},
 		{"Memory", "Pages Input/sec", "", "", 3},
 		{"Memory", "Pool Nonpaged Bytes", "", "", 500},

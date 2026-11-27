@@ -259,7 +259,8 @@ func hostGroups(l *line, nt *notes, put func(p *float64, object, counter, instan
 			nt.damaged = true
 		}
 		put(g.RequestsQueued, "ASP.NET", "Requests Queued", "", "", "")
-		put(g.RequestsRejected, "ASP.NET", "Requests Rejected", "", "", "")
+		// The Windows counter is a running total; the recorder turns it into a rate, so it is the recorder's own figure.
+		put(g.RequestsRejected, "Blackbox ASP.NET", "Requests Rejected", "", "", "per-sec")
 		put(g.RequestWaitTimeMs, "ASP.NET", "Request Wait Time", "", "", "")
 		put(g.ApplicationRestarts, "ASP.NET", "Application Restarts", "", "", "")
 		put(g.RequestsCurrent, "ASP.NET Applications", "Requests Current", "__Total__", "", "")

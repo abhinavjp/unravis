@@ -323,7 +323,7 @@ var (
 		"SQLServer:Exec Statistics", "SQLServer:Cursor Manager by Type", "SQLServer:Workload Group Stats",
 		"SQLServer:Resource Pool Stats", "SQLServer:Availability Replica", "SQLServer:Database Replica",
 		// Figures the Blackbox derives itself, so they are never filed under a Windows counter that means something else.
-		"Blackbox TCP", "Blackbox IIS", "Blackbox Memory", "Blackbox VM")
+		"Blackbox TCP", "Blackbox IIS", "Blackbox Memory", "Blackbox VM", "Blackbox ASP.NET")
 	counterNames = fold("% Processor Time", "% User Time", "% Privileged Time", "% Idle Time", "% Interrupt Time", "% DPC Time",
 		"% C1 Time", "% C2 Time", "% C3 Time", "Processor Frequency", "% of Maximum Frequency", "Interrupts/sec", "DPCs Queued/sec",
 		"Processor Queue Length", "Context Switches/sec", "System Calls/sec", "Threads", "Processes",
