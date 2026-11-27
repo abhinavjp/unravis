@@ -1,6 +1,8 @@
 package localci
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -199,6 +201,20 @@ func without(list []string, m string) []string {
 	return out
 }
 
+// ErrPolicyBroken is matched (errors.Is) by the error of a policy.json that is not JSON, has the wrong types or was
+// written by a newer version: the store is broken, the request is not wrong.
+var ErrPolicyBroken = errors.New("the machine policy file is broken")
+
+// ErrPolicyMoved is the error of a confirmed edit whose base (the policy stamp or the stranded runs the person saw in
+// the dry run) is no longer the current one. Nothing was written.
+var ErrPolicyMoved = errors.New("the policy or the queued runs changed since the dry run; nothing changed: look again and confirm again")
+
+type brokenPolicy struct{ err error }
+
+func (e brokenPolicy) Error() string        { return e.err.Error() }
+func (e brokenPolicy) Unwrap() error        { return e.err }
+func (e brokenPolicy) Is(target error) bool { return target == ErrPolicyBroken }
+
 // LoadPolicy reads the policy of a state folder. A missing file is an empty policy (any machine everywhere).
 func LoadPolicy(stateDir string) (*Policy, error) {
 	var b []byte
@@ -211,10 +227,10 @@ func LoadPolicy(stateDir string) (*Policy, error) {
 	}
 	var p Policy
 	if err := json.Unmarshal(b, &p); err != nil {
-		return nil, fmt.Errorf("machine policy %s is not readable (%v); no request is taken until it is fixed or removed", PolicyPath(stateDir), err)
+		return nil, brokenPolicy{fmt.Errorf("machine policy %s is not readable (%v); no request is taken until it is fixed or removed", PolicyPath(stateDir), err)}
 	}
 	if p.V > PolicyVersion {
-		return nil, fmt.Errorf("machine policy %s was written by a newer version (v%d); no request is taken until this program is updated", PolicyPath(stateDir), p.V)
+		return nil, brokenPolicy{fmt.Errorf("machine policy %s was written by a newer version (v%d); no request is taken until this program is updated", PolicyPath(stateDir), p.V)}
 	}
 	clean := map[string]ProjectPolicy{}
 	for k, pp := range p.Projects {
@@ -315,6 +331,37 @@ type PolicyChange struct {
 	Refused bool `json:"refused"`
 	// Unchanged is set when the rule after the edit is the rule before; nothing was written.
 	Unchanged bool `json:"unchanged"`
+	// Base is the stamp of the whole policy the edit was measured against (see PolicyStamp). A confirm sends it back
+	// with the stranded ids it was shown (PolicyExpect), so it applies only to what the person saw.
+	Base string `json:"base"`
+}
+
+// PolicyExpect is what a confirmed edit was shown in its dry run: the policy stamp and the stranded run ids.
+type PolicyExpect struct {
+	Base     string
+	Stranded []string
+}
+
+// PolicyStamp is a short hash of the whole policy (its rules and its Updated time).
+func PolicyStamp(p *Policy) string {
+	b, _ := json.Marshal(p) // map keys are sorted, so the same policy gives the same bytes
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:12])
+}
+
+func sameIDs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	x, y := append([]string{}, a...), append([]string{}, b...)
+	sort.Strings(x)
+	sort.Strings(y)
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // ChangePolicy is the one way the policy of a project is changed. edit gets the current rule and returns the new
@@ -322,6 +369,13 @@ type PolicyChange struct {
 // no error) unless force is set. With dryRun nothing is written either way: the caller only wants the impact
 // (the screen shows it before the person confirms).
 func ChangePolicy(stateDir, repo string, edit func(ProjectPolicy) (ProjectPolicy, error), force, dryRun bool) (PolicyChange, error) {
+	return ChangePolicyExpect(stateDir, repo, edit, force, dryRun, nil)
+}
+
+// ChangePolicyExpect is ChangePolicy with the base of a confirm: with expect set and force, the edit is applied only
+// when, inside the lock, the policy stamp and the stranded ids are the ones of the dry run; otherwise it returns
+// ErrPolicyMoved and writes nothing.
+func ChangePolicyExpect(stateDir, repo string, edit func(ProjectPolicy) (ProjectPolicy, error), force, dryRun bool, expect *PolicyExpect) (PolicyChange, error) {
 	key, ok := ProjectKey(repo)
 	if !ok {
 		return PolicyChange{}, fmt.Errorf("%q is not a project (owner/name)", repo)
@@ -343,10 +397,13 @@ func ChangePolicy(stateDir, repo string, edit func(ProjectPolicy) (ProjectPolicy
 	if after.Mode == "" {
 		after.Mode = PolicyAny
 	}
-	ch := PolicyChange{Project: key, Before: before, After: after}
+	ch := PolicyChange{Project: key, Before: before, After: after, Base: PolicyStamp(pol)}
 	ch.Impact, err = impactOf(stateDir, key, before, after)
 	if err != nil {
 		return PolicyChange{}, err
+	}
+	if expect != nil && force && (expect.Base != ch.Base || !sameIDs(expect.Stranded, ch.Impact.Stranded)) {
+		return ch, ErrPolicyMoved
 	}
 	if samePolicy(before, after) {
 		ch.Unchanged = true

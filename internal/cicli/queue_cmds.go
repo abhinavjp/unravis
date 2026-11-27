@@ -1,4 +1,4 @@
-package main
+package cicli
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"api-audit-explorer/internal/hsaction"
 	"api-audit-explorer/internal/localci"
 )
 
@@ -108,7 +109,7 @@ func cmdRunItem(ctx context.Context, args []string, stdout, stderr io.Writer, en
 	}
 	_, _ = fmt.Fprintf(stdout, "%s: %s%s\n", req.ID, out.Conclusion, noteIf(out.Reason != "", " ("+out.Reason+")"))
 	if out.RunID != "" {
-		_, _ = fmt.Fprintf(stdout, "run id: %s\nlogs:   unravis-ci log %s [job]\n", out.RunID, out.RunID)
+		_, _ = fmt.Fprintf(stdout, "run id: %s\nlogs:   %s log %s [job]\n", out.RunID, EngineProg, out.RunID)
 	}
 	if out.Conclusion == "success" {
 		return exitOK
@@ -233,7 +234,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, environ []string) int {
 	}
 	_, _ = fmt.Fprintln(stdout, "agents:")
 	if len(hbs) == 0 {
-		_, _ = fmt.Fprintln(stdout, "  none (start one with: unravis-ci serve)")
+		_, _ = fmt.Fprintln(stdout, "  none (start one with: "+EngineProg+" serve)")
 	}
 	for _, h := range hbs {
 		st := agentStateOf(h, now)
@@ -342,7 +343,7 @@ func cmdCancel(args []string, stdout, stderr io.Writer, environ []string) int {
 	fs := flag.NewFlagSet("cancel", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	state := fs.String("state", "", "the CI store folder (default: under LOCALAPPDATA)")
-	reason := fs.String("reason", "cancelled from the command line", "why (kept with the request)")
+	reason := fs.String("reason", "", "why (kept with the request; default: cancelled from the command line)")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return exitUsage
@@ -352,73 +353,17 @@ func cmdCancel(args []string, stdout, stderr io.Writer, environ []string) int {
 		usage(stderr)
 		return exitUsage
 	}
-	queue, err := localci.OpenQueue(localci.QueueDir(stateDirOf(*state, environ)))
+	env, err := cliEnv(stateDirOf(*state, environ), "", environ)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "cancel:", err)
 		return exitUsage
 	}
-	var ids []string
-	if n, ok := isNumber(pos[0]); ok {
-		all, err := queue.List()
-		if err != nil {
-			_, _ = fmt.Fprintln(stderr, "cancel:", err)
-			return exitUsage
-		}
-		for _, r := range all {
-			if r.Active() && r.Kind == localci.KindPR && r.Number == n {
-				ids = append(ids, r.ID)
-			}
-		}
-		if len(ids) == 0 {
-			_, _ = fmt.Fprintf(stderr, "cancel: pull request %d has no queued or running request\n", n)
-			return exitFailed
-		}
-	} else {
-		ids = []string{pos[0]}
-	}
-	code := exitOK
-	for _, id := range ids {
-		r, err := queue.Cancel(id, *reason)
-		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "cancel: %v\n", err)
-			code = exitFailed
-			continue
-		}
-		switch {
-		case r.State == localci.StateRunning:
-			_, _ = fmt.Fprintf(stdout, "%s: %s is running; its agent has been told to stop it\n", r.ID, r.Label())
-		case r.Active():
-			_, _ = fmt.Fprintf(stdout, "%s: cancel requested\n", r.ID)
-		default:
-			_, _ = fmt.Fprintf(stdout, "%s: %s (%s)\n", r.ID, r.State, r.Label())
-		}
-	}
-	return code
+	res, code := runAction(env, "queue.cancel", hsaction.CancelArgs{Target: targetOf(pos[0]), Reason: *reason})
+	printItems("cancel", res, stdout, stderr, hsaction.CancelLine)
+	return finishAction("cancel", res, code, stderr)
 }
 
 // ---------------------------------------------------------------- rerun
-
-// requestOfRun rebuilds the request that made an index entry, for a rerun of the same commit.
-func requestOfRun(e localci.IndexEntry) (localci.Request, error) {
-	r := localci.Request{Repo: e.Repo, Workflow: e.Workflow, Ref: e.HeadRef, Base: e.BaseRef, SHA: e.HeadSHA, Number: e.PR}
-	switch e.Event {
-	case "pull_request":
-		if e.PR <= 0 {
-			return r, fmt.Errorf("run %s has no pull request number", e.RunID)
-		}
-		r.Kind = localci.KindPR
-	case "push":
-		r.Kind = localci.KindPush
-	case "schedule":
-		r.Kind, r.Cron = localci.KindSchedule, "rerun"
-	default:
-		return r, fmt.Errorf("run %s was a %q run; only pull request, push and schedule runs can be run again", e.RunID, e.Event)
-	}
-	if r.Repo == "" || r.Workflow == "" || r.SHA == "" {
-		return r, fmt.Errorf("run %s does not record the repository, workflow and commit", e.RunID)
-	}
-	return r, nil
-}
 
 func cmdRerun(ctx context.Context, args []string, stdout, stderr io.Writer, environ []string) int {
 	fs := flag.NewFlagSet("rerun", flag.ContinueOnError)
@@ -438,17 +383,12 @@ func cmdRerun(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return exitUsage
 	}
 	dir := stateDirOf(*state, environ)
-	store, err := localci.OpenStore(dir)
+	env, err := cliEnv(dir, "", environ)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "rerun:", err)
 		return exitUsage
 	}
-	queue, err := localci.OpenQueue(localci.QueueDir(store.Dir))
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "rerun:", err)
-		return exitUsage
-	}
-	var req localci.Request
+	args1 := hsaction.RetryArgs{Run: pos[0]}
 	if n, ok := isNumber(pos[0]); ok {
 		workflows := defaultWorkflowFor
 		if len(wfFor) > 0 {
@@ -479,49 +419,15 @@ func cmdRerun(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 			_, _ = fmt.Fprintf(stderr, "rerun: no workflow is set for pull requests into %q (use --workflow or --workflow-for)\n", pr.BaseRef)
 			return exitUsage
 		}
-		req = localci.Request{Kind: localci.KindPR, Repo: *repo, Number: n, Ref: pr.HeadRef, Base: pr.BaseRef, SHA: pr.HeadSHA, Workflow: wf}
+		args1.Resolved = &localci.Request{Kind: localci.KindPR, Repo: *repo, Number: n, Ref: pr.HeadRef, Base: pr.BaseRef, SHA: pr.HeadSHA, Workflow: wf}
+	}
+	res, code := runAction(env, "queue.retry", args1)
+	if res.OK {
+		_, _ = fmt.Fprintln(stdout, res.Message)
 	} else {
-		entries, err := store.ReadIndex()
-		if err != nil {
-			_, _ = fmt.Fprintln(stderr, "rerun:", err)
-			return exitUsage
-		}
-		var hit []localci.IndexEntry
-		for _, e := range entries {
-			if e.RunID == pos[0] {
-				hit = []localci.IndexEntry{e}
-				break
-			}
-			if strings.HasPrefix(e.RunID, pos[0]) {
-				hit = append(hit, e)
-			}
-		}
-		switch len(hit) {
-		case 0:
-			_, _ = fmt.Fprintf(stderr, "rerun: no run %q in %s\n", pos[0], dir)
-			return exitFailed
-		case 1:
-		default:
-			_, _ = fmt.Fprintf(stderr, "rerun: %q matches %d runs; give more of the id\n", pos[0], len(hit))
-			return exitUsage
-		}
-		if req, err = requestOfRun(hit[0]); err != nil {
-			_, _ = fmt.Fprintln(stderr, "rerun:", err)
-			return exitFailed
-		}
+		_, _ = fmt.Fprintln(stderr, "rerun:", res.Message)
 	}
-	req.Rerun = true // an answer another PC left for this commit does not stand in the way of a rerun
-	got, added, err := queue.Enqueue(req)
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "rerun:", err)
-		return exitFailed
-	}
-	if !added {
-		_, _ = fmt.Fprintf(stdout, "%s: already %s (%s at %s); nothing added\n", got.ID, got.State, got.Label(), shortID(got.SHA))
-		return exitOK
-	}
-	_, _ = fmt.Fprintf(stdout, "%s: queued %s at %s with %s\n", got.ID, got.Label(), shortID(got.SHA), got.Workflow)
-	return exitOK
+	return finishAction("rerun", res, code, stderr)
 }
 
 // ---------------------------------------------------------------- drain
@@ -557,12 +463,21 @@ func cmdDrain(args []string, stdout, stderr io.Writer, environ []string) int {
 		_, _ = fmt.Fprintln(stderr, "drain: no agent is running in", dir)
 		return exitFailed
 	}
+	env, err := cliEnv(dir, "", environ)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "drain:", err)
+		return exitUsage
+	}
 	for _, n := range names {
-		if err := localci.RequestDrain(dir, n); err != nil {
-			_, _ = fmt.Fprintln(stderr, "drain:", err)
-			return exitUsage
+		res, code := runAction(env, "machines.drain", hsaction.MachineArgs{Name: n})
+		if !res.OK {
+			_, _ = fmt.Fprintln(stderr, "drain:", res.Message)
+			return finishAction("drain", res, code, stderr)
 		}
-		_, _ = fmt.Fprintf(stdout, "%s: asked to drain (it takes nothing new, finishes what runs, then exits)\n", n)
+		_, _ = fmt.Fprintln(stdout, res.Message)
+		if c := finishAction("drain", res, code, stderr); c != exitOK {
+			return c
+		}
 	}
 	return exitOK
 }

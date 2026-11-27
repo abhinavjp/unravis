@@ -1,4 +1,4 @@
-package main
+package cicli
 
 import (
 	"context"
@@ -109,7 +109,7 @@ func cmdRunPR(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 	})
 	if res != nil && res.Run != nil {
 		printSummary(stdout, res.Run)
-		_, _ = fmt.Fprintf(stdout, "run id: %s\nstore:  %s\nlogs:   unravis-ci log %s [job]\n", res.RunID, store.Dir, res.RunID)
+		_, _ = fmt.Fprintf(stdout, "run id: %s\nstore:  %s\nlogs:   %s log %s [job]\n", res.RunID, store.Dir, EngineProg, res.RunID)
 	}
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "run-pr:", redact(err.Error()))
@@ -262,7 +262,7 @@ func listLogs(store *localci.Store, id string, stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stdout, "run %s: %s\n", id, rec.Conclusion)
 	if _, err := store.JobLogs(id, localci.CheckoutLogName); err == nil {
-		_, _ = fmt.Fprintf(stdout, "  %-30s unravis-ci log %s %s\n", localci.CheckoutLogName, id, localci.CheckoutLogName)
+		_, _ = fmt.Fprintf(stdout, "  %-30s %s log %s %s\n", localci.CheckoutLogName, EngineProg, id, localci.CheckoutLogName)
 	}
 	for _, j := range rec.Jobs {
 		if localci.IsPseudoJob(j) {
@@ -272,7 +272,7 @@ func listLogs(store *localci.Store, id string, stdout, stderr io.Writer) int {
 			}
 			continue
 		}
-		_, _ = fmt.Fprintf(stdout, "  %-30s unravis-ci log %s %s   (%s)\n", j.Key, id, j.Key, j.Status)
+		_, _ = fmt.Fprintf(stdout, "  %-30s %s log %s %s   (%s)\n", j.Key, EngineProg, id, j.Key, j.Status)
 	}
 	return exitOK
 }

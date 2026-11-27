@@ -1,4 +1,4 @@
-package main
+package cicli
 
 import (
 	"errors"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"api-audit-explorer/internal/hsaction"
 	"api-audit-explorer/internal/localci"
 )
 
@@ -170,50 +171,22 @@ func cmdQueueTop(args []string, stdout, stderr io.Writer, environ []string) int 
 		usage(stderr)
 		return exitUsage
 	}
-	queue, err := localci.OpenQueue(localci.QueueDir(dirOf(environ)))
+	env, err := cliEnv(dirOf(environ), "", environ)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "queue top:", err)
 		return exitUsage
 	}
-	ids := []string{pos[0]}
-	if n, ok := isNumber(pos[0]); ok {
-		all, err := queue.List()
-		if err != nil {
-			_, _ = fmt.Fprintln(stderr, "queue top:", err)
-			return exitUsage
-		}
-		ids = nil
-		running := false
-		for _, r := range all {
-			if r.Kind == localci.KindPR && r.Number == n {
-				switch r.State {
-				case localci.StateQueued:
-					ids = append(ids, r.ID)
-				case localci.StateRunning:
-					running = true
-				}
-			}
-		}
-		if len(ids) == 0 {
-			if running {
-				_, _ = fmt.Fprintf(stderr, "queue top: pull request %d is running; only a waiting request can be moved\n", n)
-			} else {
-				_, _ = fmt.Fprintf(stderr, "queue top: pull request %d has no waiting request\n", n)
-			}
-			return exitFailed
-		}
+	res, code := runAction(env, "queue.top", hsaction.TopArgs{Target: targetOf(pos[0])})
+	printItems("queue top", res, stdout, stderr, hsaction.TopLine)
+	return finishAction("queue top", res, code, stderr)
+}
+
+// targetOf reads a request id or a pull request number.
+func targetOf(s string) hsaction.Target {
+	if n, ok := isNumber(s); ok {
+		return hsaction.Target{PR: n}
 	}
-	code := exitOK
-	for _, id := range ids {
-		r, err := queue.MoveToTop(id)
-		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "queue top: %v\n", err)
-			code = exitFailed
-			continue
-		}
-		_, _ = fmt.Fprintf(stdout, "%s: %s is first in line (priority %d)\n", r.ID, r.Label(), r.Priority)
-	}
-	return code
+	return hsaction.Target{ID: s}
 }
 
 // ---------------------------------------------------------------- pause and resume
@@ -233,23 +206,23 @@ func cmdQueuePause(pause bool, args []string, stdout, stderr io.Writer, environ 
 		return exitUsage
 	}
 	dir := dirOf(environ)
-	was := localci.IsPaused(dir)
-	if err := localci.SetPaused(dir, pause); err != nil {
+	env, err := cliEnv(dir, "", environ)
+	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "queue %s: %v\n", name, err)
 		return exitUsage
 	}
-	switch {
-	case pause && was:
-		_, _ = fmt.Fprintln(stdout, "claiming was already paused; nothing changed")
-	case pause:
-		_, _ = fmt.Fprintf(stdout, "claiming is paused (%s): no agent takes a new request; what runs keeps running\n", localci.PausePath(dir))
-	case was:
-		_, _ = fmt.Fprintln(stdout, "claiming is resumed: agents take requests again")
-	default:
-		_, _ = fmt.Fprintln(stdout, "claiming was not paused; nothing changed")
+	id := "queue.resume"
+	if pause {
+		id = "queue.pause"
 	}
+	res, code := runAction(env, id, hsaction.NoArgs{})
+	if !res.OK {
+		_, _ = fmt.Fprintf(stderr, "queue %s: %s\n", name, res.Message)
+		return finishAction("queue "+name, res, code, stderr)
+	}
+	_, _ = fmt.Fprintln(stdout, res.Message)
 	if _, err := os.Stat(dir); err != nil && !pause {
 		_, _ = fmt.Fprintf(stderr, "queue resume: note: the folder %s does not exist (check --state-dir)\n", dir)
 	}
-	return exitOK
+	return finishAction("queue "+name, res, code, stderr)
 }

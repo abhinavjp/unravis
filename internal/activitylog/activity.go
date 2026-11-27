@@ -6,7 +6,7 @@
 // O_APPEND and writes each entry with ONE write call, so entries from processes writing at the same time never mix
 // inside a line. Read skips a line it cannot parse (a torn last line after a crash) instead of failing.
 //
-// Entries hold no secrets: text fields are one plain line, capped, and the reason is passed through the secret masker.
+// Entries hold no secrets: text fields are one plain line, capped, and the target, reason and detail are passed through the secret masker.
 package activitylog
 
 import (
@@ -64,6 +64,11 @@ type Entry struct {
 	Action string    `json:"action"`           // for example hold.add, hold.lift
 	Target string    `json:"target,omitempty"` // what it acted on: a hold id, a project, a run
 	Reason string    `json:"reason,omitempty"`
+	// Outcome is how the action ended: done, refused, failed, invalid or error. Empty in entries written before it
+	// was recorded, which were all done.
+	Outcome string `json:"outcome,omitempty"`
+	// Detail is the plain-words error of an action that did not end done.
+	Detail string `json:"detail,omitempty"`
 }
 
 // Log is the activity log of one CI store folder.
@@ -103,7 +108,9 @@ func (l Log) Append(e Entry) error {
 	}
 	e.Time = e.Time.UTC().Truncate(time.Millisecond)
 	e.Person = oneLine(e.Person, maxShort)
-	e.Target = oneLine(e.Target, maxTarget)
+	e.Target = oneLine(secretscrub.Mask(e.Target, "***"), maxTarget)
+	e.Outcome = oneLine(e.Outcome, maxShort)
+	e.Detail = oneLine(secretscrub.Mask(e.Detail, "***"), maxReason)
 	e.Reason = oneLine(secretscrub.Mask(e.Reason, "***"), maxReason)
 	b, err := json.Marshal(e)
 	if err != nil {

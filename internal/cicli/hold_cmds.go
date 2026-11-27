@@ -1,15 +1,14 @@
-package main
+package cicli
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 
 	"api-audit-explorer/internal/activitylog"
+	"api-audit-explorer/internal/hsaction"
 	"api-audit-explorer/internal/releasehold"
 )
 
@@ -75,68 +74,15 @@ func userOf(environ []string) string {
 	return ""
 }
 
-// parseWhen reads a time a person typed. A duration (90m, 2h, 3d) counts from now; a date and time without a zone is
-// local time; a bare date is the start of that day, or with endOfDay the end of it (so --until 2026-12-01 holds the
-// whole of the first).
+// parseWhen reads a time a person typed (see hsaction.ParseWhen).
 func parseWhen(s string, now time.Time, endOfDay bool) (time.Time, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}, errors.New("empty time")
-	}
-	if strings.HasSuffix(s, "d") {
-		if n, err := strconv.Atoi(strings.TrimSuffix(s, "d")); err == nil && n > 0 {
-			return now.Add(time.Duration(n) * 24 * time.Hour), nil
-		}
-	}
-	if d, err := time.ParseDuration(s); err == nil {
-		if d <= 0 {
-			return time.Time{}, fmt.Errorf("%q is not a time in the future", s)
-		}
-		return now.Add(d), nil
-	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
-	}
-	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02T15:04", "2006-01-02 15:04"} {
-		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
-			return t, nil
-		}
-	}
-	if t, err := time.ParseInLocation("2006-01-02", s, time.Local); err == nil {
-		if endOfDay {
-			t = t.AddDate(0, 0, 1)
-		}
-		return t, nil
-	}
-	return time.Time{}, fmt.Errorf("%q is not a time: use a duration (90m, 2h, 3d), a date (2026-12-01), a local date and time (2026-12-01 18:00) or RFC 3339", s)
+	return hsaction.ParseWhen(s, now, endOfDay)
 }
 
-// whenText prints a stored time for a person: local time with its offset, and UTC when they differ.
-func whenText(t time.Time) string {
-	l := t.Local()
-	s := l.Format("2006-01-02 15:04 -07:00")
-	if _, off := l.Zone(); off != 0 {
-		s += " (" + t.UTC().Format("15:04") + " UTC)"
-	}
-	return s
-}
+// whenText prints a stored time for a person (see hsaction.WhenText).
+func whenText(t time.Time) string { return hsaction.WhenText(t) }
 
-func projectText(p string) string {
-	if p == releasehold.AllProjects {
-		return "every project"
-	}
-	return "project " + p
-}
-
-// logActivity writes the entry of a change. The change is already saved; when the log cannot be written the command
-// says so and fails, so nobody believes the action was recorded.
-func logActivity(cmd string, dir string, e activitylog.Entry, stderr io.Writer) int {
-	if err := (activitylog.Log{Dir: dir}).Append(e); err != nil {
-		_, _ = fmt.Fprintf(stderr, "%s: the change was saved, but the activity log could not be written: %v\n", cmd, err)
-		return exitFailed
-	}
-	return exitOK
-}
+func projectText(p string) string { return hsaction.ProjectText(p) }
 
 // ---------------------------------------------------------------- add
 
@@ -162,57 +108,34 @@ func cmdHoldAdd(args []string, stdout, stderr io.Writer, environ []string) int {
 		_, _ = fmt.Fprintln(stderr, "hold add: give exactly one of --project P or --all")
 		return exitUsage
 	}
-	p := *project
-	if *all {
-		p = releasehold.AllProjects
-	}
 	act, err := actorOf(*actor, environ)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "hold add:", err)
 		return exitUsage
 	}
-	now := holdNow()
 	if *until == "" {
 		_, _ = fmt.Fprintln(stderr, "hold add: --until is needed (for example --until 2h or --until 2026-12-01)")
 		return exitUsage
 	}
-	end, err := parseWhen(*until, now, true)
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "hold add: --until:", err)
-		return exitUsage
-	}
-	var start time.Time
-	if *from != "" {
-		if start, err = parseWhen(*from, now, false); err != nil {
-			_, _ = fmt.Fprintln(stderr, "hold add: --from:", err)
-			return exitUsage
-		}
-	}
-	who := *owner
-	if strings.TrimSpace(who) == "" {
-		who = userOf(environ)
-	}
-	dir := dirOf(environ)
-	h, err := (releasehold.Store{Dir: dir}).Add(releasehold.NewHold{Project: p, Reason: *reason, Owner: who, Start: start, End: end}, now)
+	env, err := cliEnv(dirOf(environ), act, environ)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "hold add:", err)
 		return exitUsage
 	}
+	res, code := runAction(env, "hold.add", hsaction.HoldAddArgs{Project: *project, All: *all, Until: *until, From: *from, Reason: *reason, Owner: *owner})
+	h, ok := res.Data.(releasehold.Hold)
+	if !res.OK || !ok {
+		_, _ = fmt.Fprintln(stderr, "hold add:", errorText(res))
+		return finishAction("hold add", res, code, stderr)
+	}
 	if *asJSON {
-		if rc := writeJSON("hold add", stdout, stderr, holdJSONOf(h, now)); rc != exitOK {
+		if rc := writeJSON("hold add", stdout, stderr, holdJSONOf(h, env.Now())); rc != exitOK {
 			return rc
 		}
 	} else {
-		_, _ = fmt.Fprintf(stdout, "hold %s added: Promote is held for %s from %s until %s.\n  owner: %s\n  reason: %s\n  lift it early with: unravis-ci hold lift %s --reason \"...\"\n",
-			h.ID, projectText(h.Project), whenText(h.Start), whenText(h.End), h.Owner, h.Reason, h.ID)
+		_, _ = fmt.Fprintln(stdout, res.Message)
 	}
-	// The entry names who ran the command; the owner (who may be someone else, --owner) goes in the target.
-	runner := userOf(environ)
-	if runner == "" {
-		runner = h.Owner
-	}
-	return logActivity("hold add", dir, activitylog.Entry{Time: now, Actor: act, Person: runner, Action: "hold.add",
-		Target: h.ID + " " + h.Project + " (owner " + h.Owner + ")", Reason: h.Reason}, stderr)
+	return finishAction("hold add", res, code, stderr)
 }
 
 // ---------------------------------------------------------------- lift
@@ -230,7 +153,7 @@ func cmdHoldLift(args []string, stdout, stderr io.Writer, environ []string) int 
 		return exitUsage
 	}
 	if len(pos) != 1 {
-		_, _ = fmt.Fprintln(stderr, "hold lift: give one hold id (see: unravis-ci hold list)")
+		_, _ = fmt.Fprintln(stderr, "hold lift: give one hold id (see: "+Prog+" hold list)")
 		return exitUsage
 	}
 	act, err := actorOf(*actor, environ)
@@ -238,30 +161,25 @@ func cmdHoldLift(args []string, stdout, stderr io.Writer, environ []string) int 
 		_, _ = fmt.Fprintln(stderr, "hold lift:", err)
 		return exitUsage
 	}
-	who := *by
-	if strings.TrimSpace(who) == "" {
-		who = userOf(environ)
-	}
-	now := holdNow()
-	dir := dirOf(environ)
-	h, err := (releasehold.Store{Dir: dir}).Lift(pos[0], who, *reason, now)
+	env, err := cliEnv(dirOf(environ), act, environ)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "hold lift:", err)
-		if errors.Is(err, releasehold.ErrNotFound) {
-			return exitFailed
-		}
 		return exitUsage
 	}
+	res, code := runAction(env, "hold.lift", hsaction.HoldLiftArgs{ID: pos[0], Reason: *reason, By: *by})
+	h, ok := res.Data.(releasehold.Hold)
+	if !res.OK || !ok {
+		_, _ = fmt.Fprintln(stderr, "hold lift:", errorText(res))
+		return finishAction("hold lift", res, code, stderr)
+	}
 	if *asJSON {
-		if rc := writeJSON("hold lift", stdout, stderr, holdJSONOf(h, now)); rc != exitOK {
+		if rc := writeJSON("hold lift", stdout, stderr, holdJSONOf(h, env.Now())); rc != exitOK {
 			return rc
 		}
 	} else {
-		_, _ = fmt.Fprintf(stdout, "hold %s lifted by %s: Promote is no longer held by it (%s, owner %s, was until %s).\n",
-			h.ID, h.LiftedBy, projectText(h.Project), h.Owner, whenText(h.End))
+		_, _ = fmt.Fprintln(stdout, res.Message)
 	}
-	return logActivity("hold lift", dir, activitylog.Entry{Time: now, Actor: act, Person: h.LiftedBy, Action: "hold.lift",
-		Target: h.ID + " " + h.Project, Reason: h.LiftReason}, stderr)
+	return finishAction("hold lift", res, code, stderr)
 }
 
 // ---------------------------------------------------------------- list
@@ -391,8 +309,8 @@ func cmdHoldCheck(args []string, stdout, stderr io.Writer, environ []string) int
 	} else {
 		_, _ = fmt.Fprintf(stdout, "Promote is held for %s.\n", what)
 		for _, h := range active {
-			_, _ = fmt.Fprintf(stdout, "  hold %s (%s): %s\n    owner %s, until %s\n    lift it early with: unravis-ci hold lift %s --reason \"...\"\n",
-				h.ID, projectText(h.Project), h.Reason, h.Owner, whenText(h.End), h.ID)
+			_, _ = fmt.Fprintf(stdout, "  hold %s (%s): %s\n    owner %s, until %s\n    lift it early with: %s hold lift %s --reason \"...\"\n",
+				h.ID, projectText(h.Project), h.Reason, h.Owner, whenText(h.End), Prog, h.ID)
 		}
 	}
 	if len(active) > 0 {
@@ -450,6 +368,9 @@ func cmdActivity(args []string, stdout, stderr io.Writer, environ []string) int 
 		line := fmt.Sprintf("%s  %-6s  %-10s  %-10s  %s", e.Time.Local().Format("2006-01-02 15:04:05"), e.Actor, dash(e.Person), e.Action, e.Target)
 		if e.Reason != "" {
 			line += "  (" + e.Reason + ")"
+		}
+		if e.Outcome != "" && e.Outcome != "done" {
+			line += "  [" + e.Outcome + "]"
 		}
 		_, _ = fmt.Fprintln(stdout, strings.TrimRight(line, " "))
 	}

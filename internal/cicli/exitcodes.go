@@ -1,4 +1,4 @@
-package main
+package cicli
 
 // Exit codes of unravis-ci.
 //
