@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -577,8 +578,8 @@ func TestServiceSupersededPostsNothingCancelledPostsError(t *testing.T) {
 	r.svc.ObserveQueue(r.q)
 	got := r.lines()
 	for _, c := range r.fake.Calls() {
-		if c.SHA == shaA && c.State != StatusPending {
-			t.Fatalf("the superseded head got a final status: %+v", c)
+		if c.SHA == shaA && (c.State != StatusPending || c.Description != "queued") {
+			t.Fatalf("the superseded head got a replacement status: %+v", c)
 		}
 	}
 	if !contains(got, "local/quick-gate pending: queued") {
@@ -625,6 +626,108 @@ func TestServiceSupersededPostsNothingCancelledPostsError(t *testing.T) {
 	}
 	r.svc.ObserveQueue(r.q)
 	r.expect("local/quick-gate pending: queued", "local/quick-gate error: cancelled")
+}
+
+func TestStatusCoveredPushesGetPendingAndFinalGates(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		runErr error
+		state  string
+		desc   string
+	}{
+		{"success", nil, StatusSuccess, "passed in 4m0s (3 jobs)"},
+		{"failure", nil, StatusFailure, "failed in 4m0s"},
+		{"error", errors.New("child crashed"), StatusError, "error after 4m0s: child crashed"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newSvcRig(t, testNaming(false))
+			push := Request{Kind: KindPush, Repo: "o/r", Ref: "develop", Workflow: "quick.yml", SHA: shaA}
+			r.enqueue(push)
+			r.svc.ObserveQueue(r.q)
+			push.SHA = shaB
+			r.enqueue(push)
+			r.svc.ObserveQueue(r.q)
+			push.SHA = strings.Repeat("c", 40)
+			r.enqueue(push)
+			r.svc.ObserveQueue(r.q)
+			r.svc.ObserveQueue(r.q)
+			run := r.claim()
+			since := r.now
+			r.svc.Started(run)
+			if tt.name == "success" {
+				w := r.progress(run)
+				for _, job := range []string{"lint", "build", "test"} {
+					w.Event(jobEv(EventJobEnd, job, job, "success", "", since, since.Add(time.Minute)))
+				}
+			}
+			r.now = since.Add(4 * time.Minute)
+			done, err := r.q.Complete(run.ID, "run4", tt.name, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.svc.Finished(run, since, tt.runErr, done)
+			r.lines()
+
+			byNewest := "pending: queued, will be covered by " + shortSHA(run.SHA) + ""
+			covered := tt.state + ": covered by run on " + shortSHA(run.SHA) + ": " + tt.desc
+			want := map[string][]string{
+				shaA:    {"pending: queued", "pending: queued, will be covered by " + shortSHA(shaB) + "", byNewest, covered},
+				shaB:    {"pending: queued", byNewest, covered},
+				run.SHA: {"pending: queued", "pending: running", tt.state + ": " + tt.desc},
+			}
+			got := map[string][]string{}
+			for _, c := range r.fake.Calls() {
+				if c.Repo == push.Repo && c.Name == "local/quick-gate" {
+					got[c.SHA] = append(got[c.SHA], c.State+": "+c.Description)
+				}
+			}
+			for sha, posts := range want {
+				if !slices.Equal(got[sha], posts) {
+					t.Errorf("posts on %s = %q, want %q", shortSHA(sha), got[sha], posts)
+				}
+			}
+			if len(got) != len(want) {
+				t.Errorf("gate posts on unexpected SHAs: %v", got)
+			}
+		})
+	}
+}
+
+func TestStatusCoveredGatesSkipOwnSHA(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		state string
+		desc  string
+		end   func(*svcRig, Request)
+	}{
+		{"finished", StatusSuccess, "passed in 0ms", func(r *svcRig, req Request) {
+			done, err := r.q.Complete(req.ID, "run", "success", "")
+			if err != nil {
+				r.t.Fatal(err)
+			}
+			r.svc.Finished(req, r.now, nil, done)
+		}},
+		{"mirrored", StatusFailure, "failed, run on another PC", func(r *svcRig, req Request) {
+			r.svc.MirrorDone(req, "failure")
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newSvcRig(t, testNaming(false))
+			push := Request{Kind: KindPush, Repo: "o/r", Ref: "develop", Workflow: "quick.yml", SHA: shaA}
+			r.enqueue(push)
+			push.SHA = shaB
+			r.enqueue(push)
+			push.SHA = shaA
+			r.enqueue(push)
+			tt.end(r, r.claim())
+			r.expect("local/quick-gate "+tt.state+": "+tt.desc,
+				"local/quick-gate "+tt.state+": covered by run on "+shortSHA(shaA)+": "+tt.desc)
+			calls := r.fake.Calls()
+			if calls[0].SHA != shaA || calls[1].SHA != shaB {
+				t.Fatalf("wrong gate commits: %+v", calls)
+			}
+		})
+	}
 }
 
 func TestServiceACrashOrAnErrorIsAnError(t *testing.T) {
