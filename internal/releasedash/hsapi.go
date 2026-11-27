@@ -365,8 +365,8 @@ func (v *ciView) Holds() HSHolds {
 	var act, up, lift, end []item
 	for _, h := range all {
 		st := h.StateAt(v.now)
-		it := item{h, HSHold{ID: v.rd(h.ID), Project: v.rd(h.Project), Reason: v.rd(h.Reason), Owner: v.rd(h.Owner), State: st, Start: tstr(h.Start), End: tstr(h.End),
-			Created: tstr(h.Created), LiftedBy: v.rd(h.LiftedBy), LiftedAt: tstr(h.LiftedAt), LiftReason: v.rd(h.LiftReason)}}
+		it := item{h, HSHold{ID: v.rd(h.ID), Project: v.rd(h.Project), Reason: v.rd(h.Reason), Owner: v.rdPerson(h.Owner), State: st, Start: tstr(h.Start), End: tstr(h.End),
+			Created: tstr(h.Created), LiftedBy: v.rdPerson(h.LiftedBy), LiftedAt: tstr(h.LiftedAt), LiftReason: v.rd(h.LiftReason)}}
 		switch st {
 		case releasehold.StateActive:
 			act = append(act, it)
@@ -432,7 +432,7 @@ func (v *ciView) Activity(actor string, limit int) HSActivity {
 		return out
 	}
 	for _, e := range es {
-		out.Entries = append(out.Entries, HSActivityEntry{Time: tstr(e.Time), Actor: e.Actor, Person: v.rd(e.Person), Action: v.rd(e.Action), Target: v.rd(e.Target), Reason: v.rd(e.Reason)})
+		out.Entries = append(out.Entries, HSActivityEntry{Time: tstr(e.Time), Actor: e.Actor, Person: v.rdPerson(e.Person), Action: v.rd(e.Action), Target: v.rd(e.Target), Reason: v.rd(e.Reason)})
 	}
 	return out
 }
@@ -497,4 +497,14 @@ func (d *Dash) registerHomestretch(mux *http.ServeMux, view func(http.ResponseWr
 		}
 		writeJSON(w, v.Activity(actor, n))
 	})
+}
+
+// rdPerson hides secrets in a person's name (a hold's owner, who lifted it, who did an action) but keeps the name itself. The
+// design shows who owns a hold and who acted; that is the point of the record, and the CLI prints it too. The machine and user
+// names the dashboard hides elsewhere are for log text, where they leak by accident; here they are the data.
+func (v *ciView) rdPerson(s string) string {
+	if s == "" {
+		return ""
+	}
+	return NewRedactor().Line(s)
 }

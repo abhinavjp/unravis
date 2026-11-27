@@ -392,3 +392,33 @@ func TestHSBareStoreFolderCreatesNothing(t *testing.T) {
 		t.Fatalf("reading created %d entries in the store", len(left))
 	}
 }
+
+// The dashboard hides the machine and user names it finds in the audit log from log text. A hold's owner and the person in the
+// activity log are data, not log text: they must show even when the same name is on the hide list (the fixture's audit log names
+// the user "zed"), while a secret in the same field is still hidden.
+func TestHSPeopleShowEvenWhenTheirNameIsOnTheHideList(t *testing.T) {
+	f := newCIFixture(t)
+	now := time.Now()
+	s := releasehold.Store{Dir: f.dir}
+	h, err := s.Add(releasehold.NewHold{Project: "unravis", Reason: "freeze, ask zed", Owner: "zed", Start: now.Add(-time.Hour), End: now.Add(time.Hour)}, now)
+	must(t, err)
+	_, err = s.Lift(h.ID, "zed", "done", now)
+	must(t, err)
+	must(t, activitylog.Log{Dir: f.dir}.Append(activitylog.Entry{Time: now, Actor: "cli", Person: "zed", Action: "hold.lift", Target: h.ID}))
+	must(t, activitylog.Log{Dir: f.dir}.Append(activitylog.Entry{Time: now, Actor: "cli", Person: "zed " + fxTokenSecret, Action: "x"}))
+
+	holds := decode[HSHolds](t, f.get(t, "/api/holds"))
+	if len(holds.Lifted) != 1 || holds.Lifted[0].Owner != "zed" || holds.Lifted[0].LiftedBy != "zed" {
+		t.Fatalf("the owner was hidden: %+v", holds)
+	}
+	if strings.Contains(holds.Lifted[0].Reason, "zed") {
+		t.Fatalf("the hide list no longer applies to free text, so this test proves nothing: %q", holds.Lifted[0].Reason)
+	}
+	act := decode[HSActivity](t, f.get(t, "/api/activity"))
+	if len(act.Entries) < 2 || act.Entries[0].Person != "zed" {
+		t.Fatalf("the person was hidden: %+v", act.Entries)
+	}
+	if strings.Contains(act.Entries[1].Person, fxTokenSecret) {
+		t.Fatalf("a secret reached the page in the person field: %+v", act.Entries[1])
+	}
+}
