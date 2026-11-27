@@ -76,7 +76,7 @@
   }
 </script>
 
-<Drawer class="restore-drawer" {title} titleId="restore-title" {intro} focusOnOpen returnFocus closeLabel={ARCHIVE_TEXT.restoreClose} onClose={() => { passphrase = ''; onClose(); }}>
+<Drawer class="restore-drawer" {title} titleId="restore-title" {intro} focusOnOpen returnFocus {busy} busyText="Restoring. Please wait." closeLabel={ARCHIVE_TEXT.restoreClose} onClose={() => { passphrase = ''; onClose(); }}>
   <div class="restore-body">
     {#if mode === 'as-new' && file}
       <dl class="facts">

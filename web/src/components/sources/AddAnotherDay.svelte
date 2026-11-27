@@ -23,8 +23,10 @@
   const preset = $derived(latest ? shiftDays(latest.incident, 1) : null);
   const range = (w: { start: string; end: string }) => `${w.start.slice(0, 16).replace('T', ' ')} to ${w.end.slice(0, 16).replace('T', ' ')}`;
 
+  // A failed read must not look like "the case holds nothing" (RV-UI-8): it says so, keeps the days already shown and offers Try again.
+  let loadFailed = $state(false);
   async function load() {
-    try { days = await fetchLaneDays(caseId); } catch { /* the page then says nothing is held */ }
+    try { days = await fetchLaneDays(caseId); loadFailed = false; } catch { loadFailed = true; }
     loaded = true;
   }
   onMount(() => { void load(); });
@@ -40,9 +42,12 @@
   <div class="nutshell"><b>{NUTSHELL}</b><p>{DAY_TEXT.lead}</p></div>
   <h3 id="day-head">{DAY_TEXT.heading}</h3>
 
-  {#if loaded && byDay.length === 0}
+  {#if loadFailed && days.length === 0}
+    <div class="empty"><p class="say bad" role="alert" data-load-failed>{DAY_TEXT.loadFailed}</p><div class="actions"><button type="button" class="btn-primary" data-load-retry onclick={() => void load()}>{DAY_TEXT.tryAgain}</button></div></div>
+  {:else if loaded && byDay.length === 0}
     <div class="empty"><p>{DAY_TEXT.nothingHeld}</p><p class="hint">{DAY_TEXT.onlyByDay}</p>{#if onReadSql}<div class="actions"><button type="button" class="btn-primary" data-read-first onclick={() => onReadSql?.()}>{DAY_TEXT.readFirst}</button></div>{/if}</div>
   {:else}
+    {#if loadFailed}<p class="say bad" role="alert" data-load-failed>{DAY_TEXT.refreshFailed} <button type="button" class="btn" data-load-retry onclick={() => void load()}>{DAY_TEXT.tryAgain}</button></p>{/if}
     <div class="field">
       <h4>{DAY_TEXT.holds}</h4>
       <ul class="rows">
@@ -84,5 +89,5 @@
     {/if}
     {#if said}<p class="say {said.good ? 'good' : 'bad'}" role={said.good ? 'status' : 'alert'} data-said>{said.text}</p>{/if}
   {/if}
-  {#if onCancel && !(loaded && byDay.length === 0 && onReadSql)}<div class="actions"><button type="button" class="btn" onclick={() => onCancel?.()}>{DAY_TEXT.cancel}</button></div>{/if}
+  {#if onCancel && !(loaded && !loadFailed && byDay.length === 0 && onReadSql)}<div class="actions"><button type="button" class="btn" onclick={() => onCancel?.()}>{DAY_TEXT.cancel}</button></div>{/if}
 </section>

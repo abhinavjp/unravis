@@ -875,7 +875,11 @@ async function restoreCaseWorkspace(id: string) {
   setRestore('working');
   restoreTimer = setTimeout(() => expireRestore(run), RESTORE_TIMEOUT_MS);
   let workspace: Workspace | null;
-  try { workspace = parseWorkspace(await api.caseWorkspace(id)); } catch { if (alive()) { restoreRun = null; setRestore('idle'); } return; }
+  try { workspace = parseWorkspace(await api.caseWorkspace(id)); } catch {
+    // Not read: nothing is saved over the case's own settings, and the person must hear that their changes are not kept. The demo has no workspace, so it stays quiet; a superseded run (not alive) is no one's business.
+    if (alive()) { restoreRun = null; setRestore('idle'); if (!info?.demo) workspaceNote = CASE_RESTORE_TEXT.workspaceUnreadable; }
+    return;
+  }
   if (!alive()) return;
   if (!workspace) { restoreRun = null; setRestore('idle'); return; }
   ctx.workspace = workspace; savedWindows = workspace.windows ?? null; savedTraceSources = workspace.traceSources ? parseStoredSourceChoice(workspace.traceSources) : null;
@@ -884,7 +888,7 @@ async function restoreCaseWorkspace(id: string) {
   try {
     const fresh = await api.recentConnections();
     if (Array.isArray(fresh)) recentConnections = fresh.filter(isRecentConnection).slice(0, 20);
-  } catch { /* the list already on the page is used */ }
+  } catch { /* silent on purpose: this only refreshes the recent-connections list, and the list already on the page is used for the plan below */ }
   if (!alive()) return;
   const plan = planRestore({ workspace, sources, recents: recentConnections, sessionIds: sessionCredentialIds });
   if (plan.kind === 'none') { finishRestore(id, workspace, keepTab); return; }
@@ -1057,7 +1061,10 @@ export async function openCreatedCase(id: string) {
       autoRan = false;
     }
     hasSources = loaded.length > 0;
-  } catch { /* the list could not be read: the analysis screen still opens and its own connect step can add sources */ }
+  } catch {
+    // The list could not be read: the screen still opens, but it may show the old sources without the new ones, so the person is told (RV-UI-8).
+    workspaceNote = CASE_RESTORE_TEXT.sourcesUnreadable;
+  }
   if (go('case') && !hasSources) showImportPopup(null);
 }
 /** "Create a new one": the guided flow when it exists, otherwise the import panel over the working screen. */
@@ -1723,7 +1730,8 @@ export function onWindowKey(event: KeyboardEvent) {
   if (glossaryOpen) { void closeGlossary(); return; }
   if (coverageSource) { void closeCoverage(); return; }
   if (sidePanel) { void closeSidePanel(); return; }
-  if (connectionsOpen) { void closeConnections(); return; }
+  // Adding databases is still running: the drawer stays (the drawer itself shows why).
+  if (connectionsOpen) { if (!sourceBusy) void closeConnections(); return; }
   const target = event.target;
   // Esc inside a text field belongs to the field (the Custom window boxes, any INPUT/TEXTAREA/contenteditable): it stays with the field and never closes the screen. SELECT and .popover keep their own exemption.
   if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.closest('.popover'))) return;

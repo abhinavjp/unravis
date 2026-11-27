@@ -5,6 +5,7 @@
   // Modal (the default): the scrim, the dialog box, Esc to close and a Tab trap, as Glossary, Patterns, Ledger, Export and Connections use it.
   // Not modal: a side panel that leaves the page beside it usable (the inspector). It has no scrim, no focus trap and does not handle Esc; the page owns that.
   // Every new prop has a default that keeps the old behaviour, so existing drawers need no change.
+  // busy (off by default) is for a drawer that is saving something: Esc, the dimmed page and the close button leave it open until the work ends, and a busy line (busyText) and bar say why.
   // Each drawer keeps its own list of focusable elements so Tab cycles exactly as it did before the shell existed.
   // returnFocus is off by default because the page already hands focus back when it closes each drawer; a new drawer can turn it on.
   const defaultFocusable = 'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [href], [tabindex]:not([tabindex="-1"])';
@@ -22,6 +23,8 @@
     modal = true,
     focusTitle = false,
     focusOnOpen = false,
+    busy = false,
+    busyText = '',
     element = $bindable(),
     onClose,
     headerExtra,
@@ -40,6 +43,8 @@
     modal?: boolean;
     focusTitle?: boolean;
     focusOnOpen?: boolean;
+    busy?: boolean;
+    busyText?: string;
     element?: HTMLElement;
     onClose: () => void;
     headerExtra?: Snippet;
@@ -53,8 +58,11 @@
   let titleElement = $state<HTMLElement>();
   onMount(() => { if (focusOnOpen) titleElement?.focus({ preventScroll: true }); });
 
+  // While busy nothing closes the drawer. Esc is still taken (so the page behind does not step up either), but the close is skipped.
+  const close = () => { if (!busy) onClose(); };
+
   function onKey(event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.preventDefault(); if (stopEscape) event.stopPropagation(); onClose(); return; }
+    if (event.key === 'Escape') { event.preventDefault(); if (stopEscape) event.stopPropagation(); close(); return; }
     if (event.key !== 'Tab' || !element) return;
     // Only controls that are on screen count: a hidden one (display:none) can never take focus, so as the "last" item it stopped the wrap and Tab left the dialog.
     const items = [...element.querySelectorAll<HTMLElement>(focusable)].filter((item) => item.getClientRects().length > 0);
@@ -65,14 +73,18 @@
   }
 </script>
 
-{#if modal}<button type="button" class="drawer-scrim" aria-label={closeLabel} onclick={onClose}></button>{/if}
+{#if modal}<button type="button" class="drawer-scrim" aria-label={closeLabel} onclick={close}></button>{/if}
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <svelte:element this={modal ? 'div' : 'aside'} class={modal ? (extra ? 'connections-drawer ' + extra : 'connections-drawer') : extra} bind:this={element} onkeydown={modal ? onKey : undefined} role={modal ? 'dialog' : undefined} aria-modal={modal ? 'true' : undefined} aria-labelledby={titleId} tabindex={modal ? -1 : undefined}>
   <div class="drawer-header" class:panel={!modal} class:has-extra={!!headerExtra}>
     <div class="drawer-heading"><h2 id={titleId} bind:this={titleElement} tabindex={focusTitle || focusOnOpen ? -1 : undefined}>{title}</h2>{#if intro}<p>{intro}</p>{/if}</div>
-    <button type="button" class="drawer-close" aria-label={closeLabel} title={closeTitle || undefined} onclick={onClose}>×</button>
+    <button type="button" class="drawer-close" class:busy aria-label={closeLabel} aria-disabled={busy ? 'true' : undefined} title={closeTitle || undefined} onclick={close}>×</button>
   </div>
   {#if headerExtra}{@render headerExtra()}{/if}
+  {#if busy}
+    {#if busyText}<div class="drawer-busy" role="status"><span>{busyText}</span></div>{/if}
+    <div class="drawer-busy-bar" aria-hidden="true"></div>
+  {/if}
   {@render children()}
   {#if footer}<div class="drawer-footer" class:panel={!modal}>{@render footer()}</div>{/if}
 </svelte:element>
@@ -90,6 +102,13 @@
   .drawer-header p { margin: var(--space-1) 0 0; color: var(--text-2); font-size: var(--fs-3); line-height: 1.45; overflow-wrap: anywhere; }
   .drawer-close { flex: 0 0 auto; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; color: var(--text-2); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); font-size: 20px; line-height: 1; }
   .drawer-close:hover { color: var(--text); background: var(--surface-2); }
+  .drawer-close.busy { opacity: .45; cursor: default; }
+  .drawer-close.busy:hover { color: var(--text-2); background: transparent; }
+  /* The busy line and the moving hatched bar (the approved prototype). The bar stands still when the person asked for less motion. */
+  .drawer-busy { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-3) 0 0; padding: var(--space-2) var(--space-3); color: var(--text); background: var(--surface-2); border: 1px solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-3); }
+  .drawer-busy-bar { height: 4px; margin-top: var(--space-3); background-color: var(--surface-2); background-image: var(--hatch); background-size: 12px 12px; border-radius: 1px; animation: drawer-busy-slide 1.2s linear infinite; }
+  @keyframes drawer-busy-slide { to { background-position: 12px 0; } }
+  @media (prefers-reduced-motion: reduce) { .drawer-busy-bar { animation: none; } }
 
   /* The footer holds the drawer's actions. It stays at the bottom edge of a modal drawer and sits under a hairline. */
   .drawer-footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin-top: auto; padding: var(--space-3) 0 0; border-top: 1px solid var(--hairline); }

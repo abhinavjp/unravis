@@ -314,6 +314,17 @@ export function pcControls(state: PageState, thisPc: Pick<ThisPc, 'installed' | 
   return { stop, start: thisPc.installed && !stop };
 }
 
+/**
+ * Why Apply is off, or null when it is on. Another change in progress comes first (the person only has to wait); then the settings of this PC:
+ * still being read ('loading') or read and not available ('unreadable'). The panel shows the words beside the button, so it never looks broken.
+ */
+export type ApplyWait = 'busy' | 'loading' | 'unreadable';
+export function applyWait(f: { working: boolean; hasSettings: boolean; readingSettings: boolean }): ApplyWait | null {
+  if (f.working) return 'busy';
+  if (f.hasSettings) return null;
+  return f.readingSettings ? 'loading' : 'unreadable';
+}
+
 export interface Span { window: string; start: string; end: string; minutes: number; kind: string }
 export interface HostStep {
   number: number;

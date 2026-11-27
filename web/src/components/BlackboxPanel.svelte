@@ -3,7 +3,7 @@
   import { formatTime } from '../lib/time';
   import { onMount, tick } from 'svelte';
   import {
-    blackboxApi, defaultSettings, fieldProblemNow, needsReload, pcControls, refusalText, settingsChanges, settingsProblem, shownTime,
+    applyWait, blackboxApi, defaultSettings, fieldProblemNow, needsReload, pcControls, refusalText, settingsChanges, settingsProblem, shownTime,
     type BlackboxItem, type BlackboxList, type Settings, type SettingsProblem, type SnapshotAnswer, type ThisPc, shownBytes
   } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T, ageWords, applyChangePart, intervalWords, stateNextFor } from '../lib/copy/blackboxCopy';
@@ -73,6 +73,9 @@
   // Status, Remove, Apply and Snapshot open in a pop-up over the list (BL-131), with the same shell as Place.
   let pop = $state<WizardDialog>();
   let removeBusy = $state(false);
+  // Why Apply is off, in words beside the button (RV-UI-11). Null when it is on.
+  const applyBlocked = $derived(applyWait({ working: !!working, hasSettings: !!thisPc.settings, readingSettings: loading || scanning }));
+  const applyWhy = $derived(applyBlocked === 'busy' ? T.applyWaitBusy : applyBlocked === 'loading' ? T.applyWaitLoading : applyBlocked === 'unreadable' ? T.applyUnreadable : '');
   const popView = $derived(view.kind === 'status' || view.kind === 'remove' || view.kind === 'apply' || view.kind === 'snapshot');
   const popLabels = {
     close: T.popCloseLabel,
@@ -340,14 +343,18 @@
         {/if}
       </div>
 
-      {#if loading && !list}
-        <p class="bb-note" role="status">{T.loading}</p>
-      {:else if loadError}
-        <div class="inline-error" role="alert">{T.loadFailed} {loadError}</div>
+      {#if loadError}
+        <!-- A failed read keeps the last good list under the error (RV-UI-12); with no list yet, the error is all there is. -->
+        <div class="inline-error" role="alert">{T.loadFailed} {loadError}{#if list} {T.loadStale}{/if}</div>
         <div class="bb-actions">
           {#if reloadHint}<button type="button" class="primary-button" onclick={reload}>{T.reload}</button>{/if}
           <button type="button" class="secondary-button" onclick={() => load()}>{T.retry}</button>
         </div>
+      {/if}
+      {#if loading && !list}
+        <p class="bb-note" role="status">{T.loading}</p>
+      {:else if !list}
+        <!-- nothing loaded and the error is shown above -->
       {:else if items.length === 0}
         <section class="bb-empty" aria-label={T.emptyTitle}>
           <h3 tabindex="-1">{T.emptyTitle}</h3>
@@ -430,8 +437,9 @@
             {/if}
             <p class="bb-note">{T.adminNote}</p>
             <div class="bb-actions">
-              <button type="button" class="primary-button" disabled={!!working || !thisPc.settings} onclick={() => apply(current)}>{T.apply}</button>
+              <button type="button" class="primary-button" disabled={applyBlocked !== null} aria-describedby={applyBlocked ? 'bb-apply-why' : undefined} onclick={() => apply(current)}>{T.apply}</button>
               <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'status', id: current.id })}>{T.cancel}</button>
+              {#if applyBlocked && !(applyBlocked === 'unreadable' && applyProblem)}<span class="bb-reason" id="bb-apply-why">{applyWhy}</span>{/if}
             </div>
           </section>
 
@@ -485,11 +493,12 @@
                 {#if controls.start}<button type="button" class="primary-button" disabled={!!working} onclick={start}>{T.start}</button>{/if}
                 {#if controls.stop}<button type="button" class="secondary-button" disabled={!!working} onclick={askStop} aria-expanded={stopAsk}>{T.stop}</button>{/if}
                 {#if canChangeKey(item)}<button type="button" class="secondary-button" disabled={!!working} onclick={openKey} aria-expanded={keyOpen}>{T.changeKey}</button>{/if}
-                <button type="button" class="secondary-button" disabled={!!working || !thisPc.settings} onclick={() => openApply(item)}>{T.apply}</button>
+                <button type="button" class="secondary-button" disabled={applyBlocked !== null} aria-describedby={applyBlocked ? 'bb-status-apply-why' : undefined} onclick={() => openApply(item)}>{T.apply}</button>
                 <button type="button" class="secondary-button" disabled={!!working} onclick={() => snapshot(item)}>{T.snapshot}</button>
                 <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.remove}</button>
                 <button type="button" class="quiet-button" disabled={!!working} onclick={() => check(item)}>{T.check}</button>
               </div>
+              {#if applyBlocked}<p class="bb-note bb-reason" id="bb-status-apply-why">{applyWhy}</p>{/if}
               {#if stopAsk && controls.stop}
                 <div class="bb-confirm" role="group" aria-label={T.stopTitle}>
                   <strong>{T.stopTitle}</strong>
@@ -561,6 +570,8 @@
   .bb-block h3, .bb-empty h3 { margin: 0; font-size: var(--fs-5); font-weight: 600; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .bb-block p, .bb-empty p { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
   .bb-block p.bb-note { font-size: 12px; }
+  /* The reason a button is off, beside it (not a tooltip). */
+  .bb-reason { color: var(--text-2); font-size: 12px; }
   .bb-block p.bb-ready { font-size: 16px; font-weight: 600; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
   .bb-ready-why { color: var(--bad); font-size: 13px; font-weight: 500; }
   .bb-block p.bb-next { color: var(--text); font-size: 13px; padding-left: var(--space-3); border-left: 3px solid var(--accent); }
