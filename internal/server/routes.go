@@ -115,6 +115,7 @@ var routes = []route{
 	{pattern: "/api/connections/recent", match: exactPath("/api/connections/recent"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, _ *http.Request, _ string) { h.listRecent(w) },
 	}},
+	{pattern: "/api/connections/recent/set-aside", match: exactPath("/api/connections/recent/set-aside"), methods: post((*handler).setAsideRecent)},
 	{pattern: "/api/connections/recent/{id}", match: prefixPath("/api/connections/recent/"), methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.deleteRecent(w, r, id) },
 	}},

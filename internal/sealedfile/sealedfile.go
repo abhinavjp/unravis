@@ -48,6 +48,12 @@ const maxBlob = 64 << 20
 // ErrUnavailable means sealing is not available or a file could not be written.
 var ErrUnavailable = errors.New("sealed file storage is unavailable")
 
+// ErrBadData is wrapped into an Unprotect error only when the sealed bytes themselves cannot be opened by this account: the data is damaged,
+// or was sealed for another account or PC, or the key state is bad. Any other Unprotect error (a service or an RPC call that failed, a
+// profile that is not loaded yet, a domain key that cannot be reached) may pass, so it is not wrapped, and the file must not be called
+// unreadable because of it.
+var ErrBadData = errors.New("sealed data cannot be opened by this account")
+
 // Protector encrypts and decrypts a complete document.
 type Protector interface {
 	Protect([]byte) ([]byte, error)

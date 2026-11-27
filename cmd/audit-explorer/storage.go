@@ -134,7 +134,7 @@ func wireSaved(getenv func(string) string, s storage) savedWiring {
 	}
 	c := keeper.NewClient(keeper.NewPipeDialer(s.layout.Pipe))
 	legacy := legacyStores(getenv)
-	mongo := keeper.NewMongoStore(c)
+	mongo := keeper.NewMongoStore(c).WithFolder(s.layout.KeeperDir)
 	return savedWiring{
 		keeper: c,
 		options: []server.Option{

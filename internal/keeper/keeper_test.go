@@ -23,6 +23,7 @@ import (
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/sqlaccess"
 	"api-audit-explorer/internal/sqlconn"
 )
@@ -46,7 +47,7 @@ func (xorProtector) Protect(v []byte) ([]byte, error) {
 
 func (xorProtector) Unprotect(v []byte) ([]byte, error) {
 	if !bytes.HasPrefix(v, []byte("sealed:")) {
-		return nil, errors.New("bad")
+		return nil, fmt.Errorf("%w: bad", sealedfile.ErrBadData)
 	}
 	out := append([]byte(nil), v[len("sealed:"):]...)
 	for i := range out {

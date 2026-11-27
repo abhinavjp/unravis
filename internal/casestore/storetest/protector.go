@@ -7,7 +7,9 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"errors"
+	"fmt"
+
+	"api-audit-explorer/internal/sealedfile"
 )
 
 // Protector is an AES-GCM stand-in for DPAPI. It is for tests only.
@@ -56,7 +58,12 @@ func (p *Protector) Protect(plain []byte) ([]byte, error) {
 func (p *Protector) Unprotect(sealed []byte) ([]byte, error) {
 	n := 1 + p.aead.NonceSize()
 	if len(sealed) < n || sealed[0] != magic {
-		return nil, errors.New("sealed blob too short or not from this protector")
+		return nil, fmt.Errorf("%w: sealed blob too short or not from this protector", sealedfile.ErrBadData)
 	}
-	return p.aead.Open(nil, sealed[1:n], sealed[n:], nil)
+	plain, err := p.aead.Open(nil, sealed[1:n], sealed[n:], nil)
+	if err != nil {
+		// Like DPAPI on bytes it cannot open: a data error, not a service failure.
+		return nil, fmt.Errorf("%w: %v", sealedfile.ErrBadData, err)
+	}
+	return plain, nil
 }

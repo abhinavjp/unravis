@@ -32,7 +32,17 @@ var (
 	// ErrFull means MaxRecords connections are already saved and this one is new. Nothing is removed to make room: a saved password is the
 	// owner's to forget.
 	ErrFull = errors.New("the list of saved connections is full")
+	// ErrNotDamaged means SetAside was asked for a file that reads fine (or is not there). Only an unreadable file may be set aside.
+	ErrNotDamaged = errors.New("the saved connections file is not damaged")
+	// ErrSetAsideFull means MaxSetAside damaged copies are already kept. None is removed to make room: the person moves them away.
+	ErrSetAsideFull = errors.New("too many damaged saved connections files are already set aside")
 )
+
+// MaxSetAside is how many set-aside copies are kept next to the live file. A fourth is refused, and none is ever deleted for the person.
+const MaxSetAside = 3
+
+// setAsideInfix joins the file name and the time stamp of a set-aside copy: connections.dat.unreadable-20261127-143012.
+const setAsideInfix = ".unreadable-"
 
 // Recent contains only fields that are safe to return to the browser.
 type Recent struct {
@@ -67,6 +77,8 @@ type Service struct {
 	mu             sync.Mutex
 	sessionMu      sync.Mutex
 	sessionSecrets map[string]sessionCredential
+	// now is the clock of the set-aside name; tests replace it.
+	now func() time.Time
 }
 
 type sessionCredential struct {
@@ -78,7 +90,7 @@ func New(path string, protector Protector) (*Service, error) {
 	if path == "" || protector == nil {
 		return nil, ErrUnavailable
 	}
-	return &Service{path: path, protector: protector, sessionSecrets: make(map[string]sessionCredential)}, nil
+	return &Service{path: path, protector: protector, sessionSecrets: make(map[string]sessionCredential), now: time.Now}, nil
 }
 
 // NewDefault uses the current user's configuration folder. AUDIT_CONFIG_DIR is
@@ -243,6 +255,83 @@ func (s *Service) Delete(id string) error {
 	return nil
 }
 
+// SetAside is the one way out of a saved connections file that cannot be read. It is refused unless the file is read again, under the
+// file lock, and is still unreadable (ErrCorrupt): a healthy file, a missing file or a read that failed for another reason (ErrUnavailable)
+// is never touched. The unreadable file is renamed, byte for byte and never deleted, to connections.dat.unreadable-YYYYMMDD-HHMMSS in
+// the same folder, and the list starts empty. At most MaxSetAside copies are kept: a fourth is refused with ErrSetAsideFull and
+// older copies are never removed. It returns the base name of the kept copy. Passwords typed for this session only are dropped with the
+// list, because their links are gone.
+func (s *Service) SetAside() (string, error) {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := acquireVaultLock(s.path)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	if _, err := s.readLocked(); !errors.Is(err, ErrCorrupt) {
+		if err == nil {
+			return "", ErrNotDamaged
+		}
+		return "", err
+	}
+	dir, base := filepath.Split(s.path)
+	entries, err := os.ReadDir(dirOrDot(dir))
+	if err != nil {
+		return "", ErrUnavailable
+	}
+	kept := 0
+	prefix := base + setAsideInfix
+	for _, entry := range entries {
+		// Windows file names are not case sensitive, so a copy renamed to another case still counts.
+		if len(entry.Name()) >= len(prefix) && strings.EqualFold(entry.Name()[:len(prefix)], prefix) {
+			kept++
+		}
+	}
+	if kept >= MaxSetAside {
+		return "", ErrSetAsideFull
+	}
+	clock := s.now
+	if clock == nil {
+		clock = time.Now
+	}
+	stamp := clock().Format("20060102-150405")
+	// The move itself refuses to replace a file that is already there (one system call, no check first), so a second set-aside in the same
+	// second, or a file made at that name a moment ago, can never be overwritten: the next name is tried instead.
+	target := ""
+	for n := 0; n < 100 && target == ""; n++ {
+		name := prefix + stamp
+		if n > 0 {
+			name = fmt.Sprintf("%s-%d", name, n+1)
+		}
+		err := sealedfile.MoveNoReplace(s.path, filepath.Join(dir, name))
+		switch {
+		case err == nil:
+			target = name
+		case errors.Is(err, os.ErrExist):
+		default:
+			// Held open by another program (antivirus, a backup, an editor), no permission, a full disk: the file stays where it was.
+			return "", fmt.Errorf("%w: %v", ErrUnavailable, err)
+		}
+	}
+	if target == "" {
+		return "", ErrUnavailable
+	}
+	for id := range s.sessionSecrets {
+		delete(s.sessionSecrets, id)
+	}
+	return target, nil
+}
+
+func dirOrDot(dir string) string {
+	if dir == "" {
+		return "."
+	}
+	return dir
+}
+
 func (s *Service) pruneSessionSecrets(records []storedRecord) {
 	allowed := make(map[string]struct{}, len(records))
 	for _, record := range records {
@@ -348,7 +437,15 @@ func (s *Service) readLocked() (vault, error) {
 		return vault{}, ErrCorrupt
 	}
 	plain, err := s.protector.Unprotect(data)
-	if err != nil || len(plain) == 0 || len(plain) > maxFileSize {
+	if err != nil {
+		// Only bytes that cannot be opened by this account are "unreadable". A sealer that failed for another reason (a service, an RPC call,
+		// a profile still loading) says nothing about the file, so it is reported as unavailable and set-aside is never offered.
+		if errors.Is(err, sealedfile.ErrBadData) {
+			return vault{}, ErrCorrupt
+		}
+		return vault{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if len(plain) == 0 || len(plain) > maxFileSize {
 		return vault{}, ErrCorrupt
 	}
 	var v vault
@@ -445,3 +542,6 @@ func (s *Service) Import(records []Record) (int, error) {
 
 // Path is the sealed file this service reads.
 func (s *Service) Path() string { return s.path }
+
+// Folder is the folder that holds the saved file, and so the set-aside copies. shared is false: this is one person's own file.
+func (s *Service) Folder() (dir string, shared bool) { return filepath.Dir(s.path), false }
