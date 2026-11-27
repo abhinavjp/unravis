@@ -17,4 +17,6 @@
   .foot { position:sticky; bottom:0; z-index:2; display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:14px 0; border-top:1px solid var(--line); background:var(--bg); }
   .summary { flex:1 1 180px; color:var(--text-2); font-size:var(--fs-3); }
   .summary span { display:block; }
+  /* On a phone the bar would cover a third of the screen, so it scrolls with the page. */
+  @media (max-width: 640px) { .foot { position:static; } }
 </style>
