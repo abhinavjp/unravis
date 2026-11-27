@@ -224,7 +224,8 @@ func (p *Poller) pollPRs(ctx context.Context) error {
 		}
 		p.enqueue(req)
 	}
-	// a pull request that is no longer open: its waiting or running request is of no use
+	// a pull request that is no longer open: a waiting request is of no use, but a run already
+	// started is left to finish so the comparison with GitHub still gets its result
 	for n := range p.open {
 		if now[n] {
 			continue
@@ -242,7 +243,7 @@ func (p *Poller) cancelPR(n int) {
 		return
 	}
 	for _, r := range rs {
-		if r.Active() && r.Kind == KindPR && r.Number == n && r.Repo == p.Repo {
+		if r.State == StateQueued && r.Kind == KindPR && r.Number == n && r.Repo == p.Repo {
 			if _, err := p.Queue.Cancel(r.ID, "the pull request is no longer open"); err == nil {
 				p.logf("cancelled %s: the pull request is no longer open", r.Label())
 			}

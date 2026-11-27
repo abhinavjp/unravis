@@ -55,6 +55,9 @@ func (h *watchHost) PullRequest(context.Context, string, int) (PullRequest, erro
 func (h *watchHost) Collaborators(context.Context, string) ([]string, error)  { return nil, nil }
 func (h *watchHost) Commits(context.Context, string, int) ([]PRCommit, error) { return nil, nil }
 func (h *watchHost) CloneURL(string) string                                   { return "" }
+func (h *watchHost) PushHistory(context.Context, string, string) (PushHistory, error) {
+	return PushHistory{}, errors.New("not used")
+}
 
 func (h *watchHost) setPR(pr PullRequest) {
 	h.mu.Lock()
@@ -528,4 +531,23 @@ func pushOf(m map[string]string) map[string][]string {
 		out[b] = []string{wf}
 	}
 	return out
+}
+
+func TestPollerClosedPullRequestLetsARunningRequestFinish(t *testing.T) {
+	p, h, q, _, _ := newTestPoller(t)
+	ctx := context.Background()
+	h.setPR(PullRequest{Number: 5, State: "OPEN", BaseRef: "develop", HeadRef: "f", HeadSHA: sha1})
+	_ = p.Poll(ctx)
+	claimed, err := q.Claim("agent-a", nil)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim: %v %v", claimed, err)
+	}
+	h.closePR(5)
+	if err := p.Poll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := q.Get(claimed.ID)
+	if got.State != StateRunning {
+		t.Fatalf("a run already started must finish after the pull request merges, got %q", got.State)
+	}
 }

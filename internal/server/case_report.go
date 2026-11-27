@@ -46,7 +46,7 @@ const (
 	reportMaxText     = 2000
 
 	reportWarnStale     = "The windows or lists changed after the last run. This report holds the earlier run, as it was on screen."
-	reportWarnTruncated = "The read stopped at its limit, so some calls are not in the figures. Narrow the window to read everything."
+	reportWarnTruncated = "The read was cut short, so some calls are not in the figures. Shorten the windows to read less at a time."
 )
 
 type reportRequest struct {
@@ -287,7 +287,7 @@ func newReportDoc(src reportSource) reportDoc {
 			for _, w := range src.Read.Warnings {
 				d.ReadNotes = append(d.ReadNotes, clipText(w, reportMaxText))
 			}
-			if src.Read.Truncated {
+			if src.Read.Truncated && !src.Read.Stalled {
 				d.ReadNotes = append(d.ReadNotes, "Some calls were not read because there were too many in the windows.")
 			}
 		}

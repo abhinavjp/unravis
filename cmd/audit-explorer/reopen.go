@@ -34,35 +34,49 @@ type reopener struct {
 	link    func(code string) string
 
 	mu      sync.Mutex
-	last    time.Time
-	lastTo  string
+	last    time.Time // when the last open that worked finished its work
+	lastTo  string    // the screen that open asked for
+	busy    bool      // an open is in progress: a second request at the same moment is dropped
 	warning atomic.Bool
 }
 
-// Reopen handles one open request. Requests for the same screen closer than reopenMinGap to the
-// last accepted one are dropped.
+// Reopen handles one open request. A request that arrives while another is being served, or closer than reopenMinGap to the last
+// open that worked, is dropped. An open that failed does not start the gap: the person can try again at once.
 func (r *reopener) Reopen() { r.ReopenTo("") }
 
 // ReopenTo is Reopen that lands on a screen ("updates", "whatsnew", "blackbox"); the server only accepts the names it lists.
 func (r *reopener) ReopenTo(to string) {
 	r.mu.Lock()
-	t := r.now()
 	// A repeat of the same request is dropped; a request for a different screen is not, so a notice click right after another open still works.
-	if t.Sub(r.last) < reopenMinGap && to == r.lastTo {
+	if r.busy || (r.now().Sub(r.last) < reopenMinGap && to == r.lastTo) {
 		r.mu.Unlock()
 		return
 	}
-	r.last, r.lastTo = t, to
+	r.busy = true
 	r.mu.Unlock()
+	// Cleared in a defer so a panic in the work (callers recover it) cannot leave busy set for the life of the process.
+	worked := false
+	defer func() {
+		r.mu.Lock()
+		r.busy = false
+		if worked {
+			r.last, r.lastTo = r.now(), to
+		}
+		r.mu.Unlock()
+	}()
+	worked = r.reopen(to)
+}
 
+// reopen does the work of one request and says whether the browser was opened.
+func (r *reopener) reopen(to string) bool {
 	code, err := r.newCode()
 	if err != nil {
 		r.notify("Unravis", "Could not prepare a new link. Try again in a moment.")
-		return
+		return false
 	}
 	if !r.rearm(code, r.now().Add(reopenCodeLife)) {
 		r.notify("Unravis", "Unravis is still starting; try again in a moment.")
-		return
+		return false
 	}
 	link := r.link(code)
 	if to != "" {
@@ -71,7 +85,9 @@ func (r *reopener) ReopenTo(to string) {
 	if err := r.open(link); err != nil {
 		r.notify("Unravis could not open your browser",
 			"Unravis is running at "+r.base+".\n\nYour browser could not be opened. Right-click the Unravis icon in the notification area and choose \"Open Unravis\" to try again.")
+		return false
 	}
+	return true
 }
 
 // notify shows a message box on its own goroutine, one at a time, so a modal box

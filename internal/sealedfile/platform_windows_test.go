@@ -8,6 +8,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -121,5 +122,51 @@ func TestLockWaitOutlastsFiveSeconds(t *testing.T) {
 	release()
 	if time.Since(start) < 5*time.Second {
 		t.Fatalf("LockWait returned after %v, before the holder let go", time.Since(start))
+	}
+}
+
+// Only errors that say the bytes cannot be opened are wrapped as ErrBadData; a service or RPC failure is not.
+func TestIsBadDataErrorSeparatesDataErrorsFromServiceErrors(t *testing.T) {
+	for _, code := range []syscall.Errno{13, 87, 0x80090005, 0x8009000B} {
+		if !isBadDataError(code) {
+			t.Errorf("error %#x should read as bad data", uintptr(code))
+		}
+	}
+	for _, code := range []syscall.Errno{5, 6, 1722, 1726, 0x8009001D, 0x80090016} {
+		if isBadDataError(code) {
+			t.Errorf("error %#x is not a data error", uintptr(code))
+		}
+	}
+	if isBadDataError(errors.New("something else")) {
+		t.Error("a plain error is not a data error")
+	}
+}
+
+// Bytes that were never sealed (not a DPAPI blob at all, cut short, or changed after sealing) fail with a data error in the real DPAPI
+// call, so they are reported as bad data; a good blob still opens.
+func TestUnprotectOfDamagedBytesIsBadData(t *testing.T) {
+	user, err := CurrentUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	good, err := user.Protect([]byte("hello world hello world"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := append([]byte(nil), good...)
+	changed[len(changed)/2] ^= 0xff
+	damaged := map[string][]byte{
+		"never sealed": []byte("this was never sealed by anyone"),
+		"too short":    {1, 2, 3},
+		"cut short":    good[:len(good)/2],
+		"changed":      changed,
+	}
+	for name, blob := range damaged {
+		if _, err := user.Unprotect(blob); !errors.Is(err, ErrBadData) {
+			t.Errorf("Unprotect of %s bytes = %v, want ErrBadData", name, err)
+		}
+	}
+	if plain, err := user.Unprotect(good); err != nil || string(plain) != "hello world hello world" {
+		t.Fatalf("a good blob did not open: %v", err)
 	}
 }

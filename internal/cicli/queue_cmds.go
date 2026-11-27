@@ -1,0 +1,483 @@
+package cicli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	iofs "io/fs"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"api-audit-explorer/internal/hsaction"
+	"api-audit-explorer/internal/localci"
+)
+
+// childStdin is what a `run-item --child` process watches: when it closes, the agent wants the run stopped.
+// Tests replace it.
+var childStdin io.Reader = os.Stdin
+
+// agentStale is how long after its last heartbeat an agent counts as gone.
+const agentStale = 3 * localci.DefaultBeatEvery
+
+func stateDirOf(flagValue string, environ []string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return defaultStoreDir(environ)
+}
+
+// ---------------------------------------------------------------- run-item
+
+// cmdRunItem runs one queued request in this process. The agent starts it as a child (--child): it then leaves
+// its result in the outcome file and stops when its stdin closes. By hand it only runs the request and prints
+// the result; the request's place in the queue is not touched.
+func cmdRunItem(ctx context.Context, args []string, stdout, stderr io.Writer, environ []string) int {
+	fs := flag.NewFlagSet("run-item", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	state := fs.String("state", "", "the CI store folder (default: under LOCALAPPDATA)")
+	origin := fs.String("origin", "", "URL or path the mirror fetches from (default: the host's clone URL)")
+	keep := fs.Bool("keep", false, "keep the worktree after the run")
+	jobSlots := fs.Int("job-slots", 2, "jobs at once")
+	child := fs.Bool("child", false, "started by an agent: leave the outcome file, stop when stdin closes")
+	var protect, vars, trustedBase, allowEnv multiFlag
+	fs.Var(&trustedBase, "trusted-base", "extra base branch a pull request of a non-owner may run into (repeatable)")
+	fs.Var(&allowEnv, "allow-env", "NAME of an environment variable steps may see (repeatable)")
+	fs.Var(&protect, "protect", "extra path read from the base branch for pull requests of non-owners (repeatable; added to the defaults)")
+	fs.Var(&vars, "var", "vars context value k=v (repeatable)")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return exitUsage
+	}
+	if len(pos) != 1 {
+		_, _ = fmt.Fprintln(stderr, "run-item: expected exactly one request id")
+		usage(stderr)
+		return exitUsage
+	}
+	varMap, err := kvList(vars)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "run-item: --var:", err)
+		return exitUsage
+	}
+	store, err := localci.OpenStore(stateDirOf(*state, environ))
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "run-item:", err)
+		return exitUsage
+	}
+	queue, err := localci.OpenQueue(localci.QueueDir(store.Dir))
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "run-item:", err)
+		return exitUsage
+	}
+	redact := newRedactor(secretValues(environ))
+	req, err := queue.Get(pos[0])
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "run-item:", redact(err.Error()))
+		return exitUsage
+	}
+	if *child {
+		var stop context.CancelFunc
+		ctx, stop = context.WithCancel(ctx)
+		defer stop()
+		// The reader is taken here, not inside the goroutine: the goroutine may start (or still be running) after a test has put
+		// the variable back, and reading a package variable from it would race with that write.
+		stdin := childStdin
+		go func() {
+			_, _ = io.Copy(io.Discard, stdin)
+			stop()
+		}()
+	}
+	ir := &localci.ItemRunner{
+		Store: store, Host: newHost(environ), OriginURL: *origin, Protect: append(append([]string{}, defaultProtect...), protect...),
+		TrustedBases: trustedBase, Env: scrubEnv(environ, allowEnv), Vars: varMap, Slots: *jobSlots, Keep: *keep, Redact: redact, Log: stdout,
+	}
+	out, err := ir.Run(ctx, req)
+	if err != nil {
+		out.Conclusion, out.Reason = "error", redact(err.Error())
+		_, _ = fmt.Fprintln(stderr, "run-item:", out.Reason)
+	}
+	if *child {
+		if werr := localci.WriteOutcome(store.Dir, req.ID, out); werr != nil {
+			_, _ = fmt.Fprintln(stderr, "run-item: cannot leave the outcome:", werr)
+			return exitUsage
+		}
+	}
+	_, _ = fmt.Fprintf(stdout, "%s: %s%s\n", req.ID, out.Conclusion, noteIf(out.Reason != "", " ("+out.Reason+")"))
+	if out.RunID != "" {
+		_, _ = fmt.Fprintf(stdout, "run id: %s\nlogs:   %s log %s [job]\n", out.RunID, EngineProg, out.RunID)
+	}
+	if out.Conclusion == "success" {
+		return exitOK
+	}
+	return exitFailed
+}
+
+func noteIf(ok bool, s string) string {
+	if ok {
+		return s
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------- status
+
+func ago(now, t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	d := now.Sub(t)
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		return d.Round(time.Second).String()
+	}
+	return d.Round(time.Minute).String()
+}
+
+func shortID(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
+}
+
+// requestLine is one request as a row of the status listing.
+func requestLine(now time.Time, r localci.Request) string {
+	what := r.Label()
+	when := "waiting " + ago(now, r.EnqueuedAt)
+	switch r.State {
+	case localci.StateRunning:
+		when = "on " + r.ClaimedBy + " for " + ago(now, r.ClaimedAt)
+	case localci.StateQueued:
+	default:
+		when = r.Conclusion + " " + ago(now, r.FinishedAt) + " ago"
+		if r.Reason != "" {
+			when += ": " + r.Reason
+		}
+	}
+	return fmt.Sprintf("  %-34s %-9s %-34s %-8s %-13s %s", r.ID, r.State, what, shortID(r.SHA), r.Workflow, when)
+}
+
+func cmdStatus(args []string, stdout, stderr io.Writer, environ []string) int {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	state := fs.String("state", "", "the CI store folder (default: under LOCALAPPDATA)")
+	recent := fs.Int("recent", 5, "show the last N finished requests (0 = none)")
+	pauseFile := fs.String("pause-file", "", "the pause file serve uses (default: PAUSE in the state folder)")
+	noReleasePause := fs.Bool("no-release-pause", false, "do not report a running release as a pause")
+	releaseDir := fs.String("release-dir", "", "the release script's data folder (default: where Release.ps1 keeps it)")
+	asJSON := fs.Bool("json", false, "print the same facts as one JSON object (see statusJSON)")
+	if pos, err := parseInterspersed(fs, args); err != nil || len(pos) != 0 {
+		if err == nil {
+			_, _ = fmt.Fprintln(stderr, "status: takes no arguments")
+		}
+		return exitUsage
+	}
+	dir := stateDirOf(*state, environ)
+	now := time.Now()
+	pf := *pauseFile
+	if pf == "" {
+		pf = filepath.Join(dir, pauseFileName)
+	}
+	rdir := *releaseDir
+	if rdir == "" {
+		rdir = releaseDirOf(environ)
+	}
+	if *noReleasePause {
+		rdir = ""
+	}
+	why := pauseReason(pf, rdir, now)
+
+	hbs, err := localci.ReadAgents(dir)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "status:", err)
+		return exitUsage
+	}
+	queue := &localci.Queue{Dir: localci.QueueDir(dir)}
+	all, err := queue.List()
+	if err != nil && !errors.Is(err, iofs.ErrNotExist) {
+		_, _ = fmt.Fprintln(stderr, "status:", err)
+		return exitUsage
+	}
+	var active, finished []localci.Request
+	for _, r := range all {
+		if r.Active() {
+			active = append(active, r)
+		} else {
+			finished = append(finished, r)
+		}
+	}
+	running := 0
+	for _, r := range active {
+		if r.State == localci.StateRunning {
+			running++
+		}
+	}
+	if *recent <= 0 {
+		finished = nil
+	} else if len(finished) > *recent {
+		finished = finished[:*recent]
+	}
+	if *asJSON {
+		return writeJSON("status", stdout, stderr, statusJSONOf(dir, why, hbs, active, finished, running, now))
+	}
+
+	_, _ = fmt.Fprintf(stdout, "state: %s\n", dir)
+	if why != "" {
+		_, _ = fmt.Fprintf(stdout, "claiming is paused: %s\n", why)
+	}
+	_, _ = fmt.Fprintln(stdout, "agents:")
+	if len(hbs) == 0 {
+		_, _ = fmt.Fprintln(stdout, "  none (start one with: "+EngineProg+" serve)")
+	}
+	for _, h := range hbs {
+		st := agentStateOf(h, now)
+		_, _ = fmt.Fprintf(stdout, "  %-12s %-9s slots %d  running %d  pid %d  seen %s ago%s\n", h.Name, st, h.Slots, len(h.Jobs), h.PID, ago(now, h.LastSeen), labelText(h.Labels))
+	}
+	statusLines(stdout, hbs, now)
+	_, _ = fmt.Fprintf(stdout, "queue: %d waiting, %d running\n", len(active)-running, running)
+	for _, r := range active {
+		_, _ = fmt.Fprintln(stdout, requestLine(now, r))
+	}
+	if len(finished) > 0 {
+		_, _ = fmt.Fprintln(stdout, "finished (newest first):")
+		for _, r := range finished {
+			_, _ = fmt.Fprintln(stdout, requestLine(now, r))
+		}
+	}
+	return exitOK
+}
+
+// agentStateOf is the state shown for an agent: what it said, or "gone" when its heartbeat is stale.
+func agentStateOf(h localci.Heartbeat, now time.Time) string {
+	if !h.Fresh(now, agentStale) {
+		return "gone"
+	}
+	return h.State
+}
+
+// statusJSON is the output of `status --json`: the facts of the text output, with the same names. The field
+// names are part of the command's interface; add fields, do not rename or drop them.
+type statusJSON struct {
+	StateDir     string            `json:"stateDir"`
+	Paused       bool              `json:"paused"`
+	PausedReason string            `json:"pausedReason,omitempty"` // why claiming is paused, in words
+	Agents       []agentJSON       `json:"agents"`
+	Queue        queueJSON         `json:"queue"`
+	Finished     []localci.Request `json:"finished"` // newest first, at most --recent
+}
+
+type agentJSON struct {
+	Name     string    `json:"name"`
+	State    string    `json:"state"` // ready, paused, draining, or gone when the heartbeat is stale
+	Slots    int       `json:"slots"`
+	Running  int       `json:"running"` // requests the agent runs now
+	PID      int       `json:"pid"`
+	LastSeen time.Time `json:"lastSeen"`
+	SeenAgo  string    `json:"seenAgo"` // as the text output says it
+	Labels   []string  `json:"labels"`
+	// Statuses is how posting commit statuses goes; absent when the agent posts none.
+	Statuses *localci.StatusHealth `json:"statuses,omitempty"`
+}
+
+type queueJSON struct {
+	Waiting  int               `json:"waiting"`
+	Running  int               `json:"running"`
+	Requests []localci.Request `json:"requests"` // running first, then waiting in claim order
+}
+
+func statusJSONOf(dir, why string, hbs []localci.Heartbeat, active, finished []localci.Request, running int, now time.Time) statusJSON {
+	out := statusJSON{StateDir: dir, Paused: why != "", PausedReason: why, Agents: []agentJSON{}, Finished: nonNil(finished)}
+	for _, h := range hbs {
+		labels := h.Labels
+		if labels == nil {
+			labels = []string{}
+		}
+		out.Agents = append(out.Agents, agentJSON{Name: h.Name, State: agentStateOf(h, now), Slots: h.Slots, Running: len(h.Jobs), PID: h.PID,
+			LastSeen: h.LastSeen, SeenAgo: ago(now, h.LastSeen), Labels: labels, Statuses: h.Status})
+	}
+	out.Queue = queueJSON{Waiting: len(active) - running, Running: running, Requests: nonNil(active)}
+	return out
+}
+
+// nonNil makes an empty list print as [] and not as null.
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
+// writeJSON prints v as indented JSON and one newline.
+func writeJSON(cmd string, stdout, stderr io.Writer, v any) int {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, cmd+":", err)
+		return exitUsage
+	}
+	_, _ = fmt.Fprintf(stdout, "%s\n", b)
+	return exitOK
+}
+
+func labelText(l []string) string {
+	if len(l) == 0 {
+		return ""
+	}
+	return "  labels " + strings.Join(l, ",")
+}
+
+// ---------------------------------------------------------------- cancel
+
+func isNumber(s string) (int, bool) {
+	n, err := strconv.Atoi(s)
+	return n, err == nil && n > 0 && strconv.Itoa(n) == s
+}
+
+func cmdCancel(args []string, stdout, stderr io.Writer, environ []string) int {
+	fs := flag.NewFlagSet("cancel", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	state := fs.String("state", "", "the CI store folder (default: under LOCALAPPDATA)")
+	reason := fs.String("reason", "", "why (kept with the request; default: cancelled from the command line)")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return exitUsage
+	}
+	if len(pos) != 1 {
+		_, _ = fmt.Fprintln(stderr, "cancel: expected one request id or pull request number")
+		usage(stderr)
+		return exitUsage
+	}
+	env, err := cliEnv(stateDirOf(*state, environ), "", environ)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cancel:", err)
+		return exitUsage
+	}
+	res, code := runAction(env, "queue.cancel", hsaction.CancelArgs{Target: targetOf(pos[0]), Reason: *reason})
+	printItems("cancel", res, stdout, stderr, hsaction.CancelLine)
+	return finishAction("cancel", res, code, stderr)
+}
+
+// ---------------------------------------------------------------- rerun
+
+func cmdRerun(ctx context.Context, args []string, stdout, stderr io.Writer, environ []string) int {
+	fs := flag.NewFlagSet("rerun", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	state := fs.String("state", "", "the CI store folder (default: under LOCALAPPDATA)")
+	repo := fs.String("repo", defaultRepo, "owner/name of the repository (for a pull request number)")
+	workflow := fs.String("workflow", "", "run this workflow file whatever the base branch is (for a pull request number)")
+	var wfFor multiFlag
+	fs.Var(&wfFor, "workflow-for", "base=file.yml: the workflow that gates pull requests into base (repeatable; replaces the defaults)")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return exitUsage
+	}
+	if len(pos) != 1 {
+		_, _ = fmt.Fprintln(stderr, "rerun: expected one run id or pull request number")
+		usage(stderr)
+		return exitUsage
+	}
+	dir := stateDirOf(*state, environ)
+	env, err := cliEnv(dir, "", environ)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "rerun:", err)
+		return exitUsage
+	}
+	args1 := hsaction.RetryArgs{Run: pos[0]}
+	if n, ok := isNumber(pos[0]); ok {
+		workflows := defaultWorkflowFor
+		if len(wfFor) > 0 {
+			m, err := parseBaseFiles("rerun", "--workflow-for", wfFor)
+			if err != nil {
+				_, _ = fmt.Fprintln(stderr, err)
+				return exitUsage
+			}
+			workflows = map[string]string{}
+			for k, v := range m {
+				workflows[k] = v[len(v)-1]
+			}
+		}
+		pr, err := newHost(environ).PullRequest(ctx, *repo, n)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "rerun:", newRedactor(secretValues(environ))(err.Error()))
+			return exitFailed
+		}
+		if !strings.EqualFold(pr.State, "OPEN") {
+			_, _ = fmt.Fprintf(stderr, "rerun: pull request %d is %s, not open\n", n, strings.ToLower(pr.State))
+			return exitFailed
+		}
+		wf := *workflow
+		if wf == "" {
+			wf = workflows[pr.BaseRef]
+		}
+		if wf == "" {
+			_, _ = fmt.Fprintf(stderr, "rerun: no workflow is set for pull requests into %q (use --workflow or --workflow-for)\n", pr.BaseRef)
+			return exitUsage
+		}
+		args1.Resolved = &localci.Request{Kind: localci.KindPR, Repo: *repo, Number: n, Ref: pr.HeadRef, Base: pr.BaseRef, SHA: pr.HeadSHA, Workflow: wf}
+	}
+	res, code := runAction(env, "queue.retry", args1)
+	if res.OK {
+		_, _ = fmt.Fprintln(stdout, res.Message)
+	} else {
+		_, _ = fmt.Fprintln(stderr, "rerun:", res.Message)
+	}
+	return finishAction("rerun", res, code, stderr)
+}
+
+// ---------------------------------------------------------------- drain
+
+func cmdDrain(args []string, stdout, stderr io.Writer, environ []string) int {
+	fs := flag.NewFlagSet("drain", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	state := fs.String("state", "", "the CI store folder (default: under LOCALAPPDATA)")
+	name := fs.String("name", "", "the agent to drain (default: every live agent)")
+	if pos, err := parseInterspersed(fs, args); err != nil || len(pos) != 0 {
+		if err == nil {
+			_, _ = fmt.Fprintln(stderr, "drain: takes no arguments")
+		}
+		return exitUsage
+	}
+	dir := stateDirOf(*state, environ)
+	var names []string
+	if *name != "" {
+		names = []string{*name}
+	} else {
+		hbs, err := localci.ReadAgents(dir)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "drain:", err)
+			return exitUsage
+		}
+		for _, h := range hbs {
+			if h.Fresh(time.Now(), agentStale) {
+				names = append(names, h.Name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		_, _ = fmt.Fprintln(stderr, "drain: no agent is running in", dir)
+		return exitFailed
+	}
+	env, err := cliEnv(dir, "", environ)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "drain:", err)
+		return exitUsage
+	}
+	for _, n := range names {
+		res, code := runAction(env, "machines.drain", hsaction.MachineArgs{Name: n})
+		if !res.OK {
+			_, _ = fmt.Fprintln(stderr, "drain:", res.Message)
+			return finishAction("drain", res, code, stderr)
+		}
+		_, _ = fmt.Fprintln(stdout, res.Message)
+		if c := finishAction("drain", res, code, stderr); c != exitOK {
+			return c
+		}
+	}
+	return exitOK
+}

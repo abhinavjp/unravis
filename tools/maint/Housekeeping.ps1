@@ -12,11 +12,17 @@
        (~\.claude\projects\<path with every non-letter/digit as ->). Anything else is another repository's and is left alone.
     2. A session whose transcript (or subagent folder) changed within -IdleMinutes (default 120) is treated as alive and kept, whatever
        the age of its scratch. A running process that names the session id or the folder also keeps it (Clean-Scratch rules).
-    3. Registered worktrees of this repository under D:\Scratch or the Temp\claude root are removed with a plain
+    3. Registered worktrees of this repository under D:\Scratch, the Temp\claude root or <repo>\.claude\worktrees (agent worktrees; one
+       with a Claude project folder under its own name that changed, or cannot be read, within the last day also stays, though a
+       subagent's transcript usually lives under its parent session's folder instead) are removed with a plain
        `git worktree remove` (never forced, never deleting a branch) only when: clean (no untracked files), no process names the
        path, untouched for a day, HEAD contained in origin/develop or origin/master after a fresh fetch (a failed fetch keeps
        everything), not the main checkout or the checkout running this script. Missing worktree folders are pruned.
     4. %TEMP%\unravis-probe* and %TEMP%\unravis-dev-* folders, with the Clean-Scratch age, link, in-use and clone-at-risk rules.
+    5. Every Go build cache over -GoCacheLimitGB (default 8): go env GOCACHE, %LOCALAPPDATA%\go-build, the Claude desktop app's
+       Packages\Claude_*\LocalCache\Local\go-build and D:\GoCache\build (Clean-Scratch.ps1 has the rules). The log line shows the GB
+       freed per location and the module cache size (measured, never deleted). A cache over 3x the limit that cannot be cleaned
+       because a Go build is running is logged as "go cache over limit but a build is running"; builds are never killed.
   Not touched: %TEMP%\uci-* and the Homestretch agent's work areas and caches (the agent prunes and caps them itself, see
   docs/ci/LOCAL-PIPELINE.md), other repositories, source, user data. Age alone never deletes anything.
 
@@ -30,9 +36,15 @@
 .PARAMETER Repo       Repository folder. Default: the one saved by -Install, else the checkout this script is in.
 .PARAMETER Install    Copy the scripts to %LOCALAPPDATA%\Unravis\maint, save the repository folder, and register the hourly user-level task
                       'Unravis-Housekeeping' (this is what makes the cleanup run on a checkout that does not have the hooks yet). Re-run after
-                      the scripts change. It also removes the older daily 'Unravis-CleanScratch' task.
+                      the scripts change. It also removes the older daily 'Unravis-CleanScratch' task. Run it from a NORMAL terminal:
+                      it refuses when a marker file written under %LOCALAPPDATA% turns up in a Packages\*\LocalCache\Local mirror (the Claude
+                      desktop app sandbox redirects file writes there while $env:LOCALAPPDATA still shows the real path), when the probe
+                      cannot be completed, when the package is Claude_*, and when the script itself sits in such a redirect folder, because the
+                      installed copy would land there and the hourly task would keep running the old one. Having a package identity alone
+                      (the Microsoft Store build of pwsh has one) does not refuse.
 .PARAMETER Uninstall  Remove that task.
 .PARAMETER Worker     Internal: a hook started this process in the background.
+.PARAMETER GoCacheLimitGB  Clean each Go build cache over this size (default 8, the runner cache cap). 0 turns the Go cache step off.
 #>
 [CmdletBinding()]
 param(
@@ -41,7 +53,8 @@ param(
     [string]$Repo,
     [switch]$Install,
     [switch]$Uninstall,
-    [switch]$Worker
+    [switch]$Worker,
+    [double]$GoCacheLimitGB = 8
 )
 
 $script:HkTask = 'Unravis-Housekeeping'
@@ -136,7 +149,12 @@ function Invoke-TempPatternClean {
 function Get-WorktreeKeepReason {
     param([string]$Path, [string[]]$Running, [datetime]$Clock, [int]$AgeHours, [string[]]$Roots, [string[]]$Protect, [string[]]$OwnerDirs = $null, [int]$IdleMinutes = 120)
     if (-not (Test-UnderAny -Path $Path -Roots $Roots)) { return 'outside the scratch folders' }
-    foreach ($p in $Protect) { if ($p -and ([IO.Path]::GetFullPath($p).TrimEnd('\') -ieq $Path)) { return 'the main checkout or the checkout in use' } }
+    # A protected folder equal to the worktree, or inside it (a session whose working directory is a subfolder), keeps it.
+    foreach ($p in $Protect) {
+        if (-not $p) { continue }
+        $pp = [IO.Path]::GetFullPath($p).TrimEnd('\')
+        if ($pp -ieq $Path -or $pp.StartsWith($Path + '\', [StringComparison]::OrdinalIgnoreCase)) { return 'the main checkout or the checkout in use' }
+    }
     $it = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     if (-not $it) { return $null }
     if ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) { return 'is a link' }
@@ -147,6 +165,24 @@ function Get-WorktreeKeepReason {
     if ($sm.Success -and $null -ne $OwnerDirs) {
         $ov = Get-OwnerVerdict -Id $sm.Groups[1].Value -OwnerDirs $OwnerDirs -IdleMinutes $IdleMinutes -Clock $Clock
         if ($ov -like 'its transcript changed*') { return 'its Claude session may be alive' }
+    }
+    # If a Claude project folder exists under this worktree's own name, anything in it (at any depth) that changed within the same
+    # -AgeHours window the worktree itself must have been quiet for keeps the worktree. A folder that cannot be read keeps it too.
+    # This is only a partial guard: a subagent's transcript lives under the PARENT session's project folder, so for most agent
+    # worktrees no such folder exists. The protection that always applies is the worktree's own recent-change check below, a process
+    # naming the path, and the rename probe.
+    if ($null -ne $OwnerDirs) {
+        $own = ConvertTo-ProjectName $Path
+        $since = $Clock.ToUniversalTime().AddHours(-$AgeHours)
+        foreach ($d in $OwnerDirs) {
+            if ((Split-Path -Leaf $d) -ine $own) { continue }
+            try {
+                $dd = Get-Item -LiteralPath $d -Force -ErrorAction Stop
+                if ($dd.LastWriteTimeUtc -ge $since) { return 'its Claude session may be alive' }
+                $hit = Get-ChildItem -LiteralPath $d -Recurse -Force -ErrorAction Stop | Where-Object { $_.LastWriteTimeUtc -ge $since } | Select-Object -First 1
+                if ($hit) { return 'its Claude session may be alive' }
+            } catch { return 'its Claude project folder could not be read' }
+        }
     }
     $newest = $it.LastWriteTimeUtc
     $gitFile = Join-Path $Path '.git'
@@ -238,9 +274,9 @@ function Invoke-HousekeepingRun {
     param(
         [string]$Repo, [bool]$DoApply, [datetime]$Clock, [string]$TempRoot, [string]$ProjectsRoot,
         [string[]]$ScratchRoots, [string[]]$Running, [string[]]$Protect = @(),
-        [int]$IdleMinutes = 120, [int]$AgeDays = 1, [double]$GoCacheLimitGB = 3
+        [int]$IdleMinutes = 120, [int]$AgeDays = 1, [double]$GoCacheLimitGB = 8, [object[]]$GoLocations = $null, [bool]$UseGo = $true, [string]$ModCacheDir = ''
     )
-    $out = [ordered]@{ ScratchFreed = 0L; ScratchWould = 0L; ScratchKept = 0; WtRemoved = 0; WtWould = 0; WtKept = 0; TempFreed = 0L; TempWould = 0L; GoFreed = 0L; GoWould = 0L; Note = ''; Err = '' }
+    $out = [ordered]@{ ScratchFreed = 0L; ScratchWould = 0L; ScratchKept = 0; WtRemoved = 0; WtWould = 0; WtKept = 0; TempFreed = 0L; TempWould = 0L; GoFreed = 0L; GoWould = 0L; GoLocs = @(); GoNotes = @(); ModBytes = -1L; Note = ''; Err = '' }
     $wts = Get-RepoWorktrees -Repo $Repo
     if (-not $wts) { $out.Note = 'git could not list the worktrees: nothing done'; return [pscustomobject]$out }
     $owners = @(Get-OwnerDirs -Worktrees $wts -ProjectsRoot $ProjectsRoot)
@@ -252,19 +288,44 @@ function Invoke-HousekeepingRun {
     } catch { $out.Err = 'worktree step failed: ' + ($_.Exception.Message -replace '\s+', ' ') }
     $t = Invoke-TempPatternClean -TempRoot $TempRoot -DoApply $DoApply -AgeDays $AgeDays -Clock $Clock -Running $Running
     $out.TempFreed = $t.FreedBytes; $out.TempWould = $t.WouldFreeBytes
-    $g = Invoke-GoCacheClean -DoApply $DoApply -LimitGB $GoCacheLimitGB -Running $Running
-    $out.GoFreed = $g.FreedBytes; $out.GoWould = $g.WouldFreeBytes
+    try {
+        $g = Invoke-GoCacheClean -DoApply $DoApply -LimitGB $GoCacheLimitGB -Running $Running -Locations $GoLocations -UseGo $UseGo -ModCacheDir $ModCacheDir
+        $out.GoFreed = $g.FreedBytes; $out.GoWould = $g.WouldFreeBytes; $out.GoLocs = @($g.Locations); $out.GoNotes = @($g.Notes); $out.ModBytes = $g.ModCacheBytes
+    } catch { $out.Err = (($out.Err + '; go cache step failed: ' + ($_.Exception.Message -replace '\s+', ' ')).TrimStart('; ')) }
     return [pscustomobject]$out
+}
+
+# Format-GoPart: "go [label GB, label GB]" with the GB freed (or, in a dry run, that would go) per location, then the module cache size.
+function Format-GoPart {
+    param([bool]$DoApply, $R)
+    # Every location says what happened to it, so a skipped cache can never read as "0.00 GB".
+    $parts = @()
+    foreach ($l in @($R.GoLocs)) {
+        $sz = Format-Size $l.Bytes
+        $parts += switch ($l.Status) {
+            'cleaned' { '{0} freed {1} of {2}' -f $l.Label, (Format-Size $l.FreedBytes), $sz }
+            'would clean' { '{0} would free {1}' -f $l.Label, $sz }
+            'under limit' { '{0} {1} under limit' -f $l.Label, $sz }
+            'busy' { '{0} {1} over limit, build running' -f $l.Label, $sz }
+            'not a go cache' { '{0} skipped (no Go README)' -f $l.Label }
+            default { '{0} {1}' -f $l.Label, $l.Status }
+        }
+    }
+    $s = 'go [' + ($parts -join '; ') + ']'
+    if ($R.ModBytes -ge 0) { $s += '; modcache ' + (Format-Size $R.ModBytes) }
+    return $s
 }
 
 function Format-RunLine {
     param([string]$Ev, [bool]$DoApply, $R)
     if ($R.Note) { return ('{0:yyyy-MM-ddTHH:mmZ} {1} {2}' -f [datetime]::UtcNow, $Ev, $R.Note) }
     $e = if ($R.Err) { '; ' + $R.Err } else { '' }
+    foreach ($n in @($R.GoNotes)) { $e += '; ' + $n }
+    $go = Format-GoPart -DoApply $DoApply -R $R
     if ($DoApply) {
-        return (('{0:yyyy-MM-ddTHH:mmZ} {1} apply: scratch {2} kept {3}; worktrees removed {4} kept {5}; temp {6}; go {7}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchFreed), $R.ScratchKept, $R.WtRemoved, $R.WtKept, (Format-Size $R.TempFreed), (Format-Size $R.GoFreed)) + $e)
+        return (('{0:yyyy-MM-ddTHH:mmZ} {1} apply: scratch {2} kept {3}; worktrees removed {4} kept {5}; temp {6}; {7}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchFreed), $R.ScratchKept, $R.WtRemoved, $R.WtKept, (Format-Size $R.TempFreed), $go) + $e)
     }
-    return (('{0:yyyy-MM-ddTHH:mmZ} {1} dry run: scratch {2} would go; worktrees {3} would go; temp {4}; go {5}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchWould), $R.WtWould, (Format-Size $R.TempWould), (Format-Size $R.GoWould)) + $e)
+    return (('{0:yyyy-MM-ddTHH:mmZ} {1} dry run: scratch {2} would go; worktrees {3} would go; temp {4}; {5}' -f [datetime]::UtcNow, $Ev, (Format-Size $R.ScratchWould), $R.WtWould, (Format-Size $R.TempWould), $go) + $e)
 }
 
 # Add-LogLine: one line per run; over the cap the file is cut to its last 100 lines.
@@ -292,8 +353,92 @@ function Get-RepoFolder {
     return $null
 }
 
+# Get-PackageFullName asks Windows for the package identity of THIS process (kernel32 GetCurrentPackageFullName). Returns '' for a plain
+# process (15700 = APPMODEL_ERROR_NO_PACKAGE), the full name (for example Claude_1.2.3.0_x64__<id>, or Microsoft.PowerShell_7.7.0.0_x64__<id>
+# for the Microsoft Store build of pwsh), or $null when the question itself could not be asked. A package identity alone proves nothing
+# about redirection: the Store pwsh has one and writes straight to the real folders.
+function Get-PackageFullName {
+    try {
+        if (-not ('Unravis.PkgId' -as [type])) {
+            Add-Type -Namespace Unravis -Name PkgId -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern int GetCurrentPackageFullName(ref int length, System.Text.StringBuilder name);'
+        }
+        $len = 0
+        $rc = [int][Unravis.PkgId]::GetCurrentPackageFullName([ref]$len, $null)
+        if ($rc -eq 15700) { return '' }
+        if ($rc -ne 122 -or $len -lt 1) { return $null }
+        $sb = New-Object System.Text.StringBuilder $len
+        if ([int][Unravis.PkgId]::GetCurrentPackageFullName([ref]$len, $sb) -ne 0) { return $null }
+        return $sb.ToString()
+    } catch { return $null }
+}
+
+# Test-LocalAppDataRedirect is the direct probe: it writes a uniquely named marker under <LocalAppData>\Unravis, then looks for the same
+# marker under every <PackagesRoot>\*\LocalCache\Local mirror. A sandboxed process (the Claude desktop app) sees the real path but its file
+# writes land in that mirror. Returns 'direct' (marker only at the real path), 'redirected' (marker found in a mirror) or 'failed' (the
+# probe could not be completed). The marker folder is always removed. -AfterWrite is a test hook that runs after the marker is written
+# and receives its relative path (it can simulate a redirect by copying the marker into a fake mirror).
+function Test-LocalAppDataRedirect {
+    param([string]$LocalAppData, [string]$PackagesRoot, [scriptblock]$AfterWrite = $null)
+    $rel = 'Unravis\.probe-' + [guid]::NewGuid().ToString('N')
+    $probeDir = Join-Path $LocalAppData $rel
+    $marker = Join-Path $probeDir 'marker.txt'
+    try {
+        New-Item -ItemType Directory -Force -Path $probeDir -ErrorAction Stop | Out-Null
+        Set-Content -LiteralPath $marker -Value 'unravis redirect probe' -ErrorAction Stop
+        if ($null -ne $AfterWrite) { & $AfterWrite $rel }
+        if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return 'failed' }
+        if (Test-Path -LiteralPath $PackagesRoot -PathType Container) {
+            foreach ($pkg in @(Get-ChildItem -LiteralPath $PackagesRoot -Directory -Force -ErrorAction Stop)) {
+                $mirror = Join-Path (Join-Path $pkg.FullName 'LocalCache\Local') $rel
+                if (Test-Path -LiteralPath (Join-Path $mirror 'marker.txt') -PathType Leaf) { return 'redirected' }
+            }
+        }
+        return 'direct'
+    } catch { return 'failed' } finally {
+        # the unique marker folder goes from the real path and from every mirror (a redirected write may have landed there)
+        Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue
+        if ($PackagesRoot -and (Test-Path -LiteralPath $PackagesRoot -PathType Container)) {
+            foreach ($pkg in @(Get-ChildItem -LiteralPath $PackagesRoot -Directory -Force -ErrorAction SilentlyContinue)) {
+                Remove-Item -LiteralPath (Join-Path (Join-Path $pkg.FullName 'LocalCache\Local') $rel) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+# Get-InstallRefusal: why -Install must not run here, or $null. Inside the Claude desktop app $env:LOCALAPPDATA still shows the REAL path
+# while the sandbox redirects file writes underneath, so the "installed" copy would land in Packages\Claude_*\LocalCache\Local and the
+# hourly task would keep running the old copy from the real folder. The decision is a direct probe (Test-LocalAppDataRedirect: a marker
+# file written under LocalAppData must not show up in a Packages\*\LocalCache\Local mirror, and the probe must complete). Also refused: a
+# package family starting with Claude_, and a script or LocalAppData path that is itself inside a Packages\<name>\LocalCache redirect root
+# (a repository at D:\src\Packages\repo is not). A package identity alone never refuses: the Microsoft Store build of pwsh has one
+# (Microsoft.PowerShell_*) and writes straight to the real folders. Test hooks: -PackageName ('' = none, $null = ask Windows) and -Probe
+# (a scriptblock returning 'direct', 'redirected' or 'failed', replacing the real probe).
+function Get-InstallRefusal {
+    param([string]$Self, [string]$LocalAppData, [object]$PackageName = $null, [scriptblock]$Probe = $null)
+    $how = 'Open a normal terminal (Windows Terminal or PowerShell, not the Claude app) and run -Install again from the repository.'
+    $pkg = if ($null -ne $PackageName) { [string]$PackageName } else { Get-PackageFullName }
+    if ($pkg -match '(?i)^Claude_') {
+        return "Housekeeping.ps1 -Install was started inside the Claude desktop app ($pkg). Its sandbox redirects file writes to Packages\Claude_*\LocalCache, so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. $how"
+    }
+    foreach ($p in $Self, $LocalAppData) {
+        if ($p -and ([IO.Path]::GetFullPath($p) -match '(?i)\\AppData\\Local\\Packages\\[^\\]+\\LocalCache(\\|$)')) {
+            return "Housekeeping.ps1 -Install was started from inside a redirected app folder ($p), so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. $how"
+        }
+    }
+    $verdict = if ($null -ne $Probe) { [string](& $Probe) } else { Test-LocalAppDataRedirect -LocalAppData $LocalAppData -PackagesRoot (Join-Path $env:USERPROFILE 'AppData\Local\Packages') }
+    if ($verdict -eq 'redirected') {
+        return "Housekeeping.ps1 -Install found that file writes under %LOCALAPPDATA% are redirected into a Packages\<name>\LocalCache folder (a sandboxed app such as the Claude desktop app), so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. $how"
+    }
+    if ($verdict -ne 'direct') {
+        return "Housekeeping.ps1 -Install could not check whether file writes under %LOCALAPPDATA% are redirected (the marker probe did not complete), so it stops rather than install into a redirected folder. $how"
+    }
+    return $null
+}
+
 function Register-HousekeepingTask {
     param([string]$RepoFolder)
+    $refusal = Get-InstallRefusal -Self $PSCommandPath -LocalAppData $env:LOCALAPPDATA
+    if ($refusal) { throw $refusal }
     $dir = Get-StateDir
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $self = [IO.Path]::GetFullPath($PSCommandPath)
@@ -318,6 +463,10 @@ if ($MyInvocation.InvocationName -ne '.') {
     try {
         if (-not $IsWindows) { if ($alwaysZero) { exit 0 } else { Write-Host 'Windows only.'; exit 0 } }
         $dir = Get-StateDir
+        if ($Install) {
+            $refusal = Get-InstallRefusal -Self $PSCommandPath -LocalAppData $env:LOCALAPPDATA
+            if ($refusal) { Write-Host $refusal; exit 1 }
+        }
         if ($Install) { . (Join-Path $PSScriptRoot 'Clean-Scratch.ps1'); Register-HousekeepingTask -RepoFolder (Get-RepoFolder -Explicit $Repo -Dir $dir); exit 0 }
         if ($Uninstall) { Unregister-ScheduledTask -TaskName $script:HkTask -Confirm:$false -ErrorAction SilentlyContinue; Write-Host 'task removed'; exit 0 }
 
@@ -333,6 +482,7 @@ if ($MyInvocation.InvocationName -ne '.') {
             # Claim the slot, start the real work hidden in the background and return at once.
             $a = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $PSCommandPath), '-Event', $Event, '-Worker')
             if ($Repo) { $a += @('-Repo', ('"{0}"' -f $Repo)) }
+            if ($PSBoundParameters.ContainsKey('GoCacheLimitGB')) { $a += @('-GoCacheLimitGB', $GoCacheLimitGB.ToString([Globalization.CultureInfo]::InvariantCulture)) }
             Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList $a -WindowStyle Hidden | Out-Null
             Set-Content -LiteralPath $stateFile -Value ([datetime]::UtcNow.ToString('o'))   # claimed only once the worker really started
             exit 0
@@ -352,7 +502,8 @@ if ($MyInvocation.InvocationName -ne '.') {
             $protect += (Get-Location).Path
             $args2 = @{
                 Repo = $repoFolder; DoApply = $doApply; Clock = [datetime]::UtcNow; TempRoot = (Join-Path $env:LOCALAPPDATA 'Temp')
-                ProjectsRoot = (Join-Path $env:USERPROFILE '.claude\projects'); ScratchRoots = @('D:\Scratch'); Running = $running; Protect = $protect
+                ProjectsRoot = (Join-Path $env:USERPROFILE '.claude\projects'); ScratchRoots = @('D:\Scratch', (Join-Path $repoFolder '.claude\worktrees')); Running = $running; Protect = $protect
+                GoCacheLimitGB = $GoCacheLimitGB
             }
             if ($alwaysZero) { $r = Invoke-HousekeepingRun @args2 6>$null } else { $r = Invoke-HousekeepingRun @args2 }
             $line = Format-RunLine -Ev $Event -DoApply $doApply -R $r

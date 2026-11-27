@@ -169,7 +169,6 @@ export const SOURCES_TEXT = {
   sqlNotKept: 'The server was added, but its details could not be kept: ',
   sqlSavedHeading: 'Kept before',
   sqlUse: 'Use',
-  sqlForget: 'Forget',
   sqlHasPassword: 'password kept',
   sqlNoPassword: 'no password kept',
   sqlWindowsLogin: 'Windows login',

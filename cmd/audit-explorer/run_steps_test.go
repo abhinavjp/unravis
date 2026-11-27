@@ -52,6 +52,7 @@ func listenOnce(t *testing.T) net.Listener {
 }
 
 func TestWriteSessionFileWritesAndRemoves(t *testing.T) {
+	isolateTemp(t)
 	dir := t.TempDir()
 	getenv := func(k string) string {
 		if k == "AUDIT_CONFIG_DIR" {
@@ -85,8 +86,54 @@ func TestWriteSessionFileFailureGivesANoOp(t *testing.T) {
 		}
 		return ""
 	}
+	isolateTemp(t)
 	remove := writeSessionFile(getenv, listenOnce(t), strings.Repeat("t", 40))
-	remove() // must not panic or touch anything
+	if notes := sessionNotes(t); len(notes) != 1 {
+		t.Fatalf("a failed session file must leave one note for --mcp, found %v", notes)
+	}
+	remove() // must not panic; it only clears the note
+	if notes := sessionNotes(t); len(notes) != 0 {
+		t.Fatalf("note kept after remove: %v", notes)
+	}
+}
+
+// A later start that does write the file clears a note an earlier failed start left.
+func TestWriteSessionFileSuccessClearsAnOldNote(t *testing.T) {
+	isolateTemp(t)
+	dir := t.TempDir()
+	getenv := func(k string) string {
+		if k == "AUDIT_CONFIG_DIR" {
+			return dir
+		}
+		return ""
+	}
+	mcp.RecordSessionFailure(filepath.Join(dir, mcp.SessionFileName), mcp.SessionFailOther)
+	if len(sessionNotes(t)) != 1 {
+		t.Fatal("setup: the note was not written")
+	}
+	remove := writeSessionFile(getenv, listenOnce(t), strings.Repeat("t", 40))
+	defer remove()
+	if notes := sessionNotes(t); len(notes) != 0 {
+		t.Fatalf("old note kept: %v", notes)
+	}
+}
+
+// isolateTemp points the temporary folder (where the note goes) at a fresh folder, so a test never touches the person's own.
+func isolateTemp(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("TMP", dir)
+	t.Setenv("TEMP", dir)
+	t.Setenv("TMPDIR", dir) // winok: TMP and TEMP, the Windows names, are set on the two lines above
+}
+
+func sessionNotes(t *testing.T) []string {
+	t.Helper()
+	notes, err := filepath.Glob(filepath.Join(os.TempDir(), "unravis-session-note-*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return notes
 }
 
 func TestAwaitShutdownWhenTheServerStopsItself(t *testing.T) {

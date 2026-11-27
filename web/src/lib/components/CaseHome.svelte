@@ -3,7 +3,7 @@
   import { api, ApiError } from '../api';
   import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing, results, scope } from '../appState.svelte';
   import { pacedTimeout } from '../visibility';
-  import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
+  import { JOB_POLL_MS, PREPARING_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, preparingAfterError, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, closeButton, closedEraseAt, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
   import { archiveFilePath, archivedActions, type ArchiveDrawerKind } from '../archiveModel';
   import { ARCHIVE_TEXT, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
@@ -291,7 +291,7 @@
     try {
       const shared = (await api.ledgerSharedList()) ?? [];
       if (!signal.aborted) sharedCount = shared.length;
-    } catch { /* the offer simply does not show */ }
+    } catch { /* silent on purpose: the one-time offer of old theories is a convenience; without it nothing is wrong or stuck */ }
   }
 
   async function copyShared() {
@@ -510,6 +510,36 @@
     return pacedTimeout(() => { if (id === caseId && !archiveDrawer) void load(id, true); }, JOB_POLL_MS);
   });
 
+  // An old case builds its helper indexes once, in the background, and says so ("Preparing this case"). The case is read again, only the
+  // case itself (not the files, checks or theories, and the page does not go back to its home), until it stops saying so. Reading stops
+  // when the page is not showing the case (loading, gone, locked, erase or key page), when the case is gone, locked or read-only here, and
+  // after a few failed reads in a row (a read that fails once is tried again at the next turn). An answer that says what the page already
+  // shows is not put in, so nothing is redrawn.
+  let preparingTurn = $state(0);
+  let preparingFailures = 0;
+  $effect(() => {
+    const id = caseId;
+    void preparingTurn;
+    if (!id || phase !== 'ready' || view !== 'home' || !info?.preparing) { preparingFailures = 0; return; }
+    return pacedTimeout(() => { void rereadPreparing(id); }, PREPARING_POLL_MS);
+  });
+  async function rereadPreparing(id: string) {
+    const token = caseReads.begin();
+    try {
+      const fresh = await getCaseView(id);
+      if (destroyed || id !== caseId || phase !== 'ready') return;
+      preparingFailures = 0;
+      if (caseReads.accept(token) && !sameRead(info, fresh)) info = fresh;
+    } catch (error) {
+      if (destroyed || id !== caseId || phase !== 'ready') return;
+      const next = preparingAfterError(error, ++preparingFailures);
+      if (next === 'gone') { gone(); return; }
+      if (next === 'locked') { lockedUnder(error); return; }
+      if (next === 'stop') return;
+    }
+    preparingTurn += 1;
+  }
+
   // Every date on this page follows the time zone choice in the header (London by default), like the start screen's case list.
   const when = (value: string): string => formatTime(value, { zone: timeZone.zone, year: true, precision: 'minute', fallback: value });
   const kindLabel = { case: CASE_HOME_TEXT.kindCase, file: CASE_HOME_TEXT.kindFile, health: CASE_HOME_TEXT.kindHealth, theory: CASE_HOME_TEXT.kindTheory } as const;
@@ -533,7 +563,7 @@
   {:else if view === 'erase'}
     <EraseCase {caseId} title={info?.title ?? ''} archivePath={archiveFilePath(currentFile) || undefined} believed={info ? believedState(info) : undefined} onDone={erasedDone} onCancel={() => void backFromDialog()} />
   {:else if phase === 'locked'}
-    <CaseKeyCard {caseId} ending={keyStatus.ending} onOpened={() => void load(caseId).then(() => tick()).then(() => headingEl?.focus())} onCancel={goHome} />
+    <CaseKeyCard {caseId} ending={keyStatus.ending} onErased={erasedDone} onOpened={() => void load(caseId).then(() => tick()).then(() => headingEl?.focus())} onCancel={goHome} />
     <p class="note forgot-key">{ERASE_TEXT.forgot} <button type="button" class="link-button" aria-haspopup="dialog" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button></p>
   {:else if phase === 'untrusted'}
     <section class="block untrusted" aria-labelledby="untrusted-title">
@@ -586,6 +616,7 @@
         <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('archive', e.currentTarget)}>{ARCHIVE_TEXT.showProgress}</button></div>
       {:else if info && believedState(info) === 'closed'}<p class="notice" role="status">{CASE_HOME_TEXT.closedNote}{#if eraseAt} {closedEraseText(when(eraseAt))}{/if}</p>{/if}
       {#if archiveNote}<p class="notice" role="status">{archiveNote}</p>{/if}
+      {#if info?.preparing}<p class="notice" role="status" data-testid="case-preparing">{CASE_HOME_TEXT.preparing}</p>{/if}
       {#if archiveState !== 'hidden' || isArchived || closeState !== 'hidden'}
         <div class="actions">
           {#if archiveState !== 'hidden'}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={archiveState !== 'enabled' || stale} onclick={(e) => openArchiveDrawer('archive', e.currentTarget)}>{ARCHIVE_TEXT.archiveButton}</button>{/if}

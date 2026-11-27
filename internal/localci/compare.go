@@ -210,6 +210,8 @@ func verdictOf(local *LocalSide, gh string) (verdict, note string) {
 		return VerdictDisagree, "the local run ended without a verdict (" + firstNonEmpty(local.Reason, local.Conclusion) + ")"
 	case local.Outcome == gh:
 		return VerdictAgree, ""
+	case local.Reason == "merge conflict":
+		return VerdictLocalOnly, "the base moved since GitHub ran: the pull request no longer merges here and needs a rebase, so there is nothing to compare"
 	}
 	return VerdictDisagree, "local " + local.Outcome + ", GitHub " + gh
 }

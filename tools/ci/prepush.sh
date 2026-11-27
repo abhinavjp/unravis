@@ -49,6 +49,17 @@ watch_stop_and_judge() {
   fi
 }
 
+# On Windows the agent's CI jobs and these tests share one per-user first-instance name (the app's single-instance mutex): two runs
+# at once fail with "another Unravis copy owns the name". desk_lock runs a command under the same machine-wide lock the agent takes
+# (resource desktop-first-instance in .github/local-ci.yml). Elsewhere, or with no Go toolchain, it just runs the command.
+desk_lock() {
+  case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) ;; *) "$@"; return $? ;; esac
+  if [ ! -x "$tmp/homestretch.exe" ]; then
+    CGO_ENABLED=0 go build -o "$tmp/homestretch.exe" ./cmd/homestretch >/dev/null 2>&1 || { warn "could not build the CI lock helper: this run may collide with the CI agent"; "$@"; return $?; }
+  fi
+  "$tmp/homestretch.exe" ci exclusive desktop-first-instance -- "$@"
+}
+
 step "1. Branch is current with develop"
 if [ "$fetch" = 1 ]; then git fetch --no-tags --quiet origin "+refs/heads/develop:refs/remotes/origin/develop" || warn "could not fetch develop; judging against the copy you have"; fi
 if ! git rev-parse --verify --quiet "$base" >/dev/null; then fail "no $base to compare with (run: git fetch origin develop)"; printf '\nprepush: cannot continue.\n'; exit 1; fi
@@ -114,14 +125,14 @@ if [ "$go_on" = "true" ]; then
 
   step "8. tauri_sidecar build"
   CGO_ENABLED=0 go build -tags tauri_sidecar ./... || fail "go build -tags tauri_sidecar"
-  if [ "$tests" = 1 ]; then watch_start; CGO_ENABLED=0 go test -count=1 -tags tauri_sidecar . || fail "go test -tags tauri_sidecar ."; fi
+  if [ "$tests" = 1 ]; then watch_start; CGO_ENABLED=0 desk_lock go test -count=1 -tags tauri_sidecar . || fail "go test -tags tauri_sidecar ."; fi
 
   if [ "$tests" = 1 ]; then
     step "9. Tests of the affected packages, compared with the baseline (the fast gate's step)"
     # compare-go-failures.mjs picks docs/desktop/baseline-go-tests.windows.txt on a Windows host by itself.
     # shellcheck disable=SC2086
     [ -n "$watch_pid" ] || watch_start
-    CGO_ENABLED=0 go test -count=1 -timeout 10m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json $packages >"$tmp/go-test.json"
+    CGO_ENABLED=0 desk_lock go test -count=1 -timeout 10m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json $packages >"$tmp/go-test.json"
     code=$?
     watch_stop_and_judge
     if [ ! -s "$tmp/go-test.json" ] || [ "$code" -gt 1 ]; then fail "go test did not run cleanly (exit $code)"

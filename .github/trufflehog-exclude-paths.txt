@@ -3,11 +3,12 @@
 # credentials on purpose (fake values such as FAKEPW, Hunter2! or hosts that do not exist), to prove the scrubbers redact them.
 # For a single line prefer the trailing tag `trufflehog:ignore` (in a comment on that line); list a whole file only when it
 # holds many such lines. See docs/ci/RELEASE-TRAIN.md ("Secret scan allowlist"); tools/ci/test-trufflehog-allowlist.mjs keeps this file narrow.
-^cmd/unravis-ci/main_test\.go$
 ^internal/applog/sanitize_test\.go$
 ^internal/applog/secretforms_test\.go$
+^internal/cicli/main_test\.go$
 ^internal/codemode/privacy/review2_test\.go$
 ^internal/codemode/privacy/scrub_test\.go$
+^internal/crashlog/crashlog_test\.go$
 ^internal/evidence/secretforms_test\.go$
 ^internal/evidence/secretscrub_test\.go$
 ^internal/localci/checkout_test\.go$

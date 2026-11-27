@@ -3,6 +3,7 @@ package localci
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -211,4 +212,24 @@ func ReadCompare(stateDir string) (*CompareReport, error) {
 		return nil, err
 	}
 	return &rep, nil
+}
+
+// SortClaimOrder puts requests in the order agents claim them: lower priority first, then the older request.
+// The queue lists and the screens use it, so they show the order the agents take.
+func SortClaimOrder(rs []Request) { sortClaimOrder(rs) }
+
+// CurrentImpact measures the rule a project has now against its queued requests and the known machines, without
+// changing anything and without taking the policy lock: NoMachine counts the queued requests no known machine may
+// take under the current rule. It is the read-only twin of the impact ChangePolicy computes before an edit.
+func CurrentImpact(stateDir, repo string) (PolicyImpact, error) {
+	key, ok := ProjectKey(repo)
+	if !ok {
+		return PolicyImpact{}, fmt.Errorf("%q is not a project (owner/name)", repo)
+	}
+	pol, err := LoadPolicy(stateDir)
+	if err != nil {
+		return PolicyImpact{}, err
+	}
+	rule := pol.For(key)
+	return impactOf(stateDir, key, rule, rule)
 }

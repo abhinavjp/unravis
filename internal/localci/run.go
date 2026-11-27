@@ -840,15 +840,26 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 	}
 	// A step that names an exclusive resource in local-ci.yml waits for it first and holds it for the step only.
 	if res := r.o.Config.Override(r.file, in.job.ID).StepExclusive[st.Name]; res != "" {
+		waitStart := time.Now()
 		release, lerr := acquireExclusive(ctx, res, r.o.LockDir, func() {
 			r.logf("[%s] step %d/%d %s: waiting for the exclusive resource %q", in.key, n, total, name, res)
 		})
 		if lerr != nil {
-			stepFail("cancelled while waiting for the exclusive resource " + res)
+			if ctx.Err() != nil {
+				// The run was cancelled (the pull request closed, or a newer head came): that is not a verdict on the code.
+				sr.Err = "cancelled while waiting for the exclusive resource " + res
+				sr.Outcome, sr.Conclusion = "cancelled", "cancelled"
+				in.status = "cancelled"
+			} else {
+				stepFail("could not get the exclusive resource " + res + ": " + lerr.Error())
+			}
 			finish()
 			return
 		}
 		defer release()
+		// Time spent queueing for the resource is not the job's time: GitHub gives every job its own runner, so a
+		// job-wide timeout-minutes must not run out while this job stands in line behind another run.
+		in.deadline = in.deadline.Add(time.Since(waitStart))
 	}
 	// step environment and the other interpolated fields
 	stepEnv, err := interpEnv(st.Env, ec)
@@ -930,6 +941,10 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 
 	var outputs map[string]string
 	var runErr error
+	var watch *stepWatch
+	if line := r.o.Config.Override(r.file, in.job.ID).StepWatch[st.Name]; line != "" {
+		watch = in.startStepWatch(runCtx, line, n, env, func(m string) { emit("[ci] " + m) })
+	}
 	if st.Uses != "" {
 		with, werr := interpEnv(st.With, ec)
 		if werr != nil {
@@ -943,6 +958,14 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 		runErr = in.runScript(stepCtx, st, ec, n, env, lw)
 	}
 	lw.Flush()
+	if seen := watch.stop(); len(seen) > 0 {
+		for _, l := range seen {
+			emit("[ci] watcher: " + l)
+		}
+		if runErr == nil {
+			runErr = fmt.Errorf("the step watcher saw %d problem(s), first: %s", len(seen), seen[0])
+		}
+	}
 	_ = lf.Close()
 	// special files
 	if perr := in.applyFiles(files, st, &outputs, emit); perr != nil && runErr == nil {

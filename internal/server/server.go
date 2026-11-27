@@ -77,6 +77,8 @@ type handler struct {
 	links sourceLinkStore
 	// reconn is the state of the reopening pass (see reconnect.go).
 	reconn reconnectState
+	// updateState is this server's update checker and its settings (see update_check.go).
+	updateState updateCheckState
 	// mcp is where the AI access screen's handler hangs once the grant store is open (nil: grants do not apply, see mcp_admin.go).
 	mcp *MCPMount
 	// code is where internal/codeapi hangs the code-mode handler (nil: the code routes answer 503, see code_mount.go).
@@ -393,6 +395,21 @@ func (h *handler) listRecent(w http.ResponseWriter) {
 	}
 	items, err := h.history.List()
 	if err != nil {
+		if errors.Is(err, history.ErrCorrupt) {
+			// The file fails closed. The code lets the page offer the one way out (setAsideRecent) instead of a "Try again" that cannot work.
+			folder, shared := h.savedWhere()
+			// reason "shared" tells the page the list is the whole PC's, so its confirm step can say everyone is affected.
+			reason := ""
+			if shared {
+				reason = "shared"
+			}
+			writeJSON(w, http.StatusServiceUnavailable, struct {
+				Error  string `json:"error"`
+				Code   string `json:"code"`
+				Reason string `json:"reason,omitempty"`
+			}{savedFileDamagedText(folder, shared), savedFileDamagedCode, reason}, 4096)
+			return
+		}
 		if writeKeeperError(w, err) {
 			return
 		}
@@ -502,6 +519,109 @@ func writeSourceAddError(w http.ResponseWriter, err error) {
 	default:
 		writeRepoError(w, err)
 	}
+}
+
+const (
+	// savedFileDamagedCode is the code of a saved MongoDB connections file that cannot be read. The page offers "set aside" for it.
+	savedFileDamagedCode   = "saved-file-damaged"
+	setAsideNotDamagedText = "The saved connections file can be read, so nothing was set aside."
+	setAsideFailedText     = "The saved connections file could not be set aside. It was left as it was."
+)
+
+// savedFolder is the optional part of the saved list that can name the folder holding its file (set-aside copies land there).
+type savedFolder interface {
+	Folder() (dir string, shared bool)
+}
+
+// savedWhere is the folder of the saved MongoDB file and whether that list is the shared one (the key keeper's). "" when unknown.
+func (h *handler) savedWhere() (string, bool) {
+	if f, ok := h.history.(savedFolder); ok {
+		return f.Folder()
+	}
+	return "", false
+}
+
+// savedFileDamagedText is plain words for an unreadable saved file. "Cannot be read" is all that is known: the same state is a damaged file,
+// a file sealed by another account or PC, or a file written by a newer Unravis, so it does not say "damaged".
+func savedFileDamagedText(folder string, shared bool) string {
+	text := "The saved connections file cannot be read on this account or by this version of Unravis. You can set it aside and start a new list. The old file is kept, not deleted, and Unravis will not read it again."
+	if folder != "" {
+		text += " It is kept in " + folder + "."
+	}
+	if shared {
+		text += " This list is shared, so a new list replaces it for everyone who uses Unravis on this PC."
+	}
+	return text
+}
+
+// setAsideFullText says how to make room when three set-aside copies are already kept. The shared list's folder is not open to everyone.
+func setAsideFullText(folder string, shared bool) string {
+	text := "Three unreadable files are already set aside, so this one cannot be set aside too. "
+	where := "the folder that holds the saved connections file"
+	if folder != "" {
+		where = folder
+	}
+	if shared {
+		return text + "An administrator of this PC must open " + where + ", move the old connections.dat.unreadable-… files somewhere else, then you can try again."
+	}
+	return text + "Open " + where + ", move the old connections.dat.unreadable-… files somewhere else, then try again."
+}
+
+// savedHistorySetAside is the part of the saved list that can set an unreadable file aside (the local file and the key keeper's store).
+type savedHistorySetAside interface {
+	SetAside() (string, error)
+}
+
+// setAsideRecent is the way out of an unreadable saved MongoDB connections file. It is reachable only after a read just now returned
+// ErrCorrupt: a healthy list, or a read that failed for any other reason, answers 409 and nothing is touched. The store checks the same
+// again under its file lock. The unreadable file is renamed and kept, never deleted.
+func (h *handler) setAsideRecent(w http.ResponseWriter, r *http.Request) {
+	if h.history == nil {
+		writeError(w, http.StatusServiceUnavailable, "Saved connections are unavailable on this platform.")
+		return
+	}
+	aside, ok := h.history.(savedHistorySetAside)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "Saved connections cannot be set aside here.")
+		return
+	}
+	// Only a read that works says "not damaged" (409). A read that fails for any other reason (the key keeper stopped or not trusted, the file
+	// busy or locked, a timeout) says nothing about the file, so it is answered as that failure and nothing is touched.
+	if _, err := h.history.List(); !errors.Is(err, history.ErrCorrupt) {
+		if err == nil {
+			writeNotDamaged(w)
+		} else if !writeKeeperError(w, err) {
+			writeError(w, http.StatusServiceUnavailable, setAsideFailedText)
+		}
+		return
+	}
+	folder, shared := h.savedWhere()
+	name, err := aside.SetAside()
+	switch {
+	case err == nil:
+		h.event(r, "connections_set_aside", "kind", "mongo")
+		writeJSON(w, http.StatusOK, struct {
+			Name   string `json:"name"`
+			Folder string `json:"folder,omitempty"`
+		}{name, folder}, 4096)
+	case errors.Is(err, history.ErrNotDamaged):
+		writeNotDamaged(w)
+	case errors.Is(err, history.ErrSetAsideFull):
+		writeJSON(w, http.StatusConflict, struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}{setAsideFullText(folder, shared), "set-aside-full"}, 4096)
+	case writeKeeperError(w, err):
+	default:
+		writeError(w, http.StatusServiceUnavailable, setAsideFailedText)
+	}
+}
+
+func writeNotDamaged(w http.ResponseWriter) {
+	writeJSON(w, http.StatusConflict, struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}{setAsideNotDamagedText, "saved-file-not-damaged"}, 4096)
 }
 
 func (h *handler) deleteRecent(w http.ResponseWriter, r *http.Request, id string) {
@@ -998,6 +1118,11 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if page.NextCursor == "" {
+			break
+		}
+		if len(page.Rows) == 0 {
+			// A source that says there is more but sends nothing would make this loop ask forever: stop, and say the file is not whole.
+			truncated = true
 			break
 		}
 		cursor = page.NextCursor

@@ -1,7 +1,9 @@
-// Command unravis-releases is a small read-only dashboard for Unravis releases: every release, its channel, the release
+// Command unravis-releases is the Homestretch dashboard. It keeps its file name because setup installs it under that name and a
+// shortcut points at it. It is a small dashboard for Unravis releases: every release, its channel, the release
 // manager's step by step status, the verify result and withdrawn versions. It is a separate program from Unravis. It reads the
-// release manager's log on this PC, the public GitHub release list and the signed update feed, and changes nothing.
-// It never touches a signing key or passphrase.
+// release manager's log on this PC, the public GitHub release list and the signed update feed. The only things it changes are
+// the local CI store's queue, machines, policy and holds, through the Homestretch actions (internal/hsaction), each one logged.
+// It never promotes or releases, and it never touches a signing key or passphrase.
 package main
 
 import (
@@ -33,7 +35,7 @@ var uiFiles embed.FS
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "unravis-releases: "+err.Error())
-		showError("Unravis Releases could not start:\n\n" + err.Error()) // the Windows build has no console to print to
+		showError("Homestretch could not start:\n\n" + err.Error()) // the Windows build has no console to print to
 		os.Exit(1)
 	}
 }
@@ -86,8 +88,11 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	link := fmt.Sprintf("http://127.0.0.1:%d/?t=%s", ln.Addr().(*net.TCPAddr).Port, token)
-	fmt.Println("Unravis releases (read only). Link:\n  " + link + "\nPress Ctrl+C to stop.")
+	// The action key travels only in the fragment (#a=...): a browser never sends a fragment to a server, so another
+	// loopback listener that gets our session cookie still cannot take actions (see internal/releasedash/actions.go).
+	actionToken := releasedash.NewActionToken()
+	link := startLink(ln.Addr().(*net.TCPAddr).Port, token, actionToken)
+	fmt.Println("Homestretch. Link:\n  " + link + "\nPress Ctrl+C to stop.")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	// Without a console (the Windows build) nobody can press Ctrl+C, so the program must end by itself when its page is gone.
@@ -108,6 +113,7 @@ func run(args []string) error {
 	}
 	dash := releasedash.New(dir, state, keys)
 	dash.Projects = projects
+	dash.ActionToken = actionToken
 	if windowMode {
 		var mu sync.Mutex
 		var timer *time.Timer
@@ -138,15 +144,29 @@ func run(args []string) error {
 	return nil
 }
 
-func openBrowser(u string) {
-	var c *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		c = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
-	case "darwin":
-		c = exec.Command("open", u)
-	default:
-		c = exec.Command("xdg-open", u)
+// startLink is the link the program prints and opens: the session code in the query, which the server reads once and
+// swaps for a cookie, and the action key in the fragment, which only the page reads.
+func startLink(port int, token, actionToken string) string {
+	link := fmt.Sprintf("http://127.0.0.1:%d/?t=%s", port, token)
+	if actionToken != "" {
+		link += "#a=" + actionToken
 	}
-	_ = c.Start()
+	return link
+}
+
+func openBrowser(u string) {
+	_ = browserCommand(runtime.GOOS, u).Start()
+}
+
+// browserCommand builds the command that opens u in the default browser. On Windows the program is rundll32 by its full
+// path in the Windows system folder (see rundll32Path), so a planted rundll32.exe on PATH is never started.
+func browserCommand(goos, u string) *exec.Cmd {
+	switch goos {
+	case "windows":
+		return exec.Command(rundll32Path(), "url.dll,FileProtocolHandler", u) //nolint:gosec // G204: a fixed program; u is the loopback URL of this dashboard
+	case "darwin":
+		return exec.Command("open", u) //nolint:gosec // G204: a fixed program; u is the loopback URL of this dashboard
+	default:
+		return exec.Command("xdg-open", u) //nolint:gosec // G204: a fixed program; u is the loopback URL of this dashboard
+	}
 }

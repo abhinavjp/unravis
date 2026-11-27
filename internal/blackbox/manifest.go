@@ -87,11 +87,21 @@ const (
 	EventHostStillSlow   = "host-still-slow"
 	EventHostRecovered   = "host-recovered"
 	EventSettingsRestart = "settings-applied"
+	// EventDiagStopped (RV-BB-12) is raised when the diagnostics file could be
+	// neither moved nor emptied, so it stopped being written to keep it small.
+	// The detail is the fixed code "diag-log-stuck".
+	EventDiagStopped = "diag-log-stopped"
+	// EventDiagResumed closes it: the diagnostics file could be moved or emptied
+	// again and is written to again. The detail is the fixed code "diag-log-ok".
+	EventDiagResumed = "diag-log-resumed"
 	// EventRestart is written at every start that follows an earlier run. The
 	// detail is a fixed code: "after-stop" (the earlier run stopped cleanly) or
 	// "after-crash" (it did not). It is recorded even when the hole is too short
 	// to be a gap, so a restart is always visible.
 	EventRestart = "restart"
+	// EventCrashed is written at a start that finds a crash file an earlier run
+	// left (RV-BB-10). One event per start; the detail is "crashes=<n> at=<UTC time>".
+	EventCrashed = "recorder-crashed"
 )
 
 // Restart event details.
@@ -133,6 +143,33 @@ type Manifest struct {
 	Gaps        []Gap        `json:"gaps"`
 	Events      []Event      `json:"events"`
 	Probe       Probe        `json:"probe"`
+	// PausedDiskLow is true while recording is paused because the drive is almost
+	// full (RV-BB-9). It is stored, not worked out from the event list: that list
+	// keeps only the newest maxEvents, so after enough later events the pause
+	// event is gone while recording is still paused. PausedSince is when the pause
+	// began. Both are absent in a manifest an older recorder wrote (resolvePaused
+	// fills them from the events once), and an older reader ignores them.
+	PausedDiskLow bool      `json:"pausedDiskLow,omitempty"`
+	PausedSince   time.Time `json:"pausedSince,omitzero"`
+}
+
+// resolvePaused fills the stored pause from the event list when the manifest
+// holds none (an older recorder wrote it, or the drive was never full). The
+// newest of the pause and resume events wins. A manifest that already stores a
+// pause is left as it is, so the answer no longer depends on the event window.
+func (m *Manifest) resolvePaused() {
+	if m.PausedDiskLow || !m.PausedSince.IsZero() {
+		return
+	}
+	for i := len(m.Events) - 1; i >= 0; i-- {
+		switch m.Events[i].Kind {
+		case EventPausedDiskLow:
+			m.PausedDiskLow, m.PausedSince = true, m.Events[i].T
+			return
+		case EventResumed:
+			return
+		}
+	}
 }
 
 // ErrNewerFormat is returned when the manifest was written by a newer recorder.
@@ -224,6 +261,7 @@ func readManifest(dir string) (Manifest, error) {
 		return Manifest{}, errors.New("blackbox: manifest has no format version")
 	}
 	m.normalize()
+	m.resolvePaused()
 	return m, nil
 }
 

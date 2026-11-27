@@ -317,7 +317,11 @@ export const DAY_TEXT = {
   running: 'Reading…',
   cancel: 'Cancel',
   checkAgain: 'A check of the same day again is allowed. A day that overlaps another without being the same is not.',
-  added: 'Day added to the case.'
+  added: 'Day added to the case.',
+  // The read of the days the case holds failed (RV-UI-8). Without these the page said the case holds no day, which was wrong.
+  loadFailed: 'The days this case already holds could not be read, so nothing can be shown here yet.',
+  refreshFailed: 'The days this case holds could not be read again, so the list below may be out of date.',
+  tryAgain: 'Try again'
 } as const;
 
 /** The coverage census panel, when its source is not part of the current search. The panel itself lives in components/CoveragePanel.svelte. */

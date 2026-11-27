@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"api-audit-explorer/internal/clicore"
 )
@@ -106,10 +107,10 @@ func Run(ctx context.Context, args []string, io IO) int {
 	}()
 	st.ctx = ctx
 
-	if code, handled := st.legacy(args); handled {
+	root := st.root()
+	if code, handled := st.legacy(root, args); handled {
 		return code
 	}
-	root := st.root()
 	root.SetArgs(args)
 	root.SetContext(ctx)
 	executed, err := root.ExecuteC()
@@ -132,26 +133,61 @@ func Run(ctx context.Context, args []string, io IO) int {
 }
 
 // legacy answers an argument (before "--") that is an option of the app program, wherever it stands: a host that puts another switch
-// first ("-o json --mcp") still gets LEGACY_OPTION. One or two dashes are read, like the flag package of the app does.
-func (st *state) legacy(args []string) (int, bool) {
-	for _, a := range args {
+// first ("-o json --mcp") still gets LEGACY_OPTION. One or two dashes are read, like the flag package of the app does. The word after
+// a flag that takes a value is that value, not an option ("--request --demo" is a request named "--demo"), so it is not read; root
+// tells which flags take a value, so "--json --mcp" (a switch, then an option) is still caught.
+func (st *state) legacy(root *cobra.Command, args []string) (int, bool) {
+	cur := root
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		if a == "--" {
 			return 0, false
 		}
 		if !strings.HasPrefix(a, "-") || strings.HasPrefix(a, "---") {
+			for _, sub := range cur.Commands() { // follow the command words, so the flags of that command are known
+				if sub.Name() == a || sub.HasAlias(a) {
+					cur = sub
+					break
+				}
+			}
 			continue
 		}
 		name := strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-")
 		if name == "version" {
 			return st.versionLine(), true
 		}
-		name, _, _ = strings.Cut(name, "=")
+		name, _, hasValue := strings.Cut(name, "=")
 		if legacyFlags[name] {
 			e := clicore.NewError(clicore.CodeLegacyOption, "That option belongs to "+st.appExe()+", not to the command line.", "")
 			return clicore.WriteError(st.io.Err, st.mode, "unknown", st.reqID, e), true
 		}
+		if !hasValue && flagTakesValue(cur, a) {
+			i++ // the next argument is this flag's value
+		}
 	}
 	return 0, false
+}
+
+// flagTakesValue says whether arg ("--name" or "-x") names a flag of cmd, or one it inherits, that reads the next argument as its
+// value. A name the command does not know takes none (Cobra refuses it later).
+func flagTakesValue(cmd *cobra.Command, arg string) bool {
+	long := strings.HasPrefix(arg, "--")
+	name := strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-")
+	if name == "" || (!long && len(name) != 1) {
+		return false // "-ojson" and "-qo" carry their own value or are several switches
+	}
+	for c := cmd; c != nil; c = c.Parent() {
+		for _, set := range []*pflag.FlagSet{c.Flags(), c.PersistentFlags()} {
+			f := set.Lookup(name)
+			if !long {
+				f = set.ShorthandLookup(name)
+			}
+			if f != nil {
+				return f.NoOptDefVal == ""
+			}
+		}
+	}
+	return false
 }
 
 // appExe is the absolute path of the app program (unravis.exe) in the install folder of this program (spec D5).

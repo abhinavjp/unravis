@@ -160,14 +160,21 @@ test('p06: normaliseCode refuses the wrong length, wrong letters, lookalikes and
   assert.equal(code.normaliseCode(12345), null);
 });
 
-test('p06: resolveCode says one sentence for every refusal and lets only an abort through', async () => {
+test('p06: resolveCode says a plain sentence for each kind of refusal and lets only an abort through', async () => {
   const calls = [];
   const bad = await code.resolveCode('nope', async (id) => { calls.push(id); });
   assert.deepEqual(bad, { ok: false, message: enter.CODE_NOT_FOUND });
   assert.equal(calls.length, 0, 'a malformed code never reaches the server');
-  for (const err of [new Error('x'), Object.assign(new Error('x'), { status: 404 }), Object.assign(new Error('x'), { status: 423 }), new TypeError('Failed to fetch')]) {
+  const expected = [
+    [Object.assign(new Error('x'), { status: 404 }), enter.CODE_NOT_FOUND],
+    [Object.assign(new Error('x'), { status: 400 }), enter.CODE_NOT_FOUND],
+    [Object.assign(new Error('x'), { status: 423 }), enter.CODE_APP_LOCKED],
+    [new Error('x'), enter.CODE_CHECK_FAILED],
+    [new TypeError('Failed to fetch'), enter.CODE_CHECK_FAILED]
+  ];
+  for (const [err, message] of expected) {
     const out = await code.resolveCode(REAL_ID, async () => { throw err; });
-    assert.deepEqual(out, { ok: false, message: enter.CODE_NOT_FOUND });
+    assert.deepEqual(out, { ok: false, message });
   }
   const ok = await code.resolveCode(' ' + REAL_ID.toUpperCase() + ' ', async (id) => { calls.push(id); });
   assert.deepEqual(ok, { ok: true, id: REAL_ID });

@@ -425,3 +425,19 @@ func TestGHDispatcherRunsOnlyWorkflowRun(t *testing.T) {
 		t.Fatal("command text")
 	}
 }
+
+// A pull request whose base moved after GitHub ran no longer merges: the local run stops at "merge conflict" and
+// there is nothing to compare, so it is not a disagreement and must not break the streak.
+func TestCompareMergeConflictIsNotADisagreement(t *testing.T) {
+	e := localPR(1, shaN(1), "failure", 1)
+	e.Reason = "merge conflict"
+	src := &FakeCompareSource{Results: map[string]GHChecks{shaN(1): {Runs: []GHCheck{run("quick-gate", "completed", "success")}}}}
+	rep := compareOnly(t, []IndexEntry{e}, src, 30)
+	r := rowFor(t, rep, 1)
+	if r.Verdict != VerdictLocalOnly || !strings.Contains(r.Note, "rebase") {
+		t.Fatalf("verdict %q note %q, want local-only with a note about a rebase", r.Verdict, r.Note)
+	}
+	if rep.Disagree != 0 {
+		t.Fatalf("disagree %d, want 0", rep.Disagree)
+	}
+}

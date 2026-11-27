@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	sqlite3 "github.com/ncruces/go-sqlite3"
@@ -177,30 +178,65 @@ func WriteCaseFile(ctx context.Context, dst string, src CaseFileSource, pass []b
 	}
 	defer clear(key)
 
+	// Two saves to one name in this process must not take each other's
+	// placeholder for a left-over of a crash.
+	if !claimSavePath(dst) {
+		return 0, ErrCaseFileExists
+	}
+	defer releaseSavePath(dst)
+	sweepStaleCaseFileTmp(filepath.Dir(dst), time.Now())
+
 	// Reserve the name first: O_EXCL makes "refuses to overwrite" atomic. The
-	// placeholder is replaced by the finished file, or removed on any failure.
+	// placeholder is replaced by the finished file, or removed on any failure. If
+	// the process died during an earlier save, the placeholder (0 bytes) and a
+	// temporary file are still there; reclaimLeftover clears such a placeholder,
+	// and only such a placeholder, once, so the person can save again.
+	//
+	// The placeholder stays open until just before the finished file is moved
+	// over it. On Windows an open file cannot be renamed or deleted, so a second
+	// copy of the app that sees the placeholder cannot take it over while this save
+	// runs; everywhere, the save later checks that the name is still the very file
+	// it made, and never removes or replaces anything else.
 	hold, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil && errors.Is(err, os.ErrExist) && reclaimLeftover(dst, time.Now()) {
+		hold, err = os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: the folder and name were chosen by the person
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return 0, ErrCaseFileExists
 		}
 		return 0, err
 	}
-	_ = hold.Close()
-	tmp, err := os.CreateTemp(filepath.Dir(dst), "unravis-case-*.tmp")
+	mine, err := hold.Stat()
 	if err != nil {
-		_ = os.Remove(dst)
+		// Cannot tell later which file is ours; leave the empty placeholder, which the
+		// next save clears once it is a minute old.
+		_ = hold.Close()
 		return 0, err
 	}
-	tmpName := tmp.Name()
+	stopRefresh := keepPlaceholderFresh(dst, mine)
+	var tmp *os.File
+	tmpName := ""
 	done := false
 	defer func() {
-		if !done {
+		stopRefresh()
+		if done {
+			return
+		}
+		_ = hold.Close()
+		if tmp != nil {
 			_ = tmp.Close()
 			_ = os.Remove(tmpName)
-			_ = os.Remove(dst)
 		}
+		removeOwnPlaceholder(dst, mine)
 	}()
+	tmp, err = os.CreateTemp(filepath.Dir(dst), caseFileTmpPrefix+caseFileTmpTag(dst)+"-*"+caseFileTmpSuffix)
+	if err != nil {
+		return 0, err
+	}
+	tmpName = tmp.Name()
+	claimSavePath(tmpName)
+	defer releaseSavePath(tmpName)
 	if err := os.Chmod(tmpName, 0o600); err != nil {
 		return 0, err
 	}
@@ -234,11 +270,250 @@ func WriteCaseFile(ctx context.Context, dst string, src CaseFileSource, pass []b
 	if err := tmp.Close(); err != nil {
 		return 0, err
 	}
+	stopRefresh()
+	_ = hold.Close()
+	// If another copy of the app took the name over meanwhile, its file (or a
+	// finished case) is there now: it is not ours to replace.
+	if !isOwnPlaceholder(dst, mine) {
+		return 0, ErrCaseFileExists
+	}
 	if err := sealedfile.Replace(tmpName, dst); err != nil {
 		return 0, err
 	}
 	done = true
 	return total, nil
+}
+
+const (
+	caseFileTmpPrefix = "unravis-case-"
+	caseFileTmpSuffix = ".tmp"
+	// caseFileAsidePrefix and caseFileAsideSuffix name a placeholder while
+	// reclaimLeftover checks it. The name does not look like a temporary file, so
+	// the sweep of stale temporary files cannot reach it.
+	caseFileAsidePrefix = caseFileTmpPrefix + "aside-"
+	caseFileAsideSuffix = ".aside"
+	// caseFileStaleTmpAge is how old a temporary file of a save must be before
+	// the next save in the same folder removes it.
+	caseFileStaleTmpAge = 24 * time.Hour
+	// caseFileLeftoverAge is how old an empty target must be to count as the
+	// placeholder of a save that died.
+	caseFileLeftoverAge = time.Minute
+	// caseFileTagLen is the length of the target tag in a temporary file's name.
+	caseFileTagLen = 8
+)
+
+// placeholderRefreshEvery is how often a running save touches its placeholder,
+// so that another copy of the app sees a running save as new, not as left over.
+var placeholderRefreshEvery = 10 * time.Second
+
+// linkFile is os.Link; a test replaces it to make linking fail (FAT, some shares).
+var linkFile = os.Link
+
+// savesInFlight holds the target and temporary paths of the saves running in
+// this process. A path in it is never treated as a left-over of a crash.
+var savesInFlight sync.Map
+
+func savePathKey(p string) string { return strings.ToLower(filepath.Clean(p)) }
+
+// claimSavePath reports false when the path is already claimed.
+func claimSavePath(p string) bool {
+	_, loaded := savesInFlight.LoadOrStore(savePathKey(p), struct{}{})
+	return !loaded
+}
+
+func releaseSavePath(p string) { savesInFlight.Delete(savePathKey(p)) }
+
+// caseFileTmpTag is a short tag of the target's file name. It is part of the
+// name of the temporary file, so a temporary file counts only for its own target.
+func caseFileTmpTag(dst string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(filepath.Base(dst))))
+	return hex.EncodeToString(sum[:caseFileTagLen/2])
+}
+
+// tmpBelongsTo reports whether the temporary file name may belong to the save of
+// the target with this tag. A name without a tag (written by a version before
+// the tag existed) cannot be told apart and counts for every target.
+func tmpBelongsTo(name, tag string) bool {
+	rest := strings.TrimPrefix(name, caseFileTmpPrefix)
+	if len(rest) <= caseFileTagLen || rest[caseFileTagLen] != '-' {
+		return true
+	}
+	if _, err := hex.DecodeString(rest[:caseFileTagLen]); err != nil {
+		return true
+	}
+	return rest[:caseFileTagLen] == tag
+}
+
+// isCaseFileTmp reports whether name looks like a temporary file of a save.
+func isCaseFileTmp(name string) bool {
+	return strings.HasPrefix(name, caseFileTmpPrefix) && strings.HasSuffix(name, caseFileTmpSuffix)
+}
+
+// isCaseFileAside reports whether name looks like a placeholder set aside by
+// reclaimLeftover. A build before the suffix was changed named them *.tmp, so the
+// prefix alone decides.
+func isCaseFileAside(name string) bool {
+	return strings.HasPrefix(name, caseFileAsidePrefix)
+}
+
+// isOwnPlaceholder reports whether dst is still the empty regular file this save
+// made (mine, from the open handle).
+func isOwnPlaceholder(dst string, mine os.FileInfo) bool {
+	fi, err := os.Lstat(dst)
+	return err == nil && fi.Mode().IsRegular() && fi.Size() == 0 && os.SameFile(fi, mine)
+}
+
+// removeOwnPlaceholder removes dst only when it is still the empty file this save
+// made. A finished case another save put there is never touched.
+func removeOwnPlaceholder(dst string, mine os.FileInfo) {
+	if isOwnPlaceholder(dst, mine) {
+		_ = os.Remove(dst)
+	}
+}
+
+// keepPlaceholderFresh touches the placeholder every placeholderRefreshEvery
+// until the returned function is called, which also waits for the last touch.
+func keepPlaceholderFresh(dst string, mine os.FileInfo) (stop func()) {
+	quit := make(chan struct{})
+	done := make(chan struct{})
+	every := placeholderRefreshEvery
+	go func() {
+		defer close(done)
+		// idle-ok: runs only while one case file is being saved and is stopped before the replace.
+		tick := time.NewTicker(every)
+		defer tick.Stop()
+		for {
+			select {
+			case <-quit:
+				return
+			case now := <-tick.C:
+				if isOwnPlaceholder(dst, mine) {
+					_ = os.Chtimes(dst, now, now)
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(quit) })
+		<-done
+	}
+}
+
+// sweepStaleCaseFileTmp removes the temporary files of saves that died, which a
+// failed save would have removed itself: regular files named
+// unravis-case-*.tmp in dir, last written more than caseFileStaleTmpAge ago, and
+// not used by a save running now. A placeholder set aside by reclaimLeftover is
+// removed only when it is empty and as old; one with content is never removed.
+// Nothing else in the folder is touched.
+func sweepStaleCaseFileTmp(dir string, now time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		aside := isCaseFileAside(e.Name())
+		if !e.Type().IsRegular() || (!aside && !isCaseFileTmp(e.Name())) {
+			continue
+		}
+		full := filepath.Join(dir, e.Name())
+		if _, busy := savesInFlight.Load(savePathKey(full)); busy {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil || now.Sub(fi.ModTime()) < caseFileStaleTmpAge || (aside && fi.Size() != 0) {
+			continue
+		}
+		_ = os.Remove(full)
+	}
+}
+
+// leftoverRaceHook is set by a test; it runs after a placeholder was moved aside
+// and before its size is checked again.
+var leftoverRaceHook func(aside string)
+
+// reclaimLeftover clears dst when it is the 0-byte placeholder of a save that
+// died, and reports whether dst is now free. It never removes a file with
+// content: dst must be a regular file of size 0 (the caller holds the claim on
+// it, so no save of this process is using it), at least as old as
+// caseFileLeftoverAge (a running save refreshes its placeholder far more often,
+// so a live one, here or on another PC, never gets that old), and with no
+// temporary file of a save of the same target that was written to lately. The file is first renamed to a private name
+// (atomic), and only if it is still the same empty file is it removed. If it is
+// not (something wrote into it, or a finished case was moved into dst in
+// between), it is put back under its old name and dst is reported as taken; if
+// that is not possible it stays under the private name, which no sweep removes
+// while it has content.
+func reclaimLeftover(dst string, now time.Time) bool {
+	fi, err := os.Lstat(dst)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() != 0 {
+		return false
+	}
+	// Load the file's identity now: after the rename the path no longer finds it.
+	_ = os.SameFile(fi, fi)
+	dir := filepath.Dir(dst)
+	if now.Sub(fi.ModTime()) < caseFileLeftoverAge || hasFreshCaseFileTmp(dir, dst, now) {
+		return false
+	}
+	var suffix [6]byte
+	_, _ = rand.Read(suffix[:])
+	aside := filepath.Join(dir, caseFileAsidePrefix+hex.EncodeToString(suffix[:])+caseFileAsideSuffix)
+	if err := os.Rename(dst, aside); err != nil {
+		return false
+	}
+	if leftoverRaceHook != nil {
+		leftoverRaceHook(aside)
+	}
+	if ai, err := os.Lstat(aside); err == nil && ai.Mode().IsRegular() && ai.Size() == 0 && os.SameFile(fi, ai) {
+		// The name is free whether or not the empty file can be deleted (a
+		// read-only one may refuse); an empty one that stays is swept later.
+		if os.Remove(aside) != nil {
+			_ = os.Chmod(aside, 0o600)
+			_ = os.Remove(aside)
+		}
+		return true
+	}
+	restoreAside(aside, dst)
+	return false
+}
+
+// restoreAside returns a file moved aside to its old name without replacing anything:
+// by a link, or when links are not supported (FAT, exFAT, some shares) by a
+// rename onto a name that is still free. If neither works the file stays under
+// its private name.
+func restoreAside(aside, dst string) {
+	if linkFile(aside, dst) == nil {
+		_ = os.Remove(aside)
+		return
+	}
+	if _, err := os.Lstat(dst); errors.Is(err, os.ErrNotExist) {
+		_ = os.Rename(aside, dst)
+	}
+}
+
+// hasFreshCaseFileTmp reports whether dir holds a temporary file that may belong
+// to a save of dst that is running outside this process: it is not in flight
+// here and was written to within caseFileLeftoverAge.
+func hasFreshCaseFileTmp(dir, dst string, now time.Time) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	tag := caseFileTmpTag(dst)
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !isCaseFileTmp(e.Name()) || isCaseFileAside(e.Name()) || !tmpBelongsTo(e.Name(), tag) {
+			continue
+		}
+		if _, busy := savesInFlight.Load(savePathKey(filepath.Join(dir, e.Name()))); busy {
+			continue
+		}
+		// A temporary file still being written is a running save, here or on
+		// another PC that shares the folder.
+		if info, err := e.Info(); err != nil || now.Sub(info.ModTime()) < caseFileLeftoverAge {
+			return true
+		}
+	}
+	return false
 }
 
 func writeCaseFileOnce(ctx context.Context, out *os.File, src CaseFileSource, key, salt []byte, params masterkey.Params, probe *partProbe) (int64, error) {

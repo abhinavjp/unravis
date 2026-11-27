@@ -123,6 +123,7 @@ func newCIFixture(t *testing.T) *ciFixture {
 	f.d = New(f.data, "", nil)
 	f.d.Projects = []Project{{ID: "unravis", Name: "Unravis", Repo: "o/r", CIStore: f.dir, Branches: []string{"develop", "master"}}}
 	must(t, f.d.Projects[0].Normalize())
+	f.d.ActionToken = fxActionToken
 	f.h = Handler(f.d, "tok", fstest.MapFS{"index.html": {Data: []byte("hi")}})
 	return f
 }

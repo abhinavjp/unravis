@@ -271,7 +271,7 @@ test('SEC-09: the wizard says 127.0.0.1 is only this PC, and a wide bind is refu
   const next = dialog.getByRole('button', { name: 'Next', exact: true });
   await next.click();
   await dialog.getByRole('radio', { name: /On another server/ }).check();
-  for (let i = 0; i < 5; i++) await next.click();
+  for (let i = 0; i < 6; i++) await next.click();
   await dialog.getByText('Advanced · port and who can connect').click();
   await expect(dialog.getByLabel('Listens on')).toHaveValue('127.0.0.1');
   await expect(dialog.getByText(/127\.0\.0\.1 means only this PC can connect/)).toBeVisible();
@@ -287,7 +287,9 @@ test('SEC-09: the wizard says 127.0.0.1 is only this PC, and a wide bind is refu
 
 const BANNED = /\b(cause[sd]?|causing|because|due to|waiting on|blocked by|led to|results? in|proof|prove[sn]?)\b/i;
 
-test('SEC-11: the words on the Blackbox screens and the key keeper cards avoid the banned overclaiming words', async ({ page }) => {
+test('SEC-11: the words on the Blackbox screens and the key keeper cards avoid the banned overclaiming words', async ({ page, allow }) => {
+  // Review asks the server to check the settings; a demo run off Windows cannot read a Windows drive path, so that answer may be 422.
+  allow(/\/api\/blackbox\/validate/, 'Review check of a Windows path on a non-Windows demo');
   const seen: string[] = [];
   const check = async (where: string, scope: Locator) => {
     const text = await scope.first().innerText();
@@ -317,8 +319,10 @@ test('SEC-11: the words on the Blackbox screens and the key keeper cards avoid t
   await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
   await dialog.getByLabel('Name', { exact: true }).fill('bb-lint');
   await check('wizard 1', dialog);
-  for (let step = 2; step <= 8; step++) {
+  for (let step = 2; step <= 9; step++) {
     await dialog.getByRole('button', { name: 'Next', exact: true }).click();
+    // Next stays on Where until a place is chosen; the pack path is the one with all nine steps (SQL and Redis included).
+    if (step === 2) await dialog.getByRole('radio', { name: /On another server/ }).check();
     await check('wizard step ' + step, dialog);
   }
   expect(seen, 'banned words on screen').toEqual([]);

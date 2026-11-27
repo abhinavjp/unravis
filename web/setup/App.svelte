@@ -9,13 +9,15 @@
   import {
     approvalReason, blockedLine, blocked, buildRequest, canFinish, checksFailedFirst, CONFIRM_DELETE_WORD, doneHeading, failedHeading, formatBytes, mergeEvents,
     parseAddresses, problemNotice, progressHeading, progressPercent, railPosition, railSteps, retryHelps, screenAfterResult, settleSteps, stepAnnouncement, uninstallReady,
-    showsCloseBox, showsFolderActions, uninstallWhy, validateOptions, welcomeHeading, welcomeNutshell,
+    showsCloseBox, showsFolderActions, uninstallWhy, validateOptions, watchDecision, welcomeHeading, welcomeNutshell,
+    FATAL_HEADING, PROGRESS_LOST_HEADING, PROGRESS_LOST_MESSAGE,
     type BlackboxOptions, type Check, type Op, type Options, type Problem, type Result, type Scope, type Screen, type StepEvent,
     type UIChanges, type UIState, type UninstallOptions
   } from './logic.ts';
 
   let ui = $state<UIState | null>(null);
   let fatal = $state('');
+  let fatalHeading = $state(FATAL_HEADING);
   let closed = $state(false);
   let screen = $state<Screen>('welcome');
   let op = $state<Op>('install');
@@ -238,9 +240,11 @@
     if (watching) return;
     watching = true;
     let since = from;
+    let failures = 0;
     for (;;) {
       try {
         const step = await api.progress(since);
+        failures = watchDecision(failures, { ok: true }).failures;
         rows = mergeEvents(rows, step.events ?? []);
         since = step.next;
         if (!step.running && step.result) {
@@ -249,9 +253,15 @@
           return;
         }
       } catch (err) {
-        if (err instanceof ApiError && (err.status === 0 || err.status === 401)) {
+        const decision = watchDecision(failures, { ok: false, status: err instanceof ApiError ? err.status : -1 });
+        failures = decision.failures;
+        if (decision.action === 'stop') {
           watching = false;
-          fatal = message(err);
+          // "lost": the install may still be running, so no "failed" and no way to start another one from this screen.
+          if (decision.reason === 'lost') {
+            fatalHeading = PROGRESS_LOST_HEADING;
+            fatal = PROGRESS_LOST_MESSAGE;
+          } else fatal = message(err);
           return;
         }
       }
@@ -367,7 +377,7 @@
     <p class="sr" role="status" aria-live="polite" aria-atomic="true">{announcement}</p>
 
     {#if fatal}
-      <main class="solo"><h1>Setup cannot go on</h1><p>{fatal}</p></main>
+      <main class="solo"><h1>{fatalHeading}</h1><p role="alert">{fatal}</p></main>
     {:else if closed}
       <main class="solo"><h1>Setup is closed</h1><p>You can close this window.</p></main>
     {:else if !ui}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -163,6 +164,116 @@ func TestOverlapMatchesBruteForce(t *testing.T) {
 					t.Fatalf("round %d interval %s: got %v want %v", round, v.ID, got[i].Candidates, want)
 				}
 			}
+		}
+	}
+}
+
+// overlapBrute is the plain O(n*m) reading of the Overlap contract, used to
+// check the tree-based lookup including result order and classes.
+func overlapBrute(iv []Interval, ev []evidence.Event, tol Tolerance, q func(evidence.Event) bool) []Match {
+	slack := tol.Total()
+	out := make([]Match, 0, len(iv))
+	for _, v := range iv {
+		s, e := v.Start, v.End
+		if e.Before(s) {
+			s, e = e, s
+		}
+		lo, hi := s.Add(-slack), e.Add(slack)
+		seen := map[string]bool{}
+		var ids []string
+		for _, x := range ev {
+			if q != nil && !q(x) {
+				continue
+			}
+			xe := x.End
+			if xe.Before(x.Start) {
+				xe = x.Start
+			}
+			if !xe.Before(lo) && !x.Start.After(hi) && !seen[x.EvidenceID] {
+				seen[x.EvidenceID] = true
+				ids = append(ids, x.EvidenceID)
+			}
+		}
+		sort.Strings(ids)
+		m := Match{IntervalID: v.ID, Class: evidence.JoinNone, Candidates: ids}
+		switch {
+		case len(ids) == 1:
+			m.Class = evidence.JoinUnique
+		case len(ids) > 1:
+			m.Class = evidence.JoinAmbiguous
+		}
+		out = append(out, m)
+	}
+	claims := map[string]int{}
+	for _, m := range out {
+		if m.Class == evidence.JoinUnique {
+			claims[m.Candidates[0]]++
+		}
+	}
+	for i := range out {
+		if out[i].Class == evidence.JoinUnique && claims[out[i].Candidates[0]] > 1 {
+			out[i].Class = evidence.JoinAmbiguous
+		}
+	}
+	return out
+}
+
+// Long events, inverted ranges, repeated IDs and a qualifies filter must give
+// the same matches, classes and candidate order as the brute-force reading
+// (RV-DAT-2: the lookup no longer depends on one long event).
+func TestOverlapTreeMatchesBruteForceWithLongEvents(t *testing.T) {
+	rng := rand.New(rand.NewSource(7)) //nolint:gosec // G404: seeded, reproducible test data
+	for round := 0; round < 200; round++ {
+		var events []evidence.Event
+		n := rng.Intn(80)
+		for i := 0; i < n; i++ {
+			s := rng.Intn(1000)
+			var e int
+			switch rng.Intn(6) {
+			case 0:
+				e = s + 500 + rng.Intn(1000) // a long event
+			case 1:
+				e = s - rng.Intn(20) // End before Start
+			default:
+				e = s + rng.Intn(15)
+			}
+			id := fmt.Sprintf("e%03d", i)
+			if rng.Intn(10) == 0 && i > 0 {
+				id = fmt.Sprintf("e%03d", rng.Intn(i)) // repeated ID
+			}
+			events = append(events, ev(id, s, e))
+		}
+		var ivs []Interval
+		for i, m := 0, rng.Intn(25); i < m; i++ {
+			s := rng.Intn(1100)
+			ivs = append(ivs, Interval{fmt.Sprintf("i%d", i), at(s), at(s + rng.Intn(30) - 5)})
+		}
+		tol := Tolerance{Resolution: time.Duration(rng.Intn(3)) * time.Second, Skew: time.Duration(rng.Intn(5)) * time.Second}
+		var q func(evidence.Event) bool
+		if round%3 == 0 {
+			q = func(e evidence.Event) bool { return e.EvidenceID[len(e.EvidenceID)-1] != '7' }
+		}
+		got := Overlap(ivs, events, tol, q)
+		want := overlapBrute(ivs, events, tol, q)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("round %d:\ngot  %+v\nwant %+v", round, got, want)
+		}
+	}
+}
+
+// One event spanning the whole range is a candidate of every interval and
+// must not hide the short events (RV-DAT-2).
+func TestOverlapOneLongEventAmongMany(t *testing.T) {
+	events := []evidence.Event{ev("long", -5, 100000)}
+	var ivs []Interval
+	for i := 0; i < 50; i++ {
+		events = append(events, ev(fmt.Sprintf("s%03d", i), i*100, i*100+1))
+		ivs = append(ivs, Interval{fmt.Sprintf("i%d", i), at(i * 100), at(i*100 + 1)})
+	}
+	for i, m := range Overlap(ivs, events, Tolerance{}, nil) {
+		want := []string{"long", fmt.Sprintf("s%03d", i)}
+		if m.Class != evidence.JoinAmbiguous || !reflect.DeepEqual(m.Candidates, want) {
+			t.Fatalf("interval %d: %+v want candidates %v", i, m, want)
 		}
 	}
 }

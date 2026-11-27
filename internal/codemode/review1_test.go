@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math/rand/v2"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -104,15 +105,23 @@ func TestEmptyScopeReachesNothingAndMCPNeedsAScope(t *testing.T) {
 
 // S1: a panic in the broker is a failed run that is still sealed, never a dead app.
 func TestPanicInTheCallHandlerEndsOnlyTheRun(t *testing.T) {
-	var answered bool
+	var (
+		mu       sync.Mutex // the script runs on the worker goroutine, the test reads after the run ends
+		answered bool
+	)
 	e := newEnv(t, func(w *fakeWorker) {
 		_, err := w.Call("audit_get_guide", map[string]any{})
+		mu.Lock()
 		answered = err == nil
+		mu.Unlock()
 	})
 	e.b.learn = func(string, []byte) (ids privacy.IDs) { panic("guard bug") }
 	res := e.run("1")
 	e.wantStatus(res, casestore.RunError, CodeInternal)
-	if answered {
+	mu.Lock()
+	gotAnswer := answered
+	mu.Unlock()
+	if gotAnswer {
 		t.Error("a call whose handler panicked got an answer")
 	}
 	// The tool ran, so the call is on record, with a fixed answer.
@@ -162,9 +171,15 @@ func TestSecondNetsStopWhatTheGuardMissed(t *testing.T) {
 				name += " on a failed script"
 			}
 			t.Run(name, func(t *testing.T) {
-				var answer json.RawMessage
+				var (
+					mu     sync.Mutex // the script runs on the worker goroutine, the test reads after the run ends
+					answer json.RawMessage
+				)
 				e := newEnv(t, func(w *fakeWorker) {
-					answer, _ = w.Call("audit_get_guide", map[string]any{})
+					a, _ := w.Call("audit_get_guide", map[string]any{})
+					mu.Lock()
+					answer = a
+					mu.Unlock()
 					if ok {
 						w.doneLogs("fine", "a log line")
 					} else {
@@ -193,7 +208,10 @@ func TestSecondNetsStopWhatTheGuardMissed(t *testing.T) {
 				if stage == "scripterror" {
 					e.sp.script = nil
 				}
-				everything := e.everything(res.RunID) + string(res.Result) + strings.Join(res.Logs, "\n") + string(answer)
+				mu.Lock()
+				gotAnswer := string(answer)
+				mu.Unlock()
+				everything := e.everything(res.RunID) + string(res.Result) + strings.Join(res.Logs, "\n") + gotAnswer
 				if res.Error != nil {
 					everything += res.Error.Message
 				}

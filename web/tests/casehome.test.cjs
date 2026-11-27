@@ -112,3 +112,37 @@ test('the case home still treats a 409 from the shared theories as fine, and kee
   assert.match(page, /isCaseLocked/);
   assert.match(page, /phase = 'locked'; return;/);
 });
+
+// W-34: an old case builds its helper indexes in the background, and the page says so until it stops.
+test('a case that is preparing says so once, in plain words, and is read again until it stops', () => {
+  const cases = loadTypeScript('src/lib/cases.ts');
+  assert.equal(copy.CASE_HOME_TEXT.preparing, 'Preparing this case so its charts open quickly. This can take a few minutes for a large case.');
+  assert.equal(cases.toCase({ id: 'a'.repeat(26), preparing: true }).preparing, true);
+  for (const raw of [false, 'true', 1, null, undefined]) {
+    assert.equal('preparing' in cases.toCase({ id: 'a'.repeat(26), preparing: raw }), false, 'only a real true counts: ' + String(raw));
+  }
+  assert.equal(cases.toView({ id: 'a'.repeat(26), preparing: true }).preparing, true);
+  assert.ok(cases.PREPARING_POLL_MS >= 1000, 'the case is not read every moment');
+  const page = read('src/lib/components/CaseHome.svelte');
+  assert.match(page, /\{#if info\?\.preparing\}<p class="notice" role="status"[^>]*>\{CASE_HOME_TEXT\.preparing\}<\/p>\{\/if\}/);
+  assert.match(page, /pacedTimeout\(\(\) => \{ void rereadPreparing\(id\); \}, PREPARING_POLL_MS\)/);
+  // The read that follows a preparing case reads the case only: it never sends the page back to its home or reloads the files.
+  const fn = page.slice(page.indexOf('async function rereadPreparing'), page.indexOf('async function rereadPreparing') + 1100);
+  assert.match(fn, /getCaseView\(id\)/);
+  assert.doesNotMatch(fn, /\bload\(|loadPage\(|listImports\(|view = /);
+  // It reads only while the page shows the case at its home, puts in only an answer that differs, and stops for a case that is gone or locked.
+  assert.match(page, /phase !== 'ready' \|\| view !== 'home' \|\| !info\?\.preparing/);
+  assert.match(fn, /sameRead\(info, fresh\)/);
+  assert.match(fn, /preparingAfterError/);
+});
+
+test('a failed read of a preparing case stops for a case that is gone, locked or read-only here, and is tried again otherwise, a few times', () => {
+  const cases = loadTypeScript('src/lib/cases.ts');
+  const refusal = (status, reason) => new cases.CaseApiError('x', status, reason);
+  assert.equal(cases.preparingAfterError(refusal(404, 'case-not-found'), 1), 'gone');
+  assert.equal(cases.preparingAfterError(refusal(423, 'case-locked'), 1), 'locked');
+  assert.equal(cases.preparingAfterError(refusal(403, 'untrusted-case'), 1), 'stop');
+  assert.equal(cases.preparingAfterError(refusal(0, 'unreachable'), 1), 'again');
+  assert.equal(cases.preparingAfterError(new Error('boom'), cases.JOB_MAX_UNREACHABLE - 1), 'again');
+  assert.equal(cases.preparingAfterError(refusal(0, 'unreachable'), cases.JOB_MAX_UNREACHABLE), 'stop');
+});

@@ -22,7 +22,8 @@ async function readDownload(download: import('@playwright/test').Download): Prom
 }
 
 async function shownHash(section: import('@playwright/test').Locator): Promise<string> {
-  const line = section.getByText(/^Saved\. SHA-256 of the saved file: [0-9a-f]{64}$/);
+  await expect(section.getByText("Download started. Check your browser's downloads.")).toBeVisible();
+  const line = section.locator('dt:has-text("SHA-256 of the saved file") + dd code');
   await expect(line).toBeVisible();
   return ((await line.innerText()).match(/[0-9a-f]{64}/) as RegExpMatchArray)[0];
 }
@@ -261,7 +262,8 @@ test('EXP-07: the evidence export previews without saving, then the saved file m
   const [download] = await Promise.all([page.waitForEvent('download'), drawer.getByRole('button', { name: 'Save file' }).click()]);
   expect(download.suggestedFilename()).toMatch(/^unravis-evidence-.*\.json$/);
   const bytes = await readDownload(download);
-  const line = drawer.getByText(/^Saved\. SHA-256 of the saved file: [0-9a-f]{64}$/);
+  await expect(drawer.getByText("Download started. Check your browser's downloads.")).toBeVisible();
+  const line = drawer.locator('dt:has-text("SHA-256 of the saved file") + dd code');
   await expect(line).toBeVisible();
   expect(createHash('sha256').update(bytes).digest('hex')).toBe(((await line.innerText()).match(/[0-9a-f]{64}/) as RegExpMatchArray)[0]);
   // After a save there is no second Save file for the same preview, only Preview again.

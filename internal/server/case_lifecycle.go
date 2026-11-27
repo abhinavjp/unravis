@@ -219,6 +219,9 @@ func recordView(info casestore.CaseInfo) caseViewDTO {
 func (h *handler) viewOf(ctx context.Context, c casestore.Case) caseViewDTO {
 	info := c.Info()
 	v := recordView(info)
+	if p, ok := innerCase(c).(casestore.Preparer); ok {
+		v.Preparing = p.Preparing()
+	}
 	if rs, ok := innerCase(c).(casestore.RetryStore); ok {
 		if items, err := rs.Retries(ctx); err == nil {
 			v.Retries = toRetryDTOs(items)
@@ -506,23 +509,51 @@ func (h *handler) runRetry(w http.ResponseWriter, r *http.Request, arg string) {
 		}
 		capText = tagSourceCapText
 		run = func() error {
-			_, err := tg.AddSource(r.Context(), casestore.SourceTag{ImportID: p.ImportID, Kind: p.Kind, Label: p.Label, Env: p.Env, Portal: p.Portal, API: p.API, Classification: p.Classification})
+			tag := casestore.SourceTag{ImportID: p.ImportID, Kind: p.Kind, Label: p.Label, Env: p.Env, Portal: p.Portal, API: p.API, Classification: p.Classification}
+			// The same tag already on the case means an earlier press of this item went in and only the list update failed.
+			if has, err := hasSourceTag(r.Context(), tg, tag); err != nil {
+				return err
+			} else if has {
+				return nil
+			}
+			_, err := tg.AddSource(r.Context(), tag)
 			return err
 		}
 	default:
 		writeCaseFailure(w, http.StatusUnprocessableEntity, "retry-in-page", retryInPageText)
 		return
 	}
-	// The item leaves the list before it runs, under the gate: a second press finds nothing to run, and a run that succeeds can never be
-	// followed by a failed removal that would let the same tag go in twice. A run that fails puts the item back.
-	if err := rs.RemoveRetry(r.Context(), rid); err != nil {
-		writeRetryError(w, err)
-		return
-	}
+	// The item stays on the list until the run has worked, so a run that fails (or a store that is failing for the same reason) never
+	// loses it: nothing was taken off, so there is nothing to put back. Two presses never overlap (the gate is held), and the run is safe
+	// to repeat: the environments are set, not added, and a tag that is already on the case is not added again. So if the run worked
+	// and the removal then fails, the item stays and the next press takes it off without adding anything twice.
 	if err := run(); err != nil {
-		_, _ = rs.NoteRetry(context.WithoutCancel(r.Context()), casestore.RetryItem{Kind: item.Kind, Key: item.Key, Label: item.Label, Reason: item.Reason, Payload: item.Payload})
 		writeTagError(w, err, capText)
 		return
 	}
+	// The run worked; a page that has gone away must not cut the removal short.
+	if err := rs.RemoveRetry(context.WithoutCancel(r.Context()), rid); err != nil {
+		writeRetryError(w, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// hasSourceTag says whether the case already holds a tag equal to tag in every field the person sets (as the store would keep it).
+// A tag the store would refuse is reported as absent, so AddSource gives the refusal.
+func hasSourceTag(ctx context.Context, tg casestore.Tagger, tag casestore.SourceTag) (bool, error) {
+	want, err := casestore.CleanSource(tag)
+	if err != nil {
+		return false, nil //nolint:nilerr // a tag the store would refuse is not on the case; AddSource gives the refusal
+	}
+	have, err := tg.Sources(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, s := range have {
+		if s.ImportID == want.ImportID && s.Kind == want.Kind && s.Label == want.Label && s.Env == want.Env && s.Portal == want.Portal && s.API == want.API && s.Classification == want.Classification {
+			return true, nil
+		}
+	}
+	return false, nil
 }

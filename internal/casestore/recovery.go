@@ -37,7 +37,7 @@ type Recoverer struct {
 
 	mu    sync.Mutex
 	hooks map[string]RecoveryHook
-	locks map[CaseID]*sync.Mutex // one recovery at a time per case
+	locks map[CaseID]*caseLock // one recovery at a time per case; an entry lives only while someone holds or waits for it
 }
 
 // NewRecoverer builds a Recoverer for a store. The store must implement
@@ -47,7 +47,7 @@ func NewRecoverer(st Store) (*Recoverer, error) {
 	if !ok {
 		return nil, errors.New("casestore: store has no marks")
 	}
-	return &Recoverer{marks: l, list: st.List, hooks: map[string]RecoveryHook{}, locks: map[CaseID]*sync.Mutex{}}, nil
+	return &Recoverer{marks: l, list: st.List, hooks: map[string]RecoveryHook{}, locks: map[CaseID]*caseLock{}}, nil
 }
 
 // Register sets the hook for a mark, replacing an earlier one (nil removes it).
@@ -74,15 +74,30 @@ func (r *Recoverer) hook(mark string) RecoveryHook {
 	return r.hooks[mark]
 }
 
-func (r *Recoverer) lockFor(id CaseID) *sync.Mutex {
+// caseLock is one case's recovery lock and the number of callers holding or waiting for it.
+type caseLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockFor returns the case's lock and a release func. The entry is dropped from the map when the last caller releases it, so a
+// case that is closed or erased leaves nothing behind; while anyone holds or waits, the entry stays, so recovery stays one at a time.
+func (r *Recoverer) lockFor(id CaseID) (m *sync.Mutex, release func()) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	m := r.locks[id]
-	if m == nil {
-		m = new(sync.Mutex)
-		r.locks[id] = m
+	cl := r.locks[id]
+	if cl == nil {
+		cl = new(caseLock)
+		r.locks[id] = cl
 	}
-	return m
+	cl.refs++
+	return &cl.mu, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if cl.refs--; cl.refs == 0 {
+			delete(r.locks, id)
+		}
+	}
 }
 
 // RecoverOne repairs one case if it carries a mark that has a hook, and returns
@@ -90,7 +105,8 @@ func (r *Recoverer) lockFor(id CaseID) *sync.Mutex {
 // An error from the hook is returned with the mark still in place. Concurrent
 // calls for one case run the hook once: the second waits, then sees no mark.
 func (r *Recoverer) RecoverOne(ctx context.Context, id CaseID) (string, error) {
-	m := r.lockFor(id)
+	m, release := r.lockFor(id)
+	defer release()
 	m.Lock()
 	defer m.Unlock()
 	mark, err := r.marks.Mark(ctx, id)

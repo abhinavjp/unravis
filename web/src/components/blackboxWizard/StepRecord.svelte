@@ -9,7 +9,7 @@
     stepProblem,
     steps
   } from '../../lib/blackboxWizard';
-  import type { PresetId, WizardState } from '../../lib/blackboxWizard';
+  import type { CollectorRowId, PresetId, WizardState } from '../../lib/blackboxWizard';
   import { BBW_TEXT } from '../../lib/copy/blackboxWizardCopy';
   import FigureRow from './FigureRow.svelte';
   import SegmentedControl from './SegmentedControl.svelte';
@@ -18,6 +18,7 @@
   type RecordKey = keyof WizardState['settings']['record'];
 
   const RECORD_KEYS = ['processes', 'logsCatalogue', 'copyLogsOnSnapshot'] as const satisfies readonly RecordKey[];
+  const COLLECTOR_KEYS = ['facts', 'counters', 'paths'] as const satisfies readonly CollectorRowId[];
   const PRESET_OPTIONS: { value: PresetId; label: string }[] = [
     { value: 'recommended', label: BBW_TEXT['record.recommended'] },
     { value: 'light', label: BBW_TEXT['record.light'] },
@@ -30,9 +31,9 @@
 
   let { wizard = $bindable() }: { wizard: WizardState } = $props();
 
-  // The wireframe shows seven plain rows, so the catalogue's smaller groups are shown together here. Only the three
-  // optional lists have a real tick; every other row is recorded on its own and its checkbox is shown ticked and locked.
-  type Row = { id: string; title: string; desc: string; tag?: string; toggle?: RecordKey; groups: RecordGroup[]; sql?: true };
+  // The wireframe shows plain rows, so the catalogue's smaller groups are shown together here. Only the three optional lists and the three collector rows (facts, counters, paths)
+  // have a real tick; every other row is recorded on its own and its checkbox is shown ticked and locked.
+  type Row = { id: string; title: string; desc: string; tag?: string; toggle?: RecordKey; collector?: CollectorRowId; groups: RecordGroup[]; sql?: true };
   const find = (id: string): RecordGroup => RECORD_GROUPS.find((g) => g.id === id) as RecordGroup;
   const some = (...ids: string[]): RecordGroup[] => ids.map(find).filter(Boolean);
   const ROWS: Row[] = [
@@ -44,26 +45,38 @@
     { id: 'logsCatalogue', title: find('logsCatalogue').title, desc: BBW_TEXT['record.desc.logsCatalogue'], toggle: 'logsCatalogue', groups: some('logsCatalogue') },
     { id: 'copyLogsOnSnapshot', title: find('copyLogsOnSnapshot').title, desc: BBW_TEXT['record.desc.copyLogsOnSnapshot'], toggle: 'copyLogsOnSnapshot', groups: some('copyLogsOnSnapshot') },
     { id: 'dumps', title: find('dumps').title, desc: BBW_TEXT['record.desc.dumps'], tag: BBW_TEXT['record.tag.whenPresent'], groups: some('dumps') },
-    { id: 'sqlHost', title: find('sqlHost').title, desc: BBW_TEXT['record.desc.sqlHost'], tag: BBW_TEXT['record.tag.extraStep'], sql: true, groups: some('sqlHost') }
+    { id: 'sqlHost', title: find('sqlHost').title, desc: BBW_TEXT['record.desc.sqlHost'], tag: BBW_TEXT['record.tag.extraStep'], sql: true, groups: some('sqlHost') },
+    { id: 'facts', title: BBW_TEXT['record.title.facts'], desc: BBW_TEXT['record.desc.facts'], tag: BBW_TEXT['record.tag.new'], collector: 'facts', groups: some('hostFacts') },
+    { id: 'counters', title: BBW_TEXT['record.title.counters'], desc: BBW_TEXT['record.desc.counters'], tag: BBW_TEXT['record.tag.new'], collector: 'counters', groups: some('extraCounters') },
+    { id: 'paths', title: BBW_TEXT['record.title.paths'], desc: BBW_TEXT['record.desc.paths'], tag: BBW_TEXT['record.tag.new'], collector: 'paths', groups: some('filePaths') }
   ];
   const figureTotal = (row: Row): number => row.groups.reduce((n, g) => n + g.figures.length, 0);
-  const figureOn = (row: Row): number => (row.toggle && !wizard.settings.record[row.toggle] ? 0 : figureTotal(row));
+  const rowOn = (row: Row): boolean =>
+    row.toggle ? wizard.settings.record[row.toggle] : row.collector ? wizard.collectorRows[row.collector] : true;
+  const figureOn = (row: Row): number => (rowOn(row) ? figureTotal(row) : 0);
   const allFigures = ROWS.reduce((n, row) => n + figureTotal(row), 0);
   const recordedFigures = $derived(ROWS.reduce((n, row) => n + figureOn(row), 0));
 
   const id = $props.id();
-  const recordPreset = $derived(presetOf(wizard.settings.record));
+  const recordPreset = $derived(presetOf(wizard.settings.record, wizard.collectorRows));
   let customPinned = $state(false);
   const preset = $derived(customPinned ? 'custom' : recordPreset);
   const hasSqlStep = $derived(steps(wizard).includes('sql'));
+  const countersProblem = $derived(
+    wizard.collectorRows.counters &&
+      (settingsProblem(buildSettings(wizard)) === 'counters' || stepProblem(wizard, 'record') === 'counters')
+  );
   const logProblem = $derived(
     settingsProblem(buildSettings(wizard)) === 'logs' || stepProblem(wizard, 'record') === 'logs'
   );
 
-  let basedOn = $state<BasePreset>(presetOf(wizard.settings.record) === 'light' ? 'light' : 'recommended');
+  let basedOn = $state<BasePreset>(presetOf(wizard.settings.record, wizard.collectorRows) === 'light' ? 'light' : 'recommended');
   const changed = $derived.by(() => {
-    const baseRecord = applyPreset(wizard, basedOn).settings.record;
-    return RECORD_KEYS.filter((key) => wizard.settings.record[key] !== baseRecord[key]).length;
+    const base = applyPreset(wizard, basedOn);
+    return (
+      RECORD_KEYS.filter((key) => wizard.settings.record[key] !== base.settings.record[key]).length +
+      COLLECTOR_KEYS.filter((key) => wizard.collectorRows[key] !== base.collectorRows[key]).length
+    );
   });
 
   let presetChoice = $state<PresetId>('recommended');
@@ -101,8 +114,15 @@
     wizard = { ...wizard, settings: { ...wizard.settings, intervalSeconds: intervalChoice } };
   }
 
+  function setCollector(key: CollectorRowId, checked: boolean) {
+    const before = presetOf(wizard.settings.record, wizard.collectorRows);
+    if (before !== 'custom') basedOn = before;
+    customPinned = false;
+    wizard = { ...wizard, collectorRows: { ...wizard.collectorRows, [key]: checked } };
+  }
+
   function setRecord(key: RecordKey, checked: boolean) {
-    const before = presetOf(wizard.settings.record);
+    const before = presetOf(wizard.settings.record, wizard.collectorRows);
     if (before !== 'custom') basedOn = before;
     customPinned = false;
     wizard = {
@@ -147,6 +167,12 @@
                 checked={wizard.settings.record[row.toggle]}
                 onchange={(event) => setRecord(row.toggle!, event.currentTarget.checked)}
               />
+            {:else if row.collector}
+              <input
+                type="checkbox"
+                checked={wizard.collectorRows[row.collector]}
+                onchange={(event) => setCollector(row.collector!, event.currentTarget.checked)}
+              />
             {:else}
               <span class="locked" title={BBW_TEXT['record.lockedMark']} aria-hidden="true">✓</span>
             {/if}
@@ -179,6 +205,24 @@
             </div>
           {/if}
 
+          {#if row.id === 'counters' && wizard.collectorRows.counters}
+            <div class="log-folders">
+              <label for={`${id}-counters`}>{BBW_TEXT['record.counters']}</label>
+              <textarea
+                id={`${id}-counters`}
+                rows="4"
+                spellcheck="false"
+                bind:value={wizard.countersText}
+                aria-invalid={countersProblem}
+                aria-describedby={`${id}-counters-help${countersProblem ? ` ${id}-counters-error` : ''}`}
+              ></textarea>
+              <p class="hint" id={`${id}-counters-help`}>{BBW_TEXT['record.countersHelp']}</p>
+              {#if countersProblem}
+                <p class="error" id={`${id}-counters-error`} role="alert">{BBW_TEXT['record.countersError']}</p>
+              {/if}
+            </div>
+          {/if}
+
           <details class="group-figures">
             <summary>{BBW_TEXT['record.groupFigures']}<span class="visually-hidden"> for {row.title}</span></summary>
             <div class="figure-list">
@@ -186,7 +230,7 @@
                 {#each group.figures as figure (figure.id)}
                   <FigureRow
                     {figure}
-                    checked={!row.toggle || wizard.settings.record[row.toggle]}
+                    checked={rowOn(row)}
                   />
                 {/each}
               {/each}
