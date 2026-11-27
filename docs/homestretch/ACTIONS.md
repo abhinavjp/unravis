@@ -2,7 +2,7 @@
 
 Every change a person can make in Homestretch is one entry in `internal/hsaction`. The `unravis-ci` commands and the
 page's `POST /api/action/<id>` both call `hsaction.Run`, so the checks, the activity entry and the change are the same
-code either way. There is no promote or release action.
+code either way. There is no promote or release action. The `homestretch` command line (`docs/homestretch/CLI.md`) has a command for every action below.
 
 | id | CLI command | what it does |
 |---|---|---|
