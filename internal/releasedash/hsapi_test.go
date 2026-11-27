@@ -341,7 +341,7 @@ func TestHSReadingNeverWritesTheStore(t *testing.T) {
 		m := map[string]string{}
 		_ = filepath.WalkDir(f.dir, func(p string, e os.DirEntry, err error) error {
 			if err != nil {
-				return nil
+				return nil //nolint:nilerr // a file that vanished is just not in the snapshot
 			}
 			if e.IsDir() {
 				m[p] = "dir"
