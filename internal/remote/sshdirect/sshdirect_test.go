@@ -237,6 +237,20 @@ func TestFetchHostKeyShowsTheKeyAndSendsNoSecret(t *testing.T) {
 	}
 }
 
+func TestFetchHostKeyDialsAnUnreachableServerOnce(t *testing.T) {
+	calls := 0
+	cfg := Config{Host: "example.test", Port: 22, User: "audit", OS: "linux", Dial: func(context.Context, string, string) (net.Conn, error) {
+		calls++
+		return nil, errors.New("connection refused")
+	}}
+	if _, err := FetchHostKey(ctx(t), cfg); !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("FetchHostKey error = %v, want ErrUnreachable", err)
+	}
+	if calls != 1 {
+		t.Fatalf("dialled %d times, want 1", calls)
+	}
+}
+
 func TestConnectNeedsAPinAndRefusesADifferentKeyBeforeSigningIn(t *testing.T) {
 	fs := startServer(t, &fakeServer{password: "pw", handler: func(string) ([]byte, string, int) { return nil, "", 0 }})
 	c := fs.cfg()

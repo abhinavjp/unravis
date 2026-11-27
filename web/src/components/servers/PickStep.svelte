@@ -20,6 +20,19 @@
   <h3 id="sv-pick-title">{T.pickTitle}</h3>
   <p class="sv-lead">{T.pickLead}</p>
 
+  {#if server?.os === 'linux'}
+    <label class="sv-check">
+      <input type="checkbox" checked={flow.sudo} disabled={!!flow.busy} aria-describedby="sv-sudo-help" onchange={(e) => {
+        const on = e.currentTarget.checked;
+        e.currentTarget.checked = flow.sudo;
+        void flow.setSudo(on);
+      }} />
+      {T.pickSudo}
+    </label>
+    <p class="sv-note" id="sv-sudo-help">{T.pickSudoHelp}</p>
+  {/if}
+  {#if flow.note}<p class="sv-note" role="status">{flow.note}</p>{/if}
+
   {#if flow.busy === 'machines'}
     <p class="sv-note" role="status">{T.pickLoading}</p>
   {:else if flow.machines.length === 0}
@@ -36,9 +49,6 @@
       {/each}
     </tbody></table></div>
     {#if flow.picks.length >= MAX_MACHINES}<p class="sv-note">{T.pickLimit}</p>{/if}
-    {#if server?.os === 'linux'}
-      <details><summary>{T.pickSudo}</summary><label class="sv-check"><input type="checkbox" bind:checked={flow.sudo} /> {T.pickSudo}</label><p class="sv-note">{T.pickSudoHelp}</p></details>
-    {/if}
     {#if flow.picks.length === 0}<p class="sv-note">{T.pickNone}</p>{/if}
 
     {#if commandInput}

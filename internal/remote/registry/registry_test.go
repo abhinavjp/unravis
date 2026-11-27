@@ -166,6 +166,14 @@ func TestDuplicateIsOneServerAndKeepsTheSealedSecret(t *testing.T) {
 	if !errors.Is(err, ErrDuplicate) || e.ID != first.ID {
 		t.Fatalf("%v %v", e, err)
 	}
+	again.Secret = ""
+	if e, err := s.Add(again); !errors.Is(err, ErrDuplicate) || e.ID != first.ID || !e.HasSecret {
+		t.Fatalf("blank secret for duplicate: entry %v, error %v", e, err)
+	}
+	again.Host = "another.corp.example"
+	if _, err := s.Add(again); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank secret for new server: %v, want ErrInvalid", err)
+	}
 	if k, _, _ := s.Secret(first.ID); k != pw {
 		t.Fatal("the earlier secret was replaced by a duplicate add")
 	}

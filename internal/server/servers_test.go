@@ -227,6 +227,9 @@ func TestServersHostKeyFlowAndErrors(t *testing.T) {
 		if c.reason == "host-key-changed" && (f.Pinned != "SHA256:old" || f.Presented != "SHA256:new") {
 			t.Fatalf("changed key = %+v", f)
 		}
+		if c.reason == "unreachable" && (!strings.Contains(f.Next, "address and port") || !strings.Contains(f.Next, "VPN or office network")) {
+			t.Fatalf("unreachable hint = %q", f.Next)
+		}
 	}
 }
 

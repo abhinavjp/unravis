@@ -48,15 +48,14 @@ const at = (id: string): string => '/' + encodeURIComponent(id);
 
 export const serversApi = {
   list: (signal?: AbortSignal) => call<{ items: ServerEntry[] }>('GET', '', undefined, signal),
-  /** The one call that carries a secret. The caller clears its own copy right after this settles. */
-  add: (body: AddBody) => call<ServerEntry>('POST', '', body),
-  patch: (id: string, body: PatchBody) => call<ServerEntry>('PATCH', at(id), body),
-  forget: (id: string) => callEmpty('DELETE', at(id)),
-  setSecret: (id: string, auth: AuthKind, secret: string, passphrase: string) => callEmpty('PUT', at(id) + '/secret', buildSecretBody(auth, secret, passphrase)),
-  hostKeys: (id: string) => call<{ keys: HostKey[] }>('POST', at(id) + '/host-keys', {}),
-  pin: (id: string, fingerprint: string) => call<ServerEntry>('POST', at(id) + '/pin', buildPinBody(fingerprint)),
-  replaceKey: (id: string, oldFingerprint: string, newFingerprint: string) => call<ServerEntry>('POST', at(id) + '/replace-key', buildReplaceBody(oldFingerprint, newFingerprint)),
-  machines: (id: string) => call<{ machines: MachineView[] }>('POST', at(id) + '/machines', {}),
+  add: (body: AddBody, signal?: AbortSignal) => call<ServerEntry>('POST', '', body, signal),
+  patch: (id: string, body: PatchBody, signal?: AbortSignal) => call<ServerEntry>('PATCH', at(id), body, signal),
+  forget: (id: string, signal?: AbortSignal) => callEmpty('DELETE', at(id), undefined, signal),
+  setSecret: (id: string, auth: AuthKind, secret: string, passphrase: string, signal?: AbortSignal) => callEmpty('PUT', at(id) + '/secret', buildSecretBody(auth, secret, passphrase), signal),
+  hostKeys: (id: string, signal?: AbortSignal) => call<{ keys: HostKey[] }>('POST', at(id) + '/host-keys', {}, signal),
+  pin: (id: string, fingerprint: string, signal?: AbortSignal) => call<ServerEntry>('POST', at(id) + '/pin', buildPinBody(fingerprint), signal),
+  replaceKey: (id: string, oldFingerprint: string, newFingerprint: string, signal?: AbortSignal) => call<ServerEntry>('POST', at(id) + '/replace-key', buildReplaceBody(oldFingerprint, newFingerprint), signal),
+  machines: (id: string, signal?: AbortSignal) => call<{ machines: MachineView[] }>('POST', at(id) + '/machines', {}, signal),
   test: (id: string, machine: string) => call<TestResult>('POST', at(id) + '/test', buildMachineBody(machine)),
   plan: (id: string, body: PullBody) => call<PlanView>('POST', at(id) + '/plan', body),
   startPull: (id: string, body: PullBody) => call<JobView>('POST', at(id) + '/pulls', body),

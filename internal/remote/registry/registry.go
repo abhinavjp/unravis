@@ -344,7 +344,8 @@ func (s *Store) Add(in AddInput) (Entry, error) {
 	}
 	normalise(&e)
 	secret := needsSecret(e)
-	if validate(e) != "" || (secret && !validSecret(e.Auth, in.Secret, in.Passphrase)) || (!secret && (in.Secret != "" || in.Passphrase != "")) {
+	missingSecret := secret && in.Secret == "" && in.Passphrase == ""
+	if validate(e) != "" || (secret && !missingSecret && !validSecret(e.Auth, in.Secret, in.Passphrase)) || (!secret && (in.Secret != "" || in.Passphrase != "")) {
 		return Entry{}, ErrInvalid
 	}
 	id, err := newID()
@@ -367,6 +368,10 @@ func (s *Store) Add(in AddInput) (Entry, error) {
 		if samePlace(r.Entry, e.Host, e.Port, e.User) {
 			return r.Entry, ErrDuplicate
 		}
+	}
+	// A caller can reuse a duplicate's saved secret. A new connection still needs its own.
+	if missingSecret {
+		return Entry{}, ErrInvalid
 	}
 	if len(v.Records) >= MaxEntries {
 		return Entry{}, ErrTooMany

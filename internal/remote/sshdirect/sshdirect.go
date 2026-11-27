@@ -107,8 +107,19 @@ func FetchHostKey(ctx context.Context, c Config) ([]HostKey, error) {
 	var out []HostKey
 	var firstErr error
 	for _, algo := range hostKeyAlgorithms {
-		fp, err := presented(ctx, c, algo)
+		conn, err := c.dial(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			firstErr = ErrUnreachable
+			break
+		}
+		fp, err := presented(ctx, c, conn, algo)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -137,12 +148,8 @@ type stopHandshake struct{}
 
 func (stopHandshake) Error() string { return "stopped at the host key" }
 
-// presented opens a connection that offers only algo, records the host key and stops before any authentication.
-func presented(ctx context.Context, c Config, algo string) (string, error) {
-	conn, err := c.dial(ctx)
-	if err != nil {
-		return "", ErrUnreachable
-	}
+// presented offers only algo, records the host key and stops before any authentication.
+func presented(ctx context.Context, c Config, conn net.Conn, algo string) (string, error) {
 	defer conn.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 	var fp string
 	cfg := &ssh.ClientConfig{

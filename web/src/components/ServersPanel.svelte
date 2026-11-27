@@ -141,9 +141,6 @@
     width: 100%; min-width: 0; padding: 6px 8px; font: inherit; font-size: var(--fs-3); color: var(--text); background: var(--surface); border: 1px solid var(--control-line); border-radius: var(--radius-sm); box-sizing: border-box;
   }
   .sv :global(.sv-field.sv-inline select) { width: auto; max-width: 100%; }
-  .sv :global(.sv-radios) { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
-  .sv :global(.sv-radios legend) { flex: 0 0 100%; }
-  .sv :global(.sv-radios label) { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-3); overflow-wrap: anywhere; }
   .sv :global(.sv-check) { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: var(--fs-3); min-width: 0; overflow-wrap: anywhere; }
   .sv :global(.sv-row) { display: grid; gap: var(--space-2); padding: var(--space-3) 0; border-top: 1px solid var(--line); min-width: 0; }
   .sv :global(.sv-row-main) { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }

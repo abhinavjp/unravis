@@ -3,13 +3,13 @@
   import StepFooter from './StepFooter.svelte';
   import type { ServersFlow } from '../../lib/serversFlow.svelte';
   import { SV_TEXT as T } from '../../lib/copy/serversCopy';
-  import { connectProblems, emptyConnectForm, type AuthKind, type ServerEntry } from '../../lib/servers';
+  import { connectProblems, findConnection, matchesConnection, type AuthKind, type ServerEntry } from '../../lib/servers';
 
   // Step 1. The saved servers, then the form for a new one. A password or key is read from its field at the moment of sending,
-  // sent once, and the field is emptied straight after, whether the call worked or not. It is never held in this page's state.
+  // and the field is emptied after it is saved. It is never held in this page's state.
   let { flow }: { flow: ServersFlow } = $props();
 
-  let form = $state(emptyConnectForm());
+  const form = $derived(flow.draft);
   let hasSecret = $state(false);
   let tried = $state(false);
   let passwordEl = $state<HTMLInputElement>();
@@ -19,7 +19,10 @@
 
   // The secret-only form for a saved server that has none.
   const secretAuth = $derived<AuthKind>(flow.server?.auth ?? 'password');
-  const problems = $derived(connectProblems(form, hasSecret));
+  const saved = $derived(matchesConnection(form, flow.server) ? flow.server : findConnection(form, flow.list));
+  const savedSecret = $derived(!!saved?.hasSecret);
+  const problems = $derived(connectProblems(form, hasSecret || savedSecret));
+  const connectionBusy = $derived(flow.busy === 'connect' || flow.busy === 'secret' || flow.busy === 'forget');
 
   function clearSecrets() {
     if (passwordEl) passwordEl.value = '';
@@ -32,6 +35,12 @@
     hasSecret = form.auth === 'password' ? !!passwordEl?.value : !!keyEl?.files?.length;
   }
 
+  function switchAuth(auth: AuthKind) {
+    if (form.auth === auth) return;
+    clearSecrets();
+    form.auth = auth;
+  }
+
   async function readSecret(auth: AuthKind): Promise<string> {
     if (auth === 'password') return passwordEl?.value ?? '';
     const file = keyEl?.files?.[0];
@@ -41,23 +50,32 @@
   async function submit(event: Event) {
     event.preventDefault();
     tried = true;
-    if (problems.length) return;
+    if (problems.length || connectionBusy) return;
+    const element = event.currentTarget as HTMLFormElement;
+    const draft = form;
+    const auth = draft.auth;
     let secret = '', passphrase = '';
     try {
-      secret = await readSecret(form.auth);
-      passphrase = passphraseEl?.value ?? '';
-      await flow.connect(form, secret, passphrase);
-    } finally { secret = ''; passphrase = ''; clearSecrets(); }
+      secret = await readSecret(auth);
+      if (!element.isConnected || draft !== form || draft.auth !== auth || connectionBusy) return;
+      passphrase = secret && auth === 'key' ? passphraseEl?.value ?? '' : '';
+      if (await flow.connect(draft, secret, passphrase)) clearSecrets();
+    } finally { secret = ''; passphrase = ''; }
   }
 
   async function submitSecret(event: Event) {
     event.preventDefault();
+    if (connectionBusy) return;
+    const element = event.currentTarget as HTMLFormElement;
+    const server = flow.server;
+    const auth = secretAuth;
     let secret = '', passphrase = '';
     try {
-      secret = await readSecret(secretAuth);
-      passphrase = passphraseEl?.value ?? '';
-      if (secret) await flow.saveSecret(secretAuth, secret, passphrase);
-    } finally { secret = ''; passphrase = ''; clearSecrets(); }
+      secret = await readSecret(auth);
+      if (!element.isConnected || server !== flow.server || connectionBusy) return;
+      passphrase = secret && auth === 'key' ? passphraseEl?.value ?? '' : '';
+      if (secret && await flow.saveSecret(auth, secret, passphrase)) clearSecrets();
+    } finally { secret = ''; passphrase = ''; }
   }
 
   const trustLabel = (s: ServerEntry) => (s.hostKey ? T.savedTrusted : T.savedNotTrusted);
@@ -83,7 +101,7 @@
       {/if}
 
     </form>
-    <StepFooter back={() => flow.reset()} primary={{ label: T.secretSave, form: "sv-secret-form", disabled: !hasSecret || !!flow.busy, busyLabel: flow.busy ? T.working : undefined }} />
+    <StepFooter back={() => flow.reset()} primary={{ label: T.secretSave, form: "sv-secret-form", disabled: !hasSecret || connectionBusy, busyLabel: connectionBusy ? T.working : undefined }} />
   {:else}
     <p class="sv-lead">{T.connectLead}</p>
 
@@ -121,7 +139,7 @@
                 </div>
               {:else}
                 <div class="sv-actions">
-                  <button type="button" class="primary-button" disabled={!!flow.busy} onclick={() => flow.use(s)}>{T.savedUse}</button>
+                  <button type="button" class="primary-button" disabled={connectionBusy} onclick={() => flow.use(s)}>{T.savedUse}</button>
                   <button type="button" class="quiet-button" disabled={!!flow.busy || !!s.running} onclick={() => { forgetAsk = s.id; }}>{T.savedForget}</button>
                 </div>
               {/if}
@@ -139,16 +157,17 @@
         <div class="sv-field"><label for="field-user">{T.fieldUser}</label><HelpTip id="help-user" label={T.helpLabel(T.fieldUser)} text={T.fieldUserHelp} /><input id="field-user" type="text" bind:value={form.user} autocomplete="off" spellcheck="false" /></div>
       </div>
       <fieldset class="sv-field"><legend>{T.fieldAuth}</legend><div class="segmented" role="group" aria-label={T.fieldAuth}>
-        <button type="button" aria-pressed={form.auth === 'password'} onclick={() => { clearSecrets(); form.auth = 'password'; }}>{T.authPassword}</button>
-        <button type="button" aria-pressed={form.auth === 'key'} onclick={() => { clearSecrets(); form.auth = 'key'; }}>{T.authKey}</button>
+        <button type="button" aria-pressed={form.auth === 'password'} onclick={() => switchAuth('password')}>{T.authPassword}</button>
+        <button type="button" aria-pressed={form.auth === 'key'} onclick={() => switchAuth('key')}>{T.authKey}</button>
       </div></fieldset>
       {#if form.auth === 'password'}
         <div class="sv-field"><label for="field-password">{T.fieldPassword}</label>
-          <input id="field-password" type="password" bind:this={passwordEl} autocomplete="new-password" oninput={noteSecret} />
+          <input id="field-password" type="password" bind:this={passwordEl} autocomplete="new-password" placeholder={savedSecret ? T.secretKeepLocal : undefined} oninput={noteSecret} />
           <HelpTip id={flow.needSecret ? "help-saved-password" : "help-password"} label={T.helpLabel(T.fieldPassword)} text={T.fieldPasswordHelp} /></div>
       {:else}
         <div class="sv-field"><label for="field-keyfile">{T.fieldKeyFile}</label>
-          <input id="field-keyfile" type="file" bind:this={keyEl} onchange={noteSecret} />
+          <input id="field-keyfile" type="file" bind:this={keyEl} onchange={noteSecret} aria-describedby={savedSecret ? 'sv-saved-key' : undefined} />
+          {#if savedSecret}<small id="sv-saved-key">{T.secretKeepLocal}</small>{/if}
           <HelpTip id={flow.needSecret ? "help-saved-keyfile" : "help-keyfile"} label={T.helpLabel(T.fieldKeyFile)} text={T.fieldKeyFileHelp} /></div>
         <div class="sv-field"><label for="field-passphrase">{T.fieldPassphrase}</label>
           <input id="field-passphrase" type="password" bind:this={passphraseEl} autocomplete="new-password" />
@@ -161,7 +180,7 @@
 
     </form>
     </div>
-    <StepFooter primary={{ label: T.connectGo, form: "sv-connect-form", disabled: !!flow.busy, busyLabel: flow.busy === "connect" ? T.connecting : undefined }} />
+    <StepFooter primary={{ label: T.connectGo, form: "sv-connect-form", disabled: connectionBusy, busyLabel: connectionBusy ? T.connecting : undefined }} />
   {/if}
 </section>
 

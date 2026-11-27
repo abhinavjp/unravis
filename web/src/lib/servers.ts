@@ -392,6 +392,18 @@ export interface ConnectForm {
 
 export const emptyConnectForm = (): ConnectForm => ({ host: '', port: '22', user: '', os: 'linux', auth: 'password' });
 
+function sameAddress(form: ConnectForm, entry: ServerEntry): boolean {
+  return form.host.trim().toLowerCase() === entry.host.toLowerCase() && Number(form.port) === entry.port && form.user.trim() === entry.user;
+}
+
+export function matchesConnection(form: ConnectForm, entry: ServerEntry | null): boolean {
+  return !!entry && sameAddress(form, entry) && form.os === entry.os && form.auth === entry.auth;
+}
+
+export function findConnection(form: ConnectForm, entries: ServerEntry[] | null): ServerEntry | undefined {
+  return entries?.find((entry) => sameAddress(form, entry));
+}
+
 const MACHINE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export const isMachineId = (id: string): boolean => MACHINE_ID.test(id);
 
@@ -577,7 +589,9 @@ export function accessCommands(part: CommandPart, c: CommandInput): string {
   const host = SAFE_HOST.test(c.host) ? c.host : '<address>';
   const keyOnServer = linux ? 'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub' : 'ssh-keygen -lf $env:ProgramData\\ssh\\ssh_host_ed25519_key.pub';
   if (part === 'key') {
-    return ['# 1. On your PC, in PowerShell. Shows the fingerprint the server presents. Sends no password.', 'ssh-keyscan -t ed25519 -p ' + c.port + ' ' + host + ' | ssh-keygen -lf -', '',
+    return ['# 1. On your PC, in PowerShell. Shows the fingerprint the server presents.',
+      '# It signs in with nothing and sends no password. A "Permission denied" line afterwards is expected.',
+      'ssh -v -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o ConnectTimeout=8 -p ' + c.port + ' probe@' + host + ' 2>&1 | Select-String "Server host key"', '',
       '# 2. On the server itself (your admin can run this) to compare with step 1.', keyOnServer].join('\n');
   }
   if (part === 'admin-key') {

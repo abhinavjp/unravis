@@ -322,6 +322,7 @@ func srvClassify(err error) (int, srvFailure) {
 		next = "Check the user name and the key or password saved for this server."
 	case errors.Is(err, sshdirect.ErrUnreachable):
 		status, reason, text = http.StatusBadGateway, "unreachable", err.Error()
+		next = "Check the address and port. If the server is only reachable over a VPN or office network, connect to it first, then try again."
 	case errors.Is(err, sshdirect.ErrTunnelRefused), errors.Is(err, sshdirect.ErrNoTunnel):
 		status, reason, text = http.StatusBadGateway, "tunnel", err.Error()
 	case errors.Is(err, sshdirect.ErrCommand):

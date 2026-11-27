@@ -221,6 +221,7 @@ test('the checks of a machine list only what the server answered', () => {
 /* ------------------------------------------------------------------- forms */
 
 const goodForm = () => ({ name: '', host: 'salt.example.test', port: '22', user: 'ops', os: 'linux', auth: 'password', seedMachine: 'web-1' });
+const savedServer = (fields = {}) => ({ ...goodForm(), id: 'saved', port: 22, hasSecret: true, ...fields });
 
 test('the connect form names what is missing in plain sentences', () => {
   assert.deepEqual(sv.connectProblems(goodForm(), true), []);
@@ -232,6 +233,164 @@ test('the connect form names what is missing in plain sentences', () => {
   assert.match(sv.connectProblems(goodForm(), false)[0], /password/i);
   assert.match(sv.connectProblems({ ...goodForm(), auth: 'key' }, false)[0], /key file/i);
   assert.equal(sv.connectProblems({ host: '', port: '', user: '', os: 'linux', auth: 'password' }, false).length, 4);
+});
+
+test('the draft matches a connection by address, operating system and sign-in type', () => {
+  const entry = savedServer();
+  const form = { ...goodForm(), host: ' SALT.example.test ', user: ' ops ', port: '022' };
+  assert.equal(sv.matchesConnection(form, entry), true);
+  for (const change of [{ host: 'other.test' }, { port: '2222' }, { user: 'OPS' }, { os: 'windows' }, { auth: 'key' }]) {
+    assert.equal(sv.matchesConnection({ ...form, ...change }, entry), false);
+  }
+  assert.equal(sv.matchesConnection(form, null), false);
+});
+
+test('duplicate lookup matches just the host, port and case-sensitive user', () => {
+  const entry = savedServer({ os: 'windows', auth: 'key' });
+  const list = [savedServer({ user: 'OPS' }), savedServer({ port: 2222 }), entry];
+  assert.equal(sv.findConnection({ ...goodForm(), host: 'SALT.EXAMPLE.TEST' }, list), entry);
+  assert.equal(sv.findConnection({ ...goodForm(), host: 'different.test' }, list), undefined);
+  assert.equal(sv.findConnection(goodForm(), null), undefined);
+});
+
+const makeFlow = (serversApi) => {
+  const { ServersFlow } = loadTypeScript('src/lib/serversFlow.svelte.ts', { './serversApi': { serversApi } });
+  return new ServersFlow({ windows: () => null, now: () => NOW });
+};
+
+test('Back keeps the draft, cancels key fetching, and Next reuses the saved entry', async () => {
+  const requests = [];
+  let adds = 0;
+  const flow = makeFlow({
+    add: async () => { adds++; return savedServer(); },
+    hostKeys: (id, signal) => new Promise((resolve) => requests.push({ id, signal, resolve }))
+  });
+  flow.draft = { ...goodForm(), host: 'SALT.example.test' };
+  assert.equal(await flow.connect(flow.draft, 'fixture-password', ''), true);
+  assert.equal(flow.step, 'trust');
+  assert.equal(flow.busy, 'keys');
+  flow.go('connect');
+  assert.equal(flow.busy, '');
+  assert.equal(requests[0].signal.aborted, true);
+  assert.equal(flow.draft.host, 'SALT.example.test');
+  assert.equal(await flow.connect(flow.draft, '', ''), true);
+  assert.equal(adds, 1);
+  assert.deepEqual(requests.map(({ id }) => id), ['saved', 'saved']);
+
+  requests[0].resolve({ keys: [{ fingerprint: 'old' }] });
+  await Promise.resolve();
+  assert.deepEqual(flow.hostKeys, []);
+  assert.equal(flow.busy, 'keys');
+  requests[1].resolve({ keys: [{ fingerprint: 'current' }] });
+  await Promise.resolve();
+  assert.equal(flow.hostKeys[0].fingerprint, 'current');
+  assert.equal(flow.error, null);
+});
+
+test('Next with a new secret updates the current entry and skips trust when it is pinned', async () => {
+  const entry = savedServer({ hostKey: 'pinned' });
+  const writes = [];
+  const flow = makeFlow({
+    setSecret: async (id, auth) => { writes.push([id, auth]); },
+    machines: async () => ({ machines: [] })
+  });
+  flow.server = entry;
+  assert.equal(await flow.connect(goodForm(), 'fixture-password', ''), true);
+  assert.deepEqual(writes, [['saved', 'password']]);
+  assert.equal(flow.step, 'pick');
+});
+
+test('a duplicate refreshes the list and uses the saved or newly entered secret', async () => {
+  const entry = savedServer({ hostKey: 'pinned' });
+  for (const secret of ['', 'fixture-password']) {
+    const writes = [];
+    let lists = 0;
+    const flow = makeFlow({
+      add: async () => { throw new sv.ServersError({ status: 409, reason: 'duplicate', error: 'Already saved.' }); },
+      list: async () => { lists++; return { items: [entry] }; },
+      setSecret: async (id) => { writes.push(id); },
+      machines: async () => ({ machines: [] })
+    });
+    flow.draft = goodForm();
+    assert.equal(await flow.connect(flow.draft, secret, ''), true);
+    assert.equal(lists, 1);
+    assert.deepEqual(writes, secret ? ['saved'] : []);
+    assert.equal(flow.server.id, 'saved');
+    assert.equal(flow.step, 'pick');
+  }
+});
+
+test('correcting a new untrusted connection removes only the earlier entry created here', async () => {
+  const older = savedServer({ id: 'older', host: 'older.example.test' });
+  const forgotten = [];
+  const flow = makeFlow({
+    add: async (body) => savedServer({ id: body.host, host: body.host }),
+    hostKeys: async () => ({ keys: [] }),
+    forget: async (id) => { forgotten.push(id); }
+  });
+  flow.server = older;
+  flow.list = [older];
+  for (const host of ['typo.example.test', 'correct.example.test']) {
+    flow.draft = { ...goodForm(), host };
+    assert.equal(await flow.connect(flow.draft, 'fixture-password', ''), true);
+    flow.go('connect');
+  }
+  assert.deepEqual(forgotten, ['typo.example.test']);
+  assert.deepEqual(flow.list.map(({ id }) => id), ['older', 'correct.example.test']);
+});
+
+test('Linux machine listing keeps sudo on after a successful retry and rolls it back after failure', async () => {
+  const original = { status: 502, reason: 'salt-master', error: 'The original refusal.' };
+  for (const succeeds of [true, false]) {
+    const writes = [];
+    let reads = 0;
+    const flow = makeFlow({
+      patch: async (id, body) => { writes.push(body.saltSudo); return savedServer(body); },
+      machines: async () => {
+        if (++reads === 1) throw new sv.ServersError(original);
+        if (!succeeds) throw new sv.ServersError({ ...original, error: 'The retry refusal.' });
+        return { machines: [{ id: 'web-1', state: 'accepted', online: true, chosen: true }] };
+      }
+    });
+    flow.server = savedServer({ saltSudo: false });
+    await flow.loadMachines();
+    assert.equal(reads, 2);
+    assert.deepEqual(writes, succeeds ? [true] : [true, false]);
+    assert.equal(flow.sudo, succeeds);
+    assert.equal(flow.server.saltSudo, succeeds);
+    assert.deepEqual(flow.picks, succeeds ? ['web-1'] : []);
+    assert.equal(flow.note, succeeds ? SV_TEXT.pickSudoSwitched : '');
+    assert.equal(flow.error, succeeds ? null : original);
+  }
+});
+
+test('leaving during a sudo retry rolls back the setting without showing a stale error', async () => {
+  const writes = [];
+  let finishEnable;
+  let started;
+  const enabling = new Promise((resolve) => { started = resolve; });
+  const flow = makeFlow({
+    patch: async (id, body) => {
+      writes.push(body.saltSudo);
+      if (body.saltSudo) {
+        started();
+        await new Promise((resolve) => { finishEnable = resolve; });
+      }
+      return savedServer(body);
+    },
+    machines: async () => { throw new sv.ServersError({ status: 502, reason: 'salt-master', error: 'Refused.' }); }
+  });
+  flow.server = savedServer({ saltSudo: false });
+  const loading = flow.loadMachines();
+  await enabling;
+  flow.go('connect');
+  assert.equal(flow.busy, '');
+  finishEnable();
+  await loading;
+  assert.deepEqual(writes, [true, false]);
+  assert.equal(flow.step, 'connect');
+  assert.equal(flow.sudo, false);
+  assert.equal(flow.error, null);
 });
 
 test('a machine name is letters, digits, dots, dashes and underscores', () => {
@@ -333,6 +492,15 @@ test('sizes and counts read as plain words', () => {
 
 /* -------------------------------------------------------- commands to copy */
 
+test('the PC key check reads the fingerprint in Windows PowerShell', () => {
+  const input = { os: 'linux', host: 'salt.example.test', port: 2222 };
+  const lines = sv.accessCommands('key', input).split('\n');
+  assert.ok(lines.includes('ssh -v -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o ConnectTimeout=8 -p 2222 probe@salt.example.test 2>&1 | Select-String "Server host key"'));
+  assert.match(lines.filter((line) => line.startsWith('#')).join(' '), /sends no password.*Permission denied.*expected/i);
+  assert.ok(lines.includes('ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'));
+  assert.match(sv.accessCommands('key', { ...input, host: 'host; whoami' }), /probe@<address> /);
+});
+
 test('the commands for the person to run only read, and name the machine and folders given', () => {
   const input = { os: 'linux', host: 'salt.example.test', port: 22, user: 'ops', machines: ['web-1'], folders: { blackbox: ['/opt/bb'] }, sudo: false };
   for (const part of ['key', 'salt', 'admin-key', 'admin-salt']) {
@@ -348,6 +516,16 @@ test('the commands for the person to run only read, and name the machine and fol
 
 test('every word of the Servers panel passes the copy lint', () => {
   assert.deepEqual(lintScreenStrings(serversCopyEntries(), deck.terms), []);
+});
+
+test('the copy lint includes every Servers text entry', () => {
+  const entries = new Map(serversCopyEntries().map(({ id, text }) => [id, text]));
+  for (const [name, value] of Object.entries(SV_TEXT)) {
+    const id = 'servers.' + name;
+    if (typeof value === 'string') assert.equal(entries.get(id), value, id);
+    else if (Array.isArray(value)) value.forEach((text, i) => assert.equal(entries.get(`${id}.${i}`), text));
+    else assert.ok([...entries].some(([key, text]) => (key === id || key.startsWith(id + '.')) && text), id);
+  }
 });
 
 test('the Servers words never use the internal terms, and Salt is only the Salt master', () => {
@@ -390,5 +568,7 @@ test('the panel never writes the case windows or keeps a secret in its state', (
   const flow = read('src/lib/serversFlow.svelte.ts');
   assert.equal(/\b(password|passphrase|secret)\s*=\s*\$state/i.test(flow), false);
   const connect = read('src/components/servers/ConnectStep.svelte');
-  assert.match(connect, /finally \{[^}]*clearSecrets\(\)/);
+  assert.match(connect, /if \(await flow\.connect\([^\n]+\)\) clearSecrets\(\)/);
+  assert.match(connect, /if \([^\n]*await flow\.saveSecret\([^\n]+\)\) clearSecrets\(\)/);
+  assert.equal(/finally \{[^}]*clearSecrets\(\)/.test(connect), false);
 });

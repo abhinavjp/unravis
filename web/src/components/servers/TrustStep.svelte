@@ -41,9 +41,14 @@
         <header><h4>{server ? server.host + (server.port !== 22 ? ':' + server.port : '') : ''}</h4><span class="sv-sp"></span><span class="sv-sub">{T.trustKeyType}: {flow.hostKeys.find((k) => k.fingerprint === fingerprint)?.algorithm ?? flow.hostKeys[0].algorithm}</span></header>
         <div class="sv-in sv-stack">
           {#if flow.hostKeys.length > 1}
-            <fieldset class="sv-field sv-radios"><legend>{T.trustPick}</legend>
+            <fieldset class="sv-field sv-radios" aria-describedby="sv-key-match"><legend>{T.trustPick}</legend>
+              <p class="sv-note" id="sv-key-match">{T.trustOneMatch}</p>
               {#each flow.hostKeys as k (k.fingerprint)}
-                <label><input type="radio" name="sv-fp" value={k.fingerprint} checked={fingerprint === k.fingerprint} onchange={() => { chosen = k.fingerprint; compared = false; }} /> <code>{k.fingerprint}</code> <span class="sv-note">{k.algorithm}</span></label>
+                <label class:sv-selected={fingerprint === k.fingerprint}>
+                  <input type="radio" name="sv-fp" value={k.fingerprint} checked={fingerprint === k.fingerprint} onchange={() => { chosen = k.fingerprint; compared = false; }} />
+                  <span class="sv-note">{k.algorithm}</span>
+                  <code>{k.fingerprint}</code>
+                </label>
               {/each}
             </fieldset>
           {:else}
@@ -78,6 +83,11 @@
   .sv-stack { display: grid; gap: var(--space-2); }
   .sv-print { padding: 12px; border: 1px solid var(--line); background: var(--surface-2, var(--surface)); overflow-wrap: anywhere; }
   .sv-print code { font-family: var(--mono); font-size: 13px; }
+  .sv-field.sv-radios { gap: var(--space-2); }
+  .sv-radios label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px var(--space-2); align-items: start; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+  .sv-radios label.sv-selected { border-color: var(--accent); background: var(--surface-2); }
+  .sv-radios input { grid-row: span 2; margin: 2px 0 0; accent-color: var(--accent); }
+  .sv-radios code { grid-column: 2; font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
 </style>
 
 

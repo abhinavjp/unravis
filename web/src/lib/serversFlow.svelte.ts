@@ -1,7 +1,8 @@
 import { serversApi } from './serversApi';
+import { SV_TEXT } from './copy/serversCopy';
 import {
-  FAILURE_TEXT, ServersError, buildAddBody, buildPatchBody, buildPullBody, caseRange, caseRangeProblem, connectProblems, folderKindInfo, initialPicks, jobPercent,
-  pullTargets, readableTargets, rangeHours, togglePick, withFolder, withoutFolder,
+  FAILURE_TEXT, ServersError, buildAddBody, buildPatchBody, buildPullBody, caseRange, caseRangeProblem, connectProblems, emptyConnectForm, findConnection,
+  folderKindInfo, initialPicks, jobPercent, matchesConnection, pullTargets, readableTargets, rangeHours, togglePick, withFolder, withoutFolder,
   type AuthKind, type ConnectForm, type Failure, type FolderMap, type HostKey, type JobView, type MachineView, type PlanView, type PullTarget, type RangeChoice,
   type ServerEntry, type TestResult
 } from './servers';
@@ -9,7 +10,7 @@ import type { WindowFields } from './tracing/windows';
 
 /**
  * The state and the steps of the Servers screen. Everything here comes from the backend: nothing is made up for the page.
- * A password or key passphrase is an argument of `connect` and `saveSecret` only. It is passed on and never stored in this object.
+ * `connect` and `saveSecret` pass credentials to the API without keeping them in flow state.
  */
 
 export type Step = 'connect' | 'trust' | 'pick' | 'reach' | 'has' | 'pull' | 'land';
@@ -31,6 +32,10 @@ export class ServersFlow {
   private env: Env;
   private disposed = false;
   private stopAsked = false;
+  private call: AbortController | null = null;
+  private listCall: AbortController | null = null;
+  private provisionalServerId: string | null = null;
+  private sudoRetries = new Map<string, Promise<unknown>>();
 
   constructor(env: Env) { this.env = env; }
 
@@ -39,6 +44,7 @@ export class ServersFlow {
   step = $state<Step>('connect');
   reached = $state(0);
   server = $state<ServerEntry | null>(null);
+  draft = $state(emptyConnectForm());
   needSecret = $state(false);
   busy = $state('');
   error = $state<Failure | null>(null);
@@ -60,7 +66,7 @@ export class ServersFlow {
 
   /* ------------------------------------------------------------- basics */
 
-  dispose(): void { this.disposed = true; }
+  dispose(): void { this.disposed = true; this.abortCall(); this.listCall?.abort(); }
 
   caseRange() { return caseRange(this.env.windows(), this.env.now()); }
 
@@ -72,6 +78,7 @@ export class ServersFlow {
   /** Back to an earlier step. Not while a copy runs. */
   go(step: Step): void {
     if (this.running || STEP_ORDER.indexOf(step) > this.reached) return;
+    this.abortCall();
     this.error = null; this.note = '';
     this.step = step;
   }
@@ -87,38 +94,77 @@ export class ServersFlow {
     this.error = f;
   }
 
-  private async guard<T>(label: string, fn: () => Promise<T>): Promise<T | undefined> {
+  private abortCall(): void {
+    this.call?.abort();
+    this.call = null;
+    this.busy = '';
+  }
+
+  private async guard<T>(label: string, fn: (signal: AbortSignal) => Promise<T>, apply?: (value: T) => void): Promise<T | undefined> {
+    if (this.disposed) return;
+    this.abortCall();
+    const call = new AbortController();
+    this.call = call;
     this.busy = label; this.error = null;
-    try { return await fn(); } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') return undefined;
-      this.fail(e);
-      return undefined;
-    } finally { this.busy = ''; }
+    try {
+      const value = await fn(call.signal);
+      if (this.call !== call) return;
+      apply?.(value);
+      return value;
+    } catch (e) {
+      if (this.call === call && !(e instanceof DOMException && e.name === 'AbortError')) this.fail(e);
+    } finally {
+      if (this.call === call) { this.call = null; this.busy = ''; }
+    }
   }
 
   private setServer(entry: ServerEntry): void {
     this.server = entry;
     if (this.list) this.list = this.list.some((s) => s.id === entry.id) ? this.list.map((s) => (s.id === entry.id ? { ...entry, running: s.running } : s)) : [...this.list, entry];
+    if (this.listCall) void this.load();
   }
 
   /* -------------------------------------------------------- saved servers */
 
   async load(): Promise<void> {
+    this.listCall?.abort();
+    const call = new AbortController();
+    this.listCall = call;
     this.listError = '';
-    try { this.list = (await serversApi.list()).items; } catch (e) { this.listError = failureOf(e).error; if (!this.list) this.list = []; }
+    try {
+      const { items } = await serversApi.list(call.signal);
+      if (!call.signal.aborted) this.list = items;
+    } catch (e) {
+      if (!call.signal.aborted) { this.listError = failureOf(e).error; if (!this.list) this.list = []; }
+    } finally {
+      if (this.listCall === call) this.listCall = null;
+    }
+  }
+
+  private clearConnection(): void {
+    this.server = null; this.needSecret = false; this.error = null; this.note = ''; this.changed = null; this.hostKeys = [];
+    this.machines = []; this.picks = []; this.sudo = false; this.tests = {}; this.rows = {}; this.targets = []; this.pulls = {}; this.order = [];
+    this.running = false; this.reached = 0;
   }
 
   reset(): void {
-    this.server = null; this.needSecret = false; this.error = null; this.note = ''; this.changed = null; this.hostKeys = [];
-    this.machines = []; this.picks = []; this.tests = {}; this.rows = {}; this.targets = []; this.pulls = {}; this.order = [];
-    this.running = false; this.reached = 0; this.step = 'connect';
+    this.abortCall();
+    this.clearConnection();
+    this.provisionalServerId = null;
+    this.draft = emptyConnectForm();
+    this.step = 'connect';
     void this.load();
+  }
+
+  private fillDraft(entry: ServerEntry): void {
+    this.draft = { host: entry.host, port: String(entry.port), user: entry.user, os: entry.os, auth: entry.auth };
   }
 
   /** Opens a saved server at the step it needs. */
   async use(entry: ServerEntry): Promise<void> {
     this.reset();
     this.server = entry;
+    this.fillDraft(entry);
     this.sudo = !!entry.saltSudo;
     if (!entry.hasSecret) { this.needSecret = true; this.goto('connect'); return; }
     if (!entry.hostKey) { this.goto('trust'); await this.fetchKeys(); return; }
@@ -127,32 +173,88 @@ export class ServersFlow {
   }
 
   async forget(entry: ServerEntry): Promise<void> {
-    await this.guard('forget', async () => { await serversApi.forget(entry.id); await this.load(); });
+    await this.guard('forget', (signal) => serversApi.forget(entry.id, signal), () => {
+      if (this.server?.id === entry.id) this.clearConnection();
+      if (this.provisionalServerId === entry.id) this.provisionalServerId = null;
+      if (this.list) this.list = this.list.filter((saved) => saved.id !== entry.id);
+      void this.load();
+    });
   }
 
   /* ---------------------------------------------------------------- connect */
 
   /** The secret and passphrase are used for this one call and are not kept. */
   async connect(form: ConnectForm, secret: string, passphrase: string): Promise<boolean> {
-    if (connectProblems(form, secret !== '').length) return false;
-    const entry = await this.guard('connect', () => serversApi.add(buildAddBody(form, secret, passphrase)));
-    if (!entry) return false;
-    this.setServer(entry);
-    this.sudo = false;
-    this.goto('trust');
-    await this.fetchKeys();
-    return true;
+    const draft = { ...form };
+    if (connectProblems(draft, true).length) return false;
+    const previous = this.server;
+    if (previous && matchesConnection(draft, previous)) {
+      if (secret) return this.saveSecret(draft.auth, secret, passphrase);
+      if (!previous.hasSecret) return false;
+      this.openConnection(previous);
+      return true;
+    }
+
+    const result = await this.guard('connect', async (signal) => {
+      let entry: ServerEntry;
+      let added = false;
+      let list: ServerEntry[] | undefined;
+      try {
+        entry = await serversApi.add(buildAddBody(draft, secret, secret ? passphrase : ''), signal);
+        added = true;
+      } catch (e) {
+        signal.throwIfAborted();
+        if (failureOf(e).reason !== 'duplicate') throw e;
+        let saved = findConnection(draft, this.list);
+        if (!saved || (!secret && !saved.hasSecret)) {
+          list = (await serversApi.list(signal)).items;
+          signal.throwIfAborted();
+          saved = findConnection(draft, list);
+        }
+        if (!saved || (!saved.hasSecret && !secret)) throw e;
+        entry = secret ? await this.storeSecret(saved, draft.auth, secret, passphrase, signal) : saved;
+      }
+      signal.throwIfAborted();
+      let forgotten: string | undefined;
+      if (previous && previous.id === this.provisionalServerId && !previous.hostKey && previous.id !== entry.id) {
+        try { await serversApi.forget(previous.id, signal); forgotten = previous.id; } catch { /* Keep the old entry if it cannot be removed. */ }
+      }
+      return { entry, added, list, forgotten };
+    }, ({ entry, added, list, forgotten }) => {
+      if (list) {
+        this.listCall?.abort();
+        this.listCall = null;
+        this.list = list;
+        this.listError = '';
+      }
+      if (forgotten && this.list) this.list = this.list.filter((saved) => saved.id !== forgotten);
+      if (previous?.id !== entry.id) {
+        this.clearConnection();
+        this.provisionalServerId = added ? entry.id : null;
+      }
+      if (!matchesConnection(this.draft, entry)) this.fillDraft(entry);
+      this.openConnection(entry);
+    });
+    return !!result;
   }
 
   async saveSecret(auth: AuthKind, secret: string, passphrase: string): Promise<boolean> {
     const server = this.server;
     if (!server || !secret) return false;
-    const ok = await this.guard('secret', async () => { await serversApi.setSecret(server.id, auth, secret, passphrase); return true; });
-    if (!ok) return false;
+    return !!(await this.guard('secret', (signal) => this.storeSecret(server, auth, secret, passphrase, signal), (entry) => this.openConnection(entry)));
+  }
+
+  private async storeSecret(server: ServerEntry, auth: AuthKind, secret: string, passphrase: string, signal: AbortSignal): Promise<ServerEntry> {
+    await serversApi.setSecret(server.id, auth, secret, passphrase, signal);
+    return { ...server, hasSecret: true, auth };
+  }
+
+  private openConnection(entry: ServerEntry): void {
     this.needSecret = false;
-    this.setServer({ ...server, hasSecret: true, auth });
-    if (!server.hostKey) { this.goto('trust'); await this.fetchKeys(); } else await this.loadMachines();
-    return true;
+    if (entry !== this.server) this.setServer(entry);
+    this.sudo = !!entry.saltSudo;
+    if (entry.hostKey) void this.loadMachines();
+    else { this.goto('trust'); void this.fetchKeys(); }
   }
 
   /* ------------------------------------------------------------------ trust */
@@ -160,40 +262,88 @@ export class ServersFlow {
   async fetchKeys(): Promise<void> {
     const server = this.server;
     if (!server) return;
-    const res = await this.guard('keys', () => serversApi.hostKeys(server.id));
-    if (res) this.hostKeys = res.keys;
+    await this.guard('keys', (signal) => serversApi.hostKeys(server.id, signal), ({ keys }) => { this.hostKeys = keys; });
   }
 
   async trust(fingerprint: string): Promise<void> {
     const server = this.server;
     if (!server || !fingerprint) return;
-    const entry = await this.guard('pin', () => serversApi.pin(server.id, fingerprint));
-    if (!entry) return;
-    this.setServer(entry);
-    this.hostKeys = [];
-    await this.loadMachines();
+    await this.guard('pin', (signal) => serversApi.pin(server.id, fingerprint, signal), (entry) => {
+      this.setServer(entry);
+      this.hostKeys = [];
+      void this.loadMachines();
+    });
   }
 
   async replaceKey(): Promise<void> {
     const server = this.server, changed = this.changed;
     if (!server || !changed || !changed.pinned || !changed.presented) return;
-    const entry = await this.guard('replace', () => serversApi.replaceKey(server.id, changed.pinned, changed.presented));
-    if (!entry) return;
-    this.setServer(entry);
-    this.changed = null;
-    await this.loadMachines();
+    await this.guard('replace', (signal) => serversApi.replaceKey(server.id, changed.pinned, changed.presented, signal), (entry) => {
+      this.setServer(entry);
+      this.changed = null;
+      void this.loadMachines();
+    });
   }
 
   /* ------------------------------------------------------------------- pick */
 
-  async loadMachines(): Promise<void> {
+  async loadMachines(autoSudo = true): Promise<void> {
     const server = this.server;
     if (!server) return;
     this.goto('pick');
-    const res = await this.guard('machines', () => serversApi.machines(server.id));
-    if (!res) return;
-    this.machines = res.machines;
-    this.picks = initialPicks(res.machines);
+    this.note = '';
+    this.machines = [];
+    this.picks = [];
+    await this.guard('machines', async (signal): Promise<{ machines: MachineView[]; entry?: ServerEntry }> => {
+      await this.sudoRetries.get(server.id)?.catch(() => {});
+      signal.throwIfAborted();
+      try {
+        return await serversApi.machines(server.id, signal);
+      } catch (e) {
+        signal.throwIfAborted();
+        if (!autoSudo || server.os !== 'linux' || this.sudo || failureOf(e).reason !== 'salt-master') throw e;
+        const retry = this.retryMachinesWithSudo(server.id, e, signal);
+        this.sudoRetries.set(server.id, retry);
+        try { return await retry; } finally { this.sudoRetries.delete(server.id); }
+      }
+    }, ({ machines, entry }) => {
+      if (entry) {
+        this.setServer(entry);
+        this.sudo = true;
+        this.note = SV_TEXT.pickSudoSwitched;
+      }
+      this.machines = machines;
+      this.picks = initialPicks(machines);
+    });
+  }
+
+  private async retryMachinesWithSudo(id: string, original: unknown, signal: AbortSignal): Promise<{ machines: MachineView[]; entry: ServerEntry }> {
+    let entry: ServerEntry | undefined;
+    try {
+      // Let the settings write settle so backing out can still undo it.
+      entry = await serversApi.patch(id, buildPatchBody({ saltSudo: true }));
+      signal.throwIfAborted();
+      const { machines } = await serversApi.machines(id, signal);
+      signal.throwIfAborted();
+      return { machines, entry };
+    } catch {
+      if (entry) await serversApi.patch(id, buildPatchBody({ saltSudo: false })).catch(() => {});
+      throw original;
+    }
+  }
+
+  async setSudo(on: boolean): Promise<void> {
+    const server = this.server;
+    if (server?.os !== 'linux' || on === this.sudo) return;
+    await this.guard('machines', async (signal) => {
+      await this.sudoRetries.get(server.id)?.catch(() => {});
+      signal.throwIfAborted();
+      return serversApi.patch(server.id, buildPatchBody({ saltSudo: on }), signal);
+    }, (entry) => {
+      this.setServer(entry);
+      this.sudo = !!entry.saltSudo;
+      void this.loadMachines(false);
+    });
   }
 
   toggle(id: string, on: boolean): void { this.picks = togglePick(this.picks, this.machines, id, on); }
@@ -201,11 +351,11 @@ export class ServersFlow {
   async confirmMachines(): Promise<void> {
     const server = this.server;
     if (!server || this.picks.length === 0) return;
-    const entry = await this.guard('save-machines', () => serversApi.patch(server.id, buildPatchBody({ minionIds: this.picks, saltSudo: this.sudo })));
-    if (!entry) return;
-    this.setServer(entry);
-    this.tests = {}; this.rows = {}; this.targets = [];
-    this.goto('reach');
+    await this.guard('save-machines', (signal) => serversApi.patch(server.id, buildPatchBody({ minionIds: this.picks }), signal), (entry) => {
+      this.setServer(entry);
+      this.tests = {}; this.rows = {}; this.targets = [];
+      this.goto('reach');
+    });
   }
 
   /* ------------------------------------------------------------------ reach */
@@ -226,11 +376,10 @@ export class ServersFlow {
   private async saveFolders(next: FolderMap): Promise<boolean> {
     const server = this.server;
     if (!server) return false;
-    const entry = await this.guard('folders', () => serversApi.patch(server.id, buildPatchBody({ folders: next })));
-    if (!entry) return false;
-    this.setServer(entry);
-    this.tests = {};
-    return true;
+    return !!(await this.guard('folders', (signal) => serversApi.patch(server.id, buildPatchBody({ folders: next }), signal), (entry) => {
+      this.setServer(entry);
+      this.tests = {};
+    }));
   }
 
   async testMachine(machine: string): Promise<void> {
@@ -393,9 +542,14 @@ export class ServersFlow {
   async attachRunning(): Promise<void> {
     const server = this.server;
     if (!server) return;
-    const res = await this.guard('pulls', () => serversApi.pulls(server.id));
-    const job = res?.items.find((j) => j.state === 'running');
-    if (!job) { await this.loadMachines(); return; }
+    await this.guard('pulls', (signal) => serversApi.pulls(server.id, signal), ({ items }) => {
+      const job = items.find((j) => j.state === 'running');
+      if (job) void this.showRunning(server, job);
+      else void this.loadMachines();
+    });
+  }
+
+  private async showRunning(server: ServerEntry, job: JobView): Promise<void> {
     const key = (job.machine ?? '') + '|' + (folderKindInfo(job.kind)?.kind ?? job.kind) + '|' + job.dir;
     this.order = [key];
     this.pulls = { [key]: { state: 'running', job, planned: 0 } };
