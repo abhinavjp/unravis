@@ -100,9 +100,9 @@ function paintChrome() {
     .map(([k, l, n]) => `<a class="tab" href="#/${k}" ${cur === k ? 'aria-current="page"' : ''}>${l}${n !== '' ? `<span class="n">${esc(n)}</span>` : ''}</a>`).join('');
   const run = o ? (o.running || []).length : 0; const wait = o ? (o.waiting || []).length : 0;
   $('#now').innerHTML = run ? `<span class="c-running sic-wrap">${ico('running', 'spin')}</span><b>${run} running</b> · ${wait} waiting` : `<span class="dot"></span>Nothing running · ${wait} waiting`;
-  const u = D.machines && D.machines.updated ? ts(D.machines.updated) : D.at; const age = u ? (Date.now() - u) / 1000 : 0;
-  const f = $('#fresh'); f.className = 'fresh' + (age > 120 ? ' stale' : '');
-  f.textContent = !u ? '' : age > 120 ? 'Data is ' + rel(u).replace(' ago', '') + ' old' : 'Updated ' + rel(u);
+  const fc = Fresh.chip(Date.now()); // the older of the two read times; the warning style after 3 missed polls of either
+  const f = $('#fresh'); f.className = 'fresh' + (fc.stale ? ' stale' : ''); f.title = fc.title;
+  f.innerHTML = fc.text ? (fc.stale ? ico('clock') : '') + esc(fc.text) : '';
   $('#themesw').innerHTML = Appearance.html(S.menu === 'theme');
   Appearance.bind($('#themesw'), { toggle: () => { S.menu = S.menu === 'theme' ? null : 'theme'; paintChrome(); }, changed: () => paintChrome(), toast });
   $('#swb').onclick = (e) => { e.stopPropagation(); S.menu = S.menu === 'proj' ? null : 'proj'; paintChrome(); };
@@ -466,6 +466,7 @@ function viewReleases() {
     <td>${vst(x.verify)}</td><td class="num hide-s">${(() => { const t = stepsOf(x).filter((y) => isFinite(y.t)); return t.length > 1 ? esc(dur(t[t.length - 1].t - t[0].t)) : '–'; })()}</td><td class="num">${when(x.published)}</td></tr>`;
   const withSteps = rs.filter((x) => (x.steps || []).length).length;
   return `<div class="ph"><h1>Releases</h1><p>Each release runs ${names.length} steps, from ${esc(names[0])} to ${esc(names[names.length - 1])}. Today releases are still built on GitHub; this page reads them.</p></div>
+  ${Fresh.noteHtml('releases', Date.now())}
   ${sn.github && sn.github.ok === false ? `<p class="empty"><b>GitHub could not be reached.</b> ${esc(sn.github.detail || '')}</p>` : ''}
   <div class="chan">${lane('rc')}<div class="arrow" aria-hidden="true">→</div>${lane('stable')}</div>
   <div class="split"><section><div class="sh"><h2>All releases</h2><span class="muted">${rs.length} on GitHub, ${withSteps} with step records on this PC</span></div>
@@ -480,7 +481,6 @@ function bindReleases() {
     tr.onclick = pick; tr.onkeydown = (e) => { if (e.key === 'Enter') pick(); };
   });
   $$('[data-dlg]').forEach((b) => { b.onclick = () => dialog(b.dataset.dlg, b.dataset.v); });
-  $$('[data-check]').forEach((b) => { b.onclick = () => { toast('Checking again…'); Data.tick(true); }; });
   const rs = sn.releases || []; const sel = route().q.get('v') || S.rel || (rs[0] && rs[0].version);
   Legacy.renderDetail(rs.find((x) => x.version === sel) || rs[0] || null, { releases: rs, snap: sn });
 }
@@ -551,8 +551,10 @@ function render() {
   else if (R.name === 'releases') html = viewReleases();
   else if (R.name === 'machines') html = viewMachines();
   else html = '<div class="empty"><b>No such page.</b> <a href="#/overview">Back to the overview</a>.</div>';
-  const banner = D.err && D.loaded ? `<div class="empty"><b>The last refresh failed.</b> ${esc(D.err)} Showing the last answer.</div>` : '';
+  // Older data is named at the top of the page; the Releases page puts its own note under its heading (viewReleases).
+  const banner = R.name === 'releases' ? '' : Fresh.noteHtml(R.name, Date.now()) || (D.err && D.loaded && !D.at ? `<div class="empty"><b>The last refresh failed.</b> ${esc(D.err)}</div>` : '');
   main.innerHTML = banner + html;
+  $$('[data-check]', main).forEach((b) => { b.onclick = () => { toast('Checking again…'); Data.tick(true); }; });
   $$('table.tbl th', main).forEach((th) => th.setAttribute('scope', 'col'));
   $$('table.tbl', main).forEach((t) => { if (t.parentElement.className !== 'tw') { const d = document.createElement('div'); d.className = 'tw'; t.replaceWith(d); d.appendChild(t); } });
   applyDyn(main);

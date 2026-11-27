@@ -97,3 +97,102 @@ test('the machine, the run and the log views read only the program routes, never
   assert.match(js, /fetch\('\/api\/action\/' \+ encodeURIComponent\(id\),\s*\{\s*method: 'POST'/, 'the write is the action route');
   for (const route of ['/api/projects', '/api/overview', '/api/runs', '/api/run', '/api/run/log', '/api/machines', '/api/snapshot']) assert.ok(js.includes(route), route);
 });
+
+// W-05: the page says when its data is old. util.js and data.js run in a sandbox with a fake clock and a fake fetch, so the
+// real Data.tick / loadSlow / loadFast and the real chip and note words are the code under test.
+function dataSandbox() {
+  const clock = { t: Date.parse('2026-11-27T14:00:00') };
+  class FakeDate extends Date { static now() { return clock.t; } }
+  const net = { snapshot: 'ok', fast: 'ok' };
+  const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
+  const fetch = async (url) => {
+    const p = String(url).split('?')[0];
+    if (p === '/api/projects') return json({ projects: [{ id: 'u', name: 'Unravis', ciFound: true }] });
+    if (p === '/api/snapshot') { if (net.snapshot === 'down') throw new TypeError('Failed to fetch'); return json({ at: 'x', releases: [{ version: 'rc.1' }], feeds: [] }); }
+    if (net.fast === 'down') throw new TypeError('Failed to fetch');
+    if (p === '/api/overview') return json({ now: 1, branches: [] });
+    if (p === '/api/runs') return json({ runs: [], total: 0 });
+    return json({ machines: [], updated: 0 });
+  };
+  const sb = { document: { querySelector: () => null, querySelectorAll: () => [], visibilityState: 'visible', addEventListener() {} }, Date: FakeDate, Math, isFinite, String, Array, Set, JSON, Object, Promise, Error, TypeError, URLSearchParams,
+    fetch, setInterval: () => 0, addEventListener() {}, history: {}, sessionStorage: {}, localStorage: { getItem: () => '', setItem() {} }, location: { hash: '', pathname: '/', search: '' } };
+  vm.createContext(sb);
+  vm.runInContext(read('util.js') + '\n' + read('data.js') + '\n;globalThis.__t = { D, Data, Fresh, POLL, plainReason };', sb, { filename: 'data.js' });
+  const kinds = [];
+  sb.__t.Data.start((k) => kinds.push(k));
+  return { ...sb.__t, clock, net, kinds };
+}
+const settle = () => new Promise((r) => setTimeout(r, 5));
+const tick = async (h, slow) => { await h.Data.tick(slow); await settle(); };
+
+test('W-05 loadSlow: a failed releases read keeps the old snapshot and its read time, and says why in plain words', async () => {
+  const h = dataSandbox(); await settle();
+  const first = h.D.snapshotAt; assert.ok(first > 0 && h.D.snapshot && h.D.snapshot.releases.length === 1);
+  h.clock.t += 31000; h.net.snapshot = 'down'; await tick(h, true);
+  assert.ok(h.D.snapshot, 'the old snapshot stays');
+  assert.equal(h.D.snapshotAt, first, 'the read time does not move on a failed read');
+  assert.match(h.D.snapshotErr, /could not reach the unravis-releases program on this PC/);
+  assert.doesNotMatch(h.D.snapshotErr, /Failed to fetch/);
+  h.clock.t += 31000; h.net.snapshot = 'ok'; await tick(h, true);
+  assert.equal(h.D.snapshotErr, ''); assert.ok(h.D.snapshotAt > first, 'a good read moves the time and clears the error');
+});
+
+test('W-05 loadFast: a failed runs read keeps the read time; a failure that starts or ends redraws once, a repeat does not', async () => {
+  const h = dataSandbox(); await settle();
+  const at = h.D.at; assert.ok(at > 0);
+  h.kinds.length = 0; h.clock.t += 4000; h.net.fast = 'down'; await tick(h, false);
+  assert.equal(h.D.at, at); assert.match(h.D.err, /could not reach/); assert.deepEqual(Array.from(h.kinds), ['error']);
+  h.kinds.length = 0; h.clock.t += 4000; await tick(h, false);
+  assert.deepEqual(Array.from(h.kinds), ['tick'], 'the same failure again only repaints the header');
+  h.kinds.length = 0; h.net.fast = 'ok'; await tick(h, false);
+  assert.equal(h.D.err, ''); assert.deepEqual(Array.from(h.kinds), ['data'], 'recovery redraws so the note goes away');
+});
+
+test('W-05 words of a failed read: the server answer is kept, a request that never arrived is explained', () => {
+  const h = dataSandbox();
+  assert.equal(h.plainReason(Object.assign(new Error('The server answered 502.'), { status: 502 })), 'The server answered 502.');
+  assert.doesNotMatch(h.plainReason(new TypeError('Failed to fetch')), /fetch/i);
+});
+
+test('W-05 note: names the time of the old read and the reason; Releases shows both reads, other pages only runs and machines', async () => {
+  const h = dataSandbox(); await settle();
+  assert.equal(h.Fresh.noteHtml('releases', h.clock.t), '', 'nothing failed: no note');
+  const at = h.Fresh.clock(h.D.snapshotAt);
+  h.clock.t += 61000; h.net.snapshot = 'down'; await tick(h, true);
+  const rel = h.Fresh.noteHtml('releases', h.clock.t);
+  assert.ok(rel.includes(`<b>Showing releases as read at ${at}.</b>`), rel);
+  assert.match(rel, /Could not refresh: Homestretch could not reach the unravis-releases program on this PC\. It may have been closed\./);
+  assert.match(rel, /data-check/, 'a Check again button');
+  assert.equal(h.Fresh.noteHtml('overview', h.clock.t), '', 'the releases read is not a problem of the Overview page');
+  h.net.fast = 'down'; await tick(h, true);
+  const both = h.Fresh.noteHtml('releases', h.clock.t);
+  assert.match(both, /Showing releases as read at .+ and runs and machines as read at .+\./);
+  assert.equal((both.match(/class="stale-note"/g) || []).length, 1, 'one merged note, not two');
+  assert.match(h.Fresh.noteHtml('machines', h.clock.t), /Showing runs and machines as read at/);
+});
+
+test('W-05 chip: shows the older read time and warns after 3 polls of either read (12 s runs, 90 s releases)', async () => {
+  const h = dataSandbox(); await settle();
+  assert.equal(h.POLL.warnAfter * h.POLL.fast, 12000); assert.equal(h.POLL.warnAfter * h.POLL.slow, 90000);
+  const t0 = h.clock.t;
+  assert.equal(h.Fresh.chip(t0 + 5000).stale, false);
+  assert.match(h.Fresh.chip(t0 + 5000).text, /^Updated /);
+  assert.equal(h.Fresh.chip(t0 + 12000).stale, false, 'exactly 3 poll periods is still fine');
+  assert.equal(h.Fresh.chip(t0 + 13000).stale, true, 'runs older than 3 fast polls');
+  // the runs read is fresh again at t0+80 s, but the releases read is 80 s old: still quiet; at 91 s it warns
+  h.D.at = t0 + 80000;
+  assert.equal(h.Fresh.chip(t0 + 81000).stale, false);
+  const old = h.Fresh.chip(t0 + 91000);
+  assert.equal(old.stale, true); assert.equal(old.text, 'Data is 2 min old', 'the age of the older read (releases)');
+  assert.match(old.title, /Releases read at .+\. Runs and machines read at .+\./);
+  assert.equal(h.Fresh.chip(t0 + 200000).text, 'Data is 3 min old');
+});
+
+test('W-05 render: the page draws the note under the Releases heading, the chip with its warning style, and re-reads on Check again', () => {
+  const app = read('app.js');
+  assert.match(app, /Fresh\.noteHtml\('releases', Date\.now\(\)\)/);
+  assert.match(app, /Fresh\.chip\(Date\.now\(\)\)/);
+  assert.match(app, /\$\$\('\[data-check\]', main\)\.forEach/);
+  assert.match(read('components.css'), /\.stale-note\{/);
+  assert.match(read('components.css'), /\.fresh\.stale\{color:var\(--warn\)/);
+});
