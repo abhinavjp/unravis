@@ -318,7 +318,7 @@ test('DOC-09a: the wizard never mentions a SQL Server probe; the SQL step is pla
   await next.click();
   await expect(dialog.getByRole('heading', { name: 'SQL Server figures' })).toBeVisible();
   await expect(dialog).not.toContainText(/probe/i);
-  for (let i = 0; i < 4; i++) await next.click();
+  for (let i = 0; i < 5; i++) await next.click();
   await expect(dialog).not.toContainText(/probe/i);
 });
 
