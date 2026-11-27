@@ -166,3 +166,75 @@ func TestADamagedGroupCostsOnlyItself(t *testing.T) {
 		t.Errorf("known gaps %v", rep.KnownGaps)
 	}
 }
+
+const hostGroupLine = `{"v":1,"run":"r","seq":2,"t":"2001-09-09T01:47:00Z","cpu":5,` +
+	`"aspnet":{"requestsQueued":2,"requestsCurrent":9,"requestsRejected":0,"requestWaitTimeMs":40,"applicationRestarts":1},` +
+	`"memPressure":{"hardFaultsPerSec":3,"poolPagedBytes":1000,"poolNonPagedBytes":500,"pageFileUsagePct":12.5,"pagesPerSec":7,"pageFaultsPerSec":90,` +
+	`"standbyBytes":4096,"modifiedBytes":64,"freeBytes":32},` +
+	`"vm":{"balloonBytes":1048576},` +
+	`"diskCpu":{"disks":[{"name":"1 D:","readMs":20,"writesPerSec":4},{"name":"0 C:","readMs":5,"writeMs":8,"readsPerSec":2,"splitIOPerSec":1}],` +
+	`"cpu":{"queueLength":3,"privilegedPct":10,"dpcPct":1,"interruptPct":2,"utilityPct":120,"contextSwitchesPerSec":5000}}}` + "\n"
+
+func TestHostGroupsBecomeCountersWithTheWindowsNames(t *testing.T) {
+	evs, rep, err := parse(t, good+hostGroupLine, importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		object, counter, inst, unit string
+		v                           float64
+	}{
+		{"ASP.NET", "Requests Queued", "", "", 2},
+		{"ASP.NET", "Request Wait Time", "", "", 40},
+		{"ASP.NET Applications", "Requests Current", "__Total__", "", 9},
+		{"Memory", "Pages Input/sec", "", "", 3},
+		{"Memory", "Pool Nonpaged Bytes", "", "", 500},
+		{"Memory", "Free & Zero Page List Bytes", "", "", 32},
+		{"Paging File", "% Usage", "_Total", "", 12.5},
+		{"Blackbox Memory", "Standby Bytes", "", "bytes", 4096},
+		{"Blackbox VM", "Memory Ballooned", "", "bytes", 1048576},
+		{"System", "Processor Queue Length", "", "", 3},
+		{"Processor", "% Privileged Time", "_Total", "", 10},
+		{"Processor Information", "% Processor Utility", "_Total", "", 120},
+		// Disks are told apart by their place in the sorted names; latency is in seconds, as the Windows counter.
+		{"PhysicalDisk", "Avg. Disk sec/Read", "disk-1", "", 0.005},
+		{"PhysicalDisk", "Avg. Disk sec/Read", "disk-2", "", 0.02},
+		{"PhysicalDisk", "Avg. Disk sec/Write", "disk-1", "", 0.008},
+		{"PhysicalDisk", "Disk Writes/sec", "disk-2", "", 4},
+	} {
+		var got *evidence.Event
+		for i := range evs {
+			a := evs[i].Attrs
+			if a["object"] == c.object && a["counter"] == c.counter && a["instance"] == c.inst {
+				got = &evs[i]
+			}
+		}
+		if got == nil || got.Value == nil || *got.Value != c.v || got.Unit != c.unit {
+			t.Errorf("%s\\%s(%s): %+v", c.object, c.counter, c.inst, got)
+		}
+	}
+	for _, e := range evs {
+		for _, v := range e.Attrs {
+			if strings.Contains(v, "C:") || strings.Contains(v, "D:") {
+				t.Errorf("a disk name reached the timeline: %v", e.Attrs)
+			}
+		}
+	}
+	if len(counters(evs, "Avg. Disk sec/Write")) != 1 {
+		t.Errorf("a figure that was not read became an event")
+	}
+	if !contains(rep.KnownGaps, GapGroupsNotRead) {
+		t.Error("the groups still not read must be said")
+	}
+}
+
+func TestABadHostGroupNumberLeavesOutOnlyThatNumber(t *testing.T) {
+	data := `{"v":1,"run":"r","seq":1,"t":"2001-09-09T01:47:00Z","cpu":5,"vm":{"balloonBytes":1},"aspnet":{"requestsQueued":-1}}` + "\n"
+	evs, rep, err := parse(t, data, importer.Options{Limits: importer.Limits{MaxRejectFraction: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Rejected != 1 || len(counters(evs, "% Processor Time")) != 1 {
+		t.Errorf("rejected %d, cpu events %d", rep.Rejected, len(counters(evs, "% Processor Time")))
+	}
+}

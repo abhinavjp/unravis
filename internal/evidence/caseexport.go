@@ -150,9 +150,9 @@ func polNameKeep(prefix string, keep *regexp.Regexp) attrPolicy {
 
 func polPerson(prefix string) attrPolicy { return attrPolicy{rule: rulePerson, prefix: prefix} }
 
-// blackboxInstance is every counter instance the Blackbox source writes: a total, its own volume, a worker's process id and
-// the place number of an HTTP queue. None of them is a client name.
-var blackboxInstance = regexp.MustCompile(`^(?:_Total|recordings-volume|pid-[0-9]{1,10}|queue-[0-9]{1,3})$`)
+// blackboxInstance is every counter instance the Blackbox source writes: a total, its own volume, a worker's process id, the place number of an HTTP queue or a disk
+// and the ASP.NET total. None of them is a client name.
+var blackboxInstance = regexp.MustCompile(`^(?:_Total|recordings-volume|pid-[0-9]{1,10}|queue-[0-9]{1,3}|disk-[0-9]{1,3}|__Total__)$`)
 
 var (
 	counterPolicy = map[string]attrPolicy{"object": polObject, "counter": polEnum(counterNames),

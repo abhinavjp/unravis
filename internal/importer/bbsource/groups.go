@@ -229,5 +229,101 @@ func groupReadings(l *line, nt *notes) (out []reading, ok bool) {
 			put(f.v, "Blackbox TCP", f.counter, "", "", f.unit)
 		}
 	}
+	hostGroups(l, nt, put)
 	return out, ok
+}
+
+// hostGroups adds the host-wide groups: ASP.NET, memory pressure, virtual machine and the disk and CPU detail. A figure the
+// recorder reads exactly as a Windows counter keeps that counter's name (and its unit, none); a sum or a conversion the
+// recorder makes itself goes under an object that starts with "Blackbox".
+func hostGroups(l *line, nt *notes, put func(p *float64, object, counter, instance, sqlInst, unit string)) {
+	scaled := func(p *float64, k float64) *float64 {
+		if p == nil {
+			return nil
+		}
+		v := *p * k
+		return &v
+	}
+	bytesOf := func(p *uint64) *float64 {
+		if p == nil {
+			return nil
+		}
+		v := float64(*p)
+		return &v
+	}
+	if len(l.ASPNET) > 0 {
+		var g struct {
+			RequestsQueued, RequestsCurrent, RequestsRejected, RequestWaitTimeMs, ApplicationRestarts *float64
+		}
+		if json.Unmarshal(l.ASPNET, &g) != nil {
+			nt.damaged = true
+		}
+		put(g.RequestsQueued, "ASP.NET", "Requests Queued", "", "", "")
+		put(g.RequestsRejected, "ASP.NET", "Requests Rejected", "", "", "")
+		put(g.RequestWaitTimeMs, "ASP.NET", "Request Wait Time", "", "", "")
+		put(g.ApplicationRestarts, "ASP.NET", "Application Restarts", "", "", "")
+		put(g.RequestsCurrent, "ASP.NET Applications", "Requests Current", "__Total__", "", "")
+	}
+	if len(l.MemPressure) > 0 {
+		var g struct {
+			HardFaultsPerSec, PageFileUsagePct, PagesPerSec, PageFaultsPerSec         *float64
+			PoolPagedBytes, PoolNonPagedBytes, StandbyBytes, ModifiedBytes, FreeBytes *uint64
+		}
+		if json.Unmarshal(l.MemPressure, &g) != nil {
+			nt.damaged = true
+		}
+		put(g.HardFaultsPerSec, "Memory", "Pages Input/sec", "", "", "")
+		put(g.PagesPerSec, "Memory", "Pages/sec", "", "", "")
+		put(g.PageFaultsPerSec, "Memory", "Page Faults/sec", "", "", "")
+		put(bytesOf(g.PoolPagedBytes), "Memory", "Pool Paged Bytes", "", "", "")
+		put(bytesOf(g.PoolNonPagedBytes), "Memory", "Pool Nonpaged Bytes", "", "", "")
+		put(bytesOf(g.ModifiedBytes), "Memory", "Modified Page List Bytes", "", "", "")
+		put(bytesOf(g.FreeBytes), "Memory", "Free & Zero Page List Bytes", "", "", "")
+		put(g.PageFileUsagePct, "Paging File", "% Usage", "_Total", "", "")
+		// The standby list is the sum of three bands the recorder adds up: its own figure.
+		put(bytesOf(g.StandbyBytes), "Blackbox Memory", "Standby Bytes", "", "", "bytes")
+	}
+	if len(l.VM) > 0 {
+		var g struct{ BalloonBytes *uint64 }
+		if json.Unmarshal(l.VM, &g) != nil {
+			nt.damaged = true
+		}
+		put(bytesOf(g.BalloonBytes), "Blackbox VM", "Memory Ballooned", "", "", "bytes")
+	}
+	if len(l.DiskCPU) > 0 {
+		var g struct {
+			Disks []struct {
+				Name                                                      string
+				ReadMs, WriteMs, ReadsPerSec, WritesPerSec, SplitIOPerSec *float64
+			}
+			CPU *struct {
+				QueueLength, PrivilegedPct, DPCPct, InterruptPct, UtilityPct, ContextSwitchesPerSec *float64
+			}
+		}
+		if json.Unmarshal(l.DiskCPU, &g) != nil {
+			nt.damaged = true
+		}
+		if c := g.CPU; c != nil {
+			put(c.QueueLength, "System", "Processor Queue Length", "", "", "")
+			put(c.ContextSwitchesPerSec, "System", "Context Switches/sec", "", "", "")
+			put(c.PrivilegedPct, "Processor", "% Privileged Time", "_Total", "", "")
+			put(c.DPCPct, "Processor", "% DPC Time", "_Total", "", "")
+			put(c.InterruptPct, "Processor", "% Interrupt Time", "_Total", "", "")
+			put(c.UtilityPct, "Processor Information", "% Processor Utility", "_Total", "", "")
+		}
+		// A disk is told apart by its place in the sorted names, never by its name.
+		sort.SliceStable(g.Disks, func(a, b int) bool { return g.Disks[a].Name < g.Disks[b].Name })
+		ds := g.Disks
+		if len(ds) > maxPools {
+			ds, nt.cut = ds[:maxPools], true
+		}
+		for i, d := range ds {
+			inst := "disk-" + itoa(int64(i+1))
+			put(scaled(d.ReadMs, 0.001), "PhysicalDisk", "Avg. Disk sec/Read", inst, "", "")
+			put(scaled(d.WriteMs, 0.001), "PhysicalDisk", "Avg. Disk sec/Write", inst, "", "")
+			put(d.ReadsPerSec, "PhysicalDisk", "Disk Reads/sec", inst, "", "")
+			put(d.WritesPerSec, "PhysicalDisk", "Disk Writes/sec", inst, "", "")
+			put(d.SplitIOPerSec, "PhysicalDisk", "Split IO/Sec", inst, "", "")
+		}
+	}
 }
