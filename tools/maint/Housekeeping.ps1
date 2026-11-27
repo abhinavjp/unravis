@@ -284,9 +284,20 @@ function Invoke-HousekeepingRun {
 # Format-GoPart: "go [label GB, label GB]" with the GB freed (or, in a dry run, that would go) per location, then the module cache size.
 function Format-GoPart {
     param([bool]$DoApply, $R)
+    # Every location says what happened to it, so a skipped cache can never read as "0.00 GB".
     $parts = @()
-    foreach ($l in @($R.GoLocs)) { $parts += ('{0} {1}' -f $l.Label, (Format-Size $(if ($DoApply) { $l.FreedBytes } else { $l.WouldBytes }))) }
-    $s = $(if ($DoApply) { 'go freed [' } else { 'go would free [' }) + ($parts -join ', ') + ']'
+    foreach ($l in @($R.GoLocs)) {
+        $sz = Format-Size $l.Bytes
+        $parts += switch ($l.Status) {
+            'cleaned' { '{0} freed {1} of {2}' -f $l.Label, (Format-Size $l.FreedBytes), $sz }
+            'would clean' { '{0} would free {1}' -f $l.Label, $sz }
+            'under limit' { '{0} {1} under limit' -f $l.Label, $sz }
+            'busy' { '{0} {1} over limit, build running' -f $l.Label, $sz }
+            'not a go cache' { '{0} skipped (no Go README)' -f $l.Label }
+            default { '{0} {1}' -f $l.Label, $l.Status }
+        }
+    }
+    $s = 'go [' + ($parts -join '; ') + ']'
     if ($R.ModBytes -ge 0) { $s += '; modcache ' + (Format-Size $R.ModBytes) }
     return $s
 }

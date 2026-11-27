@@ -249,10 +249,13 @@ try {
 
     $rg = Invoke-HousekeepingRun -Repo $repo -DoApply $true -Clock $clock -TempRoot $temp -ProjectsRoot $projects -ScratchRoots @($scratch) -Running $goBusy -GoCacheLimitGB $lim -GoLocations @([pscustomobject]@{ Label = 'pkg-huge'; Path = $huge }) -UseGo $false -ModCacheDir $modDir 6>$null
     $line = Format-RunLine -Ev 'periodic' -DoApply $true -R $rg
-    Check ($line -match 'go cache over limit but a build is running' -and $line -match 'go freed \[pkg-huge 0\.00 GB\]' -and $line -match 'modcache 0\.0[0-9] GB') 'run line: names the blocked cache, the GB freed per location and the module cache size'
+    Check ($line -match 'go cache over limit but a build is running' -and $line -match 'go \[pkg-huge 0\.02 GB over limit, build running\]' -and $line -match 'modcache 0\.0[0-9] GB') 'run line: names the blocked cache and its size (not a 0.00 GB freed), and the module cache size'
     $rg = Invoke-HousekeepingRun -Repo $repo -DoApply $true -Clock $clock -TempRoot $temp -ProjectsRoot $projects -ScratchRoots @($scratch) -Running @() -GoCacheLimitGB $lim -GoLocations @([pscustomobject]@{ Label = 'pkg-huge'; Path = $huge }) -UseGo $false 6>$null
     $line = Format-RunLine -Ev 'periodic' -DoApply $true -R $rg
-    Check ((-not (Test-Path (Join-Path $huge '3f\x-d'))) -and $line -match 'go freed \[pkg-huge 0\.0[1-9] GB\]') 'run line: a cleaned location shows its freed GB'
+    Check ((-not (Test-Path (Join-Path $huge '3f\x-d'))) -and $line -match 'go \[pkg-huge freed 0\.0[1-9] GB of 0\.02 GB\]') 'run line: a cleaned location shows its freed GB'
+    $rg = Invoke-HousekeepingRun -Repo $repo -DoApply $true -Clock $clock -TempRoot $temp -ProjectsRoot $projects -ScratchRoots @($scratch) -Running @() -GoCacheLimitGB $lim -GoLocations @([pscustomobject]@{ Label = 'pkg-x'; Path = $nonCache }, [pscustomobject]@{ Label = 'go-env'; Path = $small }) -UseGo $false 6>$null
+    $line = Format-RunLine -Ev 'periodic' -DoApply $true -R $rg
+    Check ($line -match 'pkg-x skipped \(no Go README\)' -and $line -match 'go-env 0\.00 GB under limit') 'run line: a skipped or under-limit cache is named as such, never shown as a bare 0.00 GB'
 
     # ---- owner filter edge cases
     $script:ProcessLinesOverride = $null
