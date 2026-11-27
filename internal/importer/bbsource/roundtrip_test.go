@@ -9,10 +9,12 @@ import (
 	"api-audit-explorer/internal/bbredis"
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/importer/redis"
 )
 
 func fp(v float64) *float64 { return &v }
 func up(v uint64) *uint64   { return &v }
+func u32(v uint32) *uint32  { return &v }
 
 // TestTheReaderReadsWhatTheRecorderWrites marshals real blackbox.Sample values, with every group this reader knows, and
 // reads them back. A tag that drifts between the recorder and this reader fails here, not on a server.
@@ -35,7 +37,14 @@ func TestTheReaderReadsWhatTheRecorderWrites(t *testing.T) {
 			Events: &blackbox.EventsGroup{Events: []blackbox.EventEntry{{Channel: 1, EventID: 7034, Level: 2, Count: 3, T: at}}},
 			SQLLog: &blackbox.SQLLogGroup{Errors: []blackbox.SQLLogEvent{{Instance: "MSSQLSERVER", Kind: blackbox.SQLLogKindError, Number: 823, Severity: 24, Count: 1, T: at}},
 				Health: []blackbox.SQLHealthEvent{{Instance: "MSSQLSERVER", Kind: blackbox.SQLHealthDeadlock, Count: 1, T: at}}},
-			Dumps: &blackbox.DumpsGroup{Dumps: []blackbox.DumpEntry{{Name: "w3wp.dmp", Size: 123456, MTime: t0}}},
+			Dumps:  &blackbox.DumpsGroup{Dumps: []blackbox.DumpEntry{{Name: "w3wp.dmp", Size: 123456, MTime: t0}}},
+			ASPNET: &blackbox.ASPNETGroup{RequestsQueued: fp(2), RequestsCurrent: fp(9), RequestsRejected: fp(0), RequestWaitTimeMs: fp(40), ApplicationRestarts: fp(1)},
+			MemPressure: &blackbox.MemPressureGroup{HardFaultsPerSec: fp(3), PoolPagedBytes: up(1000), PoolNonPagedBytes: up(500), PageFileUsagePct: fp(12),
+				PagesPerSec: fp(7), PageFaultsPerSec: fp(90), StandbyBytes: up(4096), ModifiedBytes: up(64), FreeBytes: up(32)},
+			VM: &blackbox.VMGroup{BalloonBytes: up(1 << 20)},
+			DiskCPU: &blackbox.DiskCPUGroup{Disks: []blackbox.DiskSplit{{Name: "0 C:", ReadMs: fp(5), WriteMs: fp(8), ReadsPerSec: fp(2), WritesPerSec: fp(3), SplitIOPerSec: fp(1)}},
+				CPU: &blackbox.CPUSplit{QueueLength: fp(3), PrivilegedPct: fp(10), DPCPct: fp(1), InterruptPct: fp(2), UtilityPct: fp(120), ContextSwitchesPerSec: fp(5000)}},
+			Procs: []blackbox.ProcRow{{PID: 4321, Name: "w3wp.exe", CPUPct: fp(12), WS: up(1 << 30), Private: up(1 << 29), Handles: u32(900), Threads: 40}},
 		}
 	}
 	var b strings.Builder
@@ -57,6 +66,8 @@ func TestTheReaderReadsWhatTheRecorderWrites(t *testing.T) {
 	want := map[string]bool{
 		"counter:% Processor Time": false, "counter:Batch Requests/sec": false, "counter:Page life expectancy": false,
 		"counter:MaxQueueItemAge": false, "counter:Active Requests": false, "counter:Retransmits/sec": false,
+		"counter:Requests Queued": false, "counter:Pool Paged Bytes": false, "counter:Memory Ballooned": false, "counter:% Privileged Time": false,
+		"counter:Avg. Disk sec/Read": false, "metric:cpu": false, "metric:working-set": false, "metric:private-bytes": false, "metric:handles": false, "metric:threads": false,
 		"metric:used_memory": false, "metric:used_cpu_user": false, "slow-command:": false, "latency-spike:": false,
 		"win-event:": false, "error:": false, "deadlock:": false, "dump-file:": false, "recorder-start:": false,
 	}
@@ -76,5 +87,49 @@ func TestTheReaderReadsWhatTheRecorderWrites(t *testing.T) {
 		if got := len(ofKind(evs, kind)); got != n {
 			t.Errorf("%d %s events, want %d", got, kind, n)
 		}
+	}
+}
+
+// The metric names of the process list and of the Redis figures must never meet: the resource rules choose by name.
+func TestProcessMetricNamesDoNotMeetRedisNames(t *testing.T) {
+	for _, m := range redis.InfoMetrics() {
+		switch m.Key {
+		case "cpu", "working-set", "private-bytes", "handles", "threads":
+			t.Errorf("redis metric %q is also a process metric", m.Key)
+		}
+	}
+}
+
+func TestAProcessKeepsItsStoredLabelAndNeverItsName(t *testing.T) {
+	line := `{"v":1,"run":"r","seq":1,"t":"2001-09-09T01:47:00Z","procs":[` +
+		`{"pid":4321,"name":"w3wp.exe","cpuPct":12,"ws":1000,"priv":500,"handles":9,"threads":4},` +
+		`{"pid":77,"name":"AcmePayroll.exe","cpuPct":1,"threads":0},{"pid":0,"name":"x.exe"}]}` + "\n"
+	pseudo := func(kind, v string) string { return "instance-" + strings.Repeat("a", 6) }
+	evs, rep, err := parse(t, line, importer.Options{Limits: importer.Limits{MaxRejectFraction: 1}, Pseudonymize: pseudo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	for _, e := range evs {
+		if e.Attrs["pid"] == "" {
+			continue
+		}
+		seen[e.Attrs["process"]+"/"+e.Attrs["pid"]+"/"+e.Attrs["metric"]]++
+		for _, v := range e.Attrs {
+			if strings.Contains(v, "Acme") {
+				t.Errorf("a process name reached the timeline: %v", e.Attrs)
+			}
+		}
+	}
+	for _, k := range []string{"w3wp/4321/cpu", "w3wp/4321/working-set", "w3wp/4321/private-bytes", "w3wp/4321/handles", "w3wp/4321/threads", "instance-aaaaaa/77/cpu"} {
+		if seen[k] != 1 {
+			t.Errorf("%s: %d events (%v)", k, seen[k], seen)
+		}
+	}
+	if seen["instance-aaaaaa/77/threads"] != 0 || seen["instance-aaaaaa/77/working-set"] != 0 {
+		t.Errorf("a figure that was not read became an event: %v", seen)
+	}
+	if !contains(rep.KnownGaps, GapProcs) || !contains(rep.KnownGaps, GapGroupDamaged) {
+		t.Errorf("known gaps %v", rep.KnownGaps)
 	}
 }

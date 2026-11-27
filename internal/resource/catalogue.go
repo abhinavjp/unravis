@@ -326,7 +326,7 @@ func (b *builder) sample(ev evidence.Event) error {
 	o := obs{m: m, host: ev.Host, source: ev.Source, label: labelOf(ev, r.scope == scopeProc),
 		t: ev.End, start: ev.Start, v: v * m.Scale, id: ev.EvidenceID, ownSpan: ev.End.After(ev.Start), metric: ev.Kind == "metric"}
 	if r.scope == scopeProc {
-		if isPDH {
+		if isPDH && ev.Kind == "counter" { // a metric event (the Blackbox process list) names its process in attrs, like a snapshot
 			p, class, legacy, skip := pdhIdentity(ev.Attrs["object"], ev.Attrs["instance"])
 			if skip {
 				if r.id != IISWPActive {

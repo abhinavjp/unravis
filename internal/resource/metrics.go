@@ -137,7 +137,7 @@ var objectCLRMemory = attrIs("object", ".NET CLR Memory")
 
 var (
 	pdh        = []string{sourceWinCounters, sourceSQLPDH, sourceBlackbox}
-	procsnap   = []string{sourceProcSnap, sourceWinLive} // the live sampler writes the same process metrics
+	procsnap   = []string{sourceProcSnap, sourceWinLive, sourceBlackbox} // the live sampler writes the same process metrics
 	winlive    = []string{sourceWinLive}
 	dotnet     = []string{sourceDotnet}
 	redisInfo  = []string{sourceRedisInfo, sourceBlackbox}
