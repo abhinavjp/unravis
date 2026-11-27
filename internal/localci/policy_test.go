@@ -367,3 +367,45 @@ func TestAgentResumeAfterDrainMark(t *testing.T) {
 		t.Fatal("a path as an agent name must be refused")
 	}
 }
+
+func TestCurrentImpactReadsWithoutWriting(t *testing.T) {
+	dir, q := policyRig(t)
+	writeBeat(t, dir, Heartbeat{Name: "m1"})
+	mustEnqueue(t, q, prReq(1, strings.Repeat("a", 40)))
+	mustEnqueue(t, q, prReq(2, strings.Repeat("b", 40)))
+	imp, err := CurrentImpact(dir, "O/R")
+	if err != nil || imp.Queued != 2 || imp.NoMachine != 0 || len(imp.Stranded) != 0 || len(imp.Machines) != 1 {
+		t.Fatalf("any machine: %+v %v", imp, err)
+	}
+	setPolicy(t, dir, "o/r", PolicyOnly, "m9")
+	imp, err = CurrentImpact(dir, "o/r")
+	if err != nil || imp.Queued != 2 || imp.NoMachine != 2 || len(imp.Stranded) != 0 {
+		t.Fatalf("only m9: %+v %v", imp, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, PolicyFileName+".lock")); err == nil {
+		t.Fatal("reading left a lock file")
+	}
+	if _, err := CurrentImpact(dir, "../x"); err == nil {
+		t.Fatal("not a project")
+	}
+	if err := os.WriteFile(PolicyPath(dir), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CurrentImpact(dir, "o/r"); err == nil {
+		t.Fatal("an unreadable policy is an error")
+	}
+}
+
+func TestSortClaimOrderPutsLowerPriorityFirstThenOlder(t *testing.T) {
+	t0 := time.Now()
+	rs := []Request{
+		{ID: "c", Priority: 2, EnqueuedAt: t0},
+		{ID: "b", Priority: 1, EnqueuedAt: t0.Add(time.Second)},
+		{ID: "a", Priority: 1, EnqueuedAt: t0},
+		{ID: "z", Priority: 0, EnqueuedAt: t0.Add(time.Minute)},
+	}
+	SortClaimOrder(rs)
+	if got := rs[0].ID + rs[1].ID + rs[2].ID + rs[3].ID; got != "zabc" {
+		t.Fatalf("order %s", got)
+	}
+}
