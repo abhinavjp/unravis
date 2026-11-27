@@ -150,6 +150,10 @@ func polNameKeep(prefix string, keep *regexp.Regexp) attrPolicy {
 
 func polPerson(prefix string) attrPolicy { return attrPolicy{rule: rulePerson, prefix: prefix} }
 
+// blackboxInstance is every counter instance the Blackbox source writes: a total, its own volume, a worker's process id, the place number of an HTTP queue or a disk
+// and the ASP.NET total. None of them is a client name.
+var blackboxInstance = regexp.MustCompile(`^(?:_Total|recordings-volume|pid-[0-9]{1,10}|queue-[0-9]{1,3}|disk-[0-9]{1,3}|__Total__)$`)
+
 var (
 	counterPolicy = map[string]attrPolicy{"object": polObject, "counter": polEnum(counterNames),
 		"instance": polName("instance", "_Total")}
@@ -187,6 +191,10 @@ var exportPolicy = map[string]map[string]attrPolicy{
 		"method": polEnum(httpMethods), "module": polNameKeep("module", frebModule), "notification": polEnum(frebNotifications)},
 	"win-counters": counterPolicy,
 	"sql-pdh":      counterPolicy,
+	// The Blackbox's own recordings: the same counter names as the Windows counters, and a gap's length in intervals.
+	"blackbox-source": {"object": polObject, "counter": polEnum(counterNames), "instance": polNameKeep("instance", blackboxInstance), "sqlinstance": polNum, "intervals": polNum,
+		"metric": polEnum(blackboxMetrics), "process": procName, "pid": polNum, "role": polEnum(redisRoles), "command": polEnum(redisCommands), "id": polNum,
+		"event": polEnum(redisLatencyEvents), "log": polEnum(winEventLogs), "error_number": polNum, "sql_severity": polNum},
 	"win-events": {"log": polEnum(winEventLogs), "provider": polEnum(winEventProviders), "id": polNum,
 		"app-pool": polName("pool"), "reason": polEnum(winEventReasons), "faulting-app": polEnum(faultingApps)},
 	"mongod-json":       mongoOpPolicy,

@@ -77,6 +77,8 @@ type handler struct {
 	links sourceLinkStore
 	// reconn is the state of the reopening pass (see reconnect.go).
 	reconn reconnectState
+	// updateState is this server's update checker and its settings (see update_check.go).
+	updateState updateCheckState
 	// mcp is where the AI access screen's handler hangs once the grant store is open (nil: grants do not apply, see mcp_admin.go).
 	mcp *MCPMount
 	// code is where internal/codeapi hangs the code-mode handler (nil: the code routes answer 503, see code_mount.go).
@@ -998,6 +1000,11 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if page.NextCursor == "" {
+			break
+		}
+		if len(page.Rows) == 0 {
+			// A source that says there is more but sends nothing would make this loop ask forever: stop, and say the file is not whole.
+			truncated = true
 			break
 		}
 		cursor = page.NextCursor

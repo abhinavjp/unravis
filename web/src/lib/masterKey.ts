@@ -1,4 +1,4 @@
-import { UNLOCK_MESSAGE, blankHint, edgeSpaceNote, strengthText, unlockMessage as unlockText } from './copy/masterKeyCopy';
+import { KEY_TEXT, UNLOCK_MESSAGE, blankHint, edgeSpaceNote, strengthText, unlockMessage as unlockText } from './copy/masterKeyCopy';
 import type { ResetFailureKind, SetupFailureKind, UnlockFailure } from './copy/masterKeyCopy';
 
 /**
@@ -122,6 +122,9 @@ export function strengthHint(pass: string): string {
 export function unlockMessage(failure: UnlockFailure): string {
   return unlockText(failure);
 }
+
+/** What to say when Unlock is pressed with nothing typed. Empty when there is a key to send. Nothing is sent for an empty box, so it never says the key was wrong. */
+export const unlockProblemBeforeSend = (attempt: string): string => (attempt === '' ? KEY_TEXT.unlockEmpty : '');
 
 interface FailureShape { status?: unknown; reason?: unknown; retryAfterSeconds?: unknown }
 

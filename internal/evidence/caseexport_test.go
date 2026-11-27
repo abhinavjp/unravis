@@ -749,6 +749,42 @@ func TestBuildCaseKeepsUnknownSQLSeverity(t *testing.T) {
 	}
 }
 
+func TestBuildCaseKeepsTheBlackboxHostFigureNames(t *testing.T) {
+	keep := [][3]string{
+		{"ASP.NET Applications", "Requests Current", "__Total__"}, {"Paging File", "% Usage", "_Total"},
+		{"Memory", "Modified Page List Bytes", ""}, {"Blackbox Memory", "Standby Bytes", ""}, {"Blackbox VM", "Memory Ballooned", ""},
+		{"PhysicalDisk", "Avg. Disk sec/Read", "disk-2"}, {"Processor Information", "% Processor Utility", "_Total"},
+	}
+	var ev []Event
+	for n, k := range keep {
+		a := map[string]string{"object": k[0], "counter": k[1]}
+		if k[2] != "" {
+			a["instance"] = k[2]
+		}
+		ev = append(ev, caseEvent("blackbox-source", "counter", n, a))
+	}
+	ev = append(ev, caseEvent("blackbox-source", "metric", len(keep)+1, map[string]string{"metric": "working-set", "process": "w3wp", "pid": "1240"}),
+		caseEvent("blackbox-source", "metric", len(keep)+2, map[string]string{"metric": "cpu", "process": "AcmePayroll", "pid": "77"}))
+	// A disk letter or any other instance name is not one of the Blackbox's own.
+	ev = append(ev, caseEvent("blackbox-source", "counter", len(keep), map[string]string{"object": "PhysicalDisk", "counter": "Disk Reads/sec", "instance": "0 C:"}))
+	e, _ := mustBuildCase(t, CaseInput{Events: ev, Now: testNow, Key: caseKey(11)})
+	for n, k := range keep {
+		got := eventByID(t, e, 11, caseEvID("blackbox-source", n)).Attrs
+		if got["object"] != k[0] || got["counter"] != k[1] || got["instance"] != k[2] {
+			t.Errorf("%v exported as %v", k, got)
+		}
+	}
+	if got := eventByID(t, e, 11, caseEvID("blackbox-source", len(keep)+1)).Attrs; got["metric"] != "working-set" || got["process"] != "w3wp" || got["pid"] != "1240" {
+		t.Errorf("a process figure exported as %v", got)
+	}
+	if got := eventByID(t, e, 11, caseEvID("blackbox-source", len(keep)+2)).Attrs["process"]; strings.Contains(got, "Acme") {
+		t.Errorf("a process name = %q reached the export", got)
+	}
+	if got := eventByID(t, e, 11, caseEvID("blackbox-source", len(keep))).Attrs["instance"]; strings.Contains(got, "C:") || !strings.HasPrefix(got, "instance-") {
+		t.Errorf("a disk letter instance = %q, want a keyed label", got)
+	}
+}
+
 // ---- WP-07b: the case export with scrubbing turned off ----
 
 const (

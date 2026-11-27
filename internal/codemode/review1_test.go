@@ -208,7 +208,10 @@ func TestSecondNetsStopWhatTheGuardMissed(t *testing.T) {
 				if stage == "scripterror" {
 					e.sp.script = nil
 				}
-				everything := e.everything(res.RunID) + string(res.Result) + strings.Join(res.Logs, "\n") + string(answer)
+				mu.Lock()
+				gotAnswer := string(answer)
+				mu.Unlock()
+				everything := e.everything(res.RunID) + string(res.Result) + strings.Join(res.Logs, "\n") + gotAnswer
 				if res.Error != nil {
 					everything += res.Error.Message
 				}

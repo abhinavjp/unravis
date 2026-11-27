@@ -1,0 +1,4 @@
+{
+  "schema": 1,
+  "changes": ["The Place a Blackbox pop-up has a Redis step (Standard or Everything, single rows on or off) and the SQL step has a starting point, with query text only for Deep."]
+}

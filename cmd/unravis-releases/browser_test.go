@@ -10,3 +10,13 @@ func TestBrowserCommandOffWindowsUsesTheSystemOpener(t *testing.T) {
 		}
 	}
 }
+
+func TestStartLinkCarriesTheActionKeyOnlyInTheFragment(t *testing.T) {
+	got := startLink(4321, "sess", "abc123")
+	if got != "http://127.0.0.1:4321/?t=sess#a=abc123" {
+		t.Fatalf("link: %q", got)
+	}
+	if got := startLink(4321, "sess", ""); got != "http://127.0.0.1:4321/?t=sess" {
+		t.Fatalf("link without a key: %q", got)
+	}
+}

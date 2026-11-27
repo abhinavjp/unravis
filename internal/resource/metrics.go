@@ -47,6 +47,7 @@ const (
 	SQLMemGrantsPending = "sql.mem.grants_pending"
 	unitKeep            = "" // a rule with this unit keeps the event's own unit
 	sourceWinCounters   = "win-counters"
+	sourceBlackbox      = "blackbox-source" // the Blackbox's own recordings: the same counter and Redis metric names
 	sourceSQLPDH        = "sql-pdh"
 	sourceProcSnap      = "win-procsnap"
 	sourceWinLive       = "win-live"
@@ -135,11 +136,11 @@ func objectSQLMemMgr(a map[string]string) bool {
 var objectCLRMemory = attrIs("object", ".NET CLR Memory")
 
 var (
-	pdh        = []string{sourceWinCounters, sourceSQLPDH}
-	procsnap   = []string{sourceProcSnap, sourceWinLive} // the live sampler writes the same process metrics
+	pdh        = []string{sourceWinCounters, sourceSQLPDH, sourceBlackbox}
+	procsnap   = []string{sourceProcSnap, sourceWinLive, sourceBlackbox} // the live sampler writes the same process metrics
 	winlive    = []string{sourceWinLive}
 	dotnet     = []string{sourceDotnet}
-	redisInfo  = []string{sourceRedisInfo}
+	redisInfo  = []string{sourceRedisInfo, sourceBlackbox}
 	sadf       = []string{sourceSadf}
 	pidstat    = []string{sourcePidstat}
 	vmstat     = []string{sourceVmstat}

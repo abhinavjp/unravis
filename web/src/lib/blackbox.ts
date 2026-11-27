@@ -220,6 +220,8 @@ export interface Settings {
   probe: { enabled: boolean };
   /** Which SQL checks the SQL service runs. Missing means the standard set. Settings only: no server, login or password lives here. */
   sql?: { profile?: string; extras?: string[]; queryText?: boolean; queryTextMaxChars?: number };
+  /** What the Redis collector reads on this PC. Settings only: the password is never here (it is typed on the PC that runs Redis). */
+  redis?: { profile?: string; port?: number; slowlog?: boolean; latency?: boolean; clients?: boolean; slowArgs?: boolean };
   /** The app pools and services the owner picked for per-process detail. Empty means machine-wide only. */
   targets: TargetRef[];
 }
@@ -280,7 +282,7 @@ export function refusedField(error: unknown): SettingsProblem | null {
 }
 
 /** The step of the Place wizard that owns a setting, so a refusal can send the person there. */
-export function stepOfSetting(field: SettingsProblem): 'name' | 'record' | 'watch' | 'keep' | 'folder' {
+export function stepOfSetting(field: SettingsProblem): 'name' | 'record' | 'watch' | 'keep' | 'folder' | 'redis' {
   switch (field) {
     case 'name': return 'name';
     case 'interval': case 'logs': return 'record';
@@ -310,6 +312,19 @@ export function pcControls(state: PageState, thisPc: Pick<ThisPc, 'installed' | 
   const readRunning = state === 'running' || state === 'running-late' || state === 'disk-low' || state === 'incomplete' || state === 'clock-differs';
   const stop = readRunning || (thisPc.installed && thisPc.running);
   return { stop, start: thisPc.installed && !stop };
+}
+
+/**
+ * Why Apply is off, or null when it is on. Another change in progress comes first (the person only has to wait); then the settings of this PC:
+ * still being read ('loading') or, with the service installed, read and not available ('unreadable'). With no service installed there are no
+ * settings to change and no sentence for it ('unavailable': the button stays off and says nothing). The panel shows the words beside the button.
+ */
+export type ApplyWait = 'busy' | 'loading' | 'unreadable' | 'unavailable';
+export function applyWait(f: { working: boolean; hasSettings: boolean; readingSettings: boolean; installed: boolean }): ApplyWait | null {
+  if (f.working) return 'busy';
+  if (f.hasSettings) return null;
+  if (f.readingSettings) return 'loading';
+  return f.installed ? 'unreadable' : 'unavailable';
 }
 
 export interface Span { window: string; start: string; end: string; minutes: number; kind: string }

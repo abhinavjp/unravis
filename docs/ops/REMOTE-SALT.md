@@ -51,6 +51,41 @@ $t = 'tools\remote\Invoke-RemoteSalt.ps1'
 Add `-DryRun` to any action to see exactly what would be sent without connecting. Output longer than `-MaxPrint` is
 saved under `~/.unravis-remote/pulled/` (newest 20 kept) and the path is printed.
 
+## Blackbox: read its settings, change them, pull a bundle
+
+Needs `unravis-blackbox.exe` (with `config` and `bundle`, B5 and B8) installed on the minion in `%ProgramFiles%\Unravis Blackbox`.
+
+```powershell
+& $t -Action BlackboxShow -Target web01        # collectors, on/off, intervals, counters (runs: unravis-blackbox config show --json)
+& $t -Action BlackboxHistory -Target web01     # last changes, from the recorder's own audit chain
+& $t -Action BlackboxStatus -Target web01
+
+# A change: same gate as a service restart. Needs REMOTE_MODE=write.
+& $t -Action WriteRequest -Target web01 -Fn blackbox.collector -Name redis.info -FnArgs on,every=60
+& $t -Action WriteRequest -Target web01 -Fn blackbox.counter.add -Name '\Memory\Available MBytes'
+& $t -Action WriteRequest -Target web01 -Fn blackbox.rollback -Name last
+& $t -Action WriteApprove -Hash <12 hex> -ApprovalNote '<the owner's go>'
+
+# One bundle zip, then its manifest (has the zip's SHA-256 as the recorder wrote it)
+& $t -Action LogPull -Target web01 -Path 'C:\ProgramData\Unravis Blackbox\snapshots\case-1.zip'
+```
+
+- Only these verbs exist: collector on/off/every, counter add/remove, rollback of the last change. No other `unravis-blackbox`
+  command, no file write, no Salt state. Ids and counter paths use a strict character set (stricter than the recorder's own
+  check: no `& ^ " $ *`, one `%` at most), every value is single-quoted, and the command starts with a variable because Salt
+  reads a leading `&` as YAML.
+- The recorder checks the change, restarts, waits up to 60 s for a healthy recorder and **rolls back by itself** if it is not.
+  A change therefore takes 1 to 2 minutes; the approve call waits up to 200 s. If it times out, run `BlackboxShow` and
+  `BlackboxHistory` before asking again.
+- `LogPull` reads one `.zip` or `.manifest.json` that sits in a `snapshots` folder directly inside a folder named in
+  `REMOTE_LOG_PATHS`, as base64 pieces (default 192 KB, `-ChunkKB 16..1024`, at most `-MaxMB` 512). The minion refuses a link
+  (junction or symbolic link) in the file or any parent folder. A copy whose SHA-256 differs from the one the minion computes is
+  deleted. For a `.zip` it then pulls the `.manifest.json` beside it and compares `ZipSHA256` in code. Saved under
+  `~/.unravis-remote/bundles/` (newest 10 kept). The audit log gets one line at the start and one at the end, not one per piece.
+  Not verified: Salt output limits, speed, a 100 MB bundle (start with 5 MB).
+- A change fails loudly: Salt runs with `--retcode-passthrough` and the command ends with the recorder's exit code, so a refused
+  change or a rollback exits non-zero. The hint then says to check `BlackboxShow` and `BlackboxHistory`.
+
 ## Safety rules
 
 - **Read-only by default.** Allowed: `test.ping`, `test.version`, `grains.*`, `status.*`, `service.status`,
@@ -77,5 +112,5 @@ saved under `~/.unravis-remote/pulled/` (newest 20 kept) and the path is printed
 
 Password login through askpass (password-only auth), pinned host key, `sudo -n salt`, `salt-key -L`, `test.ping`,
 `grains.item`, `service.*`, `salt-run manage.up`, and the `LogList`, `LogTail`, `LogGrep` and `EventLog` recipes on a
-Windows minion. Not yet exercised on a real server: write mode and any Linux minion recipes. If sudo on the master
+Windows minion. Not yet exercised on a real server: write mode, the Blackbox verbs, `LogPull`, and any Linux minion recipes. If sudo on the master
 asks for a password, the tool stops and says so; fix it with a sudoers rule for the SSH user, not by sharing the password.

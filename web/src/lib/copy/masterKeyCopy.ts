@@ -44,6 +44,8 @@ export const KEY_TEXT = {
   unlockForgot: 'If you forgot the key, your cases cannot be opened. Open the Glossary in the header to read what you can do.',
   unlockSubmit: 'Unlock',
   unlocking: 'Unlocking…',
+  // The box was empty when Unlock was pressed. Nothing was sent, so it must not read as a wrong key.
+  unlockEmpty: 'Type the key first.',
 
   // Lock, in the header
   lock: 'Lock',

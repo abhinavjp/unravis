@@ -25,11 +25,18 @@ func init() {
 	}
 }
 
-// Handler serves the page and one JSON route. It is read-only (GET and HEAD only), answers only to a loopback host name
-// (so a web page cannot reach it by DNS rebinding), and needs the one-time code from the start link once per browser.
+// Handler serves the page and its JSON routes. Every route but POST /api/action/<id> (see actions.go) is read-only
+// (GET and HEAD only). All answer only to a loopback host name (so a web page cannot reach them by DNS rebinding) and
+// need the one-time code from the start link once per browser.
 func Handler(d *Dash, token string, ui fs.FS) http.Handler {
 	files := http.FileServer(http.FS(ui))
+	actionToken := d.ActionToken
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/session", func(w http.ResponseWriter, r *http.Request) {
+		// The action list only. The action token is never served: anything holding the session cookie (any loopback
+		// listener the browser sends it to) could read it here. The page has it from the start link's fragment.
+		writeJSON(w, map[string]any{"actions": actionList(), "actionsOn": actionToken != ""})
+	})
 	mux.HandleFunc("/api/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
 		defer cancel()
@@ -49,16 +56,21 @@ func Handler(d *Dash, token string, ui fs.FS) http.Handler {
 	})
 	mux.Handle("/", files)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.Error(w, "read only", http.StatusMethodNotAllowed)
-			return
-		}
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
 			host = r.Host
 		}
 		if host != "127.0.0.1" && host != "localhost" && host != "[::1]" && host != "::1" {
 			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, actionPrefix) {
+			setSecurityHeaders(w)
+			d.serveAction(w, r, token, actionToken)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "read only", http.StatusMethodNotAllowed)
 			return
 		}
 		if t := r.URL.Query().Get("t"); t != "" && subtle.ConstantTimeCompare([]byte(t), []byte(token)) == 1 {
@@ -73,13 +85,17 @@ func Handler(d *Dash, token string, ui fs.FS) http.Handler {
 		if d.OnRequest != nil {
 			d.OnRequest()
 		}
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; font-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		setSecurityHeaders(w)
 		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/" || strings.Count(r.URL.Path, "/") == 1 {
 			mux.ServeHTTP(w, r)
 			return
 		}
 		http.NotFound(w, r)
 	})
+}
+
+func setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; font-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 }

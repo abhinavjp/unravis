@@ -29,6 +29,9 @@ const (
 	investigationMaxLabel    = 200
 	investigationMaxPool     = 100000
 	investigationIISSource   = "iis-w3c"
+
+	// investigationStalledText is the warning when an audit source says there is more but sends an empty page, so the read stopped early.
+	investigationStalledText = "An audit source stopped sending calls before the end, so the read is incomplete and none of its calls were used. Shorten the windows to read less at a time; if it keeps happening, check that source."
 )
 
 // investigationAuditBudget and investigationCaseBudget split the request's
@@ -68,10 +71,13 @@ type investigationRequest struct {
 // investigationRead says what the run read, so a reader knows what the answer
 // stands on.
 type investigationRead struct {
-	Requests  int      `json:"requests"`
-	IISRows   int      `json:"iisRows"`
-	Truncated bool     `json:"truncated"`
-	Warnings  []string `json:"warnings"`
+	Requests  int  `json:"requests"`
+	IISRows   int  `json:"iisRows"`
+	Truncated bool `json:"truncated"`
+	// Stalled: the read was cut because a source said there was more and sent nothing, not because of the call limit. It tells the
+	// saved report which cause to name; the warning sentence carries the same cause on screen.
+	Stalled  bool     `json:"stalled,omitempty"`
+	Warnings []string `json:"warnings"`
 }
 
 type investigationAnswer struct {
@@ -255,6 +261,7 @@ func (h *handler) readInvestigationRanges(ctx context.Context, queries []audit.Q
 			return nil, one, "", err
 		}
 		read.Truncated = read.Truncated || one.Truncated
+		read.Stalled = read.Stalled || one.Stalled
 		read.Warnings = append(read.Warnings, one.Warnings...)
 		if status != investigate.AuditPresent {
 			read.Requests = 0
@@ -275,6 +282,7 @@ func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]
 	read := investigationRead{Warnings: []string{}}
 	status := investigate.AuditPresent
 	cursor := ""
+	stalled := false // an empty page that still had a cursor: the read stopped before the end
 	// Per-source diagnostics: a start line and a finish line per source, so a
 	// failed read names the source, its error code and its sanitized reason.
 	start := time.Now()
@@ -329,7 +337,16 @@ func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]
 		if page.Truncated {
 			read.Truncated = true
 		}
-		if page.NextCursor == "" || len(page.Rows) == 0 {
+		if page.NextCursor == "" {
+			break
+		}
+		if len(page.Rows) == 0 {
+			// A source that says there is more but sends nothing: the read cannot go on, and what was read is not the whole picture.
+			// An earlier real-limit cut keeps its own cause ("too many calls"); only a read that was whole until now is called stalled.
+			if !read.Truncated {
+				stalled = true
+			}
+			read.Truncated = true
 			break
 		}
 		if len(rows) >= investigationMaxRows {
@@ -340,7 +357,12 @@ func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]
 	}
 	if read.Truncated {
 		status = investigate.AuditFailed
-		read.Warnings = append(read.Warnings, "There are too many audit calls in these windows to read in full, so none were used. Shorten the windows.")
+		if stalled {
+			read.Stalled = true
+			read.Warnings = append(read.Warnings, investigationStalledText)
+		} else {
+			read.Warnings = append(read.Warnings, "There are too many audit calls in these windows to read in full, so none were used. Shorten the windows.")
+		}
 		rows = nil
 	}
 	read.Requests = len(rows)

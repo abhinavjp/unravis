@@ -403,7 +403,7 @@ var importerWeight = map[string]int{
 	"iis-w3c": 25, "iis-freb": 25,
 	"iis-httperr":  26,
 	"win-events":   27,
-	"win-procsnap": 30, "win-live": 30,
+	"win-procsnap": 30, "win-live": 30, "blackbox-source": 31,
 	"dotnet-counters": 40, "schedule-hangfire": 40, "schedule-quartz": 41,
 	"sql-errorlog": 50, "sql-pdh": 51, "sql-xe": 52, "schedule-agent": 53,
 	"redis-info": 60, "redis-latency": 61, "redis-slowlog": 62, "redis-log": 63,

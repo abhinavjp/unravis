@@ -516,11 +516,17 @@ func (q *Queue) cancelNoteOf(id string) (cancelNote, bool) {
 }
 
 // Claim hands the next request to an agent, or nil when there is nothing it may take. Order is priority, then
-// first in first out. A request with labels only goes to an agent that has all of them. Two claimers never
-// get the same request: the rename of its file from queued/ to running/ succeeds for one of them only.
+// first in first out. A request with labels only goes to an agent that has all of them, and only to an agent
+// the machine policy of its project allows (policy.json beside the queue folder; deny wins, and a policy that
+// cannot be read lets the agent take nothing). Two claimers never get the same request: the rename of its file
+// from queued/ to running/ succeeds for one of them only.
 func (q *Queue) Claim(agent string, labels []string) (*Request, error) {
 	if agent == "" {
 		return nil, errors.New("claim: no agent name")
+	}
+	pol, err := LoadPolicy(filepath.Dir(q.Dir))
+	if err != nil {
+		return nil, err
 	}
 	rs, err := q.folderOf("queued")
 	if err != nil {
@@ -541,6 +547,9 @@ next:
 			if !have[l] {
 				continue next
 			}
+		}
+		if !pol.Allows(r.Repo, agent) {
+			continue // the project's machine policy does not let this agent run it
 		}
 		held, err := q.takeMarker(r.ID, agent)
 		if err != nil {
@@ -712,4 +721,74 @@ func (q *Queue) Prune(before time.Time) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// ErrNotQueued is returned when a request cannot be changed because it is not waiting in the queue any more
+// (running, finished) or is being claimed this very moment.
+var ErrNotQueued = errors.New("the request is not waiting in the queue")
+
+// MoveToTop gives a queued request a priority below every other queued one, so the next claim takes it. The
+// request keeps its kind, key and enqueue time; only Priority changes (PR 1, push 2 and schedule 3 are the
+// defaults, so the result can be 0 or negative). A request that is already strictly first is left as it is.
+// A running or finished request is refused with ErrNotQueued, and an unknown id with ErrNoRequest.
+// The change is a temp file renamed over the request, taken under the same claim marker a claimer needs, so
+// a claim and a move never write the same file at once.
+func (q *Queue) MoveToTop(id string) (Request, error) {
+	if !validRequestID(id) {
+		return Request{}, fmt.Errorf("%q is not a request id", id)
+	}
+	held, err := q.takeMarker(id, "move-to-top")
+	if err != nil {
+		return Request{}, err
+	}
+	if !held {
+		// the marker stays while a request runs, so a held one is a running one, or one a claimer is moving
+		return Request{}, q.notQueuedError(id)
+	}
+	defer q.dropMarker(id)
+	r, err := q.read(q.path("queued", id))
+	if errors.Is(err, fs.ErrNotExist) {
+		return Request{}, q.notQueuedError(id)
+	}
+	if err != nil {
+		return Request{}, err
+	}
+	r.State = StateQueued
+	others, err := q.folderOf("queued")
+	if err != nil {
+		return Request{}, err
+	}
+	first, any := 0, false
+	for _, o := range others {
+		if o.ID == id {
+			continue
+		}
+		if !any || o.Priority < first {
+			first, any = o.Priority, true
+		}
+	}
+	if !any || r.Priority < first {
+		return r, nil // alone, or already ahead of every other request
+	}
+	r.Priority = first - 1
+	if err := writeAtomic(q.path("queued", id), r); err != nil {
+		return Request{}, err
+	}
+	return r, nil
+}
+
+// notQueuedError says where a request that is not queued is.
+func (q *Queue) notQueuedError(id string) error {
+	r, err := q.Get(id)
+	if err != nil {
+		return err // ErrNoRequest for an id nobody knows
+	}
+	switch r.State {
+	case StateRunning:
+		return fmt.Errorf("%w: %s is running; only a waiting request can be moved", ErrNotQueued, id)
+	case StateQueued:
+		return fmt.Errorf("%w: %s is being claimed right now", ErrNotQueued, id)
+	default:
+		return fmt.Errorf("%w: %s already ended (%s)", ErrNotQueued, id, r.State)
+	}
 }

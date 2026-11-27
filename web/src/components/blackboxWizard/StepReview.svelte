@@ -6,7 +6,7 @@
   import { listensOnAll, packFileName, targetNamesByKind } from '../../lib/blackbox';
   import { RECORD_GROUPS } from '../../lib/blackboxCatalogue';
   import { BBW_TEXT as W } from '../../lib/copy/blackboxWizardCopy';
-  import { buildSettings, changeStep, driveOfPath, presetOf, steps } from '../../lib/blackboxWizard';
+  import { buildSettings, changeStep, driveOfPath, presetOf, redisPresetNow, redisRowOn, steps } from '../../lib/blackboxWizard';
   import type { StepId, WizardState } from '../../lib/blackboxWizard';
 
   let {
@@ -25,6 +25,15 @@
   const payload = $derived(buildSettings(wizard));
   const pc = $derived(wizard.where === 'pc');
   const showSql = $derived(steps(wizard).includes('sql'));
+  const showRedis = $derived(steps(wizard).includes('redis'));
+  const sqlProfileWords = $derived(W[('sql.profile' + wizard.sqlChoice.profile[0].toUpperCase() + wizard.sqlChoice.profile.slice(1)) as 'sql.profileStandard'] + (wizard.sqlChoice.text ? ', with query text' : ''));
+  const redisSetWords = $derived.by((): string => {
+    const now = redisPresetNow(wizard.redisChoice);
+    return now === 'standard' ? W['redis.standard'] : now === 'everything' ? W['redis.everything'] : W['redis.custom'] + ', based on ' + (wizard.redisChoice.profile === 'everything' ? W['redis.everything'] : W['redis.standard']);
+  });
+  const redisIncludes = $derived(
+    [W['redis.serverTitle'], ...(['slowlog', 'latency', 'clients', 'slowArgs'] as const).filter((r) => redisRowOn(wizard.redisChoice, r)).map((r) => W[('redis.' + r + 'Title') as 'redis.slowlogTitle'])].join(', ')
+  );
   const preset = $derived(presetOf(payload.record));
   const presetWords = $derived(preset === 'recommended' ? W['record.recommended'] : preset === 'light' ? W['record.light'] : W['record.custom']);
   const allFigures = RECORD_GROUPS.reduce((count, group) => count + group.figures.length, 0);
@@ -109,8 +118,24 @@
       <dl>
         <dt>{W['review.counters']}</dt>
         <dd>{W['review.sqlAutomatic']}</dd>
+        <dt>{W['review.sqlSet']}</dt>
+        <dd>{sqlProfileWords}</dd>
         <dt>{W['review.safety']}</dt>
         <dd>{W['sql.deeperChecks']}</dd>
+      </dl>
+    </section>
+  {/if}
+
+  {#if showRedis}
+    <section class="card" aria-labelledby="rv-redis">
+      <header><h3 id="rv-redis">{W['review.redis']}</h3>{@render changeLink('redis', W['review.redis'])}</header>
+      <dl>
+        <dt>{W['review.redisSet']}</dt>
+        <dd>{redisSetWords}</dd>
+        <dt>{W['review.redisIncludes']}</dt>
+        <dd>{redisIncludes}</dd>
+        <dt>{W['review.redisPassword']}</dt>
+        <dd>{W['review.redisPasswordText']}</dd>
       </dl>
     </section>
   {/if}

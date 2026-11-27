@@ -22,6 +22,8 @@ export const BB_TEXT = {
   scanFailed: 'This PC could not be asked whether a Blackbox is installed. Press Scan this PC again. If it fails again, restart Unravis.',
   loading: 'Loading the Blackbox list.',
   loadFailed: 'The Blackbox list could not be loaded.',
+  // Shown after loadFailed when an earlier list is still on screen.
+  loadStale: 'The list below is the last one that loaded, and it may be out of date.',
   reload: 'Reload this page',
   retry: 'Try again',
 
@@ -154,6 +156,10 @@ export const BB_TEXT = {
   applyFolderWarn: 'Old recordings stay in the old folder and are not moved. A case or reader must use the new folder.',
   applyIntervalWarn: 'Unravis can still slow recording when the PC is busy.',
   applyNoChange: 'Nothing is changed yet.',
+  // Beside Apply while it is off (RV-UI-11). Unreadable reuses applyUnreadable.
+  applyWaitLoading: "Loading this PC's settings.",
+  applyWaitBusy: 'Another change is being applied.',
+  applyWaitNotInstalled: 'No Blackbox service is installed on this PC.',
   applyUnreadable: 'The settings of the service on this PC could not be read, so they cannot be changed here.',
   applied: 'Applied. The service restarted with the new settings.',
   appliedNoRestart: 'Applied. The service was stopped, so the new settings are used when it next starts.',

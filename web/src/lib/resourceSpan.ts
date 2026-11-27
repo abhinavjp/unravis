@@ -28,7 +28,7 @@ interface RecordLike { status?: string; quality?: { coverageFirst?: string | nul
  * constants; a web test keeps the two lists equal). A case with files of none of these has nothing to show there, whatever else it holds (IIS, app logs).
  */
 export const RESOURCE_IMPORTERS: readonly string[] = [
-  'win-counters', 'sql-pdh', 'win-procsnap', 'win-live', 'dotnet-counters', 'redis-info', 'linux-sadf', 'linux-pidstat', 'linux-vmstat', 'mongo-serverstatus', 'mongostat-json'
+  'win-counters', 'sql-pdh', 'win-procsnap', 'win-live', 'dotnet-counters', 'redis-info', 'linux-sadf', 'linux-pidstat', 'linux-vmstat', 'mongo-serverstatus', 'mongostat-json', 'blackbox-source'
 ];
 
 /** The kept imports that are resource counter files. */
