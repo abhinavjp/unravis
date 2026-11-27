@@ -28,7 +28,7 @@ try {
     New-Item -ItemType Directory -Force -Path $base | Out-Null
 
     # ---- product vs docs/test paths
-    foreach ($p in 'internal/a/b.go', 'cmd/x/main.go', 'web/src/App.svelte', 'web/src/lib/a.ts', 'tools/release/Release.ps1', 'tools/release/promote-dist.mjs',
+    foreach ($p in 'internal/a/b.go', 'cmd/homestretch/main.go', 'web/src/App.svelte', 'web/src/lib/a.ts', 'tools/release/Release.ps1', 'tools/release/promote-dist.mjs',
                    'go.mod', 'go.sum', 'main.go', 'internal/my pkg/file name.go', 'internal\a.go', '"internal/q r.go"') {
         Check (Test-ProductPath $p) "product: $p"
     }
