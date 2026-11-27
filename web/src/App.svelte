@@ -35,6 +35,7 @@
   const CodeModePopup = lazyComponent(() => import('./components/CodeModePopup.svelte'));
   const ImportPopup = lazyComponent(() => import('./lib/components/importPopup/ImportPopup.svelte'));
   const BlackboxPanel = lazyComponent(() => import('./components/BlackboxPanel.svelte'));
+  const ServersPanel = lazyComponent(() => import('./components/ServersPanel.svelte'));
   const McpAccessPanel = lazyComponent(() => import('./components/McpAccessPanel.svelte'));
   const UpdatesPanel = lazyComponent(() => import('./components/UpdatesPanel.svelte'));
   const WhatsNewDialog = lazyComponent(() => import('./components/WhatsNewDialog.svelte'));
@@ -148,6 +149,7 @@
     {#if panels.sidePanel === 'export'}<ExportPanel query={scope.query} {zone} {sourceLabels} onClose={closeSidePanel} />{/if}
     {#if panels.importPopup}<ImportPopup caseId={panels.importPopup.caseId} caseTitle={panels.importPopup.caseTitle} query={scope.query} {zone} retryServerName={panels.importPopup.retryServerName} onClose={() => void closeImportPopup()} onOpenTimeline={openTimeline} />{/if}
     {#if panels.sidePanel === 'blackbox'}<BlackboxPanel onClose={closeSidePanel} />{/if}
+    {#if panels.sidePanel === 'servers'}<ServersPanel onClose={closeSidePanel} />{/if}
     {#if panels.sidePanel === 'mcp'}<McpAccessPanel onClose={closeSidePanel} />{/if}
     {#if panels.sidePanel === 'updates'}<UpdatesPanel onClose={closeSidePanel} />{/if}
     {#if whatsNew.open}<WhatsNewDialog current={installedVersion} />{/if}

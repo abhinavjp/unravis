@@ -37,14 +37,17 @@
     { id: 'export', label: 'Export', open: () => openSidePanel('export') },
     { id: 'import', label: 'Add files', open: () => openSidePanel('import') },
     { id: 'blackbox', label: 'Blackbox', open: () => openSidePanel('blackbox') },
+    { id: 'servers', label: 'Servers', open: () => openSidePanel('servers') },
     { id: 'mcp', label: MCP_TEXT.open, open: () => openSidePanel('mcp') },
     { id: 'updates', label: UPD_TEXT.open, open: () => openSidePanel('updates') },
     { id: 'glossary', label: 'Glossary', open: () => openGlossary() }
   ];
   // Patterns, Ledger, Export and Import are the page's navigation; Glossary sits with the utilities at the far right.
-  const navDrawers = drawers.filter(item => item.id !== 'glossary' && item.id !== 'blackbox' && item.id !== 'mcp' && item.id !== 'updates');
+  const navDrawers = drawers.filter(item => item.id !== 'glossary' && item.id !== 'blackbox' && item.id !== 'servers' && item.id !== 'mcp' && item.id !== 'updates');
   // Blackbox is placed before a case exists, so it is a utility: it shows on every screen, beside Glossary.
   const blackbox = drawers.find(item => item.id === 'blackbox')!;
+  // Servers gets recordings and logs from a remote server onto this PC. It works before a case exists, so it is a utility beside Blackbox.
+  const servers = drawers.find(item => item.id === 'servers')!;
   // AI access sits with the utilities too: approving AI programs has nothing to do with a case or an analysis.
   const mcp = drawers.find(item => item.id === 'mcp')!;
   const glossary = drawers.find(item => item.id === 'glossary')!;
@@ -63,7 +66,7 @@
   const home = { id: 'home', label: KEY_TEXT.home, open: () => goHome() };
   const caseHome = { id: 'case-home', label: CASE_HOME_TEXT.navButton, open: () => openCaseHome() };
   const lock = { id: 'lock', label: KEY_TEXT.lock, open: () => { void lockCases(); } };
-  const menuEntries = $derived([...(showHome ? [home] : []), ...(showCaseHome ? [caseHome] : []), ...(working ? navDrawers : []), blackbox, mcp, updatesEntry, whatsNewEntry, glossary, ...(showLock ? [lock] : [])]);
+  const menuEntries = $derived([...(showHome ? [home] : []), ...(showCaseHome ? [caseHome] : []), ...(working ? navDrawers : []), blackbox, servers, mcp, updatesEntry, whatsNewEntry, glossary, ...(showLock ? [lock] : [])]);
   const isOpen = (id: string) => id === 'glossary' ? panels.glossaryOpen : panels.sidePanel === id;
   const anyOpen = $derived(drawers.some(item => isOpen(item.id)));
   const ledgerTotal = $derived(ledger.items.length);
@@ -158,6 +161,7 @@
     {:else}
       <Eli10Toggle />
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(blackbox.id)} onclick={blackbox.open}>{blackbox.label}</button>
+      <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(servers.id)} onclick={servers.open}>{servers.label}</button>
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(mcp.id)} data-testid="open-mcp" onclick={mcp.open}>{mcp.label}</button>
       {#if chip.text}<button type="button" class="header-button version-chip" class:attention={chip.pip !== 'none'} aria-haspopup="dialog" aria-expanded={isOpen(updatesEntry.id)} aria-label={UPD_TEXT.chipLabel(chip.text)} data-testid="version-chip" onclick={updatesEntry.open}>{#if chip.pip !== 'none'}<span class="pip" class:busy={chip.pip === 'busy'} aria-hidden="true"></span>{/if}{chip.text}</button>{/if}
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(glossary.id)} onclick={glossary.open}>{glossary.label}</button>

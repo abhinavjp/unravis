@@ -137,11 +137,11 @@ test('the read key goes up in the add and key calls only, and is never kept or s
 });
 
 test('the panel is a header utility on every screen and is opened as a side panel', () => {
-  assert.match(read('src/lib/appState.svelte.ts'), /'export' \| 'blackbox' \| 'mcp' \| 'updates' \| null/);
+  assert.match(read('src/lib/appState.svelte.ts'), /'export' \| 'blackbox' \| 'servers' \| 'mcp' \| 'updates' \| null/);
   assert.match(read('src/lib/appState.svelte.ts'), /openSidePanel\(which: [^)]*'blackbox'[^)]*\)/);
   const header = read('src/components/AppHeader.svelte');
   assert.match(header, /id:\s*'blackbox',\s*label:\s*'Blackbox',\s*open:\s*\(\)\s*=>\s*openSidePanel\('blackbox'\)/);
-  assert.match(header, /\.\.\.\(working\s*\?\s*navDrawers\s*:\s*\[\]\),\s*blackbox,\s*mcp,\s*updatesEntry,\s*whatsNewEntry,\s*glossary/, 'the menu reaches it before a case is open');
+  assert.match(header, /\.\.\.\(working\s*\?\s*navDrawers\s*:\s*\[\]\),\s*blackbox,\s*servers,\s*mcp,\s*updatesEntry,\s*whatsNewEntry,\s*glossary/, 'the menu reaches it before a case is open');
   assert.match(read('src/App.svelte'), /panels\.sidePanel\s*===\s*'blackbox'\}\s*<BlackboxPanel\s+onClose=\{closeSidePanel\}/);
 });
 
