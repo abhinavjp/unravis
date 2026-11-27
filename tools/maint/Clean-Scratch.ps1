@@ -324,9 +324,43 @@ function Get-GoCacheLocations {
 
 function Get-FolderBytes { param([string]$Dir) return [long](Get-ChildItem -LiteralPath $Dir -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }
 
+# Only what Go itself writes into a build cache is ever deleted by hand: the 256 two-hex-digit folders (00..ff), log.txt, trim.txt and
+# testexpire.txt, plus any "<name>.deleting-<8 hex>" leftover that an earlier killed run left behind. Anything else in the folder
+# (a sibling mod\ folder, a user's file, README) is never touched.
+function Test-GoCacheEntry {
+    param([System.IO.FileSystemInfo]$Item)
+    if ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+    $n = $Item.Name
+    if ($n -imatch '^[0-9a-f]{2}(\.deleting-[0-9a-f]{8})?$') { return [bool]$Item.PSIsContainer }
+    if ($n -imatch '^(log|trim|testexpire)\.txt(\.deleting-[0-9a-f]{8})?$') { return (-not $Item.PSIsContainer) }
+    return $false
+}
+
+# Remove-GoCacheEntries deletes those entries from one cache folder. Each is renamed to "<name>.deleting-<guid8>" first (a rename Windows
+# refuses means the entry is in use and stays), then deleted; a half-deleted leftover is retried by the next run. -LeftoversOnly deletes
+# nothing but earlier "*.deleting-*" leftovers (the sweep after a successful go clean).
+function Remove-GoCacheEntries {
+    param([string]$Dir, [bool]$LeftoversOnly = $false)
+    foreach ($c in @(Get-ChildItem -LiteralPath $Dir -Force -ErrorAction SilentlyContinue)) {
+        if (-not (Test-GoCacheEntry $c)) { continue }
+        $isLeftover = $c.Name -match '\.deleting-'
+        if ($LeftoversOnly -and -not $isLeftover) { continue }
+        $target = $c.FullName
+        if (-not $isLeftover) {
+            $tmpName = $c.Name + '.deleting-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+            try { Rename-Item -LiteralPath $c.FullName -NewName $tmpName -ErrorAction Stop } catch { continue }
+            $target = Join-Path $Dir $tmpName
+        }
+        try { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop } catch { Write-Host "go cache: could not fully delete $(Split-Path -Leaf $target) in $Dir, the next run retries" }
+    }
+}
+
+# Test-GoBuildBusy is true when any process command line looks like a running Go build or one of its tools.
+function Test-GoBuildBusy { param([string[]]$Lines) return [bool]($Lines | Where-Object { $_ -match '(?i)(^|[\\"\s])(go|compile|asm|cgo)(\.exe)?("|\s|$)' }) }
+
 # Clear-GoCacheFolder empties one Go cache folder. `go clean -cache` runs with GOCACHE set to that folder for this call only (restored
-# after), then `go clean -testcache`. When go is absent or fails, every entry except README is renamed and then deleted (a rename Windows
-# refuses means the entry is in use and stays). Returns how it was done.
+# after), then `go clean -testcache`, then leftovers of an earlier killed fallback are swept. When go is absent or fails, only the entries
+# Go itself writes (see Test-GoCacheEntry) are renamed and deleted. Returns how it was done.
 function Clear-GoCacheFolder {
     param([string]$Dir, [bool]$UseGo)
     if ($UseGo) {
@@ -342,16 +376,10 @@ function Clear-GoCacheFolder {
             if ($null -eq $oldTc) { Remove-Item Env:GOTOOLCHAIN -ErrorAction SilentlyContinue } else { $env:GOTOOLCHAIN = $oldTc }
             Pop-Location
         }
-        if ($ok) { return 'go clean' }
+        if ($ok) { Remove-GoCacheEntries -Dir $Dir -LeftoversOnly $true; return 'go clean' }
         Write-Host "go cache: go clean failed for $Dir, falling back to rename and delete"
     }
-    foreach ($c in @(Get-ChildItem -LiteralPath $Dir -Force -ErrorAction SilentlyContinue)) {
-        if ($c.Name -ieq 'README') { continue }
-        if ($c.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
-        $tmpName = $c.Name + '.deleting-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        try { Rename-Item -LiteralPath $c.FullName -NewName $tmpName -ErrorAction Stop } catch { continue }
-        try { Remove-Item -LiteralPath (Join-Path $Dir $tmpName) -Recurse -Force -ErrorAction Stop } catch { Write-Host "go cache: could not fully delete $tmpName in $Dir, the next run retries" }
-    }
+    Remove-GoCacheEntries -Dir $Dir
     return 'rename and delete'
 }
 
@@ -374,7 +402,7 @@ function Invoke-GoCacheClean {
     }
     $locs = if ($null -ne $Locations) { @($Locations) } else { @(Get-GoCacheLocations -GoEnvDir $goEnvDir -LocalAppData $env:LOCALAPPDATA -UserProfile $env:USERPROFILE) }
     if ($locs.Count -eq 0) { Write-Host 'go cache: no cache folder found, skipped' }
-    $busy = $Running | Where-Object { $_ -match '(?i)(^|[\\"\s])(go|compile|asm|cgo)(\.exe)?("|\s|$)' }
+    $busy = Test-GoBuildBusy $Running
     foreach ($l in $locs) {
         $full = [IO.Path]::GetFullPath($l.Path).TrimEnd('\')
         $rec = [pscustomobject]@{ Label = $l.Label; Path = $full; Bytes = 0L; FreedBytes = 0L; WouldBytes = 0L; Status = '' }
@@ -392,6 +420,13 @@ function Invoke-GoCacheClean {
             continue
         }
         if (-not $DoApply) { $rec.Status = 'would clean'; $rec.WouldBytes = $rec.Bytes; $out.WouldFreeBytes += $rec.Bytes; Write-Host ("would clean the go cache {0} [{1}]" -f $full, (Format-Size $rec.Bytes)); continue }
+        # The list handed in was taken before the worktree fetch and the size scans; take it again right before deleting.
+        try { $fresh = @(Get-RunningLines) } catch { $fresh = $null }
+        if ($null -eq $fresh -or (Test-GoBuildBusy $fresh)) {
+            $rec.Status = 'busy'; Write-Host ("go cache: {0} [{1}] a Go build started or the process list is unavailable, skipped" -f $full, (Format-Size $rec.Bytes))
+            if ($rec.Bytes -gt 3 * $LimitGB * 1GB) { $out.Notes += ('go cache over limit but a build is running: {0} {1} (over 3x the {2} GB limit)' -f $rec.Label, (Format-Size $rec.Bytes), $LimitGB) }
+            continue
+        }
         $how = Clear-GoCacheFolder -Dir $full -UseGo $haveGo
         $rec.FreedBytes = [math]::Max(0L, $rec.Bytes - (Get-FolderBytes $full))
         $rec.Status = 'cleaned'; $out.FreedBytes += $rec.FreedBytes

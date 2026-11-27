@@ -13,7 +13,7 @@
     2. A session whose transcript (or subagent folder) changed within -IdleMinutes (default 120) is treated as alive and kept, whatever
        the age of its scratch. A running process that names the session id or the folder also keeps it (Clean-Scratch rules).
     3. Registered worktrees of this repository under D:\Scratch, the Temp\claude root or <repo>\.claude\worktrees (agent worktrees; one
-       whose own Claude project folder changed within -IdleMinutes also stays) are removed with a plain
+       whose own Claude project folder, at any depth, changed within the last day also stays) are removed with a plain
        `git worktree remove` (never forced, never deleting a branch) only when: clean (no untracked files), no process names the
        path, untouched for a day, HEAD contained in origin/develop or origin/master after a fresh fetch (a failed fetch keeps
        everything), not the main checkout or the checkout running this script. Missing worktree folders are pruned.
@@ -35,7 +35,9 @@
 .PARAMETER Repo       Repository folder. Default: the one saved by -Install, else the checkout this script is in.
 .PARAMETER Install    Copy the scripts to %LOCALAPPDATA%\Unravis\maint, save the repository folder, and register the hourly user-level task
                       'Unravis-Housekeeping' (this is what makes the cleanup run on a checkout that does not have the hooks yet). Re-run after
-                      the scripts change. It also removes the older daily 'Unravis-CleanScratch' task.
+                      the scripts change. It also removes the older daily 'Unravis-CleanScratch' task. Run it from a NORMAL terminal:
+                      it refuses inside the Claude desktop app, whose sandbox redirects LocalAppData to a Packages\Claude_* folder, so
+                      the installed copy would land there and the hourly task would keep running the old one.
 .PARAMETER Uninstall  Remove that task.
 .PARAMETER Worker     Internal: a hook started this process in the background.
 .PARAMETER GoCacheLimitGB  Clean each Go build cache over this size (default 8, the runner cache cap). 0 turns the Go cache step off.
@@ -160,14 +162,17 @@ function Get-WorktreeKeepReason {
         $ov = Get-OwnerVerdict -Id $sm.Groups[1].Value -OwnerDirs $OwnerDirs -IdleMinutes $IdleMinutes -Clock $Clock
         if ($ov -like 'its transcript changed*') { return 'its Claude session may be alive' }
     }
-    # A worktree that has its own Claude project folder (an agent worktree) is in use while a transcript there changed recently.
+    # A worktree that has its own Claude project folder (an agent worktree) is in use while anything in that folder (transcripts and
+    # subagent folders included, at any depth) changed within the same -AgeHours window the worktree itself must have been quiet for.
     if ($null -ne $OwnerDirs) {
         $own = ConvertTo-ProjectName $Path
+        $since = $Clock.ToUniversalTime().AddHours(-$AgeHours)
         foreach ($d in $OwnerDirs) {
             if ((Split-Path -Leaf $d) -ine $own) { continue }
-            foreach ($f in @(Get-ChildItem -LiteralPath $d -Force -ErrorAction SilentlyContinue)) {
-                if ($f.LastWriteTimeUtc -ge $Clock.ToUniversalTime().AddMinutes(-$IdleMinutes)) { return 'its Claude session may be alive' }
-            }
+            $dd = Get-Item -LiteralPath $d -Force -ErrorAction SilentlyContinue
+            if ($dd -and $dd.LastWriteTimeUtc -ge $since) { return 'its Claude session may be alive' }
+            $hit = Get-ChildItem -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTimeUtc -ge $since } | Select-Object -First 1
+            if ($hit) { return 'its Claude session may be alive' }
         }
     }
     $newest = $it.LastWriteTimeUtc
@@ -339,8 +344,23 @@ function Get-RepoFolder {
     return $null
 }
 
+# Get-InstallRefusal: why -Install must not run here, or $null. Inside the Claude desktop app the sandbox redirects %LOCALAPPDATA% to
+# Packages\Claude_*\LocalCache\Local, so the "installed" copy would land in that private folder and the hourly task would keep running
+# the old copy from the real one.
+function Get-InstallRefusal {
+    param([string]$Self, [string]$LocalAppData)
+    foreach ($p in $Self, $LocalAppData) {
+        if ($p -and ([IO.Path]::GetFullPath($p) -match '(?i)\\Packages\\')) {
+            return "Housekeeping.ps1 -Install was started inside the Claude desktop app sandbox ($p is under a Packages folder), which redirects LocalAppData, so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. Open a normal terminal (Windows Terminal or PowerShell, not the Claude app) and run -Install again from the repository."
+        }
+    }
+    return $null
+}
+
 function Register-HousekeepingTask {
     param([string]$RepoFolder)
+    $refusal = Get-InstallRefusal -Self $PSCommandPath -LocalAppData $env:LOCALAPPDATA
+    if ($refusal) { throw $refusal }
     $dir = Get-StateDir
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $self = [IO.Path]::GetFullPath($PSCommandPath)
@@ -365,6 +385,10 @@ if ($MyInvocation.InvocationName -ne '.') {
     try {
         if (-not $IsWindows) { if ($alwaysZero) { exit 0 } else { Write-Host 'Windows only.'; exit 0 } }
         $dir = Get-StateDir
+        if ($Install) {
+            $refusal = Get-InstallRefusal -Self $PSCommandPath -LocalAppData $env:LOCALAPPDATA
+            if ($refusal) { Write-Host $refusal; exit 1 }
+        }
         if ($Install) { . (Join-Path $PSScriptRoot 'Clean-Scratch.ps1'); Register-HousekeepingTask -RepoFolder (Get-RepoFolder -Explicit $Repo -Dir $dir); exit 0 }
         if ($Uninstall) { Unregister-ScheduledTask -TaskName $script:HkTask -Confirm:$false -ErrorAction SilentlyContinue; Write-Host 'task removed'; exit 0 }
 

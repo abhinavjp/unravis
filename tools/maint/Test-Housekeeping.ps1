@@ -193,6 +193,18 @@ try {
     Check (Test-Path $agSub) 'agent worktree: a protected checkout inside it (current directory in a subfolder) keeps it'
     Check (Test-Path $agLive) 'agent worktree: a recently changed transcript of its own Claude project keeps it'
     Check (Test-Path $repo) 'agent worktree: the main checkout is never removed'
+    # The "session may be alive" window is the same 24 hours as the worktree's own quiet time, and subfolders (subagents) count.
+    $agSubAgent = New-AgentWt 'agent-subagent'
+    $agSubProj = Join-Path $projects (ConvertTo-ProjectName $agSubAgent); New-Item -ItemType Directory -Force -Path (Join-Path $agSubProj 'sess\subagents') | Out-Null
+    $sf = Join-Path $agSubProj 'sess\subagents\agent-1.jsonl'; Set-Content -LiteralPath $sf -Value '{}'
+    foreach ($x in @($sf, (Join-Path $agSubProj 'sess\subagents'), (Join-Path $agSubProj 'sess'), $agSubProj)) { (Get-Item -LiteralPath $x).LastWriteTimeUtc = $clock.AddHours(-5) }
+    $agStale = New-AgentWt 'agent-stale'
+    $agStaleProj = Join-Path $projects (ConvertTo-ProjectName $agStale); New-Item -ItemType Directory -Force -Path (Join-Path $agStaleProj 'sess') | Out-Null
+    $stf = Join-Path $agStaleProj 'sess\old.jsonl'; Set-Content -LiteralPath $stf -Value '{}'
+    foreach ($x in @($stf, (Join-Path $agStaleProj 'sess'), $agStaleProj)) { (Get-Item -LiteralPath $x).LastWriteTimeUtc = $clock.AddDays(-3) }
+    $null = RunAg
+    Check (Test-Path $agSubAgent) 'agent worktree: a subagent transcript changed 5 hours ago (inside the 24 hour window) keeps it'
+    Check (-not (Test-Path $agStale)) 'agent worktree: its Claude project folder untouched for 3 days does not keep it'
     $null = Run $true $running
     Check (Test-Path $agUnmerged) 'agent worktree: not removed by a run whose roots do not include .claude\worktrees'
 
@@ -232,6 +244,36 @@ try {
     Check ((($g.Locations | Where-Object Label -eq 'pkg-big').FreedBytes -ge 8MB) -and (($g.Locations | Where-Object Label -eq 'small').FreedBytes -eq 0)) 'go cache: GB freed is reported per location'
     Check ((Test-Path (Join-Path $modDir 'm.bin')) -and $g.ModCacheBytes -ge 3MB) 'go module cache: measured and reported, never deleted'
 
+    # the fallback deletes only what Go itself writes: a sibling folder or a user's file in the same directory must survive
+    $sib = Join-Path $gcRoot 'sibling'; New-FakeCache $sib 8
+    New-Item -ItemType Directory -Force -Path (Join-Path $sib 'mod\cache') | Out-Null; Set-Content -LiteralPath (Join-Path $sib 'mod\cache\keep.txt') -Value 'module cache'
+    Set-Content -LiteralPath (Join-Path $sib 'notes.txt') -Value 'mine'; New-Item -ItemType Directory -Force -Path (Join-Path $sib 'abc') | Out-Null
+    Set-Content -LiteralPath (Join-Path $sib 'abc\keep.txt') -Value 'three hex digits is not a Go folder'
+    foreach ($f in 'log.txt', 'trim.txt', 'testexpire.txt') { Set-Content -LiteralPath (Join-Path $sib $f) -Value '1' }
+    New-Item -ItemType Directory -Force -Path (Join-Path $sib 'a1') | Out-Null; Set-Content -LiteralPath (Join-Path $sib 'a1\x') -Value '1'
+    New-Item -ItemType Directory -Force -Path (Join-Path $sib 'b2.deleting-0123abcd') | Out-Null; Set-Content -LiteralPath (Join-Path $sib 'b2.deleting-0123abcd\x') -Value '1'
+    $g = Invoke-GoCacheClean -DoApply $true -LimitGB $lim -Running @() -Locations @([pscustomobject]@{ Label = 'sib'; Path = $sib }) -UseGo $false 6>$null
+    Check ((-not (Test-Path (Join-Path $sib '3f'))) -and (-not (Test-Path (Join-Path $sib 'a1'))) -and (-not (Test-Path (Join-Path $sib 'log.txt'))) -and (-not (Test-Path (Join-Path $sib 'trim.txt'))) -and (-not (Test-Path (Join-Path $sib 'testexpire.txt')))) 'go cache fallback: the two-hex-digit folders and log.txt, trim.txt, testexpire.txt are deleted'
+    Check ((Test-Path (Join-Path $sib 'mod\cache\keep.txt')) -and (Test-Path (Join-Path $sib 'notes.txt')) -and (Test-Path (Join-Path $sib 'abc\keep.txt')) -and (Test-Path (Join-Path $sib 'README'))) 'go cache fallback: a sibling mod\ folder, a user file, a three-letter folder and README all survive'
+    Check (-not (Test-Path (Join-Path $sib 'b2.deleting-0123abcd'))) 'go cache fallback: a leftover of an earlier killed run is deleted too'
+
+    # leftovers of a killed fallback are swept (also after a successful go clean), and only leftovers
+    $lo = Join-Path $gcRoot 'leftovers'; New-FakeCache $lo 1
+    New-Item -ItemType Directory -Force -Path (Join-Path $lo 'c3.deleting-deadbeef') | Out-Null; Set-Content -LiteralPath (Join-Path $lo 'c3.deleting-deadbeef\x') -Value '1'
+    Set-Content -LiteralPath (Join-Path $lo 'log.txt.deleting-deadbeef') -Value '1'
+    New-Item -ItemType Directory -Force -Path (Join-Path $lo 'zz.deleting-deadbeef') | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $lo 'mod.deleting-deadbeef') | Out-Null
+    Remove-GoCacheEntries -Dir $lo -LeftoversOnly $true 6>$null
+    Check ((-not (Test-Path (Join-Path $lo 'c3.deleting-deadbeef'))) -and (-not (Test-Path (Join-Path $lo 'log.txt.deleting-deadbeef')))) 'go cache sweep: leftover <hex>.deleting-<8 hex> folders and files are removed'
+    Check ((Test-Path (Join-Path $lo '3f\x-d')) -and (Test-Path (Join-Path $lo 'zz.deleting-deadbeef')) -and (Test-Path (Join-Path $lo 'mod.deleting-deadbeef'))) 'go cache sweep: live cache folders and names that are not Go leftovers are left alone'
+
+    if (Get-Command go -ErrorAction SilentlyContinue) {
+        $loGo = Join-Path $gcRoot 'leftovers-go'; New-FakeCache $loGo 8
+        New-Item -ItemType Directory -Force -Path (Join-Path $loGo 'd4.deleting-cafe0123') | Out-Null; Set-Content -LiteralPath (Join-Path $loGo 'd4.deleting-cafe0123\x') -Value '1'
+        $null = Invoke-GoCacheClean -DoApply $true -LimitGB $lim -Running @() -Locations @([pscustomobject]@{ Label = 'logo'; Path = $loGo }) 6>$null
+        Check ((-not (Test-Path (Join-Path $loGo '3f\x-d'))) -and (-not (Test-Path (Join-Path $loGo 'd4.deleting-cafe0123')))) 'go cache: after a successful go clean the leftovers of a killed fallback are swept'
+    }
+
     if (Get-Command go -ErrorAction SilentlyContinue) {
         $envBefore = $env:GOCACHE
         $g = Invoke-GoCacheClean -DoApply $true -LimitGB $lim -Running @() -Locations @([pscustomobject]@{ Label = 'viago'; Path = $bigGo }) -ModCacheDir $modDir 6>$null
@@ -244,6 +286,13 @@ try {
     $g = Invoke-GoCacheClean -DoApply $true -LimitGB $lim -Running $goBusy -Locations @([pscustomobject]@{ Label = 'pkg-big'; Path = $big }, [pscustomobject]@{ Label = 'pkg-huge'; Path = $huge }) -UseGo $false 6>$null
     Check ((Test-Path (Join-Path $big '3f\x-d')) -and (Test-Path (Join-Path $huge '3f\x-d'))) 'go cache: nothing is cleaned while a Go build runs'
     Check (@($g.Notes).Count -eq 1 -and ($g.Notes[0] -match 'go cache over limit but a build is running') -and ($g.Notes[0] -match 'pkg-huge')) 'go cache: a cache over 3x the limit with a build running is called out (one over 1x is not)'
+    # the process list is taken again right before each delete: a build that started after the caller's list stops the clean
+    New-FakeCache $big 8
+    $savedOverride = $script:ProcessLinesOverride
+    $script:ProcessLinesOverride = $goBusy
+    $g = Invoke-GoCacheClean -DoApply $true -LimitGB $lim -Running @() -Locations @([pscustomobject]@{ Label = 'pkg-big'; Path = $big }) -UseGo $false 6>$null
+    $script:ProcessLinesOverride = $savedOverride
+    Check ((Test-Path (Join-Path $big '3f\x-d')) -and (($g.Locations | Where-Object Label -eq 'pkg-big').Status -eq 'busy') -and $g.FreedBytes -eq 0) 'go cache: a Go build that started after the caller took its process list stops the clean'
     $g = Invoke-GoCacheClean -DoApply $true -LimitGB 0 -Running @() -Locations @([pscustomobject]@{ Label = 'huge'; Path = $huge }) -UseGo $false 6>$null
     Check ((Test-Path (Join-Path $huge '3f\x-d')) -and $g.Locations.Count -eq 0) 'go cache: limit 0 turns the step off'
 
@@ -256,6 +305,20 @@ try {
     $rg = Invoke-HousekeepingRun -Repo $repo -DoApply $true -Clock $clock -TempRoot $temp -ProjectsRoot $projects -ScratchRoots @($scratch) -Running @() -GoCacheLimitGB $lim -GoLocations @([pscustomobject]@{ Label = 'pkg-x'; Path = $nonCache }, [pscustomobject]@{ Label = 'go-env'; Path = $small }) -UseGo $false 6>$null
     $line = Format-RunLine -Ev 'periodic' -DoApply $true -R $rg
     Check ($line -match 'pkg-x skipped \(no Go README\)' -and $line -match 'go-env 0\.00 GB under limit') 'run line: a skipped or under-limit cache is named as such, never shown as a bare 0.00 GB'
+
+    # ---- -Install refuses inside the Claude app sandbox (LocalAppData redirected to Packages); nothing is installed or registered
+    $normalLocal = 'C:\Users\Someone\AppData\Local'
+    $sandboxLocal = 'C:\Users\Someone\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local'
+    $selfOk = 'D:\Projects\unravis\tools\maint\Housekeeping.ps1'
+    Check ($null -eq (Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal)) 'install: a normal terminal (real LocalAppData) is allowed'
+    $why = Get-InstallRefusal -Self $selfOk -LocalAppData $sandboxLocal
+    Check ($why -and $why -match 'normal terminal' -and $why -match 'Packages') 'install: LocalAppData under Packages is refused with a clear message'
+    Check ([bool](Get-InstallRefusal -Self ($sandboxLocal + '\x\Housekeeping.ps1') -LocalAppData $normalLocal)) 'install: a script running from under Packages is refused'
+    if ([bool](Get-InstallRefusal -Self $selfOk -LocalAppData $sandboxLocal)) {
+        $savedLocal = $env:LOCALAPPDATA; $thrown = $null
+        try { $env:LOCALAPPDATA = $sandboxLocal; try { Register-HousekeepingTask -RepoFolder $repo } catch { $thrown = $_.Exception.Message } } finally { $env:LOCALAPPDATA = $savedLocal }
+        Check ($thrown -and $thrown -match 'normal terminal') 'install: Register-HousekeepingTask throws before copying anything or registering a task'
+    }
 
     # ---- owner filter edge cases
     $script:ProcessLinesOverride = $null
