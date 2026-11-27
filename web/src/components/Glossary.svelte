@@ -5,7 +5,7 @@
   import { searchTerms } from '../lib/copy/lookup';
   import { HELP_STEPS, HELP_TEXT, glossaryCount } from '../lib/copy/screenCopy';
   import { versionLine } from '../lib/versionLine';
-  import { updateCheckNote, updateCheckState, updatePreviewNow, isOwnReleaseUrl, UPDATE_INTERVALS, intervalLabel, checkedNote } from '../lib/updateCheck';
+  import { updateCheckFailureNote, updateCheckNote, updateCheckState, updatePreviewNow, isOwnReleaseUrl, UPDATE_INTERVALS, intervalLabel, checkedNote } from '../lib/updateCheck';
   import { refreshUpdateStatus, setUpdateReply, updates } from '../lib/updateState.svelte';
   import type { UpdateCheckReply } from '../lib/types';
   import Drawer from './Drawer.svelte';
@@ -53,6 +53,8 @@
   // The manual update check: only runs when the button is pressed, never by itself.
   let checking = $state(false);
   let update = $state<UpdateCheckReply | null>(null);
+  // Set when the page's own request failed (the answer never came). A feed that could not be reached is a normal answer with status 'unreachable', not this.
+  let checkFailure = $state('');
   let checkId = $state(0);
   const unreachableReply = (): UpdateCheckReply => ({ status: 'unreachable', current: '', latest: '', url: '' });
   // The automatic check and its settings. The program checks on its own; these only change how often, or switch it off.
@@ -75,11 +77,12 @@
     if (checking) return;
     checking = true;
     update = null;
+    checkFailure = '';
     try {
       const reply = await api.updateCheck(updatePreviewNow());
       update = reply && typeof reply.status === 'string' ? reply : unreachableReply();
       if (update.status !== 'unreachable' || update.current) setUpdateReply({ ...update, auto: update.auto ?? auto, intervalMinutes: update.intervalMinutes ?? minutes });
-    } catch { update = unreachableReply(); }
+    } catch (error) { checkFailure = updateCheckFailureNote(error); }
     finally { checking = false; }
     checkId += 1;
     await tick();
@@ -152,7 +155,7 @@
         {#if settings && settings.checkedAt}<p class="updates-checked" data-testid="update-checked">{checkedNote(settings.checkedAt)}</p>{/if}
       {/if}
       <div class="update-check"><button type="button" class="update-button" data-testid="update-check-button" aria-disabled={checking} onclick={checkForUpdates}>{checking ? 'Checking...' : 'Check for updates'}</button>
-        <div role="status" aria-live="polite" aria-busy={checking}>{#if update}{#key checkId}<p class="update-note" data-testid="update-check-result" data-state={updateCheckState(update)}>{updateCheckNote(update)}{#if update.status === 'available' && update.url && isOwnReleaseUrl(update.url)}{' '}<a data-testid="update-check-link" href={update.url} target="_blank" rel="noopener noreferrer">Open the release page</a>{/if}</p>{/key}{/if}</div></div>
+        <div role="status" aria-live="polite" aria-busy={checking}>{#if checkFailure}{#key checkId}<p class="update-note" data-testid="update-check-result" data-state="failed">{checkFailure}</p>{/key}{:else if update}{#key checkId}<p class="update-note" data-testid="update-check-result" data-state={updateCheckState(update)}>{updateCheckNote(update)}{#if update.status === 'available' && update.url && isOwnReleaseUrl(update.url)}{' '}<a data-testid="update-check-link" href={update.url} target="_blank" rel="noopener noreferrer">Open the release page</a>{/if}</p>{/key}{/if}</div></div>
     </section>
   {/if}
 </Drawer>

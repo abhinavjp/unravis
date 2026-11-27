@@ -151,3 +151,19 @@ test('the screen reader line has no percentage', () => {
   assert.equal(upd.installAnnouncement({ ...base, install: { state: 'ready', version: '1.3.0', done: 1, total: 1 } }), 'Version 1.3.0 is ready to install.');
   assert.equal(upd.installAnnouncement(base), '');
 });
+
+test('a failed request for the check shows the own plain sentence of the error, and falls back to the could-not-be-reached sentence', () => {
+  const unreachable = 'Unravis could not be reached. It may have been closed or updated. Start Unravis again, then reload this page.';
+  assert.equal(upd.updateCheckFailureNote(Object.assign(new Error(unreachable), { code: 'unreachable', status: 0 })), unreachable);
+  assert.equal(upd.updateCheckFailureNote(new Error('The update check is not available in this build.')), 'The update check is not available in this build.');
+  assert.equal(upd.updateCheckFailureNote(new Error('')), unreachable);
+  assert.equal(upd.updateCheckFailureNote(undefined), unreachable);
+  assert.notEqual(upd.updateCheckFailureNote(new Error('boom')), upd.updateCheckNote({ status: 'unreachable' }), 'a local failure is not the "could not check for updates" feed line');
+});
+
+test('the Help panel shows a failed request in its own note, and the update feed line only for an unreachable answer', () => {
+  const panel = fs.readFileSync(path.join(root, 'src/components/Glossary.svelte'), 'utf8');
+  assert.match(panel, /catch \(error\) \{ checkFailure = updateCheckFailureNote\(error\); \}/);
+  assert.doesNotMatch(panel, /catch \{ update = unreachableReply\(\); \}/);
+  assert.match(panel, /\{#if checkFailure\}[\s\S]*data-state="failed"[\s\S]*\{:else if update\}/);
+});

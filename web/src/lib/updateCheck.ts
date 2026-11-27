@@ -1,3 +1,4 @@
+import { UNREACHABLE_MESSAGE } from './copy/unreachableCopy';
 import type { UpdateCheckReply } from './types';
 
 export type UpdatePreview = '' | (typeof PREVIEWS)[number];
@@ -22,6 +23,16 @@ export function updateCheckNote(reply: UpdateCheckReply): string {
     default:
       return UNREACHABLE_NOTE;
   }
+}
+
+/**
+ * The sentence when the page's own request for the check failed (it never got an answer). The shared request layer already wrote a plain
+ * sentence on the error (the "could not be reached" one for a lost connection); with no message at all, that same sentence is shown. A feed that could
+ * not be reached is not this case: the server answers 200 with status "unreachable", and `updateCheckNote` says "Could not check for updates".
+ */
+export function updateCheckFailureNote(error: unknown): string {
+  const message = error instanceof Error ? error.message.trim() : '';
+  return message || UNREACHABLE_MESSAGE;
 }
 
 /** The demo-only preview named in the URL hash, such as #update=available. Any other value gives ''. */
