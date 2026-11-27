@@ -11,9 +11,13 @@
   import type { RecentConnection, SavedSqlConnection } from '../../lib/types';
   import SqlConnectionForm from './SqlConnectionForm.svelte';
   import StateSticker from './StateSticker.svelte';
+  import SavedFileDamaged from './SavedFileDamaged.svelte';
+  import { damagedInfo, isSavedFileDamaged } from '../../lib/savedFile';
+  import { SAVED_FILE_TEXT, keptNote } from '../../lib/copy/savedFileCopy';
   import KeeperCard from './KeeperCard.svelte';
   import { app } from '../../lib/appState.svelte';
-  import { announceConnectionsChanged, dropTest, recallTests, rememberTest, type TestResult } from './connectionMemory';
+  import { finishRecentSetAside } from '../../lib/appState.svelte';
+  import { announceConnectionsChanged, dropTest, onConnectionsChanged, recallTests, rememberTest, type TestResult } from './connectionMemory';
   import './sources.css';
 
   // Screens 52 and 53: every saved connection in one list, SQL Server and MongoDB. Test says only Works, Failed or Not tested, and the last
@@ -28,6 +32,10 @@
   let loaded = $state(false);
   let loadFailed = $state(false);
   let demo = $state(false);
+  // RV-DAT-1: the saved MongoDB file cannot be read. The page offers to set it aside; SQL connections still show.
+  let mongoDamaged = $state(false);
+  // The server's own sentence for it (it names the real folder), and whether the list is the whole PC's.
+  let damaged = $state({ detail: '', shared: false });
   let tests = $state.raw<Record<string, TestResult>>(recallTests());
   let testing = $state('');
   let asking = $state('');
@@ -62,12 +70,22 @@
     keeper = k.status === 'fulfilled' && k.value && typeof k.value === 'object' ? k.value : null;
     // A stopped or untrusted keeper also answers 503: that is the keeper card's to say, not the demo's.
     const keeperDown = [a, b].some(r => r.status === 'rejected' && isKeeperDown(r.reason));
-    const refused = (r: PromiseSettledResult<unknown>) => r.status === 'rejected' && (r.reason as { status?: number } | null)?.status === 503;
+    // An unreadable saved MongoDB file also answers 503, but it is not the demo: the server names it, and the page offers the way out.
+    mongoDamaged = b.status === 'rejected' && isSavedFileDamaged(b.reason);
+    damaged = b.status === 'rejected' ? damagedInfo(b.reason) : { detail: '', shared: false };
+    const refused = (r: PromiseSettledResult<unknown>) => r.status === 'rejected' && (r.reason as { status?: number } | null)?.status === 503 && !isSavedFileDamaged(r.reason);
     demo = refused(a) && refused(b) && !keeperDown;
-    loadFailed = a.status === 'rejected' && b.status === 'rejected' && !demo && !keeperDown;
+    // The damaged file has its own way out; the generic "Try again" would sit beside it and cannot help.
+    loadFailed = a.status === 'rejected' && b.status === 'rejected' && !demo && !keeperDown && !mongoDamaged;
     loaded = true;
   }
-  onMount(() => { void load(); });
+  // A set-aside failed and left the file as it was: read the list again, so the way out is offered only while the file really is unreadable.
+  async function recheckDamaged() {
+    await load(false);
+    if (!mongoDamaged && !loadFailed) notice = SAVED_FILE_TEXT.readsFine;
+  }
+  // The Connections drawer can set the damaged file aside while this page is open behind it: read the list again so it does not offer it twice.
+  onMount(() => { void load(); return onConnectionsChanged(() => { if (mongoDamaged) void load(false); }); });
 
   const remember = (key: string, word: ConnectionWord, problem: string) => {
     tests = rememberTest(key, { word, at: new Date().toLocaleString(), problem });
@@ -168,16 +186,17 @@
     {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{/if}
   {/if}
   {#if notice !== ''}<p class="say" role="status" data-notice>{notice}</p>{/if}
+  {#if mongoDamaged}<SavedFileDamaged page {readOnly} detail={damaged.detail} shared={damaged.shared} onRecheck={recheckDamaged} onDone={async (name, folder) => { notice = keptNote(name, folder); await finishRecentSetAside(name, folder); await load(false); announceConnectionsChanged(); }} />{/if}
 
   {#if demo}
     <div class="empty" data-demo><p class="lead">{CONN_TEXT.demo}</p></div>
   {:else if loadFailed}
     <div class="empty"><p class="say bad" role="alert">{CONN_TEXT.loadFailed}</p><div class="actions"><button type="button" class="btn" onclick={() => void load()}>{CONN_TEXT.retry}</button></div></div>
-  {:else if loaded && rows.length === 0}
+  {:else if loaded && rows.length === 0 && !mongoDamaged}
     <div class="empty"><h4>{CONN_TEXT.noneHeading}</h4><p class="lead">{CONN_TEXT.noneBody}</p></div>
   {:else}
     {#if loaded && sql.length === 0}<p class="hint" data-no-sql>{CONN_TEXT.noSql}</p>{/if}
-    {#if loaded && mongo.length === 0}<p class="hint" data-no-mongo>{CONN_TEXT.noMongo}</p>{/if}
+    {#if loaded && mongo.length === 0 && !mongoDamaged}<p class="hint" data-no-mongo>{CONN_TEXT.noMongo}</p>{/if}
     <ul class="rows" aria-label={CONN_TEXT.heading}>
       {#each rows as row (row.key)}
         <li data-kind={row.kind}>

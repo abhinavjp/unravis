@@ -1,3 +1,4 @@
+import { isBareFailure } from './copy/requestFailedCopy';
 import { stateLabel } from './ledger';
 import type { EvidenceCount, EvidenceExport, EvidenceRecord, ExportPreview, ExportPreviewInput, Query } from './types';
 
@@ -39,7 +40,10 @@ export const EXPORT_TEXT = {
   saving: 'Saving…',
   saveNote: 'Saving downloads the file to your computer.',
   failedPreview: 'The preview did not finish. Try again.',
-  failedSave: 'The file was not saved. Try again.',
+  failedSave: 'The file could not be saved. Make the preview again.',
+  downloadStarted: "Download started. Check your browser's downloads.",
+  fileNameLabel: 'File name',
+  savedHashLabel: 'SHA-256 of the saved file',
   hashMismatch: 'The file did not match the SHA-256 the server sent, so it was not saved. Preview it again.',
   unavailable: 'Export is not available right now. Try again later.',
   goneSave: 'This preview is no longer available. Preview it again.',
@@ -149,7 +153,13 @@ export function canSave(phase: ExportPhase): boolean {
   return phase.kind === 'preview' && phase.preview.export.body.records.length > 0;
 }
 
-export const savedLine = (sha256: string) => `Saved. SHA-256 of the saved file: ${sha256}`;
+/**
+ * What the drawer shows after a save that failed. The confirm call has used the preview up, so Save is not offered again:
+ * the drawer goes back to its start, where Preview is, and says why.
+ */
+export function failedSaveOutcome(cause: unknown): { phase: ExportPhase; problem: string } {
+  return { phase: { kind: 'idle' }, problem: errorText(cause, 'save') };
+}
 
 /** Lower-case hex SHA-256 of the UTF-8 bytes of text, which are the bytes the saved file holds. */
 export async function sha256Hex(text: string): Promise<string> {
@@ -174,7 +184,7 @@ export async function contentMatches(content: string, sha256: string): Promise<b
 export function errorText(cause: unknown, stage: 'preview' | 'save'): string {
   const status = typeof cause === 'object' && cause !== null && 'status' in cause ? Number((cause as { status?: unknown }).status) : 0;
   const message = cause instanceof Error ? cause.message.trim() : '';
-  if (message && !/^Request failed \(\d+\)$/.test(message)) return message;
+  if (message && !isBareFailure(message)) return message;
   if (status === 503) return EXPORT_TEXT.unavailable;
   if (status === 404) return stage === 'save' ? EXPORT_TEXT.goneSave : EXPORT_TEXT.notFound;
   return stage === 'save' ? EXPORT_TEXT.failedSave : EXPORT_TEXT.failedPreview;

@@ -7,6 +7,7 @@
   import type { SavedSqlConnection } from '../../lib/types';
   import { SOURCES_TEXT, addressProblemText, unreachedText } from '../../lib/copy/wizardSourcesCopy';
   import { connectedText } from '../../lib/copy/healthCopy';
+  import RemoveConfirm from '../RemoveConfirm.svelte';
 
   // SQL Server the way SQL Server Management Studio asks for it. "Test and list databases" connects (read only) and fills the Database list.
   // "Add and keep details" tests the connection too, adds the server to the case, and keeps the details on this computer. The form keeps its fields.
@@ -98,9 +99,11 @@
     onDone?.();
   }
 
-  async function forget(id: string) {
-    try { await api.forgetSqlConnection(id); } catch { /* it stays on the list; try again */ }
+  // True once the kept connection is gone. A failure leaves the row, and its Remove button says so (W-16).
+  async function forget(id: string): Promise<boolean> {
+    try { await api.forgetSqlConnection(id); } catch { return false; }
     await loadSaved();
+    return true;
   }
 
   function use(item: SavedSqlConnection) {
@@ -123,7 +126,7 @@
             <span class="what"><span class="name">{item.label}</span>
               <span class="hint">{item.auth === 'windows' ? SOURCES_TEXT.sqlWindowsLogin : item.username}{item.database ? ' · ' + item.database : ''} · {item.hasPassword ? SOURCES_TEXT.sqlHasPassword : SOURCES_TEXT.sqlNoPassword}</span></span>
             <button type="button" class="secondary-button" aria-label="{SOURCES_TEXT.sqlUse}: {item.label}" onclick={() => use(item)}>{SOURCES_TEXT.sqlUse}</button>
-            <button type="button" class="quiet-button" aria-label="{SOURCES_TEXT.sqlForget}: {item.label}" onclick={() => void forget(item.id)}>{SOURCES_TEXT.sqlForget}</button>
+            <RemoveConfirm label={item.label} locked={busy || testing} remove={() => forget(item.id)} />
           </li>
         {/each}
       </ul>

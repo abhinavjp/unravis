@@ -1,6 +1,7 @@
 import { createInvestigationSnapshot, parseInvestigationSnapshot, type InvestigationSnapshot } from './investigation';
 import type { Query, RecentConnection, Source } from './types';
 import { reasonText } from './copy/importCopy';
+import { CASE_RESTORE_TEXT } from './copy/caseRestoreCopy';
 import { isUnreachableError } from './copy/unreachableCopy';
 import { parseStoredWindows, pickWindowFields, type WindowFields } from './tracing/windows';
 import { parseStoredSourceChoice, sourceChoiceOf, type SourceSelection, type StoredSourceChoice } from './tracing/sources';
@@ -300,6 +301,17 @@ export function createWorkspaceSaver(options: WorkspaceSaverOptions) {
 export function workspaceFailureNote(cause: unknown): string {
   const reason = cause && typeof cause === 'object' ? (cause as { reason?: unknown }).reason : undefined;
   return reason === 'case-import-running' ? (reasonText('case-import-running') ?? '') : '';
+}
+
+export type WorkspaceNoteEvent = 'case-changed' | 'restore-start' | 'workspace-unreadable' | 'sources-unreadable';
+/**
+ * The note shown above the page about the case's saved settings (RV-UI-8), after an event. A new case or a new restore starts with no note
+ * (the old one was about a read that has been replaced); a failed read sets its sentence. The demo has no workspace, so its failed read says nothing.
+ */
+export function workspaceNoteAfter(event: WorkspaceNoteEvent, demo: boolean, current: string): string {
+  if (event === 'workspace-unreadable') return demo ? current : CASE_RESTORE_TEXT.workspaceUnreadable;
+  if (event === 'sources-unreadable') return CASE_RESTORE_TEXT.sourcesUnreadable;
+  return '';
 }
 
 /**

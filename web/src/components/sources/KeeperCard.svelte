@@ -67,7 +67,7 @@
       if (code === 'not-verified' || code === 'duplicates-unconfirmed') {
         // The old copies were kept: fetch the counts again so the card shows what still waits (and the move, when anything does).
         refused = code === 'not-verified';
-        try { await onRetry(); } catch { /* the message above still says what happened */ }
+        try { await onRetry(); } catch { /* silent on purpose: the refusal message above is already on screen and says what happened; this re-read only refreshes the counts */ }
       }
     } finally { busy = ''; asking = false; back = kind === 'remove'; }
     await tick();
@@ -91,7 +91,7 @@
   // A read that is already running (busy) makes the page's own refresh, so this one waits for the next change.
   async function refreshFromPreview() {
     if (busy !== '') return;
-    try { await onRetry(); } catch { /* the page keeps what it showed */ }
+    try { await onRetry(); } catch { /* silent on purpose: a preview-only refresh; the page keeps what it showed and its own Try again button covers a real failure */ }
   }
   onMount(() => onKeeperPreview(() => void refreshFromPreview()));
 

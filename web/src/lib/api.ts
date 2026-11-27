@@ -3,7 +3,9 @@ import { signalIfAppLocked } from './lockSignal';
 import { configureClientLog, dropClientLog, reportAction, reportError } from './clientLog';
 import { noticeKeeperRefusal, type KeeperStatus } from './keeper';
 import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
+import { REQUEST_FAILED_MESSAGE } from './copy/requestFailedCopy';
 import { UNREACHABLE_CODE, UNREACHABLE_MESSAGE } from './copy/unreachableCopy';
+import { noteAnswered, noteRefused, noteUnreachable } from './livenessCore';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
 const base = '/api';
@@ -133,6 +135,7 @@ function networkFailure(cause: unknown): ApiError | null {
   if (cause instanceof ApiError || isAbortLike(cause) || !(cause instanceof TypeError)) return null;
   const failure = new ApiError(UNREACHABLE_MESSAGE, UNREACHABLE_CODE, undefined, 0);
   reportError({ status: 0, code: UNREACHABLE_CODE, message: failure.message });
+  noteUnreachable(); // three in a row make the page say the app has stopped (liveness.svelte.ts)
   return failure;
 }
 
@@ -144,6 +147,8 @@ async function requestOnce<T>(path: string, init: RequestInit, signal: AbortSign
   // The server gives every request an id; an error entry quotes it so a user
   // can name it and the developer can find the exact server line.
   const reqId = responseRequestId(response);
+  // Any answer means the app is there. A refused session is the exception: the app is there but this page belongs to an earlier run.
+  if (response.status === 401) noteRefused(); else noteAnswered();
   if (response.status === 401) {
     reportError({ status: 401, code: 'no_session', message: NO_SESSION_MESSAGE, reqId });
     forgetSession();
@@ -152,7 +157,8 @@ async function requestOnce<T>(path: string, init: RequestInit, signal: AbortSign
   // 423: the master key is locked. Tell the app so it shows the unlock screen; the caller still gets the refusal.
   await signalIfAppLocked(response);
   if (!response.ok) {
-    let message = 'Request failed (' + response.status + ')';
+    // No message from the server: the plain sentence. The status number is not shown; it goes to the error log entry below.
+    let message = REQUEST_FAILED_MESSAGE;
     let code: string | undefined;
     let stage: string | undefined;
     let reasons: string[] | undefined;
@@ -166,7 +172,7 @@ async function requestOnce<T>(path: string, init: RequestInit, signal: AbortSign
       if (Array.isArray(body.reasons)) reasons = body.reasons;
       if (typeof body.reason === 'string' && body.reason) reason = body.reason;
       if (Array.isArray(body.collections)) collections = body.collections.filter((c) => typeof c === 'string');
-    } catch { /* keep status message */ }
+    } catch { /* keep the plain sentence */ }
     const failure = new ApiError(plainApiMessage(response.status, message), code, stage, response.status, reasons, reason, collections);
     // Every ApiError is reported: it is, by construction, an error the caller
     // is about to show the user.
@@ -205,6 +211,8 @@ export const api = {
   recentConnections: () => request<RecentConnection[]>('/connections/recent'),
   rememberConnection: (input: RememberConnectionInput) => request<RecentConnection>('/connections/remember', json(input)),
   forgetConnection: (id: string) => request<void>('/connections/recent/' + encodeURIComponent(id), { method: 'DELETE' }),
+  /** RV-DAT-1: rename an unreadable saved MongoDB connections file and keep it. The server refuses unless that file really cannot be read. */
+  setAsideConnections: () => request<{ name: string; folder?: string }>('/connections/recent/set-aside', { method: 'POST' }),
   sqlConnections: () => request<SavedSqlConnection[]>('/sql-connections'),
   saveSqlConnection: (input: SqlConnectionInput) => request<SavedSqlConnection>('/sql-connections', json(input)),
   testSqlConnection: (input: SqlTestRequest, signal?: AbortSignal) => request<SqlTestResult>('/sql-connections/test', json(input), signal),
@@ -290,8 +298,8 @@ export const api = {
       throw noSession();
     }
     if (!response.ok) {
-      let message = 'Export failed (' + response.status + ')';
-      try { message = ((await response.json()) as { error?: string }).error ?? message; } catch { /* status is enough */ }
+      let message = REQUEST_FAILED_MESSAGE;
+      try { message = ((await response.json()) as { error?: string }).error || message; } catch { /* status is enough */ }
       const mapped = plainApiMessage(response.status, message);
       reportError({ status: response.status, message: mapped, reqId });
       throw new Error(mapped);

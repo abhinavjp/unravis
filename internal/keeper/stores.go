@@ -125,6 +125,7 @@ type MongoStore struct {
 	c       *Client
 	mu      sync.Mutex
 	session map[string]sessionSecret
+	folder  string
 }
 
 type sessionSecret struct {
@@ -136,6 +137,16 @@ type sessionSecret struct {
 func NewMongoStore(c *Client) *MongoStore {
 	return &MongoStore{c: c, session: map[string]sessionSecret{}}
 }
+
+// WithFolder says which folder the key keeper keeps its saved MongoDB file in, so the page can name it. It changes nothing else.
+func (s *MongoStore) WithFolder(dir string) *MongoStore {
+	s.folder = dir
+	return s
+}
+
+// Folder is the key keeper's folder for the saved MongoDB file ("" when it was not told). shared is true: the list is the keeper's, shared by
+// everyone who uses Unravis on this PC, and only an administrator can open its folder.
+func (s *MongoStore) Folder() (dir string, shared bool) { return s.folder, true }
 
 func sameAddress(saved history.Recent, in audit.ConnectionInput) bool {
 	return saved.URI == strings.TrimSpace(in.URI) && saved.Username == in.Username && saved.AuthSource == in.AuthSource && saved.TLSMode == in.TLSMode && saved.CACertificate == in.CACertificate
@@ -197,6 +208,21 @@ func (s *MongoStore) Delete(id string) error {
 	delete(s.session, id)
 	s.mu.Unlock()
 	return err
+}
+
+// SetAside asks the keeper to set its unreadable saved MongoDB file aside. The keeper refuses a file that reads fine.
+func (s *MongoStore) SetAside() (string, error) {
+	ctx, cancel := storeCtx()
+	defer cancel()
+	var out MongoSetAsideReply
+	err := native(s.c.Call(ctx, OpMongoSetAside, nil, &out), kindMongo)
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	s.session = map[string]sessionSecret{}
+	s.mu.Unlock()
+	return out.Name, nil
 }
 
 func (s *MongoStore) sessionPassword(rec history.Recent) string {

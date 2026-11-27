@@ -20,8 +20,9 @@ function loadTypeScript(relativePath) {
 }
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-const { normaliseCode, resolveCode, CODE_NOT_FOUND, CODE_ARCHIVED, CODE_PATTERN, codeIsEmpty } = loadTypeScript('src/lib/caseCode.ts');
+const { normaliseCode, resolveCode, CODE_NOT_FOUND, CODE_ARCHIVED, CODE_APP_LOCKED, CODE_CHECK_FAILED, CODE_PATTERN, codeIsEmpty } = loadTypeScript('src/lib/caseCode.ts');
 const { ENTER_TEXT, RESTORE_FAILED, enterLintEntries } = loadTypeScript('src/lib/copy/enterCopy.ts');
+const { UNREACHABLE_MESSAGE } = loadTypeScript('src/lib/copy/unreachableCopy.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 
@@ -89,23 +90,55 @@ test('a code the server knows opens that case, asked once with the cleaned code'
   assert.deepEqual(seen, [code]);
 });
 
-test('an unknown, an erased, a locked and an unreachable case all give the same message as a malformed code', async () => {
-  const code = 'abcdefghij' + 'klmnopqrst' + 'uvwxy2';
-  const refusals = [
-    { status: 404, reason: 'case-not-found' }, // unknown or erased
-    { status: 400, reason: 'bad-case-id' },
-    { status: 423, reason: 'locked' },
-    { status: 0, reason: 'unreachable' },
-    { status: 500, reason: '' },
-    new Error('anything at all')
-  ];
+const CODE = 'abcdefghij' + 'klmnopqrst' + 'uvwxy2';
+const refuse = (refusal) => resolveCode(CODE, async () => { throw refusal; });
+
+test('a 404 or a 400 (unknown, erased, bad id) gives the same message as a malformed code', async () => {
   const malformed = await resolveCode('nope', async () => {});
   assert.equal(malformed.message, CODE_NOT_FOUND);
-  for (const refusal of refusals) {
-    const outcome = await resolveCode(code, async () => { throw refusal; });
+  for (const refusal of [{ status: 404, reason: 'case-not-found' }, { status: 400, reason: 'bad-case-id' }, { status: 404 }, { status: 400 }]) {
+    const outcome = await refuse(refusal);
     assert.deepEqual(outcome, { ok: false, message: CODE_NOT_FOUND }, JSON.stringify(refusal));
-    assert.equal(outcome.message, malformed.message, 'the same string for every failure');
+    assert.equal(outcome.message, malformed.message, 'the same string for every wrong code');
   }
+});
+
+test('a locked Unravis (423) says to unlock first, not "not found"', async () => {
+  assert.equal(CODE_APP_LOCKED, 'Unlock Unravis first, then try the code again.');
+  assert.deepEqual(await refuse({ status: 423, reason: 'locked' }), { ok: false, message: CODE_APP_LOCKED });
+  assert.deepEqual(await refuse({ status: 423 }), { ok: false, message: CODE_APP_LOCKED });
+});
+
+test('any other failure says the code could not be checked, never "not found"', async () => {
+  assert.equal(CODE_CHECK_FAILED, 'The code could not be checked just now. Try again.');
+  const failures = [
+    { status: 500, reason: '' },
+    { status: 502 },
+    { status: 0, code: 'timeout' },
+    new Error('anything at all'),
+    new TypeError('Failed to fetch'),
+    'a string',
+    undefined
+  ];
+  for (const failure of failures) {
+    const outcome = await refuse(failure);
+    assert.deepEqual(outcome, { ok: false, message: CODE_CHECK_FAILED }, String(JSON.stringify(failure)));
+    assert.notEqual(outcome.message, CODE_NOT_FOUND);
+  }
+});
+
+test('a lost connection says Unravis could not be reached, but a timeout stays on the could-not-be-checked sentence', async () => {
+  assert.match(UNREACHABLE_MESSAGE, /could not be reached/);
+  assert.deepEqual(await refuse({ status: 0, code: 'unreachable' }), { ok: false, message: UNREACHABLE_MESSAGE });
+  assert.deepEqual(await refuse({ status: 0, reason: 'unreachable' }), { ok: false, message: UNREACHABLE_MESSAGE });
+  assert.deepEqual(await refuse({ status: 0, code: 'timeout' }), { ok: false, message: CODE_CHECK_FAILED });
+  assert.deepEqual(await refuse({ status: 0, reason: 'timeout' }), { ok: false, message: CODE_CHECK_FAILED });
+});
+
+test('a case with its own key, an untrusted case and an archived case keep their own answers, ahead of the status', async () => {
+  assert.deepEqual(await refuse({ status: 423, reason: 'case-locked' }), { ok: true, id: CODE });
+  assert.deepEqual(await refuse({ status: 409, reason: 'untrusted-case' }), { ok: true, id: CODE });
+  assert.deepEqual(await refuse({ status: 409, reason: 'case-archived' }), { ok: false, message: CODE_ARCHIVED });
 });
 
 test('an abort is not turned into a message', async () => {
@@ -113,10 +146,12 @@ test('an abort is not turned into a message', async () => {
   await assert.rejects(resolveCode(code, async () => { throw new DOMException('Aborted', 'AbortError'); }), { name: 'AbortError' });
 });
 
-test('the not-found message is one constant, said in plain words, and the card uses it on every code path', () => {
+test('the code sentences are constants, said in plain words, and the logic holds no sentence of its own', () => {
   assert.equal(CODE_NOT_FOUND, 'That code does not match a case on this computer.');
   const caseCode = read('src/lib/caseCode.ts');
-  assert.equal((caseCode.match(/message: CODE_NOT_FOUND/g) ?? []).length, 2, 'both failure paths use the constant');
+  assert.equal((caseCode.match(/message: CODE_NOT_FOUND/g) ?? []).length, 2, 'the malformed path and the 404 or 400 path use the constant');
+  assert.equal((caseCode.match(/message: CODE_CHECK_FAILED/g) ?? []).length, 1);
+  assert.equal((caseCode.match(/message: CODE_APP_LOCKED/g) ?? []).length, 1);
   assert.doesNotMatch(caseCode, /message: '/, 'no other message text in the code logic');
   const card = read('src/components/EnterCase.svelte');
   assert.doesNotMatch(card, /does not match a case/, 'the sentence lives only in the copy file');
@@ -189,9 +224,10 @@ test('the code of an archived case says it is archived and points to Saved cases
   assert.match(CODE_ARCHIVED, /Saved cases/);
   assert.doesNotMatch(CODE_ARCHIVED, /case-archived|409/, 'no internal code on screen');
   assert.ok(enterLintEntries().some((e) => e.id === 'enter.codeArchived' && e.text === CODE_ARCHIVED), 'the sentence is in the copy lint');
-  // Any other 409 or unknown reason still reads as the generic sentence.
-  for (const refusal of [{ status: 409, reason: 'case-closed' }, { status: 409, reason: '' }, { status: 404, reason: 'case-not-found' }]) {
-    assert.deepEqual(await resolveCode(code, async () => { throw refusal; }), { ok: false, message: CODE_NOT_FOUND }, JSON.stringify(refusal));
+  // An unknown 404 still reads as the not-found sentence; any other 409 or unknown reason is a failure to check (W-17).
+  assert.deepEqual(await resolveCode(code, async () => { throw { status: 404, reason: 'case-not-found' }; }), { ok: false, message: CODE_NOT_FOUND });
+  for (const refusal of [{ status: 409, reason: 'case-closed' }, { status: 409, reason: '' }]) {
+    assert.deepEqual(await resolveCode(code, async () => { throw refusal; }), { ok: false, message: CODE_CHECK_FAILED }, JSON.stringify(refusal));
   }
   // A locked or untrusted case still opens.
   assert.deepEqual(await resolveCode(code, async () => { throw { status: 423, reason: 'case-locked' }; }), { ok: true, id: code });

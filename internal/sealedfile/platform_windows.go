@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -82,12 +83,29 @@ func dpapi(protect bool, input []byte, flags uintptr) ([]byte, error) {
 		defer localFree.Call(uintptr(unsafe.Pointer(out.Data)))
 	}
 	if ok == 0 {
+		if !protect && isBadDataError(callErr) {
+			return nil, fmt.Errorf("Windows DPAPI operation failed: %w: %w", ErrBadData, callErr)
+		}
 		return nil, fmt.Errorf("Windows DPAPI operation failed: %w", callErr)
 	}
 	if out.Data == nil || out.Size == 0 || out.Size > maxBlob {
 		return nil, errors.New("Windows DPAPI returned invalid data")
 	}
 	return append([]byte(nil), unsafe.Slice(out.Data, out.Size)...), nil
+}
+
+// isBadDataError reports whether an Unprotect failure says the bytes cannot be opened by this account (ERROR_INVALID_DATA, ERROR_INVALID_PARAMETER, NTE_BAD_DATA,
+// NTE_BAD_KEY_STATE) rather than that the unsealing service could not be reached or used right now.
+func isBadDataError(err error) bool {
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		return false
+	}
+	switch uintptr(errno) {
+	case 13, 87, 0x80090005, 0x8009000B:
+		return true
+	}
+	return false
 }
 
 // lockSDDL is the access list of a machine-wide lock: SYSTEM and Administrators in full; any signed-in account and services may wait on
@@ -196,6 +214,28 @@ func Replace(from, to string) error {
 	}
 	ok, _, callErr := moveFileEx.Call(uintptr(unsafe.Pointer(source)), uintptr(unsafe.Pointer(destination)), 0x1|0x8)
 	if ok == 0 {
+		return callErr
+	}
+	return nil
+}
+
+// MoveNoReplace renames from to to and refuses, with an error that satisfies errors.Is(err, os.ErrExist), when to already exists. The check
+// and the move are one system call (MoveFileEx without MOVEFILE_REPLACE_EXISTING), so nothing can be created at to between a check and the
+// move. A file held open without delete sharing makes the move fail with a sharing violation, and from is then left where it was.
+func MoveNoReplace(from, to string) error {
+	source, err := syscall.UTF16PtrFromString(from)
+	if err != nil {
+		return err
+	}
+	destination, err := syscall.UTF16PtrFromString(to)
+	if err != nil {
+		return err
+	}
+	ok, _, callErr := moveFileEx.Call(uintptr(unsafe.Pointer(source)), uintptr(unsafe.Pointer(destination)), 0x8)
+	if ok == 0 {
+		if errno, isErrno := callErr.(syscall.Errno); isErrno && (errno == syscall.ERROR_ALREADY_EXISTS || errno == syscall.ERROR_FILE_EXISTS) {
+			return os.ErrExist
+		}
 		return callErr
 	}
 	return nil

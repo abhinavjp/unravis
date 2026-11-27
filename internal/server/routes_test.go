@@ -27,6 +27,7 @@ var routeCases = []routeCase{
 	{"/api/client-log", "/api/client-log", "POST"},
 	{"/api/logs/info", "/api/logs/info", "GET"},
 	{"/api/connections/recent", "/api/connections/recent", "GET"},
+	{"/api/connections/recent/set-aside", "/api/connections/recent/set-aside", "POST"},
 	{"/api/connections/recent/{id}", "/api/connections/recent/c1", "DELETE"},
 	{"/api/sql-connections", "/api/sql-connections", "GET, POST"},
 	{"/api/sql-connections/test", "/api/sql-connections/test", "POST"},

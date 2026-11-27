@@ -99,7 +99,37 @@ test('errorText shows a server message as written and gives a bare 503 or 404 a 
   assert.equal(exp.errorText(err('Request failed (404)', 404), 'preview'), T.notFound);
   assert.equal(exp.errorText(err('', 500), 'save'), T.failedSave);
   assert.equal(exp.errorText('boom', 'preview'), T.failedPreview);
-  assert.equal(exp.savedLine('abc123'), 'Saved. SHA-256 of the saved file: abc123');
+});
+
+test('W-15: a failed save goes back to Preview, says why, and never offers Save again', () => {
+  const T = exp.EXPORT_TEXT;
+  const err = (message, status) => Object.assign(new Error(message), { status });
+  for (const cause of [err('', 500), err('Request failed (500)', 500), 'boom', undefined]) {
+    const outcome = exp.failedSaveOutcome(cause);
+    assert.deepEqual(outcome.phase, { kind: 'idle' }, 'the used-up preview is dropped');
+    assert.equal(outcome.problem, T.failedSave);
+    assert.equal(exp.canSave(outcome.phase), false, 'Save is not offered');
+  }
+  assert.equal(T.failedSave, 'The file could not be saved. Make the preview again.');
+  assert.equal(exp.failedSaveOutcome(err('Request failed (404)', 404)).problem, T.goneSave, 'a preview that is gone keeps its own sentence');
+  assert.equal(exp.failedSaveOutcome(err('The disk is full.', 500)).problem, 'The disk is full.', 'a message the server wrote is shown as written');
+});
+
+test('W-15: after a save the drawer says the download started and keeps the file name and the SHA-256 on screen', () => {
+  const T = exp.EXPORT_TEXT;
+  assert.equal(T.downloadStarted, "Download started. Check your browser's downloads.");
+  assert.equal(T.fileNameLabel, 'File name');
+  assert.equal(T.savedHashLabel, 'SHA-256 of the saved file');
+  assert.equal(exp.savedLine, undefined, 'the old "Saved." line is gone');
+  const panel = fs.readFileSync(path.join(root, 'src/components/ExportPanel.svelte'), 'utf8').replace(/\r\n/g, '\n');
+  const saved = panel.slice(panel.indexOf("{#if phase.kind === 'saved'}\n          <p"), panel.indexOf('{:else if !summary.empty}'));
+  assert.match(saved, /<p class="export-saved" role="status">\{EXPORT_TEXT\.downloadStarted\}<\/p>/);
+  assert.match(saved, /\{EXPORT_TEXT\.fileNameLabel\}<\/dt><dd><code>\{phase\.filename\}<\/code>/);
+  assert.match(saved, /\{EXPORT_TEXT\.savedHashLabel\}<\/dt><dd><code>\{phase\.sha256\}<\/code>/);
+  assert.doesNotMatch(panel, /savedLine/);
+  const save = panel.slice(panel.indexOf('async function save()'), panel.indexOf('</script>'));
+  assert.match(save, /catch \(cause\) \{[^}]*\(\{ phase, problem \} = failedSaveOutcome\(cause\)\);/);
+  assert.doesNotMatch(save, /phase = \{ kind: 'preview', preview: shown \}/, 'a failed save no longer returns to the used-up preview');
 });
 
 test('contentMatches accepts only content whose SHA-256 equals the returned hash', async () => {
@@ -116,7 +146,7 @@ test('contentMatches accepts only content whose SHA-256 equals the returned hash
 });
 
 test('the panel checks the hash before saving and keys pseudonym rows by index', () => {
-  const panel = fs.readFileSync(path.join(root, 'src/components/ExportPanel.svelte'), 'utf8');
+  const panel = fs.readFileSync(path.join(root, 'src/components/ExportPanel.svelte'), 'utf8').replace(/\r\n/g, '\n');
   const save = panel.slice(panel.indexOf('async function save()'), panel.indexOf('</script>'));
   assert.ok(save.indexOf('contentMatches(file.content, file.sha256)') > 0, 'save checks the hash');
   assert.ok(save.indexOf('contentMatches(') < save.indexOf('new Blob('), 'the hash is checked before the file is made');
@@ -130,7 +160,6 @@ test('every fixed string passes the copy lint and avoids causal or certainty wor
     ...Object.values(exp.EXPORT_TEXT),
     ...Object.values(exp.RECORD_FIELDS),
     ...['Source version', 'Threshold', 'First record covered', 'Last record covered', 'Row selection', 'Time zone rule'],
-    exp.savedLine('0123456789abcdef'),
     exp.exportSummary(exported({ pseudonyms: [], ledger: [] })).line
   ];
   assert.deepEqual(lintCopy(strings.map((text, i) => ({ id: `e${i}`, text })), deck.terms), []);

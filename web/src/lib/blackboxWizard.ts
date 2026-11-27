@@ -1,6 +1,7 @@
 import {
   INTERVALS,
   defaultSettings,
+  extraCountersProblem,
   folderFault,
   folderKind,
   nameProblem,
@@ -9,6 +10,7 @@ import {
 } from './blackbox';
 import type { Settings, TargetRef, ThisPc } from './blackbox';
 import type { DriveInfo } from './blackboxDrives';
+import { DEFAULT_QUERY_TEXT_SIZE, type SqlProfile } from './blackboxSql';
 
 /**
  * The state machine of the Place a Blackbox pop-up (contract C-1, payload contract C-5). Pure TypeScript: no Svelte,
@@ -18,10 +20,26 @@ import type { DriveInfo } from './blackboxDrives';
  * Every function returns a new state and never changes the one given.
  */
 
-export type StepId = 'name' | 'where' | 'record' | 'sql' | 'watch' | 'keep' | 'folder' | 'review';
+export type StepId = 'name' | 'where' | 'record' | 'sql' | 'redis' | 'watch' | 'keep' | 'folder' | 'review';
 export type Where = 'pc' | 'pack';
 export type PresetId = 'recommended' | 'light' | 'custom';
 export type WatchMode = 'none' | 'some';
+export type RedisProfile = 'standard' | 'everything';
+export type RedisRowId = 'slowlog' | 'latency' | 'clients' | 'slowArgs';
+/** A Redis starting point and the rows the owner switched against it. A row left out follows the starting point. */
+export interface RedisChoice {
+  profile: RedisProfile;
+  rows: Partial<Record<RedisRowId, boolean>>;
+}
+
+/** The three collector rows of the Record step: Server facts, Extra Windows counters, Log and config file paths. */
+export interface CollectorRows { facts: boolean; counters: boolean; paths: boolean }
+export type CollectorRowId = keyof CollectorRows;
+
+/** What the counters box holds when the row is first switched on. */
+export const COUNTERS_PREFILL = '\\Process(w3wp)\\Page Faults/sec\n\\Memory\\Pool Nonpaged Bytes';
+/** Catalogue ids the server knows these rows by (blackbox.Config collectors). An absent id means on. */
+const COLLECTOR_IDS = { facts: 'host.facts', paths: 'paths.files' } as const;
 
 export interface WizardState {
   step: StepId;
@@ -34,6 +52,10 @@ export interface WizardState {
   settings: Settings;
   /** Textarea mirror of settings.logPaths: one folder per line. */
   logPathsText: string;
+  /** Which of the three collector rows are on. Recommended: facts and paths on, counters off. */
+  collectorRows: CollectorRows;
+  /** Textarea for settings.counters.extra: one counter path per line. Only used while collectorRows.counters is on. */
+  countersText: string;
   watchMode: WatchMode;
   /** The owner typed or picked a folder; stop the automatic default. */
   folderTouched: boolean;
@@ -41,6 +63,12 @@ export interface WizardState {
   confirmSystemDrive: boolean;
   /** SQL Server seen in the this-pc services list (B-01). */
   sqlSeen: boolean;
+  /** Redis (or Memurai) seen in the this-pc services list. The Redis step appears on the pack path, or when this is true. */
+  redisSeen: boolean;
+  /** The SQL starting point and the query-text tick, as the SQL step shows them. Standard with no text is the plain install. */
+  sqlChoice: { profile: SqlProfile; text: boolean };
+  /** The Redis starting point and the single-row overrides on top of it. */
+  redisChoice: RedisChoice;
   /**
    * Letter of the drive Windows runs from, as the drives route reported it. Optional: when it is absent the
    * system drive is C. Added to C-1 so the C: tick guards the right drive on a machine where Windows is not on C:.
@@ -57,7 +85,7 @@ export interface WizardState {
  * Why a step cannot be left. A short code, never prose: the pop-up turns it into words. Null means the step is fine.
  *   name:    name-empty | name-long | name-chars
  *   where:   where-missing
- *   record:  interval | logs
+ *   record:  interval | logs | counters (only while the extra counters row is on)
  *   watch:   targets-many | targets-kind | targets-empty | targets-long | targets-chars | targets-duplicate
  *   keep:    keep | size | free
  *   folder:  folder-invalid (not a full path) | folder-slash (forward slashes) | folder-chars (a character Windows refuses)
@@ -77,10 +105,11 @@ const LOG_PATHS_MAX = 20;
 
 /* ---------------------------------------------------------------- the steps */
 
-/** The steps in order: 8 when the SQL step applies (pack path, or SQL Server seen on this PC), else 7. */
-export function steps(s: Pick<WizardState, 'where' | 'sqlSeen'>): StepId[] {
+/** The steps in order: the SQL and Redis steps apply on the pack path, or when that product was seen on this PC. 9 at most, 7 at least. */
+export function steps(s: Pick<WizardState, 'where' | 'sqlSeen' | 'redisSeen'>): StepId[] {
   const list: StepId[] = ['name', 'where', 'record'];
   if (s.where === 'pack' || s.sqlSeen) list.push('sql');
+  if (s.where === 'pack' || s.redisSeen) list.push('redis');
   list.push('watch', 'keep', 'folder', 'review');
   return list;
 }
@@ -207,6 +236,14 @@ function parseLogPaths(text: string): string[] {
   return out;
 }
 
+/**
+ * The counters typed in the counters box, one per line, trimmed, blanks dropped. Unlike the log folders a repeat is kept:
+ * the server refuses a duplicate, so it is a problem for the owner to fix, not something to hide.
+ */
+function parseCounters(text: string): string[] {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== '');
+}
+
 function logPathsOk(paths: string[]): boolean {
   return paths.length <= LOG_PATHS_MAX && paths.every((p) => /^[A-Za-z]:[\\/]/.test(p));
 }
@@ -228,9 +265,12 @@ export function stepProblem(s: WizardState, id: StepId): StepProblem | null {
       if (!INTERVALS.includes(st.intervalSeconds as 5 | 15 | 30 | 60)) return 'interval';
       // The log folders only matter while the logs catalogue is on; the box is hidden otherwise (B-07).
       if (st.record.logsCatalogue && !logPathsOk(parseLogPaths(s.logPathsText))) return 'logs';
+      // The counters box only matters while its row is on.
+      if (s.collectorRows.counters && extraCountersProblem(parseCounters(s.countersText))) return 'counters';
       return null;
     }
     case 'sql':
+    case 'redis':
       return null;
     case 'watch': {
       if (s.watchMode === 'none') return null;
@@ -357,24 +397,76 @@ export function setSqlSeen(s: WizardState, sqlSeen: boolean): WizardState {
   return withList(s, { ...s, sqlSeen });
 }
 
+/** Redis or Memurai was seen (or not) in the this-pc services list. The Redis step appears or goes away. */
+export function setRedisSeen(s: WizardState, redisSeen: boolean): WizardState {
+  return withList(s, { ...s, redisSeen });
+}
+
+/* ---------------------------------------------------------------- the SQL and Redis choices */
+
+/** The SQL starting point. Query text exists only in the deep profile, so any other choice drops the tick. */
+export function setSqlProfile(s: WizardState, profile: SqlProfile): WizardState {
+  return { ...s, sqlChoice: { profile, text: profile === 'deep' ? s.sqlChoice.text : false } };
+}
+
+/** The query-text tick. Refused (same state) unless the deep profile is chosen. */
+export function setSqlText(s: WizardState, text: boolean): WizardState {
+  return s.sqlChoice.profile === 'deep' ? { ...s, sqlChoice: { ...s.sqlChoice, text } } : s;
+}
+
+/** What each Redis row is under a starting point. Matches RedisSettings in internal/blackbox/redis.go. */
+export function redisRowDefault(profile: RedisProfile, row: RedisRowId): boolean {
+  if (row === 'slowArgs') return false;
+  if (row === 'slowlog') return true;
+  return profile === 'everything';
+}
+
+/** Whether a Redis row is on: the owner's override, else the starting point's answer. */
+export function redisRowOn(c: RedisChoice, row: RedisRowId): boolean {
+  const own = c.rows[row];
+  return own === undefined ? redisRowDefault(c.profile, row) : own;
+}
+
+/** The starting point shown: custom as soon as any row differs from the chosen starting point. */
+export function redisPresetNow(c: RedisChoice): RedisProfile | 'custom' {
+  const rows: RedisRowId[] = ['slowlog', 'latency', 'clients', 'slowArgs'];
+  return rows.some((r) => redisRowOn(c, r) !== redisRowDefault(c.profile, r)) ? 'custom' : c.profile;
+}
+
+/** Picks a Redis starting point. Row overrides go: the starting point answers every row again. */
+export function setRedisProfile(s: WizardState, profile: RedisProfile): WizardState {
+  return { ...s, redisChoice: { profile, rows: {} } };
+}
+
+/** Switches one Redis row. A value equal to the starting point's answer is not kept as an override. */
+export function setRedisRow(s: WizardState, row: RedisRowId, on: boolean): WizardState {
+  const rows = { ...s.redisChoice.rows };
+  if (on === redisRowDefault(s.redisChoice.profile, row)) delete rows[row];
+  else rows[row] = on;
+  return { ...s, redisChoice: { ...s.redisChoice, rows } };
+}
+
 /* ---------------------------------------------------------------- presets and defaults */
 
 /** The preset the three record switches add up to (B-03). Anything else is Custom. */
-export function presetOf(record: Settings['record']): PresetId {
-  if (record.processes && record.logsCatalogue && !record.copyLogsOnSnapshot) return 'recommended';
-  if (!record.processes && !record.logsCatalogue && !record.copyLogsOnSnapshot) return 'light';
+export function presetOf(record: Settings['record'], rows: CollectorRows): PresetId {
+  if (record.processes && record.logsCatalogue && !record.copyLogsOnSnapshot && rows.facts && !rows.counters && rows.paths) return 'recommended';
+  if (!record.processes && !record.logsCatalogue && !record.copyLogsOnSnapshot && !rows.facts && !rows.counters && !rows.paths) return 'light';
   return 'custom';
 }
 
-/** Sets the three record switches to a preset. Any single change afterwards moves presetOf to custom by itself. */
+/** Sets the three record switches and the three collector rows to a preset. Any single change afterwards moves presetOf to custom by itself. */
 export function applyPreset(s: WizardState, p: Exclude<PresetId, 'custom'>): WizardState {
   const on = p === 'recommended';
-  return { ...s, settings: { ...s.settings, record: { processes: on, logsCatalogue: on, copyLogsOnSnapshot: false } } };
+  return {
+    ...s,
+    settings: { ...s.settings, record: { processes: on, logsCatalogue: on, copyLogsOnSnapshot: false } },
+    collectorRows: { facts: on, counters: false, paths: on }
+  };
 }
 
 /**
- * "Use defaults, go to review": the Record, SQL and Watch answers go back to the defaults (the SQL step holds no
- * choice), then Review. Refused until the name and the place are answered. Every step is then reached.
+ * "Use defaults, go to review": the Record, SQL, Redis and Watch answers go back to the defaults, then Review. Refused until the name and the place are answered. Every step is then reached.
  * The Keep answers (days, size, free space) are not part of the shortcut unless the shortcut is taken from the Keep
  * step itself (resetKeep): there the owner asks for the defaults of that very step.
  */
@@ -398,7 +490,11 @@ export function useDefaultsToReview(s: WizardState, resetKeep = false): WizardSt
     ...s,
     settings,
     logPathsText: d.logPaths.join('\n'),
+    collectorRows: { facts: true, counters: false, paths: true },
+    countersText: COUNTERS_PREFILL,
     watchMode: 'none',
+    sqlChoice: { profile: 'standard', text: false },
+    redisChoice: { profile: 'standard', rows: {} },
     step: 'review',
     returnTo: null,
     maxSeen: Math.max(s.maxSeen, review)
@@ -417,10 +513,15 @@ export function initialState(): WizardState {
     where: null,
     settings: d,
     logPathsText: d.logPaths.join('\n'),
+    collectorRows: { facts: true, counters: false, paths: true },
+    countersText: COUNTERS_PREFILL,
     watchMode: 'none',
     folderTouched: false,
     confirmSystemDrive: false,
-    sqlSeen: false
+    sqlSeen: false,
+    redisSeen: false,
+    sqlChoice: { profile: 'standard', text: false },
+    redisChoice: { profile: 'standard', rows: {} }
   };
 }
 
@@ -450,5 +551,34 @@ export function buildSettings(s: WizardState): Settings {
   out.port = st.port;
   out.bind = st.bind.trim();
   out.probe = { enabled: false };
+  // Recommended writes nothing here: an absent collector id is on, and no counters block means nothing extra.
+  const rows = s.collectorRows;
+  const off: Record<string, { on: boolean }> = {};
+  if (!rows.facts) off[COLLECTOR_IDS.facts] = { on: false };
+  if (!rows.paths) off[COLLECTOR_IDS.paths] = { on: false };
+  if (Object.keys(off).length > 0) out.collectors = off;
+  if (rows.counters) out.counters = { extra: parseCounters(s.countersText) };
+  // The SQL and Redis blocks go in only when their step applies, and a plain Standard choice writes nothing, so a
+  // plain install stays plain. Query text exists only in the deep profile.
+  if (steps(s).includes('sql')) {
+    const { profile, text } = s.sqlChoice;
+    if (profile !== 'standard') {
+      out.sql = { profile };
+      if (profile === 'deep' && text) {
+        out.sql.queryText = true;
+        out.sql.queryTextMaxChars = DEFAULT_QUERY_TEXT_SIZE;
+      }
+    }
+  }
+  if (steps(s).includes('redis')) {
+    const c = s.redisChoice;
+    const block: NonNullable<Settings['redis']> = {};
+    if (c.profile !== 'standard') block.profile = c.profile;
+    if (c.rows.slowlog !== undefined) block.slowlog = c.rows.slowlog;
+    if (c.rows.latency !== undefined) block.latency = c.rows.latency;
+    if (c.rows.clients !== undefined) block.clients = c.rows.clients;
+    if (c.rows.slowArgs) block.slowArgs = true;
+    if (Object.keys(block).length > 0) out.redis = block;
+  }
   return out;
 }

@@ -3,12 +3,18 @@ import { waitText } from './masterKeyCopy';
 
 /**
  * Every fixed sentence of the "Open with a case code" card, and the small helpers that build the rest. Pure: no DOM, no fetch.
- * Rules: plain words; one message for every case code that does not open, one message for every case file that does not open; say that
+ * Rules: plain words; one message for every case code the server says is wrong, one message for every case file that does not open; say that
  * restoring always makes a new case; no text here ever holds a master key, a path or a code that was typed.
  */
 
-/** The one sentence for a code that is malformed, unknown, erased, or one the server could not answer. The screen never says which. */
+/** The one sentence for a code that is malformed, unknown or erased (the server answered 404 or 400). The screen never says which. */
 export const CODE_NOT_FOUND = 'That code does not match a case on this computer.';
+
+/** The sentence when Unravis is locked, so the code could not be checked yet (the server answered 423 for the whole app, not for one case). */
+export const CODE_APP_LOCKED = 'Unlock Unravis first, then try the code again.';
+
+/** The sentence when the code could not be checked at all: any other failure (a server error, a time limit, no answer). It says nothing about the code. */
+export const CODE_CHECK_FAILED = 'The code could not be checked just now. Try again.';
 
 /** The sentence for a code that belongs to an archived case: the one exception to the single not-found sentence (UI-R5-03). */
 export const CODE_ARCHIVED = 'That case is archived. Open it from Saved cases on this screen.';
@@ -66,6 +72,8 @@ export const throttledText = (seconds: number): string => ENTER_TEXT.throttled +
 export const enterLintEntries = (): LintEntry[] => [
   { id: 'enter.codeNotFound', text: CODE_NOT_FOUND },
   { id: 'enter.codeArchived', text: CODE_ARCHIVED },
+  { id: 'enter.codeAppLocked', text: CODE_APP_LOCKED },
+  { id: 'enter.codeCheckFailed', text: CODE_CHECK_FAILED },
   { id: 'enter.restoreFailed', text: RESTORE_FAILED },
   ...Object.entries(ENTER_TEXT).map(([id, text]) => ({ id: 'enter.' + id, text })),
   { id: 'enter.sample.throttled', text: throttledText(4) },

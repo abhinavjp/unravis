@@ -60,3 +60,12 @@ func LockWait(ctx context.Context, path string) (func(), error) {
 
 // Replace moves from over to, replacing it.
 func Replace(from, to string) error { return os.Rename(from, to) }
+
+// MoveNoReplace renames from to to and refuses, with an error that satisfies errors.Is(err, os.ErrExist), when to already exists: the file is
+// first linked to its new name (a link never replaces), then the old name is removed.
+func MoveNoReplace(from, to string) error {
+	if err := os.Link(from, to); err != nil {
+		return err
+	}
+	return os.Remove(from)
+}

@@ -1,7 +1,10 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
+import { reportError } from './clientLog';
+import { REQUEST_FAILED_MESSAGE } from './copy/requestFailedCopy';
 import { WRONG_CASE_KEY_REASON, signalIfAppLocked } from './lockSignal';
 import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
 import { pacedSleep } from './visibility';
+import { noteAnswered, noteRefused, noteUnreachable } from './livenessCore';
 import { parseTimelineView, type TimelineView } from './timeline';
 import { readBinaryBody } from './binaryBody';
 import { parseResource, parseSeries, parseSeriesBinary, type ResourceView, type SeriesView } from './resource';
@@ -217,35 +220,52 @@ async function sendOnce(path: string, init: RequestInit, signal: AbortSignal | u
     response = await fetch(base + path, { ...init, headers, credentials: 'same-origin', signal });
   } catch (error) {
     if (isAbortLike(error)) throw error;
+    noteUnreachable(); // three in a row make the page say the app has stopped (liveness.svelte.ts)
     throw new CaseApiError('The server could not be reached.', 0, 'unreachable');
   }
   if (response.status === 401) {
     // A wrong case key is also a 401 (reason wrong-case-key): the token is fine, so it is kept and the refusal goes to the caller.
     const refused = await refusal(response);
-    if (refused.reason === WRONG_CASE_KEY_REASON) throw refused;
+    if (refused.reason === WRONG_CASE_KEY_REASON) { noteAnswered(); throw refused; }
     // The dashboard refused the token: forget it so nothing keeps sending it, and show the usual message.
+    noteRefused();
     forgetSession();
     throw new CaseApiError(NO_SESSION_MESSAGE, 401, 'no_session');
   }
+  noteAnswered(); // any answer means the app is there
   // 423: the master key is locked. Tell the app so it shows the unlock screen; the caller still gets the refusal.
   await signalIfAppLocked(response);
   if (!response.ok) throw await refusal(response);
   return response;
 }
 
+/**
+ * The plain sentence for a failure the server gave no message for. The sentence tells the person to copy the error log, so the status
+ * is written there (as `http_<status>`, or the reason), the same way the shared request layer does it. The status is never shown.
+ */
+function plainFailure(status: number, reason = '', reqId?: string, column?: string, importId?: number): CaseApiError {
+  reportError({ status, code: reason || undefined, message: REQUEST_FAILED_MESSAGE, reqId });
+  return new CaseApiError(REQUEST_FAILED_MESSAGE, status, reason, column, importId);
+}
+
 async function refusal(response: Response): Promise<CaseApiError> {
-  let message = 'Request failed (' + response.status + ')';
+  let message = '';
   let reason = '';
   let column: string | undefined;
   let importId: number | undefined;
   try {
     const body = await response.json() as { error?: unknown; reason?: unknown; code?: unknown; column?: unknown; importId?: unknown };
-    if (typeof body.error === 'string') message = body.error;
+    if (typeof body.error === 'string' && body.error.trim()) message = body.error;
     if (typeof body.reason === 'string') reason = body.reason;
     else if (typeof body.code === 'string') reason = body.code;
     if (typeof body.column === 'string') column = body.column;
     if (typeof body.importId === 'number') importId = body.importId;
   } catch { /* an empty or unreadable body keeps the generic message */ }
+  if (!message) {
+    let reqId: string | undefined;
+    try { reqId = response.headers?.get('X-Request-Id') ?? undefined; } catch { /* no request id */ }
+    return plainFailure(response.status, reason, reqId, column, importId);
+  }
   return new CaseApiError(message, response.status, reason, column, importId);
 }
 
@@ -641,10 +661,12 @@ export function parseImportJob(body: unknown): ImportJob | null {
   } else if (job.state === 'failed') {
     const failure = asObject(raw.failure);
     const status = asNumber(raw.status);
-    job.failure = new CaseApiError(
-      typeof failure?.error === 'string' && failure.error ? failure.error : 'Request failed (' + (status || 500) + ')',
-      status || 500, asString(failure?.reason), typeof failure?.column === 'string' ? failure.column : undefined, typeof failure?.importId === 'number' ? failure.importId : undefined
-    );
+    const column = typeof failure?.column === 'string' ? failure.column : undefined;
+    const importId = typeof failure?.importId === 'number' ? failure.importId : undefined;
+    const text = typeof failure?.error === 'string' ? failure.error.trim() : '';
+    job.failure = text
+      ? new CaseApiError(failure!.error as string, status || 500, asString(failure?.reason), column, importId)
+      : plainFailure(status || 500, asString(failure?.reason), undefined, column, importId);
   }
   return job;
 }
@@ -748,7 +770,7 @@ export async function waitForImportJob(caseId: string, first: ImportJob, options
   options.onUpdate?.(job);
   for (;;) {
     if (job.state === 'done' && job.answer) return job.answer;
-    if (job.state === 'failed') throw job.failure ?? new CaseApiError('Request failed (500)', 500);
+    if (job.state === 'failed') throw job.failure ?? plainFailure(500);
     await sleep(options.intervalMs ?? JOB_POLL_MS, options.signal);
     try {
       job = await fetchImportJob(caseId, first.id, options.signal);
@@ -773,7 +795,7 @@ export async function waitForCheckJob(caseId: string, first: ImportJob, options:
   for (;;) {
     if (job.checkReport) return job.checkReport;
     if (job.state === 'done') throw new CaseApiError('The server sent an answer that could not be read.', 200, 'unreadable');
-    if (job.state === 'failed') throw job.failure ?? new CaseApiError('Request failed (500)', 500);
+    if (job.state === 'failed') throw job.failure ?? plainFailure(500);
     await sleep(options.intervalMs ?? JOB_POLL_MS, options.signal);
     try {
       job = await fetchImportJob(caseId, first.id, options.signal);

@@ -1,4 +1,6 @@
 import { api } from './api';
+import { isUnreachableError } from './copy/unreachableCopy';
+import { noteCheckUnreachable } from './livenessCore';
 import { updatePreviewNow } from './updateCheck';
 import type { UpdateCheckReply } from './types';
 import { visiblePoll } from './visibility';
@@ -56,7 +58,13 @@ export async function refreshUpdateStatus(): Promise<void> {
       if (reply.install?.state === 'downloading') pollWhileDownloading(); // also after a page reload mid-download
       if (reply.install?.state === 'launched') pollWhileLaunched(); // also after a page reload mid-update
     }
-  } catch (cause) { readFailed(cause); /* the bar otherwise stays as it was */ }
+  } catch (cause) {
+    readFailed(cause);
+    // A lost connection here is as good as a failed light check: the page says the app has stopped now, and that hides this bar,
+    // rather than waiting up to 20 seconds for the next check. A refusal (401) is already reported by the request layer.
+    if (isUnreachableError(cause)) noteCheckUnreachable();
+    // otherwise the bar stays as it was
+  }
 }
 
 /** "Check again" on the lost-app note: one more look; the note goes away when the app answers. */
