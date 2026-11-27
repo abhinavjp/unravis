@@ -88,6 +88,35 @@ func TestHousekeepKeepFloorIsFromNewestRecordingNotNow(t *testing.T) {
 	}
 }
 
+// A clock that ran ahead for an hour and was corrected leaves a file named in the
+// future. The floor must not anchor on it: the real newest 24 hours survive.
+func TestHousekeepKeepFloorIgnoresAFileNamedInTheFuture(t *testing.T) {
+	from := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+	s, dir, c := filled(t, 30, from, 1000)
+	now := from.Add(29 * time.Hour)
+	c.t = now.Add(48 * time.Hour)
+	_ = s.Append(padded("r1", 99, c.t, 1000), "") // the clock ran two days ahead
+	c.t = now                                     // and was corrected; the future file is no longer the open one
+	_ = s.Close("stopped")
+	s2 := openT(t, dir, "r2", c)
+	disk := &fakeDisk{dir: dir, total: 100000, other: 90000}
+	res, err := s2.Housekeep(Limits{MinFreePercent: 90}, disk, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.FloorHeld || !res.DiskLow {
+		t.Fatalf("%+v", res)
+	}
+	for h := 6; h < 30; h++ { // real hours 06-29 all survive
+		if _, err := os.Stat(filepath.Join(dir, FileNameFor(from.Add(time.Duration(h)*time.Hour)))); err != nil {
+			t.Fatalf("hour %d of the real newest 24 hours was removed", h)
+		}
+	}
+	if len(res.Removed) != 6 {
+		t.Fatalf("removed %v", res.Removed)
+	}
+}
+
 // The age rule is not limited by the floor: files older than the keep days go
 // even when they are the newest recordings there are.
 func TestHousekeepKeepFloorDoesNotLimitTheAgeRule(t *testing.T) {

@@ -129,20 +129,27 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 		}
 	}
 	// Free space. Invariant: this rule never removes a file whose hour is inside
-	// the keep floor, the newest KeepFloor of recordings. The floor is measured
-	// from the newest recording file, not from the clock: after a long stop or a
-	// clock jump, "now" says nothing about which recordings are the newest, and
-	// measuring from it could empty the folder. Files are whole hours, so the
-	// floor is the 24 newest hours: every file whose hour is later than
-	// (newest hour - 24h). The age and size rules above are not limited by it.
+	// the keep floor, the newest KeepFloor of recordings. Files are whole hours,
+	// so the floor is every file whose hour is later than (anchor - 24h), where
+	// the anchor is the EARLIER of the newest recording file's hour and the
+	// current hour. Taking the earlier one errs toward keeping more, and covers
+	// both clock faults: after a long stop "now" is far past the newest file, so
+	// the newest file anchors the floor (measuring from the clock would empty the
+	// folder); after a clock that ran ahead and was corrected, a file named in
+	// the future is the newest, so the current hour anchors the floor and the
+	// real recent files stay inside it. The age and size rules above are not
+	// limited by it.
 	if disk != nil && l.MinFreePercent > 0 {
-		floorStart := time.Time{}
+		anchor := time.Time{}
 		for _, f := range files {
-			if f.Hour.After(floorStart) {
-				floorStart = f.Hour
+			if f.Hour.After(anchor) {
+				anchor = f.Hour
 			}
 		}
-		floorStart = floorStart.Add(-KeepFloor)
+		if nowHour := now.Truncate(time.Hour); nowHour.Before(anchor) {
+			anchor = nowHour
+		}
+		floorStart := anchor.Add(-KeepFloor)
 		inFloor := func(f FileEntry) bool { return f.Hour.After(floorStart) }
 		// nextOutsideFloor is the oldest file that may go and is not in the floor.
 		// held reports that next() still had a candidate, so the floor is what
