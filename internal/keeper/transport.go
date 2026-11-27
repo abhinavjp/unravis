@@ -7,15 +7,12 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"api-audit-explorer/internal/keeperwire"
 )
 
 // Caller is who sent a request, as Windows reports it for the pipe client. It is filled by the transport, never by the request.
-type Caller struct {
-	SID     string `json:"sid"`
-	Name    string `json:"name"`
-	PID     uint32 `json:"pid"`
-	Session uint32 `json:"session"`
-}
+type Caller = keeperwire.Caller
 
 // Conn is the keeper's side of one connection.
 type Conn interface {
@@ -39,21 +36,22 @@ type Listener interface {
 }
 
 // ClientConn is the client's side of one connection.
-type ClientConn interface {
-	io.ReadWriteCloser
-	SetDeadline(time.Time) error
-}
+type ClientConn = keeperwire.ClientConn
 
 // Dialer opens one connection to the keeper. A dialer whose keeper is not there returns an error that matches ErrNotRunning.
-type Dialer interface {
-	Dial(ctx context.Context) (ClientConn, error)
-}
+type Dialer = keeperwire.Dialer
 
 // ErrNotRunning means nothing is listening on the keeper's pipe: the service is stopped or not installed.
-var ErrNotRunning = errors.New("the Unravis Key Keeper service is not running")
+var ErrNotRunning = keeperwire.ErrNotRunning
 
 // ErrImpostor means something answered on the keeper's pipe name that is not a Windows service (its process is not in session 0).
-var ErrImpostor = errors.New("the program answering on the key keeper's pipe is not the Unravis Key Keeper service")
+var ErrImpostor = keeperwire.ErrImpostor
+
+// PipeDialer connects to the keeper's pipe (Windows only; elsewhere the keeper is never running).
+type PipeDialer = keeperwire.PipeDialer
+
+// NewPipeDialer is the production dialer for the pipe name.
+func NewPipeDialer(name string) PipeDialer { return keeperwire.NewPipeDialer(name) }
 
 // ErrListenerClosed is returned by Accept after Close.
 var ErrListenerClosed = errors.New("keeper listener closed")

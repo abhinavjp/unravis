@@ -2,10 +2,7 @@
 
 package keeper
 
-import (
-	"context"
-	"errors"
-)
+import "errors"
 
 // PipeListenOptions configures ListenPipe.
 type PipeListenOptions struct {
@@ -16,17 +13,3 @@ type PipeListenOptions struct {
 func ListenPipe(string, PipeListenOptions) (Listener, error) {
 	return nil, errors.New("the key keeper pipe needs Windows")
 }
-
-// PipeDialer connects to the keeper's pipe (Windows only; elsewhere the keeper is never running).
-type PipeDialer struct {
-	Name               string
-	RequireSession0    bool
-	RequireKeeperOwner bool
-}
-
-// NewPipeDialer is the production dialer for the pipe name.
-func NewPipeDialer(name string) PipeDialer {
-	return PipeDialer{Name: name, RequireSession0: true, RequireKeeperOwner: true}
-}
-
-func (PipeDialer) Dial(context.Context) (ClientConn, error) { return nil, ErrNotRunning }

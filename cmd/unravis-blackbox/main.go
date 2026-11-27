@@ -69,8 +69,10 @@ Commands that change the service (run as administrator):
               "trustServerCertificate"} from --login-stdin, or from
               --login-file with --login-sha256 (Unravis). Never printed.
   setup-sql   One call for the app: install the SQL service if needed, save the
-              login (--login-file --login-sha256) or use Windows sign-in
-              (--windows-signin), and start it with --enable.
+              login (--login-file --login-sha256, or --login-handover <id>
+              --keeper-pipe <name> to fetch a saved login from the key keeper)
+              or use Windows sign-in (--windows-signin), and start it with
+              --enable.
   clear-sql-login  Remove the saved login; the SQL service goes back to
               Windows sign-in.
   remove-sql  Stop and remove the SQL service, then print the revoke script.
@@ -125,6 +127,8 @@ type deps struct {
 	// reads; nil means the console. Both are test seams.
 	sealer func() (sealedfile.Protector, error)
 	stdin  io.Reader
+	// handover fetches a saved login from the key keeper (setup-sql --login-handover); nil means the real fetch over the keeper's pipe.
+	handover func(ctx context.Context, id, pipe string) ([]byte, error)
 	// redisCheck tests a Redis password against this PC's Redis (set-redis-password). Nil means the real check.
 	redisCheck func(port int, password string) error
 	// confirmDir proves the SQL data folder for a saved login (see sqlLoginDir); nil means SQLManager.ConfirmLoginDir. Test seam.
@@ -371,6 +375,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	delRec := fs.Bool("delete-recordings", false, "also delete the recordings (remove)")
 	loginFile := fs.String("login-file", "", "file holding the SQL login, made by Unravis (set-sql-login)")
 	loginSHA := fs.String("login-sha256", "", "SHA-256 of that file (set-sql-login)")
+	loginHandover := fs.String("login-handover", "", "one-time id of a saved SQL login the key keeper holds (setup-sql)")
+	keeperPipe := fs.String("keeper-pipe", "", "the key keeper's pipe the login is fetched from (setup-sql, with --login-handover)")
 	windowsSignin := fs.Bool("windows-signin", false, "use Windows sign-in, not a saved SQL login (setup-sql)")
 	enableSQL := fs.Bool("enable", false, "start the SQL service when it is set up (setup-sql)")
 	loginStdin := fs.Bool("login-stdin", false, "read the SQL login from standard input (set-sql-login)")
@@ -727,7 +733,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	case "set-sql-login":
 		return runSetSQLLogin(ans, d, paths.ConfigPath, *loginFile, *loginSHA, *loginStdin)
 	case "setup-sql":
-		return runSetupSQL(ans, d, paths.ConfigPath, *loginFile, *loginSHA, *windowsSignin, *enableSQL)
+		return runSetupSQL(ans, d, paths.ConfigPath, loginSource{File: *loginFile, SHA: *loginSHA, HandoverID: *loginHandover, Pipe: *keeperPipe}, *windowsSignin, *enableSQL)
 	case "clear-sql-login":
 		return runClearSQLLogin(ans, d, paths.ConfigPath)
 	case "sql-service":
