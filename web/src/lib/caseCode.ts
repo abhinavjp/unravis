@@ -1,4 +1,5 @@
 import { CODE_APP_LOCKED, CODE_ARCHIVED, CODE_CHECK_FAILED, CODE_NOT_FOUND } from './copy/enterCopy';
+import { UNREACHABLE_MESSAGE, isUnreachableError } from './copy/unreachableCopy';
 
 /**
  * Entering a case by its code. Pure: no DOM; the one request is passed in. The 26-character case id is the code.
@@ -63,11 +64,12 @@ export async function resolveCode(input: string, check: (id: string) => Promise<
     if (reason === 'case-locked' || reason === 'untrusted-case') return { ok: true, id };
     // An archived case answers 409: the code is right, but the case opens from the Saved cases list, not from here.
     if (reason === 'case-archived') return { ok: false, message: CODE_ARCHIVED };
+    // A lost connection says so. A timeout is not that (the app may be busy, not gone), so it falls to the general sentence below.
+    if (isUnreachableError(error)) return { ok: false, message: UNREACHABLE_MESSAGE };
     // Only a 404 or 400 says the code is wrong. A locked Unravis (423) and every other failure say what happened, not "not found".
     const status = error && typeof error === 'object' ? (error as { status?: unknown }).status : undefined;
     if (status === 404 || status === 400) return { ok: false, message: CODE_NOT_FOUND };
     if (status === 423) return { ok: false, message: CODE_APP_LOCKED };
-    // Status 0 (code "unreachable") also lands here for now. W-01 will route this to the unreachable sentence.
     return { ok: false, message: CODE_CHECK_FAILED };
   }
 }

@@ -22,6 +22,7 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const { normaliseCode, resolveCode, CODE_NOT_FOUND, CODE_ARCHIVED, CODE_APP_LOCKED, CODE_CHECK_FAILED, CODE_PATTERN, codeIsEmpty } = loadTypeScript('src/lib/caseCode.ts');
 const { ENTER_TEXT, RESTORE_FAILED, enterLintEntries } = loadTypeScript('src/lib/copy/enterCopy.ts');
+const { UNREACHABLE_MESSAGE } = loadTypeScript('src/lib/copy/unreachableCopy.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 
@@ -113,7 +114,6 @@ test('any other failure says the code could not be checked, never "not found"', 
   const failures = [
     { status: 500, reason: '' },
     { status: 502 },
-    { status: 0, reason: 'unreachable' }, // W-01 will route this one to the unreachable sentence
     { status: 0, code: 'timeout' },
     new Error('anything at all'),
     new TypeError('Failed to fetch'),
@@ -125,6 +125,14 @@ test('any other failure says the code could not be checked, never "not found"', 
     assert.deepEqual(outcome, { ok: false, message: CODE_CHECK_FAILED }, String(JSON.stringify(failure)));
     assert.notEqual(outcome.message, CODE_NOT_FOUND);
   }
+});
+
+test('a lost connection says Unravis could not be reached, but a timeout stays on the could-not-be-checked sentence', async () => {
+  assert.match(UNREACHABLE_MESSAGE, /could not be reached/);
+  assert.deepEqual(await refuse({ status: 0, code: 'unreachable' }), { ok: false, message: UNREACHABLE_MESSAGE });
+  assert.deepEqual(await refuse({ status: 0, reason: 'unreachable' }), { ok: false, message: UNREACHABLE_MESSAGE });
+  assert.deepEqual(await refuse({ status: 0, code: 'timeout' }), { ok: false, message: CODE_CHECK_FAILED });
+  assert.deepEqual(await refuse({ status: 0, reason: 'timeout' }), { ok: false, message: CODE_CHECK_FAILED });
 });
 
 test('a case with its own key, an untrusted case and an archived case keep their own answers, ahead of the status', async () => {

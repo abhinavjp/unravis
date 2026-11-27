@@ -152,12 +152,17 @@ test('the screen reader line has no percentage', () => {
   assert.equal(upd.installAnnouncement(base), '');
 });
 
-test('a failed request for the check shows the own plain sentence of the error, and falls back to the could-not-be-reached sentence', () => {
+test('a failed request for the check says unreachable, keeps a timeout message, and otherwise one plain sentence', () => {
   const unreachable = 'Unravis could not be reached. It may have been closed or updated. Start Unravis again, then reload this page.';
-  assert.equal(upd.updateCheckFailureNote(Object.assign(new Error(unreachable), { code: 'unreachable', status: 0 })), unreachable);
-  assert.equal(upd.updateCheckFailureNote(new Error('The update check is not available in this build.')), 'The update check is not available in this build.');
-  assert.equal(upd.updateCheckFailureNote(new Error('')), unreachable);
-  assert.equal(upd.updateCheckFailureNote(undefined), unreachable);
+  const plain = 'Something went wrong in Unravis. Try again. If it keeps happening, open Help and copy the error log.';
+  assert.equal(upd.updateCheckFailureNote(Object.assign(new Error('Failed to fetch'), { code: 'unreachable', status: 0 })), unreachable);
+  assert.equal(upd.updateCheckFailureNote(Object.assign(new Error('x'), { reason: 'unreachable' })), unreachable);
+  assert.equal(upd.updateCheckFailureNote(Object.assign(new Error('The read took too long.'), { code: 'timeout', status: 0 })), 'The read took too long.');
+  for (const failure of [new Error('Request failed (500)'), new Error('boom'), new Error(''), new TypeError('Failed to fetch'), 'a string', undefined, Object.assign(new Error(''), { code: 'timeout' })]) {
+    const note = upd.updateCheckFailureNote(failure);
+    assert.equal(note, plain, String(failure));
+    assert.doesNotMatch(note, /Request failed|\(\d+\)/);
+  }
   assert.notEqual(upd.updateCheckFailureNote(new Error('boom')), upd.updateCheckNote({ status: 'unreachable' }), 'a local failure is not the "could not check for updates" feed line');
 });
 
