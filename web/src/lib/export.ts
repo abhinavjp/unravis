@@ -1,3 +1,4 @@
+import { isBareFailure } from './copy/requestFailedCopy';
 import { stateLabel } from './ledger';
 import type { EvidenceCount, EvidenceExport, EvidenceRecord, ExportPreview, ExportPreviewInput, Query } from './types';
 
@@ -183,7 +184,7 @@ export async function contentMatches(content: string, sha256: string): Promise<b
 export function errorText(cause: unknown, stage: 'preview' | 'save'): string {
   const status = typeof cause === 'object' && cause !== null && 'status' in cause ? Number((cause as { status?: unknown }).status) : 0;
   const message = cause instanceof Error ? cause.message.trim() : '';
-  if (message && !/^Request failed \(\d+\)$/.test(message)) return message;
+  if (message && !isBareFailure(message)) return message;
   if (status === 503) return EXPORT_TEXT.unavailable;
   if (status === 404) return stage === 'save' ? EXPORT_TEXT.goneSave : EXPORT_TEXT.notFound;
   return stage === 'save' ? EXPORT_TEXT.failedSave : EXPORT_TEXT.failedPreview;

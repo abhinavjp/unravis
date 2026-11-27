@@ -86,5 +86,33 @@ These are in the design but have no backing code. They say so in plain words and
 ## Install
 
 `go build -o homestretch ./cmd/homestretch`, then copy or link it as `hs` (on Windows `hs.exe`). The program calls
-itself `hs` in messages when it was started under that name. Wiring the names into the installer and making `unravis-ci`
-a shim is P8.
+itself `hs` in messages when it was started under that name. `build.ps1` builds `dist\homestretch.exe` and `dist\hs.exe`
+(a copy) next to the other programs. They are not in the installer payload: they are for whoever cuts releases and runs
+CI on a PC with the checkout, so setup and its manifest are unchanged.
+
+## Old names and migration (BL-708)
+
+`homestretch` (and `hs`) is the name to use. The two old programs stay, for a limited period:
+
+| old | now | what it does |
+|---|---|---|
+| `unravis-ci <args>` | `homestretch ci <args>` | A shim: prints one line to stderr, `unravis-ci is now `homestretch ci`; forwarding`, then runs the same engine in the same process. Same arguments, same exit code, same stdout (including the name it prints for itself, `unravis-ci 0.1.0`), so a script that reads stdout sees no change. The line is left out when the agent starts the engine on itself (`run-item <id> --child`), so a run's log does not begin with it. |
+| `unravis-releases` | the Homestretch window | Unchanged in behaviour. It is a Windows GUI program (no console), so it prints nothing and keeps starting the window. It keeps its file name because setup installs `unravis-releases.exe` and the Start-menu shortcut `Unravis Releases.lnk` points at it. Only its message-box title now says Homestretch. |
+| `Start Releases.cmd` | `Start Homestretch.cmd` | The old file calls the new one. |
+
+What changed in the repository's own scripts: `tools/ci/prepush.sh` and `tools/release/Promote-Develop.ps1` build
+`./cmd/homestretch` instead of `./cmd/unravis-ci` (the lock helper runs `homestretch ci exclusive`, the hold check runs
+`homestretch hold check`; same arguments and exit codes). `Promote-Develop.ps1 -CiExe` accepts either program. On `PATH` it
+looks for `homestretch`, then `unravis-ci`. `Release.ps1` never called either program, so it is unchanged.
+
+Migrating an old install:
+
+- Nothing has to change. A Windows service, scheduled task or startup entry that runs `unravis-ci.exe serve ...` keeps
+  working through the shim. Do not rename the service or task: the installed names stay as they are.
+- To move one over, change only its program and put `ci` first: `unravis-ci.exe serve --state D ...` becomes
+  `homestretch.exe ci serve --state D ...`, same arguments. The agent then starts its children as
+  `homestretch ci run-item`. Stop the old service before you start the new one so two agents do not claim at once.
+- Scripts that call `unravis-ci hold check`, `unravis-ci queue ...` and so on can switch to `homestretch hold check` and
+  `homestretch queue ...` (the commands of this page), or to `homestretch ci <command>` for the engine commands.
+- The shim's end date is not set. It is tracked as BL-724 in `docs/BACKLOG.md`: remove it only after the owner
+  has moved every service and task.
