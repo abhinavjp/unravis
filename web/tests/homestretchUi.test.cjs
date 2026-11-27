@@ -91,6 +91,9 @@ test('the theme system: every attribute the page sets has a rule layer and a sav
 
 test('the machine, the run and the log views read only the program routes, never write', () => {
   const js = read('data.js') + read('app.js');
-  assert.doesNotMatch(js, /method:\s*['"](POST|PUT|PATCH|DELETE)/i);
+  // The one write the page makes is Data.act(): a POST to /api/action/<id>. Everything else is read-only.
+  const writes = js.match(/method:\s*['"](POST|PUT|PATCH|DELETE)['"]/gi) || [];
+  assert.deepEqual(writes, ["method: 'POST'"], 'exactly one write call');
+  assert.match(js, /fetch\('\/api\/action\/' \+ encodeURIComponent\(id\),\s*\{\s*method: 'POST'/, 'the write is the action route');
   for (const route of ['/api/projects', '/api/overview', '/api/runs', '/api/run', '/api/run/log', '/api/machines', '/api/snapshot']) assert.ok(js.includes(route), route);
 });
