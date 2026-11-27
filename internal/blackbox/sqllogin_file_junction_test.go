@@ -21,13 +21,13 @@ func TestSweepLeavesAJunctionAndItsTargetAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(root, "unravis-sqllogin-junction")
-	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil { //nolint:gosec // G204: a fixed mklink call on paths this test made in its own temp dir
 		t.Skipf("could not make a junction here: %v %s", err, out)
 	}
 	if n := SweepSQLLoginFiles(root); n != 0 {
 		t.Errorf("the sweep removed %d entries, want 0", n)
 	}
-	b, err := os.ReadFile(keep)
+	b, err := os.ReadFile(keep) //nolint:gosec // G304: a path this test made in its own temp dir
 	if err != nil || string(b) != `{"password":"x"}` {
 		t.Fatalf("the junction target was touched: %q %v", b, err)
 	}

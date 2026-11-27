@@ -182,7 +182,7 @@ func (d fakeDialer) Dial(context.Context) (keeperwire.ClientConn, error) {
 	server, client := net.Pipe()
 	d.k.conn = server
 	go func() {
-		defer server.Close()
+		defer func() { _ = server.Close() }()
 		frame, err := keeperwire.ReadFrame(server)
 		if err != nil {
 			return

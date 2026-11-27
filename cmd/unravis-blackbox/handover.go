@@ -42,21 +42,27 @@ func validHandover(id, pipe string) bool {
 		return false
 	}
 	for _, c := range id {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+		if !isLowerHex(c) {
 			return false
 		}
 	}
 	name := pipe[len(keeperPipePrefix):]
 	// The name starts with a letter or digit, so it can never be "." or ".." (which a path cleaner could turn into the pipe folder itself).
-	if c := name[0]; !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+	if !isAlnum(rune(name[0])) {
 		return false
 	}
 	for _, c := range name {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '.' || c == '_' || c == '-') {
+		if !isAlnum(c) && c != '.' && c != '_' && c != '-' {
 			return false
 		}
 	}
 	return true
+}
+
+func isLowerHex(c rune) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' }
+
+func isAlnum(c rune) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 // fetchHandover asks the keeper for the login held under id. The answer is the login document, which the caller wipes after use.
@@ -70,7 +76,7 @@ func fetchHandover(ctx context.Context, id, pipe string) ([]byte, error) {
 	if err != nil {
 		return nil, errHandover
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(handoverTimeout))
 	args, err := json.Marshal(struct {
 		ID string `json:"id"`

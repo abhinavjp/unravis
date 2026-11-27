@@ -1,7 +1,7 @@
 package keeperwire
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // Windows derives a service's SID with SHA-1; this only recomputes that SID to recognise the keeper, nothing is protected by the hash
 	"encoding/binary"
 	"strconv"
 	"strings"
@@ -19,7 +19,7 @@ func ServiceSID(name string) string {
 	for i, u := range units {
 		binary.LittleEndian.PutUint16(raw[2*i:], u)
 	}
-	sum := sha1.Sum(raw)
+	sum := sha1.Sum(raw) //nolint:gosec // G401: Windows derives the per-service SID with SHA-1, so this must match it
 	var b strings.Builder
 	b.WriteString("S-1-5-80")
 	for i := 0; i < 5; i++ {

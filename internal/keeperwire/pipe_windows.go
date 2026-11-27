@@ -52,7 +52,7 @@ func NewPipeConn(h windows.Handle, server bool) (*PipeConn, error) {
 	}
 	we, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
-		windows.CloseHandle(re)
+		_ = windows.CloseHandle(re)
 		return nil, err
 	}
 	return &PipeConn{h: h, server: server, rov: &windows.Overlapped{HEvent: re}, wov: &windows.Overlapped{HEvent: we}, rbuf: make([]byte, PipeBuffer), wbuf: make([]byte, PipeBuffer)}, nil
@@ -93,20 +93,20 @@ func (c *PipeConn) finish(ov *windows.Overlapped, started error, n uint32) (uint
 		return 0, c.mapErr(started)
 	}
 	if c.closed.Load() {
-		windows.CancelIoEx(c.h, ov)
+		_ = windows.CancelIoEx(c.h, ov)
 	}
 	ms, ok := c.waitMillis()
 	timedOut := !ok
 	if ok {
 		r, err := windows.WaitForSingleObject(ov.HEvent, ms)
 		if err != nil {
-			windows.CancelIoEx(c.h, ov)
+			_ = windows.CancelIoEx(c.h, ov)
 		} else if r == uint32(windows.WAIT_TIMEOUT) {
 			timedOut = true
 		}
 	}
 	if timedOut {
-		windows.CancelIoEx(c.h, ov)
+		_ = windows.CancelIoEx(c.h, ov)
 	}
 	err := windows.GetOverlappedResult(c.h, ov, &n, true)
 	runtime.KeepAlive(ov)
@@ -148,7 +148,7 @@ func (c *PipeConn) Read(p []byte) (int, error) {
 		if want > len(c.rbuf) {
 			want = len(c.rbuf)
 		}
-		windows.ResetEvent(c.rov.HEvent)
+		_ = windows.ResetEvent(c.rov.HEvent)
 		var n uint32
 		err := windows.ReadFile(c.h, c.rbuf[:want], &n, c.rov)
 		n, err = c.finish(c.rov, err, n)
@@ -172,7 +172,7 @@ func (c *PipeConn) Write(p []byte) (int, error) {
 			return written, os.ErrClosed
 		}
 		chunk := copy(c.wbuf, p)
-		windows.ResetEvent(c.wov.HEvent)
+		_ = windows.ResetEvent(c.wov.HEvent)
 		var n uint32
 		err := windows.WriteFile(c.h, c.wbuf[:chunk], &n, c.wov)
 		n, err = c.finish(c.wov, err, n)
@@ -192,14 +192,14 @@ func (c *PipeConn) Close() error {
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	windows.CancelIoEx(c.h, nil)
+	_ = windows.CancelIoEx(c.h, nil)
 	c.rmu.Lock()
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	defer c.rmu.Unlock()
 	err := windows.CloseHandle(c.h)
-	windows.CloseHandle(c.rov.HEvent)
-	windows.CloseHandle(c.wov.HEvent)
+	_ = windows.CloseHandle(c.rov.HEvent)
+	_ = windows.CloseHandle(c.wov.HEvent)
 	return err
 }
 
@@ -248,7 +248,7 @@ func (c *PipeConn) Identify() (Caller, error) {
 		oerr := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY, true, &tok)
 		if rerr := windows.RevertToSelf(); rerr != nil {
 			if oerr == nil {
-				tok.Close()
+				_ = tok.Close()
 			}
 			ch <- result{err: fmt.Errorf("revert: %w", rerr)}
 			return
@@ -258,7 +258,7 @@ func (c *PipeConn) Identify() (Caller, error) {
 			ch <- result{err: fmt.Errorf("token: %w", oerr)}
 			return
 		}
-		defer tok.Close()
+		defer func() { _ = tok.Close() }()
 		tu, terr := tok.GetTokenUser()
 		if terr != nil {
 			ch <- result{err: terr}
@@ -326,25 +326,25 @@ func (d PipeDialer) Dial(ctx context.Context) (ClientConn, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		procWaitNamedPipeW.Call(uintptr(unsafe.Pointer(namep)), 500)
+		_, _, _ = procWaitNamedPipeW.Call(uintptr(unsafe.Pointer(namep)), 500) //nolint:gosec // G103: the pointer is to a string this function owns, only for the duration of this call
 	}
 	if d.RequireSession0 {
 		var pid, session uint32
 		if err := windows.GetNamedPipeServerProcessId(h, &pid); err != nil || windows.ProcessIdToSessionId(pid, &session) != nil || session != 0 {
-			windows.CloseHandle(h)
+			_ = windows.CloseHandle(h)
 			return nil, ErrImpostor
 		}
 	}
 	if d.RequireKeeperOwner {
 		owner, err := PipeOwner(h)
 		if err != nil || !TrustedPipeOwner(owner, d.ExtraOwners) {
-			windows.CloseHandle(h)
+			_ = windows.CloseHandle(h)
 			return nil, ErrImpostor
 		}
 	}
 	c, err := NewPipeConn(h, false)
 	if err != nil {
-		windows.CloseHandle(h)
+		_ = windows.CloseHandle(h)
 		return nil, err
 	}
 	return c, nil
