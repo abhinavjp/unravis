@@ -1,24 +1,24 @@
 {
   "v": 1,
-  "state": "held",
+  "state": "free",
   "id": "30a0ae23d2134dc0aef07951d208da08",
   "host": "9f484c6ac779",
   "pid": 66976,
   "requester": "Make Blackbox collect SQL, Redis and more",
   "started": "2026-11-27T20:01:06.6553802Z",
-  "heartbeat": "2026-11-27T20:01:06.6575045Z",
+  "heartbeat": "2026-11-27T20:01:12.0572785Z",
   "channel": "rc",
   "version": "",
-  "stage": "Starting",
+  "stage": "idle",
   "commit": "",
-  "holdMerges": true,
+  "holdMerges": false,
   "lease_minutes": 180,
   "reason": "",
   "last": {
-    "at": "2026-11-27T14:58:54.0675661Z",
-    "requester": "rc-slot",
-    "reason": "",
-    "outcome": "done",
-    "version": "0.1.0-rc.68"
+    "at": "2026-11-27T20:01:11.5659871Z",
+    "requester": "Make Blackbox collect SQL, Redis and more",
+    "version": "",
+    "outcome": "stopped",
+    "reason": ""
   }
 }
