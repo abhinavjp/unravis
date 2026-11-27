@@ -17,6 +17,7 @@ Docs and process only. This file changes no app UI. UI rule from the project sti
 | 6 | Triage and fix (fixed, or rejected with a one-line reason; one in, one out), then rerun step 3 on what changed | author | triage table, updated design-gate file |
 | 7 | Goldfish round 2, ONLY IF round 1 had at least one blocker or 3 or more majors, or the fixes changed more than about a third of the screen. Otherwise skip it and say so in the delivery note. | a NEW fresh agent, medium effort | `docs/prototypes/reviews/<slug>-r2.md` |
 | 8 | Final auto gate (step 3 once more, so late edits cannot break the budget or add dead buttons), then deliver (see "Step 8: delivery") | author | final prototype shown to nachi |
+| 9 | After nachi approves and the real UI is built: prototype-to-build check (see "Step 9") | author, on the PC | same-state screenshot pairs, a reason for every difference, the build fixed |
 
 Stop rule: no third review round without asking. After round 2 fix what is left. If a blocker or major finding cannot be fixed, say so in the delivery message.
 
