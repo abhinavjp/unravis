@@ -252,6 +252,10 @@ func native(err error, kind storeKind) error {
 		n = bbsaved.ErrDuplicate
 	case CodeCorrupt:
 		n = pick(sqlconn.ErrCorrupt, history.ErrCorrupt, bbsaved.ErrCorrupt)
+	case CodeNotDamaged:
+		n = history.ErrNotDamaged
+	case CodeSetAsideFull:
+		n = history.ErrSetAsideFull
 	case CodeUnavailable:
 		n = pick(sqlconn.ErrUnavailable, history.ErrUnavailable, bbsaved.ErrUnavailable)
 	case CodeMismatch:

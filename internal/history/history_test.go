@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/sealedfile"
 )
 
 type testProtector struct{}
@@ -25,7 +27,7 @@ func (testProtector) Protect(value []byte) ([]byte, error) {
 func (testProtector) Unprotect(value []byte) ([]byte, error) {
 	prefix := []byte("fixture-encrypted:")
 	if !bytes.HasPrefix(value, prefix) {
-		return nil, errors.New("invalid test ciphertext")
+		return nil, fmt.Errorf("%w: invalid test ciphertext", sealedfile.ErrBadData)
 	}
 	out := append([]byte(nil), bytes.TrimPrefix(value, prefix)...)
 	for i := range out {

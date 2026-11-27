@@ -84,6 +84,7 @@ func (b *Backend) Register(s *Server) {
 	s.Handle(OpMongoRemember, classWrite, storeTimeout, b.mongoRemember)
 	s.Handle(OpMongoDelete, classWrite, storeTimeout, b.mongoDelete)
 	s.Handle(OpMongoImport, classWrite, storeTimeout, b.mongoImport)
+	s.Handle(OpMongoSetAside, classWrite, storeTimeout, b.mongoSetAside)
 	s.Handle(OpMongoTest, classReach, reachTimeout, b.mongoTest)
 	s.Handle(OpMongoHealth, classReach, runTimeout, b.mongoHealth)
 	s.Handle(OpMongoLane, classReach, runTimeout, b.mongoLane)
@@ -390,6 +391,20 @@ func (b *Backend) mongoList(_ context.Context, _ *Call) (any, error) {
 		items = []history.Recent{}
 	}
 	return items, err
+}
+
+// MongoSetAsideReply is the answer of mongo.setaside: the base name of the kept copy.
+type MongoSetAsideReply struct {
+	Name string `json:"name"`
+}
+
+// mongoSetAside sets the keeper's unreadable saved MongoDB file aside (history.SetAside refuses a file that reads fine).
+func (b *Backend) mongoSetAside(_ context.Context, _ *Call) (any, error) {
+	name, err := b.Mongo.SetAside()
+	if err != nil {
+		return nil, err
+	}
+	return MongoSetAsideReply{Name: name}, nil
 }
 
 func (b *Backend) mongoDescribe(_ context.Context, c *Call) (any, error) {
@@ -883,6 +898,10 @@ func classify(err error) *WireError {
 		return &WireError{Code: CodeInvalid, Message: "The details are not valid."}
 	case errors.Is(err, sqlconn.ErrCorrupt), errors.Is(err, history.ErrCorrupt), errors.Is(err, bbsaved.ErrCorrupt):
 		return &WireError{Code: CodeCorrupt, Message: "The key keeper's saved file could not be read. It was left as it is."}
+	case errors.Is(err, history.ErrNotDamaged):
+		return &WireError{Code: CodeNotDamaged, Message: "The saved connections file reads fine, so nothing was set aside."}
+	case errors.Is(err, history.ErrSetAsideFull):
+		return &WireError{Code: CodeSetAsideFull, Message: "Three damaged files are already set aside."}
 	case errors.Is(err, sqlconn.ErrUnavailable), errors.Is(err, history.ErrUnavailable), errors.Is(err, bbsaved.ErrUnavailable):
 		return &WireError{Code: CodeUnavailable, Message: "The key keeper's saved files are unavailable."}
 	case errors.Is(err, context.DeadlineExceeded):

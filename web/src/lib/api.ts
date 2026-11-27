@@ -211,6 +211,8 @@ export const api = {
   recentConnections: () => request<RecentConnection[]>('/connections/recent'),
   rememberConnection: (input: RememberConnectionInput) => request<RecentConnection>('/connections/remember', json(input)),
   forgetConnection: (id: string) => request<void>('/connections/recent/' + encodeURIComponent(id), { method: 'DELETE' }),
+  /** RV-DAT-1: rename an unreadable saved MongoDB connections file and keep it. The server refuses unless that file really cannot be read. */
+  setAsideConnections: () => request<{ name: string; folder?: string }>('/connections/recent/set-aside', { method: 'POST' }),
   sqlConnections: () => request<SavedSqlConnection[]>('/sql-connections'),
   saveSqlConnection: (input: SqlConnectionInput) => request<SavedSqlConnection>('/sql-connections', json(input)),
   testSqlConnection: (input: SqlTestRequest, signal?: AbortSignal) => request<SqlTestResult>('/sql-connections/test', json(input), signal),
