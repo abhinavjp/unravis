@@ -222,6 +222,10 @@ export interface Settings {
   sql?: { profile?: string; extras?: string[]; queryText?: boolean; queryTextMaxChars?: number };
   /** What the Redis collector reads on this PC. Settings only: the password is never here (it is typed on the PC that runs Redis). */
   redis?: { profile?: string; port?: number; slowlog?: boolean; latency?: boolean; clients?: boolean; slowArgs?: boolean };
+  /** Collectors the owner switched off, by catalogue id (host.facts, paths.files). A missing id is on. Never carries everySec. */
+  collectors?: Record<string, { on?: boolean }>;
+  /** Windows counters recorded on top of the built-in ones. A missing block means nothing extra. */
+  counters?: { extra?: string[] };
   /** The app pools and services the owner picked for per-process detail. Empty means machine-wide only. */
   targets: TargetRef[];
 }
@@ -268,7 +272,7 @@ export function refusalText(error: unknown, table: Record<string, string>): stri
 }
 
 const REFUSED_FIELD: Record<string, SettingsProblem> = {
-  name: 'name', folder: 'folder', intervalSeconds: 'interval', keepDays: 'keep', maxGB: 'size', minFreePercent: 'free', port: 'port', bind: 'bind', logPaths: 'logs'
+  name: 'name', folder: 'folder', intervalSeconds: 'interval', keepDays: 'keep', maxGB: 'size', minFreePercent: 'free', port: 'port', bind: 'bind', logPaths: 'logs', 'counters.extra': 'counters'
 };
 
 /**
@@ -277,7 +281,7 @@ const REFUSED_FIELD: Record<string, SettingsProblem> = {
  */
 export function refusedField(error: unknown): SettingsProblem | null {
   if (!(error instanceof BlackboxError) || error.refusal.reason !== 'invalid-config') return null;
-  const m = /"(\w+)"/.exec(error.refusal.error ?? '');
+  const m = /"([\w.]+)"/.exec(error.refusal.error ?? '');
   return (m && REFUSED_FIELD[m[1]]) || null;
 }
 
@@ -285,7 +289,7 @@ export function refusedField(error: unknown): SettingsProblem | null {
 export function stepOfSetting(field: SettingsProblem): 'name' | 'record' | 'watch' | 'keep' | 'folder' | 'redis' {
   switch (field) {
     case 'name': return 'name';
-    case 'interval': case 'logs': return 'record';
+    case 'interval': case 'logs': case 'counters': return 'record';
     case 'targets': return 'watch';
     case 'keep': case 'size': case 'free': return 'keep';
     default: return 'folder';
@@ -548,7 +552,7 @@ export function defaultSettings(name = ''): Settings {
   };
 }
 
-export type SettingsProblem = 'name' | 'folder' | 'interval' | 'keep' | 'size' | 'free' | 'port' | 'bind' | 'logs' | 'targets';
+export type SettingsProblem = 'name' | 'folder' | 'interval' | 'keep' | 'size' | 'free' | 'port' | 'bind' | 'logs' | 'counters' | 'targets';
 
 const HOST_NAME = /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
@@ -623,6 +627,25 @@ export function folderFault(folder: string): FolderFault | null {
   return null;
 }
 
+/** The server takes at most this many extra counters, each at most this long (internal/blackbox/extracounters.go). */
+export const EXTRA_COUNTERS_MAX = 50;
+export const EXTRA_COUNTER_LENGTH_MAX = 200;
+/** Copied from internal/blackbox/extracounters.go: \\Object(instance)\\Counter, with no wildcard and no computer name. */
+export const EXTRA_COUNTER_PATTERN = /^\\[A-Za-z0-9 .#&_%/:-]+(\([A-Za-z0-9 .#&_%/:$-]+\))?\\[A-Za-z0-9 .#&_%/:()-]+$/;
+
+/** Whether a list of extra counter paths would be refused by the server: empty, too many, too long, badly formed, or a repeat (compared without case). */
+export function extraCountersProblem(list: string[]): boolean {
+  if (list.length === 0 || list.length > EXTRA_COUNTERS_MAX) return true;
+  const seen = new Set<string>();
+  for (const entry of list) {
+    if (entry.length > EXTRA_COUNTER_LENGTH_MAX || !EXTRA_COUNTER_PATTERN.test(entry)) return true;
+    const key = entry.toLowerCase();
+    if (seen.has(key)) return true;
+    seen.add(key);
+  }
+  return false;
+}
+
 /**
  * The first thing wrong with the settings, or null. The server checks again; this only saves a round trip.
  * A folder is a full path on a drive (D:\UnravisBlackbox) or on a network share (\\files01\share\UnravisBlackbox),
@@ -638,6 +661,8 @@ export function settingsProblem(s: Settings): SettingsProblem | null {
   if (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535) return 'port';
   if (!validBind(s.bind)) return 'bind';
   if (s.logPaths.some(p => !/^[A-Za-z]:[\\/]/.test(p.trim()))) return 'logs';
+  // The Record step also refuses an empty list while the counters row is on; the server accepts an empty one.
+  if (s.counters?.extra?.length && extraCountersProblem(s.counters.extra)) return 'counters';
   if (targetsProblem(s.targets)) return 'targets';
   return null;
 }

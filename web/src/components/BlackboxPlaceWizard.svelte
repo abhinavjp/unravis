@@ -123,7 +123,7 @@
   function ownerOf(code: string): StepId {
     if (code.startsWith('name-')) return 'name';
     if (code === 'where-missing') return 'where';
-    if (code === 'interval' || code === 'logs') return 'record';
+    if (code === 'interval' || code === 'logs' || code === 'counters') return 'record';
     if (code.startsWith('targets-')) return 'watch';
     if (code === 'keep' || code === 'size' || code === 'free') return 'keep';
     return 'folder';

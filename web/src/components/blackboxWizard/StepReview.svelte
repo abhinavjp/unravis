@@ -34,11 +34,11 @@
   const redisIncludes = $derived(
     [W['redis.serverTitle'], ...(['slowlog', 'latency', 'clients', 'slowArgs'] as const).filter((r) => redisRowOn(wizard.redisChoice, r)).map((r) => W[('redis.' + r + 'Title') as 'redis.slowlogTitle'])].join(', ')
   );
-  const preset = $derived(presetOf(payload.record));
+  const preset = $derived(presetOf(payload.record, wizard.collectorRows));
   const presetWords = $derived(preset === 'recommended' ? W['record.recommended'] : preset === 'light' ? W['record.light'] : W['record.custom']);
   const allFigures = RECORD_GROUPS.reduce((count, group) => count + group.figures.length, 0);
   const recordedFigures = $derived(RECORD_GROUPS.reduce(
-    (count, group) => count + (group.toggle && !payload.record[group.toggle] ? 0 : group.figures.length), 0
+    (count, group) => count + ((group.toggle && !payload.record[group.toggle]) || (group.row && !wizard.collectorRows[group.row]) ? 0 : group.figures.length), 0
   ));
   const groups = $derived(targetNamesByKind(payload.targets));
   const watchWords = $derived(payload.targets.length === 0 ? W['review.watchNone'] : W['review.watchText'](groups.appPools, groups.services));
@@ -57,6 +57,11 @@
       .filter((key) => payload.record[key])
       .map((key) => toggleTitle(key))
   );
+
+  // The three collector rows, read from the payload so Review shows what is sent: an absent id is on.
+  const rowFacts = $derived(payload.collectors?.['host.facts']?.on !== false);
+  const rowPaths = $derived(payload.collectors?.['paths.files']?.on !== false);
+  const extraCounters = $derived(payload.counters?.extra ?? []);
 
   function change(id: StepId): void {
     if (disabled) return;
@@ -99,6 +104,16 @@
           {/if}
         </dd>
       {/if}
+      <dt>{W['review.rowFacts']}</dt>
+      <dd>{rowFacts ? W['review.on'] : W['review.off']}</dd>
+      <dt>{W['review.rowCounters']}</dt>
+      <dd>{extraCounters.length > 0 ? W['review.on'] : W['review.off']}</dd>
+      {#if extraCounters.length > 0}
+        <dt>{W['review.counters']}</dt>
+        <dd>{extraCounters.join(', ')}</dd>
+      {/if}
+      <dt>{W['review.rowPaths']}</dt>
+      <dd>{rowPaths ? W['review.on'] : W['review.off']}</dd>
       <dt>{W['review.every']}</dt>
       <dd>{payload.intervalSeconds} {W['review.seconds']}</dd>
     </dl>

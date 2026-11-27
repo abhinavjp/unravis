@@ -11,6 +11,9 @@ const bb = loadTypeScript('src/lib/blackbox.ts');
 const drive = (letter, type, system, extra = {}) =>
   ({ letter, label: 'Drive ' + letter, type, system, freeBytes: 100, totalBytes: 200, ...extra });
 const FALLBACK = 'D:\\UnravisBlackbox';
+// The Recommended and Light answers of the three collector rows (Server facts, Extra Windows counters, Log and config file paths).
+const ROWS_ON = { facts: true, counters: false, paths: true };
+const ROWS_OFF = { facts: false, counters: false, paths: false };
 
 /** A wizard with a good name, the place chosen, and the folder already placed on a plain drive. */
 function ready(where = 'pc', extra = {}) {
@@ -258,32 +261,32 @@ test('a Review "Change" link comes straight back to Review after Next (S-05)', (
 /* ------------------------------------------------------------------ presets */
 
 test('presets are worked out from the three record switches (B-03)', () => {
-  assert.equal(w.presetOf({ processes: true, logsCatalogue: true, copyLogsOnSnapshot: false }), 'recommended');
-  assert.equal(w.presetOf({ processes: false, logsCatalogue: false, copyLogsOnSnapshot: false }), 'light');
-  assert.equal(w.presetOf({ processes: true, logsCatalogue: false, copyLogsOnSnapshot: false }), 'custom');
-  assert.equal(w.presetOf({ processes: false, logsCatalogue: true, copyLogsOnSnapshot: false }), 'custom');
-  assert.equal(w.presetOf({ processes: true, logsCatalogue: true, copyLogsOnSnapshot: true }), 'custom');
-  assert.equal(w.presetOf({ processes: false, logsCatalogue: false, copyLogsOnSnapshot: true }), 'custom');
+  assert.equal(w.presetOf({ processes: true, logsCatalogue: true, copyLogsOnSnapshot: false }, ROWS_ON), 'recommended');
+  assert.equal(w.presetOf({ processes: false, logsCatalogue: false, copyLogsOnSnapshot: false }, ROWS_OFF), 'light');
+  assert.equal(w.presetOf({ processes: true, logsCatalogue: false, copyLogsOnSnapshot: false }, ROWS_ON), 'custom');
+  assert.equal(w.presetOf({ processes: false, logsCatalogue: true, copyLogsOnSnapshot: false }, ROWS_ON), 'custom');
+  assert.equal(w.presetOf({ processes: true, logsCatalogue: true, copyLogsOnSnapshot: true }, ROWS_ON), 'custom');
+  assert.equal(w.presetOf({ processes: false, logsCatalogue: false, copyLogsOnSnapshot: true }, ROWS_ON), 'custom');
   // the recommended preset is what the recorder ships with
-  assert.equal(w.presetOf(bb.defaultSettings().record), 'recommended');
+  assert.equal(w.presetOf(bb.defaultSettings().record, w.initialState().collectorRows), 'recommended');
 });
 
 test('applyPreset sets the switches, and changing any one switch afterwards reads as Custom (S-07)', () => {
   const s = ready('pc');
   const light = w.applyPreset(s, 'light');
   assert.deepEqual(light.settings.record, { processes: false, logsCatalogue: false, copyLogsOnSnapshot: false });
-  assert.equal(w.presetOf(light.settings.record), 'light');
+  assert.equal(w.presetOf(light.settings.record, light.collectorRows), 'light');
   const rec = w.applyPreset(light, 'recommended');
   assert.deepEqual(rec.settings.record, { processes: true, logsCatalogue: true, copyLogsOnSnapshot: false });
-  assert.equal(w.presetOf(rec.settings.record), 'recommended');
+  assert.equal(w.presetOf(rec.settings.record, rec.collectorRows), 'recommended');
   for (const key of ['processes', 'logsCatalogue', 'copyLogsOnSnapshot']) {
     for (const base of [rec, light]) {
       const changed = { ...base.settings.record, [key]: !base.settings.record[key] };
-      assert.equal(w.presetOf(changed), 'custom', key + ' flipped from ' + w.presetOf(base.settings.record));
+      assert.equal(w.presetOf(changed, base.collectorRows), 'custom', key + ' flipped from ' + w.presetOf(base.settings.record, base.collectorRows));
     }
   }
   // the original state is untouched
-  assert.equal(w.presetOf(s.settings.record), 'recommended');
+  assert.equal(w.presetOf(s.settings.record, s.collectorRows), 'recommended');
   assert.equal(w.applyPreset(s, 'light') !== s, true);
 });
 
@@ -301,7 +304,7 @@ test('"Use defaults, go to review" fills the record, SQL and watch answers and l
   assert.equal(r.step, 'review');
   assert.equal(r.returnTo, null);
   assert.equal(r.maxSeen, 8, 'nine steps on the pack path: all reached');
-  assert.equal(w.presetOf(r.settings.record), 'recommended');
+  assert.equal(w.presetOf(r.settings.record, r.collectorRows), 'recommended');
   assert.equal(r.settings.intervalSeconds, 15);
   assert.deepEqual(r.settings.logPaths, ['C:\\inetpub\\logs\\LogFiles']);
   assert.equal(r.logPathsText, 'C:\\inetpub\\logs\\LogFiles');
@@ -553,6 +556,8 @@ test('initialState starts from the recorder defaults on the first step', () => {
   assert.equal(s.sqlSeen, false);
   assert.equal(s.logPathsText, 'C:\\inetpub\\logs\\LogFiles');
   assert.deepEqual(s.settings, bb.defaultSettings());
+  assert.deepEqual(s.collectorRows, { facts: true, counters: false, paths: true });
+  assert.equal(s.countersText, '\\Process(w3wp)\\Page Faults/sec\n\\Memory\\Pool Nonpaged Bytes');
   // two fresh states share nothing
   s.settings.record.processes = false;
   assert.equal(w.initialState().settings.record.processes, true);
@@ -677,4 +682,112 @@ test('"Use defaults, go to review" puts the SQL and Redis choices back to Standa
   const r = w.useDefaultsToReview(s);
   assert.deepEqual(r.sqlChoice, { profile: 'standard', text: false });
   assert.deepEqual(r.redisChoice, { profile: 'standard', rows: {} });
+});
+
+/* ------------------------------------------------------------------ collector rows (BL-698 / B9) */
+
+const withRows = (s, rows, countersText) => ({ ...s, collectorRows: { ...s.collectorRows, ...rows }, ...(countersText === undefined ? {} : { countersText }) });
+
+test('presets also depend on the three collector rows; anything else reads as custom', () => {
+  const rec = { processes: true, logsCatalogue: true, copyLogsOnSnapshot: false };
+  const light = { processes: false, logsCatalogue: false, copyLogsOnSnapshot: false };
+  assert.equal(w.presetOf(rec, ROWS_ON), 'recommended');
+  assert.equal(w.presetOf(light, ROWS_OFF), 'light');
+  for (const key of ['facts', 'counters', 'paths']) {
+    assert.equal(w.presetOf(rec, { ...ROWS_ON, [key]: !ROWS_ON[key] }), 'custom', 'recommended with ' + key + ' flipped');
+    assert.equal(w.presetOf(light, { ...ROWS_OFF, [key]: true }), 'custom', 'light with ' + key + ' on');
+  }
+  // A host placed with Light before this change has no collectors block, so facts and paths are really on there.
+  assert.equal(w.presetOf(light, ROWS_ON), 'custom');
+  assert.equal(w.presetOf(rec, ROWS_OFF), 'custom');
+});
+
+test('applyPreset sets the collector rows: Recommended facts and paths on, counters off; Light all off', () => {
+  const s = withRows(ready('pc'), { counters: true });
+  assert.deepEqual(w.applyPreset(s, 'recommended').collectorRows, ROWS_ON);
+  assert.deepEqual(w.applyPreset(s, 'light').collectorRows, ROWS_OFF);
+  assert.equal(w.presetOf(w.applyPreset(s, 'light').settings.record, w.applyPreset(s, 'light').collectorRows), 'light');
+  assert.deepEqual(s.collectorRows, { facts: true, counters: true, paths: true }, 'the state given is not changed');
+});
+
+test('buildSettings: Recommended writes no collectors and no counters key', () => {
+  const out = w.buildSettings(ready('pc'));
+  assert.equal('collectors' in out, false);
+  assert.equal('counters' in out, false);
+});
+
+test('buildSettings writes only what is switched off, and never everySec', () => {
+  const s = ready('pc');
+  assert.deepEqual(w.buildSettings(withRows(s, { facts: false })).collectors, { 'host.facts': { on: false } });
+  assert.deepEqual(w.buildSettings(withRows(s, { paths: false })).collectors, { 'paths.files': { on: false } });
+  assert.deepEqual(w.buildSettings(withRows(s, { facts: false, paths: false })).collectors, { 'host.facts': { on: false }, 'paths.files': { on: false } });
+  for (const rows of [{ facts: false }, { paths: false }, { facts: false, paths: false }]) {
+    const out = w.buildSettings(withRows(s, rows));
+    assert.equal('counters' in out, false);
+    assert.equal(JSON.stringify(out).includes('everySec'), false);
+  }
+  const light = w.buildSettings(w.applyPreset(s, 'light'));
+  assert.equal(JSON.stringify(light.collectors), '{"host.facts":{"on":false},"paths.files":{"on":false}}');
+  assert.equal('counters' in light, false);
+});
+
+test('buildSettings: the counters row on writes the lines; off writes nothing even with text left over', () => {
+  const s = ready('pc');
+  const on = w.buildSettings(withRows(s, { counters: true }, '  \\Process(w3wp)\\Page Faults/sec \r\n\n\\Memory\\Pool Nonpaged Bytes\n'));
+  assert.deepEqual(on.counters, { extra: ['\\Process(w3wp)\\Page Faults/sec', '\\Memory\\Pool Nonpaged Bytes'] });
+  assert.equal('collectors' in on, false, 'facts and paths stay on, so nothing is written for them');
+  assert.equal('counters' in w.buildSettings(s), false, 'prefill text is there but the row is off');
+  assert.equal('counters' in w.buildSettings(withRows(s, { counters: false }, '\\A\\b')), false);
+  // exact JSON for one combination
+  const both = w.buildSettings(withRows(s, { facts: false, counters: true }, '\\Process(w3wp)\\Page Faults/sec'));
+  assert.equal(JSON.stringify({ collectors: both.collectors, counters: both.counters }), '{"collectors":{"host.facts":{"on":false}},"counters":{"extra":["\\\\Process(w3wp)\\\\Page Faults/sec"]}}');
+});
+
+test('the counters problem: empty, bad shape, over 50, over 200 characters, a repeat in another case', () => {
+  const s = withRows(ready('pc'), { counters: true });
+  const problem = (text) => w.stepProblem({ ...s, countersText: text }, 'record');
+  assert.equal(problem(w.initialState().countersText), null, 'the prefill is valid');
+  assert.equal(problem(''), 'counters');
+  assert.equal(problem(' \n\n  '), 'counters', 'blank lines only');
+  assert.equal(problem('Process(w3wp)\\Page Faults/sec'), 'counters', 'no leading backslash');
+  assert.equal(problem('\\Process(w3wp)'), 'counters', 'no counter name');
+  assert.equal(problem('\\Process(*)\\Page Faults/sec'), 'counters', 'wildcard instance');
+  assert.equal(problem('\\*\\Page Faults/sec'), 'counters', 'wildcard object');
+  assert.equal(problem('\\\\server\\Process(w3wp)\\Page Faults/sec'), 'counters', 'computer name');
+  assert.equal(problem('\\Process(w3wp)\\Page Faults/sec\nnot a counter'), 'counters', 'one bad line is enough');
+  assert.equal(problem('\\Process(w3wp)\\Page Faults/sec\n\\process(W3WP)\\page faults/SEC'), 'counters', 'duplicate differing only in case');
+  assert.equal(problem('\\Process(w3wp)\\Page Faults/sec\n\\Process(w3wp)\\Page Faults/sec'), 'counters', 'an exact repeat is not hidden');
+  const fifty = Array.from({ length: 50 }, (_, i) => '\\Object\\Counter ' + i);
+  assert.equal(problem(fifty.join('\n')), null, '50 is allowed');
+  assert.equal(problem([...fifty, '\\Object\\Counter 50'].join('\n')), 'counters', '51');
+  const base = '\\Object\\';
+  assert.equal(problem(base + 'a'.repeat(200 - base.length)), null, '200 characters is allowed');
+  assert.equal(problem(base + 'a'.repeat(201 - base.length)), 'counters', '201 characters');
+});
+
+test('the counters problem is hidden while the row is off, and settingsProblem repeats the check', () => {
+  const s = ready('pc');
+  assert.equal(w.stepProblem({ ...s, countersText: '' }, 'record'), null);
+  assert.equal(w.stepProblem({ ...s, countersText: 'bad' }, 'record'), null);
+  assert.equal(w.next(walkTo(s, 'record')).step, 'watch');
+  const bad = withRows(s, { counters: true }, 'bad');
+  assert.equal(w.next({ ...bad, step: 'record' }).step, 'record', 'Next is refused');
+  assert.equal(bb.settingsProblem(w.buildSettings(bad)), 'counters');
+  assert.equal(w.stepProblem({ ...bad, step: 'review' }, 'review'), 'counters');
+  assert.equal(bb.settingsProblem(bb.defaultSettings('web-a')), null, 'no counters block, no check');
+  assert.equal(bb.settingsProblem({ ...bb.defaultSettings('web-a'), counters: { extra: ['\\Memory\\Pool Nonpaged Bytes'] } }), null);
+  assert.equal(bb.settingsProblem({ ...bb.defaultSettings('web-a'), counters: { extra: [] } }), null, 'the server accepts an empty list; the wizard refuses it on Record instead');
+  assert.equal(w.stepProblem({ ...withRows(s, { counters: true }, ''), step: 'record' }, 'record'), 'counters');
+  assert.equal(w.stepProblem({ ...withRows(s, { counters: true }, ''), step: 'review' }, 'review'), 'counters', 'Review also refuses an empty list');
+  assert.equal(bb.stepOfSetting('counters'), 'record');
+});
+
+test('"Use defaults, go to review" puts the three collector rows and the counters text back', () => {
+  let s = ready('pc');
+  s = { ...withRows(s, { facts: false, counters: true, paths: false }, '\\A\\b'), };
+  const r = w.useDefaultsToReview(s);
+  assert.deepEqual(r.collectorRows, ROWS_ON);
+  assert.equal(r.countersText, w.initialState().countersText);
+  assert.equal('collectors' in w.buildSettings(r), false);
+  assert.equal('counters' in w.buildSettings(r), false);
 });
