@@ -1,0 +1,67 @@
+Homestretch
+Unravis
+Overview
+Runs
+633
+Queue
+2
+Releases
+3
+Machines
+Holds
+Activity
+1 running
+· 1 waiting
+captured 18:12 UTC
+Appearance
+?
+Failed
+The master branch is failing.
+Latest release
+0.1.0-rc.68
+Main branches
+Result	Branch	Where it failed	Recent pushes	Time
+
+Waiting
+	develop 9888212 checks 5 changes
+Not starting though a slot is free on local. Is the queue paused? Queue controls · waiting 2 h 25 min
+	
+–
+	
+	queued 15:47 UTC
+
+Failed
+	master 9f20445	
+Go - tests (shard 2 of 3)
+	
+	started 15:47 UTC
+Pull requests
+All PR runs
+Latest pull request
+Running
+local · slot 1
+of 2
+	PR 479	started 18:10 UTC
+Queue
+
+1 running · 1 waiting
+
+? local: 1 of 2 slots busy
+
+Changes
+
+All releases
+Prototype. Dashed controls for review.
+Show state
+Waiting
+Running
+Done passed
+Done failed
+One change only
+More than 6
+Prototype: machine state
+Ready
+Busy (both slots)
+Low disk
+Offline
+Where this fits
