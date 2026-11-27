@@ -122,11 +122,11 @@ try {
         Check "$verb allowed with tag in write mode" ($null -eq (Test-WriteCall $verb $tag $wcfg))
         Check "$verb refused by Salt read gate" ($null -ne (Test-SaltReadCall $verb @($tag) $wcfg))
         $recipe = New-UpdateCommand $verb $tag
-        $remote = New-SaltRemoteCommand 'salt' (@($updateTarget, 'cmd.run', $recipe.Cmd) + $recipe.Kwargs) $wcfg 170 -Retcode
+        $remote = New-SaltRemoteCommand 'salt' (@($updateTarget, 'cmd.run', $recipe.Cmd) + $recipe.Kwargs) $wcfg 170
         Check "$verb has one quoted YAML-safe Windows command" (
             $recipe.Cmd -cmatch '^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/]+={0,2}\z' -and
             (Test-YamlSafe $recipe.Cmd) -and
-            $remote -ceq "sudo -n salt --out=json --no-color --static -t 170 --retcode-passthrough '$updateTarget' 'cmd.run' '$($recipe.Cmd)' 'shell=powershell'" -and
+            $remote -ceq "sudo -n salt --out=json --no-color --static -t 170 '$updateTarget' 'cmd.run' '$($recipe.Cmd)' 'shell=powershell'" -and
             (ConvertTo-WinArg $remote).Length -lt 32000
         )
         $source = Get-EmbeddedScript $recipe.Cmd
@@ -573,7 +573,7 @@ if ($FailInstall) {
     $r = Run $approve
     Check 'update approval previews the fixed command and hides the password' (
         $r.Code -eq 0 -and $r.Out.Contains("update.fetch '$tag'") -and $r.Out.Contains("'cmd.run' 'powershell.exe") -and
-        $r.Out.Contains('--retcode-passthrough') -and -not $r.Out.Contains('FAKE-PASSWORD-123')
+        -not $r.Out.Contains('FAKE-PASSWORD-123')
     )
     Set-Content -LiteralPath $envFile -Value ($testSettings + 'REMOTE_MODE=readonly')
     $r = Run $approve
@@ -604,7 +604,7 @@ function Invoke-RemoteSsh($Config, [string]$RemoteCommand, [int]$TimeoutSec) {
     if ($latest.decision -ne 'starting' -or $latest.command -notlike 'update.fetch*') { throw 'Missing update start audit.' }
     if ($RemoteCommand -notmatch "'cmd\.run' 'powershell\.exe" -or $TimeoutSec -lt 630) { throw 'Unexpected fake update call.' }
     if (Test-Path -LiteralPath (Join-Path (Get-RemoteHome) "pending\$Hash.json")) { throw 'Approval was not consumed before running.' }
-    return @{ Exit = 0; TimedOut = $false; Out = '{"BG-SRV-UK-01":"fake update ran"}'; Err = '' }
+    return @{ Exit = 0; TimedOut = $false; Out = '{"BG-SRV-UK-01":"fake update ran UPDATE-OK"}'; Err = '' }
 }
 '@
     Set-Content -LiteralPath $testEntry -Value ($entry.Replace($dotSource, $dotSource + "`n" + $fakeSsh))

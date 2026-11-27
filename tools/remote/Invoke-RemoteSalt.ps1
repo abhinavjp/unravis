@@ -251,7 +251,7 @@ switch ($Action) {
         Assert-Target
         Assert-UpdateTarget
         try { $rec = New-UpdateStatusCommand $script:Cfg } catch { Deny $_.Exception.Message }
-        $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg (Get-SaltWait) -Retcode
+        $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg (Get-SaltWait)
         $r = Invoke-Planned "Read Unravis update status on $Target" $remote
         if ($r) { Show-SaltJson $r.Out }
     }
@@ -330,7 +330,7 @@ switch ($Action) {
                 $rec = New-UpdateCommand $Fn $Name
                 $wait = if ($Fn -eq 'update.fetch') { [Math]::Max($TimeoutSec - 30, 600) } else { [Math]::Max($TimeoutSec - 30, 170) }
                 $approveSec = $wait + 30
-                $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg $wait -Retcode
+                $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg $wait
             } else {
                 $remote = New-SaltRemoteCommand 'salt' @($Target, $Fn, $Name) $script:Cfg 60
                 $approveSec = [Math]::Max($TimeoutSec, 90)
@@ -357,6 +357,7 @@ switch ($Action) {
             $hint = if ($isBb) { " The change may be refused, rolled back by the recorder, or half done: run -Action BlackboxShow and -Action BlackboxHistory before asking again." } else { '' }
             throw ("Remote command failed (exit {0}): {1} {2}{3}" -f $r.Exit, $r.Err.Trim(), (Protect-Text $r.Out $script:Secrets).Trim(), $hint)
         }
+        if ($isUpdate -and (Protect-Text $r.Out $script:Secrets) -notmatch 'UPDATE-OK') { throw ('The update step did not report success. Check with -Action UpdateStatus before asking again. Output: ' + (Protect-Text $r.Out $script:Secrets).Trim()) }
         Show-SaltJson $r.Out
     }
     'LogPull' {

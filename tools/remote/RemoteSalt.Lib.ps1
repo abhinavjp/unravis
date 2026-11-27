@@ -354,6 +354,7 @@ function New-UpdatePowerShellCommand([string]$Source) {
 
 $script:UpdatePathChecks = @'
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 function Get-PlainItem([string]$path) {
     $parent = [IO.Path]::GetDirectoryName($path)
     if ($parent -and -not (Get-PlainItem $parent)) { return }
@@ -594,7 +595,7 @@ if (-not $recorder -or $recorder.PSIsContainer) { throw 'The verified recorder e
 Assert-PrivateStage (Get-PlainItem $recorder.DirectoryName)
 Assert-PrivateStage $recorder
 & $recorder.FullName update --json
-exit $LASTEXITCODE
+if ($LASTEXITCODE -ne 0) { throw "The recorder update exited with code $LASTEXITCODE." }
 '@ }
         'update.app' { $stage; $install; $appSwap; @'
 Assert-VerifiedStage
@@ -608,6 +609,7 @@ Invoke-AppSwap
 $sessionList = @(& quser.exe)
 if ($LASTEXITCODE -ne 0 -or -not ($sessionList -match '^\s*>?\s*btlsupport1\s+(?:\S+\s+)?\d+\s+Active(?:\s|$)')) {
     Write-Output 'No active btlsupport1 session found. The app was not started.'
+    Write-Output 'UPDATE-OK (nothing changed)'
     return
 }
 $program = Get-PlainItem $appExe
@@ -654,8 +656,9 @@ try {
     try { $locked = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $locked = $true }
     if (-not $locked) { throw 'Another Unravis update action is running.' }
 '@ + "`n" + ($body -join "`n") + "`n" + @'
+    Write-Output 'UPDATE-OK'
 } catch {
-    [Console]::Error.WriteLine($_.Exception.Message)
+    Write-Output ('UPDATE-FAILED: ' + $_.Exception.Message)
     exit 1
 } finally {
     if ($locked) { $mutex.ReleaseMutex() }
