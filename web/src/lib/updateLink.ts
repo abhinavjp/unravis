@@ -1,4 +1,5 @@
 import { isNetworkError } from './copy/startupCopy';
+import { isUnreachableError } from './copy/unreachableCopy';
 
 // When an update restarts Unravis, the app comes back on a new address with a new session, so the page that pressed the button can no
 // longer reach it. These are the rules for noticing that, and the words for it. Pure: no DOM, no fetch.
@@ -20,7 +21,8 @@ export const GONE_CHECK_MS = 3000;
 
 /** True when the answer says the app is not there (or not the same app): the connection failed, or the session is no longer known. */
 export function lostServer(cause: unknown): boolean {
-  if (isNetworkError(cause)) return true;
+  // The request layer turns a failed fetch into an error with code `unreachable` and status 0 (W-01), which isNetworkError does not read as one.
+  if (isNetworkError(cause) || isUnreachableError(cause)) return true;
   const code = cause && typeof cause === 'object' ? (cause as { code?: unknown }).code : undefined;
   const status = cause && typeof cause === 'object' ? (cause as { status?: unknown }).status : undefined;
   return code === 'no_session' || status === 401;

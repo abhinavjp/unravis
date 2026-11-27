@@ -5,6 +5,7 @@ import { noticeKeeperRefusal, type KeeperStatus } from './keeper';
 import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
 import { REQUEST_FAILED_MESSAGE } from './copy/requestFailedCopy';
 import { UNREACHABLE_CODE, UNREACHABLE_MESSAGE } from './copy/unreachableCopy';
+import { noteAnswered, noteRefused, noteUnreachable } from './livenessCore';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
 const base = '/api';
@@ -134,6 +135,7 @@ function networkFailure(cause: unknown): ApiError | null {
   if (cause instanceof ApiError || isAbortLike(cause) || !(cause instanceof TypeError)) return null;
   const failure = new ApiError(UNREACHABLE_MESSAGE, UNREACHABLE_CODE, undefined, 0);
   reportError({ status: 0, code: UNREACHABLE_CODE, message: failure.message });
+  noteUnreachable(); // three in a row make the page say the app has stopped (liveness.svelte.ts)
   return failure;
 }
 
@@ -145,6 +147,8 @@ async function requestOnce<T>(path: string, init: RequestInit, signal: AbortSign
   // The server gives every request an id; an error entry quotes it so a user
   // can name it and the developer can find the exact server line.
   const reqId = responseRequestId(response);
+  // Any answer means the app is there. A refused session is the exception: the app is there but this page belongs to an earlier run.
+  if (response.status === 401) noteRefused(); else noteAnswered();
   if (response.status === 401) {
     reportError({ status: 401, code: 'no_session', message: NO_SESSION_MESSAGE, reqId });
     forgetSession();
