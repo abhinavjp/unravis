@@ -181,17 +181,18 @@ func TestSetAsideRouteReportsAFailedMoveAsLeftAsItWas(t *testing.T) {
 
 // The shared list's words name the keeper's folder, say an administrator opens it, and say the new list is for everyone on this PC.
 func TestSetAsideWordsForTheSharedList(t *testing.T) {
-	full := setAsideFullText(`C:\ProgramData\Unravis\keeper`, true)
-	if !strings.Contains(full, `C:\ProgramData\Unravis\keeper`) || !strings.Contains(full, "administrator") {
+	full := setAsideFullText(testKeeperDir, true)
+	if !strings.Contains(full, testKeeperDir) || !strings.Contains(full, "administrator") {
 		t.Fatalf("shared full text = %q", full)
 	}
-	damaged := savedFileDamagedText(`C:\ProgramData\Unravis\keeper`, true)
-	for _, want := range []string{"on this account or by this version of Unravis", `C:\ProgramData\Unravis\keeper`, "everyone who uses Unravis on this PC", "not deleted"} {
+	damaged := savedFileDamagedText(testKeeperDir, true)
+	for _, want := range []string{"on this account or by this version of Unravis", testKeeperDir, "everyone who uses Unravis on this PC", "not deleted"} {
 		if !strings.Contains(damaged, want) {
 			t.Fatalf("shared damaged text lacks %q: %q", want, damaged)
 		}
 	}
-	if own := savedFileDamagedText(`C:\Users\me\cfg`, false); strings.Contains(own, "everyone") || strings.Contains(setAsideFullText(`C:\Users\me\cfg`, false), "administrator") {
+	ownDir := filepath.Join(os.TempDir(), "unravis-own")
+	if own := savedFileDamagedText(ownDir, false); strings.Contains(own, "everyone") || strings.Contains(setAsideFullText(ownDir, false), "administrator") {
 		t.Fatalf("a personal file talks about everyone or an administrator: %q", own)
 	}
 }
@@ -199,7 +200,9 @@ func TestSetAsideWordsForTheSharedList(t *testing.T) {
 // sharedDamaged is an unreadable saved list that is the whole PC's (the key keeper's), with a known folder.
 type sharedDamaged struct{ failingAside }
 
-func (sharedDamaged) Folder() (string, bool) { return `C:\ProgramData\Unravis\keeper`, true }
+var testKeeperDir = filepath.Join(os.TempDir(), "unravis-keeper")
+
+func (sharedDamaged) Folder() (string, bool) { return testKeeperDir, true }
 
 // The page is told when the unreadable list is shared (reason "shared"), so its question says everyone is affected; a personal file says nothing.
 func TestListRecentTellsThePageWhenTheDamagedListIsShared(t *testing.T) {
