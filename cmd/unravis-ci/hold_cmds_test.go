@@ -142,13 +142,18 @@ func TestHoldLiftAndActivity(t *testing.T) {
 		t.Fatalf("list --all --json: exit %d, %+v, %v", code, list, err)
 	}
 
-	// activity: the add (actor claude, run by pat for owner sam) and the lift (actor ui from the env, lifter pat)
+	// activity: the add (actor claude, run by pat for owner sam), the lift (actor ui from the env, lifter pat),
+	// then the two failed lifts, each logged with its outcome (BL-705)
 	code, out, _ = cli(t, nil, "activity", "--json", "--state-dir", dir)
 	var act activityJSON
-	if err := json.Unmarshal([]byte(out), &act); err != nil || code != exitOK || len(act.Entries) != 2 {
+	if err := json.Unmarshal([]byte(out), &act); err != nil || code != exitOK || len(act.Entries) != 4 {
 		t.Fatalf("activity --json: exit %d, %+v, %v", code, act, err)
 	}
 	a, l := act.Entries[0], act.Entries[1]
+	if again, unknown := act.Entries[2], act.Entries[3]; again.Action != "hold.lift" || again.Outcome != "invalid" ||
+		unknown.Action != "hold.lift" || unknown.Outcome != "refused" {
+		t.Errorf("failed lift entries = %+v, %+v", again, unknown)
+	}
 	if a.Actor != activitylog.ActorClaude || a.Person != "pat" || a.Action != "hold.add" || !strings.HasPrefix(a.Target, h.ID) || !strings.Contains(a.Target, "owner sam") || a.Reason != "release review" {
 		t.Errorf("add entry = %+v", a)
 	}
