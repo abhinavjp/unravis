@@ -241,6 +241,11 @@ $script:ReadFns = @{
 }
 $script:RunFns = @('manage.up', 'manage.down', 'manage.status', 'jobs.active', 'jobs.list_jobs')
 $script:WriteFns = @('service.restart', 'service.start', 'service.stop')
+$script:UpdateFns = @('update.fetch', 'update.blackbox', 'update.app', 'update.app-start', 'update.rollback', 'update.cleanup')
+$script:UpdateTarget = 'BG-SRV-UK-01'
+$script:UpdateRoot = 'D:\UnravisUpdate'
+$script:UpdateInstall = 'C:\Users\btlsupport1\AppData\Local\Programs\Unravis'
+$script:UpdateManifest = 'D:\UnravisBlackbox\manifest.json'
 # Denylist of lockout/critical services; write mode is also limited to one named service per approved request.
 $script:ProtectedServices = '^(salt-.*|salt|sshd?|openssh.*|ssh-agent|cron|crond|dbus.*|networking|network.*|systemd.*|winrm|rpcss|dhcp|dnscache|eventlog|termservice|lanmanserver|netlogon|mpssvc|bfe|firewalld|ufw|nftables|iptables|xrdp|amazon-ssm-agent|w32time|samss|lsass|wuauserv)\z'
 
@@ -322,13 +327,380 @@ function Test-ReadOnlyCommand {
 }
 
 function Test-WriteCall {
-    # Write mode is v1-tiny: start, stop or restart one named, non-critical service.
+    # Write mode permits one non-critical service action or a fixed update recipe.
     param([string]$Fn, [string]$ServiceName, $Config)
     if ($Config.Mode -ne 'write') { return 'REMOTE_MODE is readonly; set REMOTE_MODE=write in the settings file to request changes' }
-    if ($script:WriteFns -notcontains $Fn) { return "'$Fn' is not available even in write mode (only service.start, service.stop, service.restart)" }
+    if ($Fn -in $script:UpdateFns) {
+        if (-not (Test-UpdateTag $ServiceName)) { return 'release tag must look like v0.1.0-rc.68 or v0.1.0' }
+        return $null
+    }
+    if ($script:WriteFns -notcontains $Fn) { return "'$Fn' is not available even in write mode" }
     if (-not (Test-SafeWord $ServiceName)) { return 'service name is not a plain name' }
     if ($ServiceName.ToLowerInvariant() -match $script:ProtectedServices) { return "service '$ServiceName' is protected (it could cut off access); do it by hand" }
     return $null
+}
+
+function Test-UpdateTag([string]$Tag) {
+    return ($Tag -cmatch '^v[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}(-rc\.[0-9]{1,3})?\z')
+}
+
+# ---------------------------------------------------------------- Windows updates
+function New-UpdatePowerShellCommand([string]$Source) {
+    # Salt parses arguments as YAML, and Windows adds another command-line parsing step.
+    # Pass one fixed script to Windows PowerShell without raw quotes or line breaks in that argument.
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Source))
+    return @{ Cmd = "powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded"; Kwargs = @('shell=powershell') }
+}
+
+$script:UpdatePathChecks = @'
+$ErrorActionPreference = 'Stop'
+function Get-PlainItem([string]$path) {
+    $parent = [IO.Path]::GetDirectoryName($path)
+    if ($parent -and -not (Get-PlainItem $parent)) { return }
+    try { $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop }
+    catch [System.Management.Automation.ItemNotFoundException] { return }
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing a reparse point at $path" }
+    $item
+}
+'@
+
+function New-UpdateCommand {
+    param([string]$Fn, [string]$Tag)
+    if ($Fn -notin $script:UpdateFns -or -not (Test-UpdateTag $Tag)) { throw 'Unknown update action or invalid release tag.' }
+    $header = '$tag = ' + (ConvertTo-ShSingleQuoted $Tag) + "`n" + $script:UpdatePathChecks + "`n" + @'
+$ProgressPreference = 'SilentlyContinue'
+function Get-PlainTree($item) {
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing a reparse point at $($item.FullName)" }
+    $item
+    if ($item.PSIsContainer) {
+        Get-ChildItem -LiteralPath $item.FullName -Force | ForEach-Object { Get-PlainTree $_ }
+    }
+}
+function Get-Sha256([string]$path) {
+    (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+}
+'@
+    $stage = @'
+$updateRoot = 'D:\UnravisUpdate'
+$stage = Join-Path $updateRoot $tag
+$marker = Join-Path $stage '.verified'
+function Assert-PrivateStage($item) {
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+    $acl = Get-Acl -LiteralPath $item.FullName
+    $writeRights = -bnot [int][Security.AccessControl.FileSystemRights]::ReadAndExecute
+    $writeRights = $writeRights -band (-bnot [int][Security.AccessControl.FileSystemRights]::Synchronize)
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted) {
+        throw "Staging must be owned by the Salt account, Administrators or SYSTEM ($($item.FullName))."
+    }
+    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin $trusted -and ($rule.FileSystemRights -band $writeRights)) {
+            throw "Staging is writable by another account ($($item.FullName))."
+        }
+    }
+}
+function Assert-VerifiedStage {
+    foreach ($path in @($updateRoot, $stage, $marker)) {
+        $item = Get-PlainItem $path
+        if (-not $item) { throw "Run update.fetch successfully for $tag first." }
+        Assert-PrivateStage $item
+    }
+    if ($item.PSIsContainer -or (Get-Content -LiteralPath $marker -Raw) -cne $tag) {
+        throw "Invalid fetch marker for $tag."
+    }
+}
+'@
+    $install = @'
+$install = 'C:\Users\btlsupport1\AppData\Local\Programs\Unravis'
+$appExe = Join-Path $install 'unravis.exe'
+'@
+    $appSwap = @'
+$managed = @('unravis.exe', 'unravis-blackbox.exe', 'unravis-setup.exe', 'bin')
+function Stop-InstalledApp {
+    foreach ($process in @(Get-Process -Name unravis -ErrorAction SilentlyContinue)) {
+        try {
+            # Keep a handle to the same process across the path check, stop and wait.
+            try { $null = $process.Handle; $path = $process.Path }
+            catch { if ($process.HasExited) { continue }; throw }
+            if (-not [string]::Equals($path, $appExe, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            try { $process.Kill() }
+            catch { if (-not $process.HasExited) { throw } }
+            if (-not $process.WaitForExit(30000)) { throw 'Timed out waiting for the installed Unravis app to exit.' }
+        } finally { $process.Dispose() }
+    }
+}
+function Get-PayloadHashes($item) {
+    if (-not $item.PSIsContainer) { return (Get-Sha256 $item.FullName) }
+    foreach ($file in @(Get-PlainTree $item | Where-Object { -not $_.PSIsContainer } | Sort-Object FullName)) {
+        $relative = $file.FullName.Substring($item.FullName.Length + 1)
+        '{0}  {1}' -f (Get-Sha256 $file.FullName), $relative
+    }
+}
+function Move-UpdateItem([string]$from, [string]$to) {
+    if (Get-PlainItem $to) { throw "The destination already exists ($to)." }
+    Move-Item -LiteralPath $from -Destination $to -ErrorAction Stop
+    $moves.Add(@{ From = $from; To = $to })
+}
+function Invoke-AppSwap([switch]$Rollback) {
+    $installed = Get-PlainItem $install
+    if (-not $installed -or -not $installed.PSIsContainer) { throw 'The per-user Unravis install folder is missing.' }
+    $receiptPath = Join-Path $install "update-$tag.txt"
+    $plans = foreach ($name in $managed) {
+        $live = Join-Path $install $name
+        $old = "$live.old"
+        $backup = Get-PlainItem $old
+        if ($backup) { $null = Get-PlainTree $backup }
+        $source = if (-not $Rollback) { Get-PlainItem (Join-Path $appSource $name) }
+        $current = if ($source -or ($Rollback -and $backup)) { Get-PlainItem $live }
+        if ($current) { $null = Get-PlainTree $current }
+        if ($source) {
+            Get-PlainTree $source | ForEach-Object { Assert-PrivateStage $_ }
+            if ($source.PSIsContainer -ne ($name -eq 'bin')) { throw "Unexpected archive item type ($name)." }
+            $newHashes = @(Get-PayloadHashes $source)
+            $oldHashes = if ($current) { @(Get-PayloadHashes $current) }
+        } else {
+            $newHashes = @()
+            $oldHashes = @()
+        }
+        [pscustomobject]@{ Name = $name; Live = $live; Old = $old; Current = $current; Backup = $backup
+            Source = $source; NewHashes = $newHashes; OldHashes = $oldHashes }
+    }
+    $payloads = @($plans | Where-Object Source)
+    if ($Rollback) {
+        if (-not @($plans | Where-Object Backup).Count) { Write-Output 'No app backups to restore.'; return }
+    } else {
+        if (-not $plans[0].Source) { throw 'The portable archive is missing unravis.exe.' }
+        $different = @($payloads | Where-Object {
+            -not $_.Current -or $_.Current.PSIsContainer -ne $_.Source.PSIsContainer -or
+                ($_.NewHashes -join "`n") -cne ($_.OldHashes -join "`n")
+        })
+        if (-not $different.Count) { Write-Output 'App payload hashes already match. App backups are retained.'; return }
+        $priorReceipt = Get-PlainItem $receiptPath
+        if ($priorReceipt -and $priorReceipt.PSIsContainer) { throw "Expected a file at $receiptPath" }
+    }
+
+    $work = Join-Path $install ('.update-' + [guid]::NewGuid().ToString('N') + '.old')
+    $null = New-Item -ItemType Directory -Path $work
+    $moves = New-Object 'System.Collections.Generic.List[hashtable]'
+    $restored = $true
+    try {
+        if (-not $Rollback) {
+            foreach ($plan in $payloads) {
+                $candidate = Join-Path $work $plan.Name
+                Copy-Item -LiteralPath $plan.Source.FullName -Destination $candidate -Recurse
+                if ((@(Get-PayloadHashes (Get-PlainItem $candidate)) -join "`n") -cne ($plan.NewHashes -join "`n")) {
+                    throw "Copied SHA-256 differs for $($plan.Name)."
+                }
+            }
+            $receipt = Join-Path $work 'receipt.txt'
+            $lines = foreach ($plan in $payloads) {
+                "[old $($plan.Name)]"
+                if ($null -eq $plan.Current) { '(absent)' } else { $plan.OldHashes }
+                "[new $($plan.Name)]"
+                $plan.NewHashes
+            }
+            Set-Content -LiteralPath $receipt -Value $lines -Encoding UTF8
+        }
+
+        Stop-InstalledApp
+        foreach ($plan in $plans) {
+            if ($Rollback) {
+                if (-not $plan.Backup) { continue }
+                if ($plan.Current) { Move-UpdateItem $plan.Live (Join-Path $work "$($plan.Name).displaced") }
+                Move-UpdateItem $plan.Old $plan.Live
+            } else {
+                if ($plan.Backup) { Move-UpdateItem $plan.Old (Join-Path $work "$($plan.Name).previous") }
+                if (-not $plan.Source) { continue }
+                if ($plan.Current) { Move-UpdateItem $plan.Live $plan.Old }
+                Move-UpdateItem (Join-Path $work $plan.Name) $plan.Live
+                if ((@(Get-PayloadHashes (Get-PlainItem $plan.Live)) -join "`n") -cne ($plan.NewHashes -join "`n")) {
+                    throw "Installed SHA-256 differs for $($plan.Name)."
+                }
+            }
+        }
+        if (-not $Rollback) {
+            if ($priorReceipt) { Move-UpdateItem $receiptPath (Join-Path $work 'receipt.previous') }
+            Move-UpdateItem $receipt $receiptPath
+        }
+    } catch {
+        for ($i = $moves.Count - 1; $i -ge 0; $i--) {
+            try {
+                if (Get-PlainItem $moves[$i].From) { throw 'Restore destination already exists.' }
+                Move-Item -LiteralPath $moves[$i].To -Destination $moves[$i].From -ErrorAction Stop
+            }
+            catch { $restored = $false; Write-Warning "Could not restore $($moves[$i].From). Recovery files remain in $work." }
+        }
+        throw
+    } finally {
+        if ($restored) {
+            # Only the unique, transaction-owned .old directory is deleted in the install tree.
+            try {
+                $null = Get-PlainTree (Get-PlainItem $work)
+                Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction Stop
+            }
+            catch { Write-Warning "Could not remove the transaction backup $work." }
+        }
+    }
+    if ($Rollback) { Write-Output 'App backups restored.' }
+    else { Write-Output "App payloads installed and verified. Hashes saved in $receiptPath." }
+}
+'@
+    $body = switch ($Fn) {
+        'update.fetch' { $stage; @'
+if (-not (Get-PlainItem $updateRoot)) {
+    $security = New-Object Security.AccessControl.DirectorySecurity
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @('S-1-5-18', 'S-1-5-32-544', [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) | Select-Object -Unique) {
+        $identity = New-Object Security.Principal.SecurityIdentifier($sid)
+        $rule = New-Object Security.AccessControl.FileSystemAccessRule($identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+        $security.AddAccessRule($rule)
+    }
+    $null = [IO.Directory]::CreateDirectory($updateRoot, $security)
+}
+Assert-PrivateStage (Get-PlainItem $updateRoot)
+$existing = Get-PlainItem $stage
+if ($existing) {
+    Get-PlainTree $existing | ForEach-Object { Assert-PrivateStage $_ }
+    if (Get-PlainItem $marker) { Remove-Item -LiteralPath $marker -Force }
+    Remove-Item -LiteralPath $stage -Recurse -Force
+}
+$null = New-Item -ItemType Directory -Path $stage
+$archives = [ordered]@{ app = "unravis-$tag-windows-x64.zip"; blackbox = "unravis-blackbox-$tag-windows-x64.zip" }
+$baseUrl = "https://github.com/abhinavjp/unravis/releases/download/$tag"
+$sums = Join-Path $stage 'SHA256SUMS.txt'
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/SHA256SUMS.txt" -OutFile $sums
+$lines = @(Get-Content -LiteralPath $sums)
+foreach ($name in $archives.Values) {
+    $zip = Join-Path $stage $name
+    Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/$name" -OutFile $zip
+    $expected = @($lines | ForEach-Object {
+        if ($_ -match ('^([0-9a-f]{64})[ \t]+\*?' + [regex]::Escape($name) + '\z')) { $Matches[1] }
+    })
+    if ($expected.Count -ne 1 -or (Get-Sha256 $zip) -ne $expected[0]) {
+        throw "Missing, ambiguous or mismatched SHA-256 for $name."
+    }
+}
+foreach ($kind in $archives.Keys) {
+    Expand-Archive -LiteralPath (Join-Path $stage $archives[$kind]) -DestinationPath (Join-Path $stage $kind)
+}
+Set-Content -LiteralPath $marker -Value $tag -Encoding ASCII -NoNewline
+Write-Output "Verified and extracted both archives for $tag."
+'@ }
+        'update.blackbox' { $stage; @'
+Assert-VerifiedStage
+if (-not (Get-Service -Name 'UnravisBlackbox' -ErrorAction SilentlyContinue)) { throw 'The UnravisBlackbox service is not installed.' }
+$recorder = Get-PlainItem (Join-Path $stage 'blackbox\unravis-blackbox.exe')
+if (-not $recorder -or $recorder.PSIsContainer) { throw 'The verified recorder executable is missing.' }
+Assert-PrivateStage (Get-PlainItem $recorder.DirectoryName)
+Assert-PrivateStage $recorder
+& $recorder.FullName update --json
+exit $LASTEXITCODE
+'@ }
+        'update.app' { $stage; $install; $appSwap; @'
+Assert-VerifiedStage
+$appSource = Join-Path $stage 'app'
+$archiveRoot = Get-PlainItem $appSource
+if (-not $archiveRoot -or -not $archiveRoot.PSIsContainer) { throw 'The verified app directory is missing.' }
+Assert-PrivateStage $archiveRoot
+Invoke-AppSwap
+'@ }
+        'update.app-start' { $install; @'
+$sessionList = @(& quser.exe)
+if ($LASTEXITCODE -ne 0 -or -not ($sessionList -match '^\s*>?\s*btlsupport1\s+(?:\S+\s+)?\d+\s+Active(?:\s|$)')) {
+    Write-Output 'No active btlsupport1 session found. The app was not started.'
+    return
+}
+$program = Get-PlainItem $appExe
+if (-not $program -or $program.PSIsContainer) { throw 'The installed app executable is missing.' }
+$task = 'UnravisUpdate-' + [guid]::NewGuid().ToString('N')
+$action = New-ScheduledTaskAction -Execute $appExe -WorkingDirectory $install
+$principal = New-ScheduledTaskPrincipal -UserId btlsupport1 -LogonType Interactive
+$null = Register-ScheduledTask -TaskName $task -Action $action -Principal $principal
+try {
+    $before = (Get-ScheduledTaskInfo -TaskName $task).LastRunTime
+    Start-ScheduledTask -TaskName $task
+    $deadline = [datetime]::UtcNow.AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 250
+        $info = Get-ScheduledTaskInfo -TaskName $task
+        $ran = $info.LastRunTime -ne $before -and $info.LastTaskResult -ne 267011 # SCHED_S_TASK_HAS_NOT_RUN
+    } until ($ran -or [datetime]::UtcNow -ge $deadline)
+    if (-not $ran -or $info.LastTaskResult -notin 0, 267009) {
+        throw "The interactive task did not start successfully (result $($info.LastTaskResult))."
+    }
+    Write-Output 'Started Unravis in the btlsupport1 session.'
+} finally {
+    Unregister-ScheduledTask -TaskName $task -Confirm:$false
+}
+'@ }
+        'update.rollback' { $install; $appSwap; @'
+Write-Output 'For Blackbox rollback, use the installed unravis-blackbox.exe.old to restore the recorder manually.'
+Invoke-AppSwap -Rollback
+'@ }
+        'update.cleanup' { $stage; @'
+$existing = Get-PlainItem $stage
+if ($existing) {
+    Assert-PrivateStage (Get-PlainItem $updateRoot)
+    Get-PlainTree $existing | ForEach-Object { Assert-PrivateStage $_ }
+    Remove-Item -LiteralPath $stage -Recurse -Force
+}
+Write-Output "Staging cleared for $tag."
+'@ }
+    }
+    $source = $header + "`n" + @'
+$mutex = New-Object Threading.Mutex($false, 'Global\UnravisRemoteUpdate')
+$locked = $false
+try {
+    try { $locked = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $locked = $true }
+    if (-not $locked) { throw 'Another Unravis update action is running.' }
+'@ + "`n" + ($body -join "`n") + "`n" + @'
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+} finally {
+    if ($locked) { $mutex.ReleaseMutex() }
+    $mutex.Dispose()
+}
+'@
+    return (New-UpdatePowerShellCommand $source)
+}
+
+function New-UpdateStatusCommand($Config) {
+    $statePath = $script:UpdateInstall + '\setup-state.json'
+    foreach ($path in @($script:UpdateManifest, $statePath)) {
+        $reason = Test-SaltReadCall 'file.read' @($path) $Config
+        if ($reason) { throw $reason }
+    }
+    foreach ($path in @($script:UpdateInstall, $script:UpdateRoot)) {
+        $reason = Test-ReadOnlyCommand "Get-ChildItem $path" $Config
+        if ($reason) { throw $reason }
+    }
+    $paths = @(
+        ('$manifestPath = ' + (ConvertTo-ShSingleQuoted $script:UpdateManifest))
+        ('$statePath = ' + (ConvertTo-ShSingleQuoted $statePath))
+        ('$install = ' + (ConvertTo-ShSingleQuoted $script:UpdateInstall))
+        ('$updateRoot = ' + (ConvertTo-ShSingleQuoted $script:UpdateRoot))
+    )
+    $source = $script:UpdatePathChecks + "`n" + @'
+function Get-RecordedVersion([string]$path) {
+    $item = Get-PlainItem $path
+    if ($item -and -not $item.PSIsContainer) {
+        (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).version
+    }
+}
+$old = @(
+    if ((Get-PlainItem $install).PSIsContainer) {
+        Get-ChildItem -LiteralPath $install -Force -Filter '*.old' | Select-Object -ExpandProperty Name
+    }
+)
+[ordered]@{
+    blackboxManifestVersion = Get-RecordedVersion $manifestPath
+    appSetupStateVersion = Get-RecordedVersion $statePath
+    updateDirectoryExists = [bool](Get-PlainItem $updateRoot).PSIsContainer
+    appBackups = $old
+} | ConvertTo-Json
+'@
+    return (New-UpdatePowerShellCommand (($paths -join "`n") + "`n" + $source))
 }
 
 # ---------------------------------------------------------------- Blackbox verbs (B6)
