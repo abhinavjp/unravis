@@ -285,6 +285,75 @@ try {
     Assert-That 'run: the run proves it was started by the bootstrap and takes its own lock' ($rel -match 'UNRAVIS_RELEASE_NONCE' -and $rel -match 'Enter-RunLock')
     Assert-That 'bootstrap: a release.ps1 without the protocol marker is not re-run' ($rel -match 'ReleaseProtocol = 2')
 
+    # ---- RV-SUP-6: a failed gh must stop the run, a stuck run must not hang it (static + fake gh) -----------------------------------
+    $relLines = $rel -split "\r?\n"
+    Assert-That 'gh: -RunWatchMinutes exists, default 90, forwarded to the worker (not in the bootstrap skip-list)' ($rel -match '\[ValidateRange\(1, 1440\)\] \[int\]\$RunWatchMinutes = 90' -and $rel -notmatch "-eq 'RunWatchMinutes'")
+    Assert-That 'gh: no unbounded gh run watch is left in the code' (-not ($relLines | Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'gh run watch' }))
+    Assert-That 'gh: a run that does not finish stops the release and says it is NOT published, with the run URL' ($rel -match '(?s)Wait-RunFinished \$id \$RunWatchMinutes.*?Fail "The release\.yml run[^\r\n]*\$runUrl[^\r\n]*NOT published')
+    $unchecked = @()
+    for ($i = 0; $i -lt $relLines.Count; $i++) {
+        $ln = $relLines[$i]
+        if ($ln -match '^\s*#' -or $ln -notmatch '(^|[\s=(@{])(&\s+)?gh\s+(run|release|api|auth|pr|repo)\b') { continue }
+        if ($ln -match "Run '") { continue }   # Run throws on a non-zero exit code
+        $near = ($relLines[$i..([Math]::Min($i + 2, $relLines.Count - 1))]) -join "`n"
+        if ($near -notmatch 'LASTEXITCODE') { $unchecked += "line $($i + 1): $($ln.Trim())" }
+    }
+    Assert-That 'gh: every gh call in Release.ps1 is followed by an exit-code check' ($unchecked.Count -eq 0) ($unchecked -join ' | ')
+
+    & {
+        # The real helpers are cut out of Release.ps1 and run against a fake gh; Fail throws instead of exiting.
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Release.ps1'), [ref]$null, [ref]$null)
+        $want = 'Invoke-GhOrFail', 'ConvertFrom-GhLines', 'Get-GhJson', 'Find-Run', 'Wait-RunFinished'
+        $defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)
+        Assert-That 'gh: the five helpers are found in Release.ps1' ($defs.Count -eq $want.Count)
+        . ([scriptblock]::Create(($defs | ForEach-Object { $_.Extent.Text }) -join "`n"))
+        function Fail([string]$msg, [string]$status = 'stopped') { throw "FAIL: $msg" }
+        $Repo = 'o/r'
+        $script:ghReply = $null
+        function gh { $script:ghCalls++; $r = & $script:ghReply $args; $global:LASTEXITCODE = $r.Code; return $r.Out }
+        $oldPoll = $script:RunPollSeconds; $oldBad = $script:RunUnreadableMinutes
+        $script:RunPollSeconds = 0; $script:RunUnreadableMinutes = 0.0005
+        try {
+            $script:ghCalls = 0
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 1; Out = 'HTTP 502' } }
+            Assert-That 'fake gh: a non-zero exit stops the run in plain words' ((Get-ThrownMessage { Invoke-GhOrFail 'list the releases' @('release', 'list') }) -match 'FAIL: gh could not list the releases \(exit code 1\)')
+            Assert-That 'fake gh: Get-GhJson fails the same way' ((Get-ThrownMessage { Get-GhJson 'list the releases' @('release', 'list') }) -match 'gh could not list the releases')
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = '<html>not json' } }
+            Assert-That 'fake gh: an answer that is not JSON stops the run' ((Get-ThrownMessage { Get-GhJson 'list the releases' @('release', 'list') }) -match 'cannot be read while it was asked to list the releases')
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = @() } }
+            Assert-That 'fake gh: an empty answer is an empty list, not a crash' ((Get-GhJson 'list' @('x')).Count -eq 0)
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = @('[{"tagName":"v1"},', '{"tagName":"v2"}]') } }
+            Assert-That 'fake gh: a good answer is parsed' ((Get-GhJson 'list' @('x')).tagName -join ',' -eq 'v1,v2')
+
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 1; Out = 'timeout' } }
+            Assert-That 'fake gh: Find-Run that can never ask GitHub stops the run' ((Get-ThrownMessage { Find-Run 'release.yml' 'v1' '' 1 }) -match 'gh could not list the release\.yml runs')
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = '[{"databaseId":7,"headSha":"abc","createdAt":"2026-11-27T10:00:00Z"}]' } }
+            Assert-That 'fake gh: Find-Run returns the run of that commit' ((Find-Run 'release.yml' 'v1' 'abc' 5) -eq 7)
+
+            $state = @{ n = 0 }
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = '{"status":"completed","conclusion":"success"}' } }
+            $w = Wait-RunFinished 5 1 6>$null
+            Assert-That 'fake gh: a finished run is reported Done with its conclusion' ($w.Done -and $w.Conclusion -eq 'success')
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = '{"status":"completed","conclusion":"failure"}' } }
+            $w = Wait-RunFinished 5 1 6>$null
+            Assert-That 'fake gh: a failed run is Done with conclusion failure (the caller stops)' ($w.Done -and $w.Conclusion -eq 'failure')
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = '{"status":"in_progress","conclusion":""}' } }
+            $script:ghCalls = 0
+            $w = Wait-RunFinished 5 0.0005 6>$null
+            Assert-That 'fake gh: a run that never finishes gives up at the limit instead of hanging' ((-not $w.Done) -and $w.Problem -match 'did not finish within' -and $script:ghCalls -ge 1)
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 1; Out = 'HTTP 401' } }
+            $w = Wait-RunFinished 5 5 6>$null
+            Assert-That 'fake gh: a run that cannot be read gives up and says so' ((-not $w.Done) -and $w.Problem -match 'could not be read from GitHub')
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = 'garbage' } }
+            $w = Wait-RunFinished 5 5 6>$null
+            Assert-That 'fake gh: an unreadable answer counts as unreadable, never as finished' ((-not $w.Done) -and $w.Problem -match 'could not be read from GitHub')
+            $script:RunUnreadableMinutes = 5
+            $script:ghReply = { param($a) $state.n++; if ($state.n -eq 1) { [pscustomobject]@{ Code = 1; Out = 'blip' } } else { [pscustomobject]@{ Code = 0; Out = '{"status":"completed","conclusion":"success"}' } } }
+            $w = Wait-RunFinished 5 1 6>$null
+            Assert-That 'fake gh: one failed read in between is tolerated' ($w.Done -and $w.Conclusion -eq 'success')
+        } finally { $script:RunPollSeconds = $oldPoll; $script:RunUnreadableMinutes = $oldBad }
+    }
+
     # ---- release train: the develop side of a promotion merge (real git, throw-away repo, no network) ----------------------------
     $g = Join-Path $root 'train'
     New-Item -ItemType Directory -Path $g | Out-Null
