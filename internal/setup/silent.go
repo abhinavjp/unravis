@@ -17,7 +17,7 @@ type SilentConfig struct {
 	Firewall      *FirewallOptions `json:"firewall"`
 	StartAtSignIn *bool            `json:"startAtSignIn"`
 	OpenWhenDone  *bool            `json:"openWhenDone"`
-	// Releases installs the optional read-only Unravis Releases window. Off unless true.
+	// Releases installs the optional Homestretch dashboard. Off unless true.
 	Releases *bool `json:"releases"`
 	// ReadKeyFile is where the Blackbox read key is written once, readable by the current user only. It is required when a Blackbox
 	// is placed, because silent mode has no window to show the key in and never writes it to the log.

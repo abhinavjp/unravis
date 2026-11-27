@@ -16,6 +16,9 @@ func TestWorkFolderOwnedNeedsOurNamesAndOurFiles(t *testing.T) {
 	good := map[string][]string{
 		".setup-staging-20261122-101010": {"unravis.exe", "unravis-setup.exe", "beside-app-unravis-blackbox.exe"},
 		".setup-backup-20261122-101010":  {"1-unravis.exe", "12-Unravis.lnk"},
+		".setup-staging-20261122-102010": {ReleasesExeName, LegacyReleasesExeName, HomestretchExeName, HSExeName},
+		".setup-backup-20261122-102010":  {"1-" + LegacyReleasesExeName, "2-" + LegacyReleasesShortcutName, "3-" + ReleasesShortcutName, "4-" + HSExeName},
+		CLIDirName:                       {CLIInstalledName, HomestretchExeName, HSExeName},
 		update.PreviousDir:               {update.MarkerName, update.MarkerName + ".tmp", update.PreviousSetupName},
 	}
 	for dir, files := range good {

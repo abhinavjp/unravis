@@ -87,15 +87,19 @@ func CheckUserDirs(u UserDirs) error {
 const (
 	AppExeName    = "unravis.exe"
 	KeeperExeName = "unravis-keeper.exe"
-	// ReleasesExeName is the read-only releases window. It is an optional companion: a payload without it installs as before.
-	ReleasesExeName      = "unravis-releases.exe"
-	ReleasesShortcutName = "Unravis Releases.lnk"
+	// ReleasesExeName is the optional Homestretch dashboard.
+	ReleasesExeName            = "homestretch-app.exe"
+	ReleasesShortcutName       = "Homestretch.lnk"
+	LegacyReleasesExeName      = "unravis-releases.exe"
+	LegacyReleasesShortcutName = "Unravis Releases.lnk"
 	// CLIInstalledName is the command line program as installed, in the CLIDirName folder (the one folder that goes on the PATH).
-	CLIInstalledName = "unravis.exe"
-	CLIDirName       = "bin"
-	SetupExeName     = "unravis-setup.exe"
-	StateFileName    = "setup-state.json"
-	ShortcutName     = "Unravis.lnk"
+	CLIInstalledName   = "unravis.exe"
+	HomestretchExeName = "homestretch.exe"
+	HSExeName          = "hs.exe"
+	CLIDirName         = "bin"
+	SetupExeName       = "unravis-setup.exe"
+	StateFileName      = "setup-state.json"
+	ShortcutName       = "Unravis.lnk"
 	// QuitShortcutName is the Start-menu entry that asks the running Unravis to quit.
 	QuitShortcutName = "Quit Unravis.lnk"
 	ProductName      = "Unravis"
@@ -126,9 +130,11 @@ type Layout struct {
 	// ReleasesExe is the releases window kept beside the app; ReleasesLink is its Start-menu entry (next to StartMenuLink).
 	ReleasesExe  string
 	ReleasesLink string
-	// CLIDir is the folder added to the PATH; CLIExe is the command line program in it.
-	CLIDir string
-	CLIExe string
+	// CLIDir is the folder added to the PATH for the command line programs.
+	CLIDir         string
+	CLIExe         string
+	HomestretchExe string
+	HSExe          string
 	// BlackboxExe is the Blackbox program kept beside the app, which is where the app looks for it when it
 	// installs a Blackbox on this PC or builds a pack. It is always placed, whatever the Blackbox options are.
 	BlackboxExe string
@@ -158,6 +164,8 @@ func NewLayout(o Options, d Dirs) Layout {
 	l.ReleasesExe = filepath.Join(l.InstallDir, ReleasesExeName)
 	l.CLIDir = filepath.Join(l.InstallDir, CLIDirName)
 	l.CLIExe = filepath.Join(l.CLIDir, CLIInstalledName)
+	l.HomestretchExe = filepath.Join(l.CLIDir, HomestretchExeName)
+	l.HSExe = filepath.Join(l.CLIDir, HSExeName)
 	l.SetupExe = filepath.Join(l.InstallDir, SetupExeName)
 	l.StateFile = filepath.Join(l.InstallDir, StateFileName)
 	l.BlackboxDir = filepath.Join(d.ProgramFiles, BlackboxProgramFolder)
@@ -181,6 +189,14 @@ func NewLayout(o Options, d Dirs) Layout {
 	l.QuitLink = filepath.Join(filepath.Dir(l.StartMenuLink), QuitShortcutName)
 	l.ReleasesLink = filepath.Join(filepath.Dir(l.StartMenuLink), ReleasesShortcutName)
 	return l
+}
+
+func (l Layout) legacyReleasesExe() string {
+	return filepath.Join(l.InstallDir, LegacyReleasesExeName)
+}
+
+func (l Layout) legacyReleasesLink() string {
+	return filepath.Join(filepath.Dir(l.StartMenuLink), LegacyReleasesShortcutName)
 }
 
 // BlackboxPaths are the settings and read key hash of an installed Blackbox.

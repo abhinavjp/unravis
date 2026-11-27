@@ -1,5 +1,5 @@
-// Command unravis-releases is the Homestretch dashboard. It keeps its file name because setup installs it under that name and a
-// shortcut points at it. It is a small dashboard for Unravis releases: every release, its channel, the release
+// Command unravis-releases is the Homestretch dashboard. Setup installs it as homestretch-app.exe.
+// It is a small dashboard for Unravis releases: every release, its channel, the release
 // manager's step by step status, the verify result and withdrawn versions. It is a separate program from Unravis. It reads the
 // release manager's log on this PC, the public GitHub release list and the signed update feed. The only things it changes are
 // the local CI store's queue, machines, policy and holds, through the Homestretch actions (internal/hsaction), each one logged.
