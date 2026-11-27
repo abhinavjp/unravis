@@ -19,14 +19,17 @@ import (
 //
 //  1. sql.handover  (the person's Unravis): the keeper builds the login from the saved connection, keeps it and answers with only the id.
 //  2. The helper is started with the id on its command line (the id alone opens nothing).
-//  3. sql.handover.take (the helper, over this same pipe): the keeper gives the login once, to a caller in the same Windows session as the
-//     person who asked, and forgets it. A second take, a take after the lifetime, and a take from another session are all refused with
-//     the same words and none of them reveals which it was.
+//  3. sql.handover.take (the helper, over this same pipe): the keeper gives the login once, to an ELEVATED caller in the same Windows
+//     session as the person who asked, and forgets it. A second take, a take after the lifetime, a take from another session and a
+//     take from a caller that is not elevated are all refused with the same words and none of them reveals which it was. A refusal never
+//     uses the login up.
 //  4. sql.handover.revoke (the person's Unravis, when the set-up ends): forgets whatever is left.
 //
-// Who may take is decided by the Windows session of the pipe client, not its account: the helper runs elevated, which when a standard
-// user types an administrator's password is a different account in the same session. Other people signed in to the PC are in other
-// sessions. The pipe itself already refuses everyone but people signed in to this PC; the id is 128 random bits.
+// Who may take is decided by two things Windows reports for the pipe client: its session and whether its token is elevated. It is not
+// decided by the account: the helper is elevated, which when a standard user types an administrator's password is a different account in
+// the same session. Other people signed in to the PC are in other sessions, and a program running as the person without administrator
+// rights (the ordinary Unravis, or malware as the person) is not elevated, so it cannot read a login that the old temp file also kept from
+// everyone but administrators. The pipe itself already refuses everyone but people signed in to this PC; the id is 128 random bits.
 //
 // The login is held as the document the helper reads (blackbox.MarshalSQLLoginDoc) and zeroed when it is taken, revoked or expired.
 // This is a best effort: Go strings cannot be zeroed, so the copies the encoder and the pipe buffers make live until the garbage
@@ -35,12 +38,12 @@ import (
 // HandoverLife is how long a hand-over waits for the helper to ask for it: the same time the helper itself is given.
 const HandoverLife = 5 * time.Minute
 
-// maxHandovers bounds what the keeper holds at once. Each session keeps at most one (a new one replaces its older one), so this is
-// also a bound on how many sessions can be setting up together.
+// maxHandovers bounds what the keeper holds at once. Each account in each session keeps at most one (a new one replaces its older one),
+// so this is also a bound on how many people can be setting up together.
 const maxHandovers = 32
 
-// errHandoverGone is the one answer for every reason a take cannot be served: the id is unknown, was used, has expired, or belongs to
-// another session. It tells a guesser nothing.
+// errHandoverGone is the one answer for every reason a take cannot be served: the id is unknown, was used, has expired, belongs to
+// another session, or the caller is not elevated. It tells a guesser nothing.
 var errHandoverGone = &WireError{Code: CodeRefused, Message: "The saved login is no longer waiting for the Blackbox. It was used already, took too long, or was made for someone else. Start the set-up again."}
 
 // HandoverArgs name a hand-over for take and revoke.
@@ -57,6 +60,7 @@ type handoverEntry struct {
 	doc     []byte
 	conn    string // the saved connection it came from, for the audit log
 	session uint32
+	sid     string // the account that asked: only that account's newer request replaces it, and only it can revoke it
 	expires time.Time
 	timer   *time.Timer
 }
@@ -92,9 +96,10 @@ func (s *handoverStore) drop(id string) {
 	}
 }
 
-// put keeps doc for session and returns its one-time id. The store owns doc from here on and zeroes it. A session's older hand-over is
-// forgotten first: a person sets up one thing at a time.
-func (s *handoverStore) put(session uint32, conn string, doc []byte) (string, error) {
+// put keeps doc for the account sid in session and returns its one-time id. The store owns doc from here on and zeroes it. That
+// account's older hand-over in that session is forgotten first: a person sets up one thing at a time. Another account's process in
+// the same session cannot replace it; its own hand-over just counts against the bound.
+func (s *handoverStore) put(session uint32, sid, conn string, doc []byte) (string, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		wipeBytes(doc)
@@ -105,7 +110,7 @@ func (s *handoverStore) put(session uint32, conn string, doc []byte) (string, er
 	defer s.mu.Unlock()
 	now := s.now()
 	for k, e := range s.m {
-		if e.session == session || !now.Before(e.expires) {
+		if (e.session == session && e.sid == sid) || !now.Before(e.expires) {
 			s.drop(k)
 		}
 	}
@@ -113,7 +118,7 @@ func (s *handoverStore) put(session uint32, conn string, doc []byte) (string, er
 		wipeBytes(doc)
 		return "", &WireError{Code: CodeBusy, Message: "The key keeper is already preparing several Blackbox set-ups. Try again in a few minutes."}
 	}
-	e := &handoverEntry{doc: doc, conn: conn, session: session, expires: now.Add(s.life)}
+	e := &handoverEntry{doc: doc, conn: conn, session: session, sid: sid, expires: now.Add(s.life)}
 	e.timer = time.AfterFunc(s.life, func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -150,11 +155,11 @@ func (s *handoverStore) take(id string, session uint32) (doc []byte, conn string
 	return doc, conn, true
 }
 
-// revoke forgets the entry if the session owns it. Unknown, used and other people's ids are ignored.
-func (s *handoverStore) revoke(id string, session uint32) {
+// revoke forgets the entry if that account in that session asked for it. Unknown, used and other people's ids are ignored.
+func (s *handoverStore) revoke(id string, session uint32, sid string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if key, e := s.find(id); e != nil && e.session == session {
+	if key, e := s.find(id); e != nil && e.session == session && e.sid == sid {
 		s.drop(key)
 	}
 }
@@ -231,7 +236,7 @@ func (b *Backend) sqlHandover(_ context.Context, c *Call) (any, error) {
 	if err != nil {
 		return nil, &WireError{Code: CodeInternal, Message: "The login could not be prepared for the Blackbox."}
 	}
-	id, err := b.handovers().put(session, ref.ID, doc)
+	id, err := b.handovers().put(session, c.Caller.SID, ref.ID, doc)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +250,9 @@ func (b *Backend) sqlHandoverTake(_ context.Context, c *Call) (any, error) {
 		return nil, err
 	}
 	session, ok := handoverSession(c)
-	if !ok {
+	// Only an elevated caller may take. A refusal for that reason does not touch the store, so the person's own helper can still take
+	// the login afterwards, and it reads exactly like every other refusal.
+	if !ok || !c.Caller.Elevated {
 		return nil, errHandoverGone
 	}
 	doc, conn, ok := b.handovers().take(a.ID, session)
@@ -263,7 +270,7 @@ func (b *Backend) sqlHandoverRevoke(_ context.Context, c *Call) (any, error) {
 		return nil, err
 	}
 	if session, ok := handoverSession(c); ok {
-		b.handovers().revoke(a.ID, session)
+		b.handovers().revoke(a.ID, session, c.Caller.SID)
 	}
 	return map[string]bool{"ok": true}, nil
 }

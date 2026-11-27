@@ -26,10 +26,14 @@ func takeAs(c *Client, id string) (loginDoc, error) {
 
 type loginDoc struct{ Server, User, Password string }
 
-// helperClient is a second client in the same Windows session under another account (an administrator who typed their password at the
-// elevation prompt), or in another session.
+// helperClient is a second client with an ELEVATED token, in the same Windows session under another account (an administrator who typed
+// their password at the elevation prompt), or in another session.
 func (h *harness) helperClient(sid string, session uint32) *Client {
-	return NewClient(recordingDialer{inner: h.server.slotDialer(h.l, Caller{SID: sid, Name: `PC\helper`, PID: 5151, Session: session}), buf: h.wire})
+	return h.clientAs(Caller{SID: sid, Name: `PC\helper`, PID: 5151, Session: session, Elevated: true})
+}
+
+func (h *harness) clientAs(c Caller) *Client {
+	return NewClient(recordingDialer{inner: h.server.slotDialer(h.l, c), buf: h.wire})
 }
 
 func isRefused(err error) bool {
@@ -88,7 +92,7 @@ func TestHandoverExpiredIsRefusedAndForgotten(t *testing.T) {
 	mu.Lock()
 	now = now.Add(HandoverLife + time.Second)
 	mu.Unlock()
-	if _, err := takeAs(h.client, ho.ID); !isRefused(err) {
+	if _, err := takeAs(h.helperClient(testSID, 1), ho.ID); !isRefused(err) {
 		t.Fatalf("an expired hand-over must be refused: %v", err)
 	}
 	if got := h.backend.handovers().held(); got != 0 {
@@ -99,7 +103,7 @@ func TestHandoverExpiredIsRefusedAndForgotten(t *testing.T) {
 func TestHandoverTimerForgetsAnUnusedLogin(t *testing.T) {
 	st := newHandoverStore(20*time.Millisecond, nil)
 	doc := []byte("login-bytes")
-	id, err := st.put(1, "conn", doc)
+	id, err := st.put(1, "sid-a", "conn", doc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,8 +140,111 @@ func TestHandoverFromAnotherSessionIsRefusedAndDoesNotUseItUp(t *testing.T) {
 		t.Fatalf("the refusals differ:\n%v\n%v", errOther, errUnknown)
 	}
 	// The wrong guess did not use up the real one.
-	if d, err := takeAs(h.client, ho.ID); err != nil || d.Password != sqlSecret {
+	if d, err := takeAs(h.helperClient(testSID, 1), ho.ID); err != nil || d.Password != sqlSecret {
 		t.Fatalf("the real take failed after a wrong guess: %v", err)
+	}
+}
+
+func TestHandoverFromACallerThatIsNotElevatedIsRefusedAndDoesNotUseItUp(t *testing.T) {
+	h := newHarness(t, nil)
+	rec := h.saveSQL(sqlconn.AuthSQL)
+	ho, err := NewSQLStore(h.client).HandoverSaved(context.Background(), SQLRef{ID: rec.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same session, same account as the person (their own Unravis, or malware running as them), and another account in the same session
+	// that is not elevated: neither may read the login.
+	plain := []*Client{
+		h.client,
+		h.clientAs(Caller{SID: testSID, Name: `PC\analyst`, PID: 6001, Session: 1}),
+		h.clientAs(Caller{SID: "S-1-5-21-1000-1000-1000-2002", Name: `PC\guest`, PID: 6002, Session: 1}),
+	}
+	_, errUnknown := takeAs(h.helperClient(testSID, 1), "00000000000000000000000000000000")
+	for i, c := range plain {
+		d, err := takeAs(c, ho.ID)
+		if !isRefused(err) || d.Password != "" {
+			t.Fatalf("caller %d: a non-elevated take must be refused: %v", i, err)
+		}
+		// The refusal is word for word the one for an unknown id.
+		if err.Error() != errUnknown.Error() {
+			t.Fatalf("caller %d: the refusal tells it apart:\n%v\n%v", i, err, errUnknown)
+		}
+	}
+	// Nothing was used up: the elevated helper in the same session still gets the login, once.
+	if got := h.backend.handovers().held(); got != 1 {
+		t.Fatalf("a refused take used the hand-over up: held %d", got)
+	}
+	d, err := takeAs(h.helperClient("S-1-5-21-1000-1000-1000-500", 1), ho.ID)
+	if err != nil || d.Password != sqlSecret || d.User != "auditor" {
+		t.Fatalf("the elevated helper in the same session did not get the login: %v", err)
+	}
+	if _, err := takeAs(h.helperClient("S-1-5-21-1000-1000-1000-500", 1), ho.ID); !isRefused(err) {
+		t.Fatalf("a second elevated take must be refused: %v", err)
+	}
+}
+
+func TestHandoverAnElevatedCallerInTheSameSessionAndAccountGetsItOnce(t *testing.T) {
+	// The person who is themselves an administrator: Unravis and the helper are the same account, the helper elevated.
+	h := newHarness(t, nil)
+	rec := h.saveSQL(sqlconn.AuthSQL)
+	ho, err := NewSQLStore(h.client).HandoverSaved(context.Background(), SQLRef{ID: rec.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := takeAs(h.helperClient(testSID, 1), ho.ID)
+	if err != nil || d.Password != sqlSecret {
+		t.Fatalf("take: %v", err)
+	}
+	if _, err := takeAs(h.helperClient(testSID, 1), ho.ID); !isRefused(err) {
+		t.Fatalf("a second read must be refused: %v", err)
+	}
+}
+
+func TestHandoverAnotherAccountInTheSameSessionCannotReplaceOrRevokeIt(t *testing.T) {
+	h := newHarness(t, nil)
+	rec := h.saveSQL(sqlconn.AuthSQL)
+	mine, err := NewSQLStore(h.client).HandoverSaved(context.Background(), SQLRef{ID: rec.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another account's process in the person's session asks for its own hand-over and tries to revoke theirs.
+	intruder := NewSQLStore(h.clientAs(Caller{SID: "S-1-5-21-1000-1000-1000-2002", Name: `PC\guest`, PID: 6002, Session: 1}))
+	theirs, err := intruder.HandoverSaved(context.Background(), SQLRef{ID: rec.ID})
+	if err != nil || theirs.ID == mine.ID {
+		t.Fatalf("the intruder's own hand-over: %+v %v", theirs, err)
+	}
+	if got := h.backend.handovers().held(); got != 2 {
+		t.Fatalf("held %d: the intruder replaced the person's hand-over", got)
+	}
+	if err := intruder.RevokeHandover(context.Background(), mine.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.backend.handovers().held(); got != 2 {
+		t.Fatalf("held %d: the intruder revoked the person's hand-over", got)
+	}
+	// The person's own helper still gets the person's login.
+	if d, err := takeAs(h.helperClient(testSID, 1), mine.ID); err != nil || d.Password != sqlSecret {
+		t.Fatalf("the person's hand-over was lost: %v", err)
+	}
+}
+
+func TestHandoverIntrudersCountAgainstTheBoundAndCannotChurnPastIt(t *testing.T) {
+	st := newHandoverStore(HandoverLife, nil)
+	keep := []byte("person-login")
+	if _, err := st.put(1, "sid-person", "c", keep); err != nil {
+		t.Fatal(err)
+	}
+	// Many different accounts in the same session fill the store; the person's entry is never dropped to make room.
+	for i := 0; i < maxHandovers-1; i++ {
+		if _, err := st.put(1, "sid-other-"+string(rune('a'+i)), "c", []byte("x")); err != nil {
+			t.Fatalf("put %d: %v", i, err)
+		}
+	}
+	if _, err := st.put(1, "sid-one-more", "c", []byte("x")); err == nil {
+		t.Fatal("the store grew past its bound")
+	}
+	if strings.Trim(string(keep), "\x00") == "" {
+		t.Fatal("the person's login was wiped by someone else's request")
 	}
 }
 
@@ -231,20 +338,20 @@ func TestHandoverStoreIsBoundedAndWipesWhatItDrops(t *testing.T) {
 	for i := 0; i < maxHandovers; i++ {
 		d := []byte("secret-login")
 		docs = append(docs, d)
-		if _, err := st.put(uint32(i+1), "c", d); err != nil {
+		if _, err := st.put(uint32(i+1), "sid-a", "c", d); err != nil {
 			t.Fatalf("put %d: %v", i, err)
 		}
 	}
 	extra := []byte("secret-login")
-	if _, err := st.put(1000, "c", extra); err == nil {
+	if _, err := st.put(1000, "sid-a", "c", extra); err == nil {
 		t.Fatal("the store grew past its bound")
 	}
 	if strings.Trim(string(extra), "\x00") != "" {
 		t.Fatal("a refused login was not zeroed")
 	}
-	// A new one from a session that already has one replaces it and wipes the old one.
+	// A new one from the same account in a session that already has one replaces it and wipes the old one.
 	repl := []byte("secret-login")
-	if _, err := st.put(1, "c", repl); err != nil {
+	if _, err := st.put(1, "sid-a", "c", repl); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Trim(string(docs[0]), "\x00") != "" {

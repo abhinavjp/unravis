@@ -57,6 +57,10 @@ type Caller struct {
 	Name    string `json:"name"`
 	PID     uint32 `json:"pid"`
 	Session uint32 `json:"session"`
+	// Elevated is true when the client's token is an elevated (administrator) token, as Windows reports it for the client's connection.
+	// A person's ordinary Unravis is not elevated; the Blackbox set-up helper started through the UAC prompt is. A failed or missing
+	// answer is false.
+	Elevated bool `json:"elevated"`
 }
 
 // ClientConn is the client's side of one connection.

@@ -1,8 +1,8 @@
 // Command unravis-keeper is the Unravis Key Keeper (P14): a small Windows service that holds saved SQL Server passwords, saved MongoDB
 // link passwords and Blackbox read keys, and does the work that needs them (the fixed checks, the keyed Blackbox reads and the MongoDB
 // audit sources opened from saved links) on behalf of Unravis, over a local named pipe. It never hands a secret back, except the one
-// narrow Blackbox SQL set-up hand-over (internal/keeper: sql.handover.*), which gives a saved login once, from memory, to the person's
-// own elevated set-up helper.
+// narrow Blackbox SQL set-up hand-over (internal/keeper: sql.handover.*), which gives a saved login once, from memory, to an elevated
+// set-up helper in the same Windows session as the person who asked (a non-elevated caller is refused).
 //
 // It installs nothing. The installer registers it as a service (P14 installer work); on a developer PC "unravis-keeper console" runs the
 // same thing in the foreground with the keeper folder taken from UNRAVIS_KEEPER_DIR, for trying it by hand.

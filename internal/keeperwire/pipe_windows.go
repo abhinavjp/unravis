@@ -229,8 +229,9 @@ func (c *PipeConn) Identify() (Caller, error) {
 		_ = windows.ProcessIdToSessionId(caller.PID, &caller.Session)
 	}
 	type result struct {
-		sid *windows.SID
-		err error
+		sid      *windows.SID
+		elevated bool
+		err      error
 	}
 	ch := make(chan result, 1)
 	go func() {
@@ -264,13 +265,15 @@ func (c *PipeConn) Identify() (Caller, error) {
 			return
 		}
 		sid, cerr := tu.User.Sid.Copy()
-		ch <- result{sid: sid, err: cerr}
+		// TokenElevation works on this identification-level token (TOKEN_QUERY); an error reads as not elevated.
+		ch <- result{sid: sid, elevated: tok.IsElevated(), err: cerr}
 	}()
 	res := <-ch
 	if res.err != nil {
 		return caller, res.err
 	}
 	caller.SID = res.sid.String()
+	caller.Elevated = res.elevated
 	if acct, dom, _, err := res.sid.LookupAccount(""); err == nil {
 		caller.Name = acct
 		if dom != "" {

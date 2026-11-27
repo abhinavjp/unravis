@@ -9,8 +9,10 @@
 //
 // The one narrow exception is the Blackbox SQL set-up hand-over (sql.handover.*, RV-SEC-2): so that a saved SQL login never has to be
 // written to a file for the elevated set-up helper, the keeper holds it in memory under a random one-time id for about five minutes
-// and gives it, once, to a caller in the same Windows session as the person who asked for the set-up. The id travels from the person's
-// Unravis to the helper on its command line; the login itself travels only over the keeper pipe, straight into the helper.
+// and gives it, once, only to an ELEVATED caller (an administrator's token, as Windows reports it for the pipe client) in the same
+// Windows session as the person who asked for the set-up. The person's ordinary, non-elevated Unravis can ask for a hand-over but can
+// never read one back; the old temp file likewise could be read only by administrators. The id travels from the person's Unravis to
+// the helper on its command line; the login itself travels only over the keeper pipe, straight into the helper.
 //
 // Wire format (protocol version 1):
 //

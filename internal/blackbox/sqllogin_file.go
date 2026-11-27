@@ -84,10 +84,16 @@ func SweepSQLLoginFiles(root string) int {
 	}
 	removed := 0
 	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), sqlLoginFilePrefix) || e.Type()&os.ModeSymlink != 0 {
+		// A symbolic link shows as ModeSymlink; a Windows junction or other reparse point shows as ModeIrregular (with ModeDir). Neither is
+		// a folder this package made, and removing through one could reach a folder somewhere else, so both are left alone.
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), sqlLoginFilePrefix) || e.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
 			continue
 		}
 		dir := filepath.Join(root, e.Name())
+		// Look again at the folder itself, not what it points to, in case it changed since the listing.
+		if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			continue
+		}
 		RemoveSQLLoginFile(SQLLoginFile{Dir: dir, Path: filepath.Join(dir, "login.json")})
 		if _, err := os.Lstat(dir); err != nil {
 			removed++
