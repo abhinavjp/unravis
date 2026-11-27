@@ -27,7 +27,7 @@
   });
 
   const empty = $derived(!store.answer);
-  const warnings = $derived(reportWarnings(store.answer?.read, store.outOfDate(sourceIds), T.truncated, T.exportStale));
+  const warnings = $derived(reportWarnings(store.answer?.read, store.outOfDate(sourceIds), T.readCut, T.exportStale));
   const building = $derived(store.reportState === 'building');
   const OPTIONS: ReadonlyArray<{ key: keyof ReportInclude; label: string }> = [
     { key: 'figures', label: T.includeFigures }, { key: 'suspects', label: T.includeSuspects },
