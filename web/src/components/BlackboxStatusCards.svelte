@@ -14,7 +14,7 @@
 </script>
 
 {#if parts.length}
-  <p class="bbs-strip" aria-label={T.stripLabel}>{#each parts as p, i (i)}{#if i > 0}<span class="bbs-dot" aria-hidden="true">·</span>{/if}<span>{p}</span>{/each}</p>
+  <p class="bbs-strip" role="group" aria-label={T.stripLabel}>{#each parts as p, i (i)}{#if i > 0}<span class="bbs-dot" aria-hidden="true">·</span>{/if}<span>{p}</span>{/each}</p>
 {/if}
 {#if cards.length}
   <section class="bbs-cards" aria-labelledby="bbs-cards-title">

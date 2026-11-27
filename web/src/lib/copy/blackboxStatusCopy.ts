@@ -16,11 +16,17 @@ export const BBS_TEXT = {
   sqlWaiting: 'waiting',
   sqlStopped: 'stopped',
   sqlTurnedOff: 'turned itself off',
+  sqlRetrying: 'retrying',
   sqlNoteOn: 'The SQL reader had a good read.',
   sqlNoteGrant: 'SQL refused the login. Use Collect SQL data below to check access and get the grant.',
   sqlNoteOff: 'The SQL service is not set up on this PC. Collect SQL data below turns it on.',
   sqlNoteStopped: 'The SQL service is set up and stopped. Collect SQL data below turns it on.',
   sqlNoteWaiting: 'The SQL service runs but has not had a good read yet.',
+  sqlNoteGrantRemote: 'SQL refused the login on that server. Fix the access there.',
+  sqlNoteOffRemote: 'This Blackbox reports SQL as off.',
+  sqlNoteRunsOff: 'The SQL service runs but reports itself off. Collect SQL data below shows why.',
+  sqlNoteTurnedOffRemote: 'The SQL reader turned itself off after repeated failures. Check access on that server.',
+  sqlNoteRetrying: (failures: number): string => 'Reads are failing' + (failures > 0 ? ' (' + failures + ' in a row)' : '') + '. It keeps trying.',
   sqlNoteTurnedOff: 'The SQL reader turned itself off after repeated failures. Check access below, then turn it on again.',
   sqlLastOk: (when: string): string => 'Last good read ' + when,
   redisTitle: 'Redis',
@@ -52,6 +58,7 @@ export function blackboxStatusCopyEntries(): LintEntry[] {
       : id === 'since' ? BBS_TEXT.since('26 Nov 18:55')
       : id === 'kept' ? BBS_TEXT.kept(14)
       : id === 'sqlLastOk' ? BBS_TEXT.sqlLastOk('18:55')
+      : id === 'sqlNoteRetrying' ? BBS_TEXT.sqlNoteRetrying(3)
       : BBS_TEXT.redisSub(6379, 'Standard');
     entries.push({ id: 'status.' + id, text: sample });
   }

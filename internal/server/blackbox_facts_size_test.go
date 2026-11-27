@@ -12,13 +12,13 @@ func TestBlackboxFactsCarrySizeAndSQL(t *testing.T) {
 	last := time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
 	rd := &blackbox.Reading{
 		Manifest: blackbox.Manifest{Name: "web-a", IntervalSeconds: 10, Files: []blackbox.FileEntry{{Bytes: 1000, Samples: 5}, {Bytes: 2500, Samples: 7}}},
-		Status:   &blackbox.StatusDoc{MaxGB: 5, KeepDays: 14, SQL: blackbox.SQLStatus{Enabled: true, State: "collecting", LastOK: &last, Failures: 1}},
+		Status:   &blackbox.StatusDoc{MaxGB: 5, KeepDays: 14, SQL: blackbox.SQLStatus{Enabled: true, State: "on", LastOK: &last, Failures: 1}},
 	}
 	f := (&blackboxHub{}).facts(rd, nil)
 	if f == nil || f.Bytes != 3500 || f.MaxGB != 5 || f.KeepDays != 14 {
 		t.Fatalf("size facts wrong: %+v", f)
 	}
-	if f.SQL == nil || !f.SQL.Enabled || f.SQL.State != "collecting" || f.SQL.Failures != 1 || f.SQL.LastOK == nil {
+	if f.SQL == nil || !f.SQL.Enabled || f.SQL.State != "on" || f.SQL.Failures != 1 || f.SQL.LastOK == nil {
 		t.Fatalf("sql facts wrong: %+v", f.SQL)
 	}
 

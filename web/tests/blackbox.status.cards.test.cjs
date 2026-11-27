@@ -19,6 +19,7 @@ test('used of the cap reads only what was read', () => {
   assert.equal(usedLine(item({ bytes: 412 * 1024 * 1024, maxGB: 5 })), '412.0 MB used of 5 GB');
   assert.equal(usedLine(item({ bytes: 2 * GB, maxGB: 7.5 })), '2.0 GB used of 7.5 GB');
   assert.equal(usedLine(item({ bytes: 2048 })), '2 KB recorded');
+  assert.equal(usedLine(item({ bytes: GB, maxGB: 2.25 })), '1.0 GB used of 2.25 GB', 'a fractional cap is not rounded to one decimal');
   assert.equal(usedLine(item({})), '', 'no size read, no line');
   assert.equal(usedLine({ id: 'x', thisPc: false }), '', 'no facts, no line');
 });
@@ -36,7 +37,18 @@ test('SQL card follows the recorder status and the service, never invents a good
   assert.equal(card({ sql: { enabled: true, state: 'on' } }, pc()).word, 'waiting', 'on with no good read yet is waiting, not collecting');
   assert.equal(card({ sql: { enabled: true, state: 'denied' } }, pc()).word, 'needs access');
   assert.equal(card({ sql: { enabled: false, state: 'auto-off' } }, pc()).tone, 'bad');
-  assert.equal(card({ sql: { enabled: false, state: 'off' } }, pc()).word, 'off');
+  assert.equal(card({ sql: { enabled: false, state: 'off' } }, pc({ sqlInstalled: false })).word, 'off');
+  const running = card({ sql: { enabled: false, state: 'off' } }, pc());
+  assert.equal(running.word, 'waiting', 'service installed and running must not read as "not set up"');
+  assert.ok(!/not set up/.test(running.note));
+  const retry = card({ sql: { enabled: true, state: 'backing-off', lastOK: '2026-11-27T09:00:00Z', failures: 3 } }, pc());
+  assert.equal(retry.word, 'retrying');
+  assert.match(retry.note, /3 in a row/);
+  assert.match(retry.sub, /Last good read/);
+  const remoteOff = techCards(item({ sql: { enabled: false, state: 'off' } }, false), pc(), when).find((c) => c.id === 'sql');
+  assert.ok(!/below|this PC/.test(remoteOff.note), 'a recorder elsewhere is not pointed at a control that is not on its page');
+  const remoteDenied = techCards(item({ sql: { enabled: true, state: 'denied' } }, false), pc(), when).find((c) => c.id === 'sql');
+  assert.ok(!/below/.test(remoteDenied.note));
   assert.equal(card({}, pc({ sqlInstalled: false })).word, 'off', 'service not installed');
   assert.equal(card({}, pc({ sqlRunning: false })).word, 'stopped', 'service installed, stopped');
   assert.equal(card({}, pc()), undefined, 'service running but the recorder reports nothing: no card, no claim');

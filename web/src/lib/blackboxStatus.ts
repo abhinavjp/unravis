@@ -13,7 +13,7 @@ export function usedLine(item: BlackboxItem): string {
 }
 
 function shownGB(gb: number): string {
-  return (Number.isInteger(gb) ? String(gb) : gb.toFixed(1)) + ' GB';
+  return String(Number(gb.toFixed(2))) + ' GB';
 }
 
 /** The summary parts, in order, for the line under the headline. Each part is left out when it was not read. */
@@ -35,10 +35,17 @@ function sqlCard(item: BlackboxItem, pc: ThisPc, when: (iso: string) => string):
   if (item.thisPc && pc.installed && !pc.sqlInstalled) return { ...base, tone: 'idle', word: T.sqlOff, note: T.sqlNoteOff };
   if (item.thisPc && pc.installed && pc.sqlInstalled && !pc.sqlRunning) return { ...base, tone: 'warn', word: T.sqlStopped, note: T.sqlNoteStopped };
   if (!q) return null;
-  if (q.state === 'denied') return { ...base, tone: 'warn', word: T.sqlGrant, note: T.sqlNoteGrant };
-  if (q.state === 'auto-off') return { ...base, tone: 'bad', word: T.sqlTurnedOff, note: T.sqlNoteTurnedOff };
+  // "Collect SQL data below" exists only for the recorder on this PC, so a recorder elsewhere gets a note without it.
+  const local = item.thisPc && pc.installed;
+  if (q.state === 'denied') return { ...base, tone: 'warn', word: T.sqlGrant, note: local ? T.sqlNoteGrant : T.sqlNoteGrantRemote };
+  if (q.state === 'auto-off') return { ...base, tone: 'bad', word: T.sqlTurnedOff, note: local ? T.sqlNoteTurnedOff : T.sqlNoteTurnedOffRemote };
   if (q.enabled && q.state === 'on' && q.lastOK) return { ...base, tone: 'good', word: T.sqlOn, sub: T.sqlLastOk(when(q.lastOK)), note: T.sqlNoteOn };
-  if (!q.enabled && q.state === 'off') return { ...base, tone: 'idle', word: T.sqlOff, note: T.sqlNoteOff };
+  if (q.state === 'backing-off') return { ...base, tone: 'warn', word: T.sqlRetrying, sub: q.lastOK ? T.sqlLastOk(when(q.lastOK)) : '', note: T.sqlNoteRetrying(q.failures ?? 0) };
+  if (!q.enabled && q.state === 'off') {
+    // On this PC the service manager already said it is installed and running, so "not set up" would contradict it.
+    if (local && pc.sqlInstalled && pc.sqlRunning) return { ...base, tone: 'idle', word: T.sqlWaiting, note: T.sqlNoteRunsOff };
+    return { ...base, tone: 'idle', word: T.sqlOff, note: local ? T.sqlNoteOff : T.sqlNoteOffRemote };
+  }
   return { ...base, tone: 'idle', word: T.sqlWaiting, note: T.sqlNoteWaiting };
 }
 
