@@ -52,7 +52,7 @@ func parseSources(b []byte, e registry.Entry) (Discovery, error) {
 		Generated string   `json:"generated"`
 		Sources   []Source `json:"sources"`
 	}
-	if len(b) > sourcesLimit || json.Unmarshal(b, &doc) != nil {
+	if len(b) > sourcesLimit || json.Unmarshal(b, &doc) != nil { //nolint:nilerr // a manifest we cannot read is "not published", not a failure
 		return missing, nil
 	}
 	if doc.Schema != 1 {
