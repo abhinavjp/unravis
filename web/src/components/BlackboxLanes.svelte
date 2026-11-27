@@ -182,7 +182,7 @@
       <p class="undo" role="status">{undo.text} <button type="button" class="link" onclick={undoLast}>{BBL_TEXT.undo}</button></p>
     {/if}
 
-    <div class="chart" bind:clientWidth={width}>
+    <div class="bblchart" bind:clientWidth={width}>
       <div class="ticks" aria-hidden="true">{#each ticks as t, i (i)}<span style:left="{(i / 6) * 100}%" class:end={i === 6}>{fmtTime(t)}</span>{/each}</div>
       {#if status === 'loading' && !data}
         <p class="hint" role="status">{BBL_TEXT.loading}</p>
@@ -202,9 +202,9 @@
                 <small>{scaleLine(v)}</small>
               </div>
               <div class="plot">
+                {#each gaps as g, i (i)}<div class="gap" style:left="{xOf(g.from) / 10}%" style:width="{(xOf(g.to) - xOf(g.from)) / 10}%" aria-hidden="true"></div>{/each}
                 <svg viewBox="0 0 1000 54" preserveAspectRatio="none" role="img" aria-label="{laneName(v.def.id)} over time">
-                  {#each gaps as g, i (i)}<rect x={xOf(g.from)} y="0" width={xOf(g.to) - xOf(g.from)} height="54" class="gap" />{/each}
-                  {#if v.points.length > 0}<path d={path(v, 54)} fill="none" stroke={colour(v.def.group)} stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round" />{/if}
+                                    {#if v.points.length > 0}<path d={path(v, 54)} fill="none" stroke={colour(v.def.group)} stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round" />{/if}
                   {#each marks as m, i (i)}<line x1={xOf(m.start)} x2={xOf(m.start)} y1="0" y2="54" class="mark" vector-effect="non-scaling-stroke" />{/each}
                 </svg>
                 <button type="button" class="rm" aria-label={BBL_TEXT.hide(laneName(v.def.id))} title={BBL_TEXT.hideTitle} onclick={() => hideLane(v.def.id)}>&times;</button>
@@ -228,13 +228,13 @@
           <h4>{BBL_TEXT.firstHeading}</h4>
           <p class="hint">{BBL_TEXT.firstHelp}</p>
           {#if first.length > 0}
-            <ol>{#each first as f (f.id)}<li>{BBL_TEXT.firstAt(laneName(f.id), fmtTime(f.t))}</li>{/each}</ol>
+            <ol>{#each first as f (f.id)}<li><b>{laneName(f.id)}</b> at {fmtTime(f.t)}</li>{/each}</ol>
           {:else}<p class="hint">{BBL_TEXT.firstNone}</p>{/if}
         </div>
         <div class="events">
           <h4>{BBL_TEXT.eventsHeading}</h4>
           {#if marks.length === 0}<p class="hint">{BBL_TEXT.eventsNone}</p>
-          {:else}<ol>{#each listed as m, i (i)}<li><time>{fmtTime(m.start)}</time> {eventText(m.kind)}</li>{/each}</ol>{#if allMarks.length > listed.length}<p class="hint">{BBL_TEXT.more(allMarks.length - listed.length)}</p>{/if}{/if}
+          {:else}<ol>{#each listed as m, i (i)}<li><span class="tri" aria-hidden="true">&#9650;</span> <time>{fmtTime(m.start)}</time> {eventText(m.kind)}</li>{/each}</ol>{#if allMarks.length > listed.length}<p class="hint">{BBL_TEXT.more(allMarks.length - listed.length)}</p>{/if}{/if}
         </div>
       {/if}
     </div>
@@ -251,7 +251,7 @@
   .problem { margin: 0; color: var(--bad); }
   .undo { margin: 0; font-size: var(--fs-3); }
   .link { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font: inherit; }
-  .chart { --lw: 180px; display: grid; gap: var(--space-2); min-width: 0; position: relative; }
+  .bblchart { --lw: 180px; display: grid; gap: var(--space-2); min-width: 0; position: relative; }
   .ticks { position: relative; height: 18px; margin-left: var(--lw); font-size: var(--fs-2); color: var(--text-2); }
   .ticks span { position: absolute; top: 0; transform: translateX(-50%); }
   .ticks span:first-child { transform: none; }
@@ -264,7 +264,7 @@
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
   .plot { position: relative; min-width: 0; }
   svg { display: block; width: 100%; height: 100%; min-height: 54px; }
-  .gap { fill: var(--line); opacity: 0.55; }
+  .gap { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, var(--line) 0 2px, transparent 2px 7px); opacity: 0.8; pointer-events: none; }
   .mark { stroke: var(--bad); stroke-opacity: 0.45; stroke-width: 1; }
   .rm { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-2); cursor: pointer; }
   .cross { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text-2); opacity: 0.6; pointer-events: none; }
@@ -273,9 +273,10 @@
   .muted { color: var(--text-2); }
   .key { display: grid; gap: var(--space-1); color: var(--text-2); font-size: var(--fs-2); }
   .key i { display: inline-block; width: 12px; height: 10px; margin-right: 6px; vertical-align: middle; }
-  .gapkey { background: var(--line); opacity: 0.7; }
+  .gapkey { background: repeating-linear-gradient(135deg, var(--line) 0 2px, transparent 2px 5px); opacity: 0.9; }
   .evkey { width: 2px !important; background: var(--bad); }
   .first ol, .events ol { margin: var(--space-1) 0 0; padding-left: var(--space-4); }
+  .tri { color: var(--bad); font-size: var(--fs-2); }
   time { font-variant-numeric: tabular-nums; color: var(--text-2); margin-right: var(--space-2); }
-  @media (max-width: 700px) { .chart { --lw: 120px; } }
+  @media (max-width: 700px) { .bblchart { --lw: 120px; } }
 </style>
