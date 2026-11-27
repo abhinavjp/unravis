@@ -199,6 +199,21 @@ func (s *MongoStore) Delete(id string) error {
 	return err
 }
 
+// SetAside asks the keeper to set its unreadable saved MongoDB file aside. The keeper refuses a file that reads fine.
+func (s *MongoStore) SetAside() (string, error) {
+	ctx, cancel := storeCtx()
+	defer cancel()
+	var out MongoSetAsideReply
+	err := native(s.c.Call(ctx, OpMongoSetAside, nil, &out), kindMongo)
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	s.session = map[string]sessionSecret{}
+	s.mu.Unlock()
+	return out.Name, nil
+}
+
 func (s *MongoStore) sessionPassword(rec history.Recent) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

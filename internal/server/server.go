@@ -395,6 +395,14 @@ func (h *handler) listRecent(w http.ResponseWriter) {
 	}
 	items, err := h.history.List()
 	if err != nil {
+		if errors.Is(err, history.ErrCorrupt) {
+			// The file fails closed. The code lets the page offer the one way out (setAsideRecent) instead of a "Try again" that cannot work.
+			writeJSON(w, http.StatusServiceUnavailable, struct {
+				Error string `json:"error"`
+				Code  string `json:"code"`
+			}{savedFileDamagedText, savedFileDamagedCode}, 4096)
+			return
+		}
 		if writeKeeperError(w, err) {
 			return
 		}
@@ -504,6 +512,63 @@ func writeSourceAddError(w http.ResponseWriter, err error) {
 	default:
 		writeRepoError(w, err)
 	}
+}
+
+const (
+	// savedFileDamagedCode is the code of a saved MongoDB connections file that cannot be read. The page offers "set aside" for it.
+	savedFileDamagedCode = "saved-file-damaged"
+	// savedFileDamagedText is plain words for the same state, for a caller that shows only the message.
+	savedFileDamagedText = "The saved connections file is damaged and cannot be read. You can set it aside and start a new list. The old file is kept."
+	setAsideFullText     = "Three damaged files are already set aside, so this one cannot be set aside too. Open the Unravis data folder, move the old connections.dat.unreadable-… files somewhere else, then try again."
+)
+
+// savedHistorySetAside is the part of the saved list that can set an unreadable file aside (the local file and the key keeper's store).
+type savedHistorySetAside interface {
+	SetAside() (string, error)
+}
+
+// setAsideRecent is the way out of an unreadable saved MongoDB connections file. It is reachable only after a read just now returned
+// ErrCorrupt: a healthy list, or a read that failed for any other reason, answers 409 and nothing is touched. The store checks the same
+// again under its file lock. The unreadable file is renamed and kept, never deleted.
+func (h *handler) setAsideRecent(w http.ResponseWriter, r *http.Request) {
+	if h.history == nil {
+		writeError(w, http.StatusServiceUnavailable, "Saved connections are unavailable on this platform.")
+		return
+	}
+	aside, ok := h.history.(savedHistorySetAside)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "Saved connections cannot be set aside here.")
+		return
+	}
+	if _, err := h.history.List(); !errors.Is(err, history.ErrCorrupt) {
+		writeNotDamaged(w)
+		return
+	}
+	name, err := aside.SetAside()
+	switch {
+	case err == nil:
+		h.event(r, "connections_set_aside", "kind", "mongo")
+		writeJSON(w, http.StatusOK, struct {
+			Name string `json:"name"`
+		}{name}, 4096)
+	case errors.Is(err, history.ErrNotDamaged):
+		writeNotDamaged(w)
+	case errors.Is(err, history.ErrSetAsideFull):
+		writeJSON(w, http.StatusConflict, struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}{setAsideFullText, "set-aside-full"}, 4096)
+	case writeKeeperError(w, err):
+	default:
+		writeError(w, http.StatusServiceUnavailable, "The saved connections file could not be set aside. It was left as it was.")
+	}
+}
+
+func writeNotDamaged(w http.ResponseWriter) {
+	writeJSON(w, http.StatusConflict, struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}{"The saved connections file can be read, so nothing was set aside.", "saved-file-not-damaged"}, 4096)
 }
 
 func (h *handler) deleteRecent(w http.ResponseWriter, r *http.Request, id string) {

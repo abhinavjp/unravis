@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { addSource, app, clearCACertificate, clearConnectionDetails, closeConnections, conn, displayLastUsed, forgetRecent, loadCACertificate, loadRecent, panels, redactedAddress, saveConnectionDetails, selectAllDatabases, setDatabaseSelected, startNewConnection, testConnection } from '../lib/appState.svelte';
+  import { addSource, app, clearCACertificate, clearConnectionDetails, closeConnections, conn, displayLastUsed, finishRecentSetAside, forgetRecent, loadCACertificate, loadRecent, panels, redactedAddress, saveConnectionDetails, selectAllDatabases, setDatabaseSelected, startNewConnection, testConnection } from '../lib/appState.svelte';
   import Drawer from './Drawer.svelte';
   import RemoveConfirm from './RemoveConfirm.svelte';
+  import SavedFileDamaged from './sources/SavedFileDamaged.svelte';
 
   // The Connections drawer: saved connection settings, and the form that tests a MongoDB connection and adds its databases as sources.
   // Esc is not stopped here, as before: the page closes the drawer and hands focus back to the button that opened it.
@@ -11,9 +12,11 @@
   <div class="connection-tabs"><button class:active={panels.connectionTab === 'saved'} disabled={conn.sourceBusy || conn.connectionTesting || conn.historyMutationBusy} onclick={() => panels.connectionTab = 'saved'}>Saved connections</button><button class:active={panels.connectionTab === 'new'} disabled={conn.sourceBusy || conn.connectionTesting || conn.historyMutationBusy} onclick={startNewConnection}>New connection</button></div>
   {#if panels.connectionTab === 'saved'}
     <div class="saved-connections-panel">
-      {#if conn.recentConnections.length}{#each conn.recentConnections as recent (recent.id)}
+      {#if conn.recentFileDamaged}<SavedFileDamaged onDone={finishRecentSetAside} />
+      {:else if conn.recentConnections.length}{#each conn.recentConnections as recent (recent.id)}
         <article class="recent-card"><div class="recent-card-copy"><strong>{recent.label}</strong><div class="recent-username"><span>Username</span><b>{recent.username || 'Not provided'}</b></div><small>{redactedAddress(recent.uri)}</small><small>{recent.tlsMode === 'system' ? 'TLS · Verified certificate' : recent.tlsMode === 'custom' ? 'TLS · Certificate file' : recent.tlsMode === 'insecure' ? 'TLS · Verification skipped' : recent.tlsMode === 'off' ? 'TLS off' : 'TLS · From address'} · {recent.collection || 'ApiAuditLog'}</small><small>Saved {displayLastUsed(recent.lastUsedAt)}</small>{#if recent.hasCredentials}<span class="saved-badge">Password saved on this account</span>{/if}</div>{#if !app.info?.demo}<div class="recent-card-actions"><button class="quiet-button" disabled={conn.sourceBusy || conn.connectionTesting || conn.historyMutationBusy} onclick={() => { if (conn.sourceBusy || conn.connectionTesting || conn.historyMutationBusy) return; clearConnectionDetails(); loadRecent(recent); panels.connectionTab = 'new'; }}>{conn.sourceBusy || conn.connectionTesting || conn.historyMutationBusy ? 'Working…' : 'Use settings'}</button><RemoveConfirm label={recent.label} locked={conn.sourceBusy || conn.connectionTesting || conn.historyMutationBusy} remove={() => forgetRecent(recent)} /></div>{/if}</article>
       {/each}{:else}<div class="drawer-empty"><strong>No saved connections</strong><p>Save connection settings to load them here later.</p>{#if !app.info?.demo}<button class="primary-button" onclick={startNewConnection}>Create a connection</button>{/if}</div>{/if}
+      {#if conn.recentSetAsideNote}<p class="connection-status field-note" role="status" data-set-aside-note>{conn.recentSetAsideNote}</p>{/if}
       {#if conn.recentHistoryError}<p class="connection-status warning" role="status">{conn.recentHistoryError}</p>{/if}
       {#if conn.recentSaveError}<p class="connection-status warning" role="status">{#if conn.recentSaveErrorStage}<span class="error-stage">{conn.recentSaveErrorStage}</span>{/if}{conn.recentSaveError}</p>{/if}
       {#if conn.recentSaveSuccess}<p class="connection-status" role="status">{conn.recentSaveSuccess}</p>{/if}

@@ -306,7 +306,9 @@ test('D-A-34: recent connections are read in the demo too and the demo New tab e
   const init = state.slice(state.indexOf('export async function initialize'), state.indexOf('function setLocalInputs'));
   assert.match(init, /tabInvestigationHeld = false;\s*try \{\s*const recents = await api\.recentConnections\(\);/);
   assert.doesNotMatch(init, /if \(!info\.demo\) \{\s*try \{\s*const recents/, 'the demo guard around the recents read is gone');
-  assert.match(init, /recentHistoryError = 'Recent connections could not be loaded\. You can still test and add a connection\.';/);
+  // RV-DAT-1: the message moved into noteRecentsFailure, which keeps it for every failure except an unreadable saved file.
+  assert.match(init, /\} catch \(cause\) \{\s*noteRecentsFailure\(cause\);/);
+  assert.match(state, /recentHistoryError = recentFileDamaged \? '' : 'Recent connections could not be loaded\. You can still test and add a connection\.';/);
   assert.match(state, /if \(!info\?\.demo\) await rememberConnection\(/, 'the demo still saves nothing');
   const drawer = read('src/components/ConnectionsDrawer.svelte');
   assert.match(drawer, /\{#if !app\.info\?\.demo\}<button class="primary-button" onclick=\{startNewConnection\}>Create a connection<\/button>\{\/if\}/);
