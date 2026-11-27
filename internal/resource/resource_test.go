@@ -813,3 +813,25 @@ func TestBlackboxWorkersAndSQLInstancesStaySeparateSeries(t *testing.T) {
 		t.Fatalf("two SQL instances gave %d series: %+v", len(g), g)
 	}
 }
+
+func TestBlackboxProcessMetricsJoinTheirProcessByPID(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		tm := at(time.Duration(i) * 15 * time.Second)
+		h.add(bb(metric("win-procsnap", "web-a", tm, float64(10+i), "percent-host", "metric", "cpu", "process", "w3wp", "pid", "1240")))
+		h.add(bb(metric("win-procsnap", "web-a", tm, 1e9, "bytes", "metric", "private-bytes", "process", "w3wp", "pid", "1240")))
+		h.add(bb(pdh("web-a", tm, "W3SVC_W3WP", "pid-1240", "Active Requests", float64(i), "")))
+	}
+	x := h.catalogue(importer.Window{})
+	cpu := x.Series(resource.ProcCPU, resource.Filter{PID: 1240})
+	if len(cpu) != 1 || cpu[0].Proc.PID != 1240 || cpu[0].Proc.Name != "w3wp" {
+		t.Fatalf("process cpu series: %+v", cpu)
+	}
+	if got := x.Series(resource.ProcPrivate, resource.Filter{PID: 1240}); len(got) != 1 {
+		t.Fatalf("private bytes series: %+v", got)
+	}
+	// The IIS worker counter of the same recording joins the same process.
+	if act := x.Series(resource.IISWPActive, resource.Filter{PID: 1240}); len(act) != 1 || act[0].Proc.Key() != cpu[0].Proc.Key() {
+		t.Fatalf("worker series %+v, process %+v", act, cpu[0].Proc)
+	}
+}
