@@ -184,29 +184,39 @@ func TestAgentCancelsARunningRequestThroughItsContext(t *testing.T) {
 	}
 }
 
-func TestAgentStopsARunningRequestWhenANewerHeadArrives(t *testing.T) {
+func TestAgentLetsARunningRequestFinishWhenANewerHeadArrives(t *testing.T) {
 	started := make(chan string, 4)
+	release := make(chan struct{})
 	rig := newAgentRig(t, "a1", 1, func(ctx context.Context, r Request) (Outcome, error) {
 		started <- r.SHA
 		if r.SHA[0] == 'a' {
-			<-ctx.Done()
-			return Outcome{Conclusion: "cancelled"}, nil
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return Outcome{Conclusion: "cancelled"}, nil
+			}
 		}
 		return Outcome{Conclusion: "success"}, nil
 	})
 	old := mustEnqueue(t, rig.q, prReq(7, strings.Repeat("a", 40)))
 	rig.start()
 	if sha := <-started; sha[0] != 'a' {
-		t.Fatal("the old head should start first")
+		t.Fatal("old head should start first")
 	}
 	newer := mustEnqueue(t, rig.q, prReq(7, strings.Repeat("b", 40)))
-	waitFor(t, "old superseded", func() bool { return rig.get(old.ID).State == StateSuperseded })
+	if _, _, ok := rig.q.CancelRequested(old.ID); ok {
+		t.Fatal("old run marked")
+	}
+	close(release)
+	waitFor(t, "old done", func() bool { return rig.get(old.ID).State == StateDone })
+	if g := rig.get(old.ID); g.Conclusion != "success" || g.SupersededBy != "" {
+		t.Fatalf("old = %+v", g)
+	}
 	waitFor(t, "new done", func() bool { return rig.get(newer.ID).State == StateDone })
-	if g := rig.get(old.ID); g.SupersededBy != newer.ID {
-		t.Fatalf("%+v", g)
+	if sha := <-started; sha[0] != 'b' {
+		t.Fatal("new head did not run")
 	}
 }
-
 func TestAgentDrainFinishesRunningWorkAndClaimsNothingNew(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 4)

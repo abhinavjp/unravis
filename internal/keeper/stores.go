@@ -98,11 +98,29 @@ func (s *SQLStore) AccessSaved(ctx context.Context, ref SQLRef) (sqlaccess.Repor
 	return out, native(s.c.Call(ctx, OpSQLAccess, ref, &out), kindSQL)
 }
 
-// LoginFileSaved has the keeper write a saved SQL login into a short-lived private file for the Blackbox helper and returns where it is and
-// its hash. The login itself never reaches this process; the keeper removes the file after ten minutes.
-func (s *SQLStore) LoginFileSaved(ctx context.Context, ref SQLRef) (blackbox.SQLLoginFile, error) {
-	var out blackbox.SQLLoginFile
-	return out, native(s.c.Call(ctx, OpSQLLoginFile, ref, &out), kindSQL)
+// SQLHandover is a saved SQL login the keeper holds for the Blackbox set-up helper: the one-time id, and the name of the keeper's pipe
+// the helper asks on. Neither holds any part of the login.
+type SQLHandover struct {
+	ID   string
+	Pipe string
+}
+
+// HandoverSaved has the keeper keep a saved SQL login for the Blackbox helper, which fetches it once over the keeper's pipe. The login
+// itself never reaches this process and is written to no file. End the set-up with RevokeHandover.
+func (s *SQLStore) HandoverSaved(ctx context.Context, ref SQLRef) (SQLHandover, error) {
+	var out HandoverTicket
+	if err := s.c.Call(ctx, OpSQLHandover, ref, &out); err != nil {
+		return SQLHandover{}, native(err, kindSQL)
+	}
+	if out.ID == "" {
+		return SQLHandover{}, &WireError{Code: CodeInternal, Message: "The key keeper's answer was not understood."}
+	}
+	return SQLHandover{ID: out.ID, Pipe: s.c.pipeName()}, nil
+}
+
+// RevokeHandover has the keeper forget a hand-over the helper did not take. It is safe to call after the helper took it.
+func (s *SQLStore) RevokeHandover(ctx context.Context, id string) error {
+	return native(s.c.Call(ctx, OpSQLHandoverRevoke, HandoverArgs{ID: id}, nil), kindSQL)
 }
 
 // HealthSaved runs the fixed SQL Server checks inside the keeper.

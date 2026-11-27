@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -195,7 +196,7 @@ func TestQueueNewHeadSupersedesQueued(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != StateSuperseded || got.SupersededBy != newer.ID {
+	if got.State != StateSuperseded || got.SupersededBy != newer.ID || len(got.Covers) != 0 || len(newer.Covers) != 0 {
 		t.Fatalf("old request = %+v", got)
 	}
 	if o, _ := q.Get(other.ID); o.State != StateQueued {
@@ -204,7 +205,7 @@ func TestQueueNewHeadSupersedesQueued(t *testing.T) {
 	c1, _ := q.Claim("a", nil)
 	c2, _ := q.Claim("a", nil)
 	c3, _ := q.Claim("a", nil)
-	if c1 == nil || c2 == nil || c3 != nil || c1.ID != other.ID || c2.ID != newer.ID {
+	if c1 == nil || c2 == nil || c3 != nil || c1.ID != other.ID || c2.ID != newer.ID || len(c2.Covers) != 0 {
 		t.Fatalf("claims = %v %v %v", c1, c2, c3)
 	}
 }
@@ -224,36 +225,87 @@ func TestQueueSameHeadIsNotQueuedTwice(t *testing.T) {
 	}
 }
 
-func TestQueueNewHeadMarksRunningAndCompleteEndsItSuperseded(t *testing.T) {
+func TestQueueNewHeadLeavesRunningUntilComplete(t *testing.T) {
 	q, _ := newTestQueue(t)
 	old := mustEnqueue(t, q, prReq(7, "aaaa"))
-	run, _ := q.Claim("a", nil)
-	if run == nil || run.ID != old.ID {
-		t.Fatal("not claimed")
+	if run, err := q.Claim("a", nil); err != nil || run == nil || run.ID != old.ID {
+		t.Fatalf("claim = %v, %v", run, err)
 	}
 	newer := mustEnqueue(t, q, prReq(7, "bbbb"))
-	st, _, ok := q.CancelRequested(old.ID)
-	if !ok || st != StateSuperseded {
-		t.Fatalf("marker = %q %v", st, ok)
+	if _, _, ok := q.CancelRequested(old.ID); ok {
+		t.Fatal("running request marked")
 	}
 	if got, _ := q.Get(old.ID); got.State != StateRunning {
-		t.Fatalf("a running request must stay running until its agent ends it: %+v", got)
+		t.Fatalf("old = %+v", got)
 	}
-	done, err := q.Complete(old.ID, "run1", "cancelled", "")
-	if err != nil {
-		t.Fatal(err)
+	if got, _ := q.Get(newer.ID); got.State != StateQueued {
+		t.Fatalf("new = %+v", got)
 	}
-	if done.State != StateSuperseded || done.RunID != "run1" {
-		t.Fatalf("completed = %+v", done)
+	if got, err := q.Claim("a", nil); err != nil || got != nil {
+		t.Fatalf("blocked claim = %v, %v", got, err)
 	}
-	if _, _, ok := q.CancelRequested(old.ID); ok {
-		t.Fatal("marker left behind")
+	done, err := q.Complete(old.ID, "run1", "success", "")
+	if err != nil || done.State != StateDone || done.Conclusion != "success" || done.RunID != "run1" {
+		t.Fatalf("completed = %+v, %v", done, err)
 	}
-	if got, _ := q.Claim("a", nil); got == nil || got.ID != newer.ID {
-		t.Fatalf("the newer request is not next: %v", got)
+	if got, err := q.Claim("a", nil); err != nil || got == nil || got.ID != newer.ID {
+		t.Fatalf("new claim = %v, %v", got, err)
 	}
 }
 
+func TestQueueThreeHeadsWhileRunning(t *testing.T) {
+	q, _ := newTestQueue(t)
+	old := mustEnqueue(t, q, prReq(7, "aaaa"))
+	if _, err := q.Claim("a", nil); err != nil {
+		t.Fatal(err)
+	}
+	middle := mustEnqueue(t, q, prReq(7, "bbbb"))
+	newest := mustEnqueue(t, q, prReq(7, "cccc"))
+	if got, _ := q.Get(middle.ID); got.State != StateSuperseded || got.SupersededBy != newest.ID || got.Reason != "a newer head cccc arrived" {
+		t.Fatalf("middle = %+v", got)
+	}
+	if got, _ := q.Get(old.ID); got.State != StateRunning {
+		t.Fatalf("old = %+v", got)
+	}
+	if _, _, ok := q.CancelRequested(old.ID); ok {
+		t.Fatal("old marked")
+	}
+	if got, _ := q.Get(newest.ID); got.State != StateQueued {
+		t.Fatalf("newest = %+v", got)
+	}
+}
+
+func TestQueueBusyKeyDoesNotBlockOtherKeys(t *testing.T) {
+	q, _ := newTestQueue(t)
+	mustEnqueue(t, q, prReq(7, "aaaa"))
+	if _, err := q.Claim("a", nil); err != nil {
+		t.Fatal(err)
+	}
+	mustEnqueue(t, q, prReq(7, "bbbb"))
+	push := mustEnqueue(t, q, Request{Kind: KindPush, Repo: "o/r", Ref: "main", SHA: "a", Workflow: "ci.yml"})
+	other := mustEnqueue(t, q, prReq(8, "cccc"))
+	for _, want := range []Request{other, push} {
+		got, err := q.Claim("a", nil)
+		if err != nil || got == nil || got.ID != want.ID {
+			t.Fatalf("claim = %v, %v; want %s", got, err, want.ID)
+		}
+	}
+}
+func TestQueueRunningPushDoesNotBlockAnotherBranch(t *testing.T) {
+	q, _ := newTestQueue(t)
+	request := func(ref, sha string) Request {
+		return Request{Kind: KindPush, Repo: "o/r", Ref: ref, SHA: sha, Workflow: "ci.yml"}
+	}
+	mustEnqueue(t, q, request("main", "a"))
+	if _, err := q.Claim("a", nil); err != nil {
+		t.Fatal(err)
+	}
+	mustEnqueue(t, q, request("main", "b"))
+	other := mustEnqueue(t, q, request("develop", "c"))
+	if got, err := q.Claim("a", nil); err != nil || got == nil || got.ID != other.ID {
+		t.Fatalf("claim = %v, %v", got, err)
+	}
+}
 func TestQueuePushesToTheSameBranchSupersede(t *testing.T) {
 	q, _ := newTestQueue(t)
 	a := mustEnqueue(t, q, Request{Kind: KindPush, Repo: "o/r", Ref: "develop", SHA: "a1", Workflow: "ci.yml"})
@@ -270,6 +322,102 @@ func TestQueuePushesToTheSameBranchSupersede(t *testing.T) {
 	}
 	if n != 2 {
 		t.Fatalf("%d queued, want 2", n)
+	}
+}
+
+func TestQueuePushCoversQueuedHeadsBehindARunningPush(t *testing.T) {
+	q, _ := newTestQueue(t)
+	push := func(sha, title string) Request {
+		return mustEnqueue(t, q, Request{Kind: KindPush, Repo: "o/r", Ref: "develop", Workflow: "ci.yml", SHA: sha, Title: title})
+	}
+	r1 := push("1111111", "")
+	if got, err := q.Claim("a", nil); err != nil || got == nil || got.ID != r1.ID {
+		t.Fatalf("first claim = %v, %v", got, err)
+	}
+	s2 := push("2222222", "Merge pull request #463 from o/f\r\n\r\nDetails")
+	s3 := push("3333333", "Fix lint (#465)")
+	s4 := push("4444444", "")
+	want := []Covered{
+		{ID: s2.ID, SHA: s2.SHA, Number: 463, Title: "Merge pull request #463 from o/f"},
+		{ID: s3.ID, SHA: s3.SHA, Number: 465, Title: "Fix lint (#465)"},
+	}
+	if !slices.Equal(s4.Covers, want) || s4.Number != 0 {
+		t.Fatalf("enqueued request = %+v, want coverage %+v", s4, want)
+	}
+	if queued, running := q.Depth(); queued != 1 || running != 1 {
+		t.Fatalf("depth = %d queued, %d running", queued, running)
+	}
+	for _, tt := range []struct {
+		req   Request
+		state string
+		by    string
+	}{
+		{r1, StateRunning, ""},
+		{s2, StateSuperseded, s3.ID},
+		{s3, StateSuperseded, s4.ID},
+		{s4, StateQueued, ""},
+	} {
+		got, err := q.Get(tt.req.ID)
+		if err != nil || got.State != tt.state || got.SupersededBy != tt.by || !slices.Equal(got.Covers, tt.req.Covers) {
+			t.Errorf("%s = %+v, %v, want state %s, superseded by %q, covers %+v", tt.req.SHA, got, err, tt.state, tt.by, tt.req.Covers)
+		}
+	}
+	if _, _, marked := q.CancelRequested(r1.ID); marked {
+		t.Fatal("running push got a cancel marker")
+	}
+	if got, err := q.Claim("b", nil); err != nil || got != nil {
+		t.Fatalf("claim while first push runs = %v, %v", got, err)
+	}
+	if done, err := q.Complete(r1.ID, "run1", "success", ""); err != nil || done.State != StateDone || done.Conclusion != "success" {
+		t.Fatalf("first completion = %+v, %v", done, err)
+	}
+	if got, err := q.Claim("b", nil); err != nil || got == nil || got.ID != s4.ID || !slices.Equal(got.Covers, want) {
+		t.Fatalf("next claim = %+v, %v", got, err)
+	}
+	if done, err := q.Complete(s4.ID, "run4", "success", ""); err != nil || done.State != StateDone || done.Conclusion != "success" || !slices.Equal(done.Covers, want) {
+		t.Fatalf("last completion = %+v, %v", done, err)
+	}
+}
+
+func TestQueuePushCoverageKeepsNewest50DistinctSHAs(t *testing.T) {
+	q, _ := newTestQueue(t)
+	push := Request{Kind: KindPush, Repo: "o/r", Ref: "develop", Workflow: "ci.yml"}
+	var all []Request
+	for i := 1; i <= 52; i++ {
+		push.SHA = fmt.Sprintf("%040x", i)
+		all = append(all, mustEnqueue(t, q, push))
+	}
+	push.SHA = all[2].SHA
+	push.Title = strings.Repeat("é", 121) + "\nDetails"
+	repeat := mustEnqueue(t, q, push)
+	push.SHA, push.Title = "newest", ""
+	latest := mustEnqueue(t, q, push)
+	var want []Covered
+	for _, r := range all[3:] {
+		want = append(want, Covered{ID: r.ID, SHA: r.SHA})
+	}
+	want = append(want, Covered{ID: repeat.ID, SHA: repeat.SHA, Title: strings.Repeat("é", 120)})
+	if !slices.Equal(latest.Covers, want) || len(want) != 50 {
+		t.Fatalf("coverage = %+v, want %+v", latest.Covers, want)
+	}
+}
+
+func TestCoverPRNumberFromTitle(t *testing.T) {
+	for _, tt := range []struct {
+		title string
+		want  int
+	}{
+		{"Merge pull request #12 from x", 12},
+		{"Fix lint (#465)\n\nDetails", 465},
+		{"Merge pull request #12 from x (#34)", 12},
+		{"Fix issue #12", 0},
+		{"Fix lint\nDetails (#465)", 0},
+		{"Fix lint (#9999999999999999999999999)", 0},
+		{"", 0},
+	} {
+		if got := PRNumberFromTitle(tt.title); got != tt.want {
+			t.Errorf("PRNumberFromTitle(%q) = %d, want %d", tt.title, got, tt.want)
+		}
 	}
 }
 

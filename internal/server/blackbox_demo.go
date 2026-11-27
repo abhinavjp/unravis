@@ -695,6 +695,23 @@ func (p *simPC) SetupSQL(ctx context.Context, loginFile, loginSHA string, window
 	return out, nil
 }
 
+// SetupSQLHandover pretends to turn SQL collection on with a login the pretend keeper holds. Nothing is installed.
+func (p *simPC) SetupSQLHandover(ctx context.Context, handoverID, keeperPipe string, enable bool) (blackbox.SQLSetupOutcome, error) {
+	if err := p.enter(ctx, "setup-sql"); err != nil {
+		return blackbox.SQLSetupOutcome{}, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if handoverID == "" {
+		return blackbox.SQLSetupOutcome{}, &blackbox.ThisPCError{Reason: blackbox.ReasonInvalid, Message: "The SQL login settings are not valid."}
+	}
+	p.loginFileOK = true
+	out := blackbox.SQLSetupOutcome{Installed: !p.sqlInstalled, LoginSaved: true, Started: enable}
+	p.sqlInstalled = true
+	p.sqlRunning = enable
+	return out, nil
+}
+
 // ClearSQLLogin pretends to delete the saved login.
 func (p *simPC) ClearSQLLogin(ctx context.Context) error {
 	if err := p.enter(ctx, "clear-sql-login"); err != nil {

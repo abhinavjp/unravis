@@ -2,9 +2,9 @@
 // the setup window in its capture mode (it fakes every change), the Releases dashboard (on made-up release data, offline) and
 // the Lite stand-in (tools/uiaudit/litefixture). The addresses go to the tests through the environment. Stops all at the end.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { startDemo, DEMO_NOW, type Demo } from '../../e2e/support/launcher';
 import type { AppName } from './steps';
 
@@ -60,6 +60,46 @@ function releaseFiles(dir: string): void {
   writeFileSync(join(dir, 'state.json'), JSON.stringify({ version: '0.1.0-rc.59', stage: 'Tag', status: 'running', updated: at(20) }));
 }
 
+// Made-up local runs for r8 and r9. Use only the audit's temporary CI store.
+function ciFiles(dir: string): void {
+  const now = Date.now();
+  const at = (seconds: number) => new Date(now + seconds * 1000).toISOString();
+  const stamp = (time: string) => time.slice(0, 19).replace(/-/g, '').replace('T', '-').replace(/:/g, '');
+  const workflow = 'ci.yml', repo = 'abhinavjp/unravis', sha = 'a'.repeat(40);
+  const failed = stamp(at(-500)) + '-push-audit-failed-ci';
+  const running = stamp(at(-70)) + '-push-audit-running-ci';
+  const req = 'q-' + stamp(at(-75)) + '-audit';
+  const write = (file: string, text: string) => {
+    const path = join(dir, file);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, text);
+  };
+  const step = (index: number, name: string, conclusion: string, start: number, end: number) =>
+    ({ index, name, conclusion, start: at(start), end: at(end) });
+  const prepare = { key: 'prepare', id: 'prepare', label: 'Prepare the code', status: 'success' };
+  const jobs = [
+    { ...prepare, start: at(-500), end: at(-485), steps: [step(1, 'Read the commit', 'success', -500, -485)] },
+    { key: 'tests', id: 'tests', label: 'Check the app', status: 'failure', start: at(-485), end: at(-400),
+      steps: [step(1, 'Build the app', 'success', -485, -460), step(2, 'Run app tests', 'failure', -460, -400)] },
+    { key: 'docs', id: 'docs', label: 'Check the docs', status: 'failure', start: at(-480), end: at(-440),
+      steps: [step(1, 'Check links', 'failure', -480, -440)] },
+  ];
+  write(`runs/${failed}/run.json`, JSON.stringify({ workflow, conclusion: 'failure', start: at(-500), end: at(-400), jobs }));
+  write('runs/index.jsonl', JSON.stringify({ run_id: failed, workflow, event: 'push', repo, head_ref: 'audit-failed',
+    commit_sha: sha, conclusion: 'failure', reason: 'job tests, step 2 Run app tests', start: at(-500), end: at(-400) }) + '\n');
+  write(`runs/${failed}/logs/tests/02-test.log`, 'Running app tests\n--- FAIL: TestOpenExample\nExpected the example to open\n');
+  write(`runs/${failed}/logs/docs/01-links.log`, 'Checking links\n::error::Example page link is missing\n');
+  write(`queue/running/${req}.json`, JSON.stringify({ id: req, kind: 'push', repo, ref: 'audit-running', sha, workflow,
+    state: 'running', enqueuedAt: at(-75), claimedAt: at(-70), claimedBy: 'audit-machine' }));
+  write('agents/audit-machine.json', JSON.stringify({ name: 'audit-machine', state: 'ready', slots: 2, lastSeen: at(0) }));
+  write(`queue/progress/${req}.json`, JSON.stringify({ request: req, total: 4, updated: at(0), jobs: [
+    { ...prepare, start: at(-70), end: at(-60) },
+    { key: 'tests', label: 'Check the app', status: 'running', start: at(-60) },
+    { key: 'docs', label: 'Check the docs', status: 'running', start: at(-55) },
+  ] }));
+  write(`runs/${running}/logs/tests/01-run-app-tests.log`, 'Building the app\nRunning app tests\n');
+}
+
 export default async function globalSetup(): Promise<() => Promise<void>> {
   let demo: Demo | null = null;
   const children: ChildProcess[] = [];
@@ -106,8 +146,9 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       const noData = mkdtempSync(join(tmpdir(), 'uiaudit-releases-empty-'));
       temp.push(withData, noData);
       releaseFiles(withData);
+      ciFiles(join(withData, 'ci'));
       for (const [name, dir] of [['releases', withData], ['releases-empty', join(noData, 'missing')]] as const) {
-        const r = await launch(releasesExe, ['--data', dir, '--port', '0', '--print-link'], link, offline);
+        const r = await launch(releasesExe, ['--data', dir, '--ci-store', join(dir, 'ci'), '--port', '0', '--print-link'], link, offline);
         if (r) {
           children.push(r.child);
           apps[name] = { url: r.url, code: r.code };

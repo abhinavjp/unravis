@@ -20,6 +20,12 @@ r = runOS('linux');
 assert.equal(r.status, 1); assert.match(r.stdout, /NEW FAILURE p\/b\.TestBrandNew/);
 r = runOS('win32');
 assert.equal(r.status, 0, r.stdout); assert.match(r.stdout, /Windows host: comparing with .*baseline\.windows\.txt/);
+// The race job's baseline is a concatenation with no sibling file: a Windows host still adds the Windows-only failures.
+const runExtra = (os) => spawnSync('node', [path.join(here, 'compare-go-failures.mjs'), '--json', fx('go-test-new-failure.json'), '--baseline', fx('baseline.txt'), '--os', os, '--windows-extra', fx('win/baseline.windows.txt')], { encoding: 'utf8' });
+r = runExtra('linux');
+assert.equal(r.status, 1); assert.match(r.stdout, /NEW FAILURE p\/b\.TestBrandNew/);
+r = runExtra('win32');
+assert.equal(r.status, 0, r.stdout);
 console.log('compare-go-failures: ok');
 // Quarantine: a listed failure is reported, not new; an expired, id-less or malformed line quarantines nothing.
 const runQ = (file, today = '2026-11-26') => spawnSync('node', [path.join(here, 'compare-go-failures.mjs'), '--json', fx('go-test-new-failure.json'), '--baseline', fx('baseline.txt'), '--quarantine', fx(file), '--today', today], { encoding: 'utf8' });

@@ -39,6 +39,11 @@ jobs:
       step-watch:
         "Go - tests (shard ${{ matrix.shard }} of 3)": powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/ci/watch-test-windows.ps1 -Log "{log}" -StopFile "{stop}"
     linux-gates:
+      step-env:
+        # Same as fast-gate lint: the GitHub runner is Linux, so lint the Linux build. Without this a PC lints the *_windows.go
+        # files too, which Linux CI never compiles, and a full run (no previous head) reports 27 issues that GitHub never sees.
+        "Go - lint (only code changed since the base branch or the previous head)":
+          GOOS: linux
       step-exclusive:
         "Go - tests (compared with the baseline)": desktop-first-instance
       step-watch:

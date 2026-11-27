@@ -12,6 +12,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -146,6 +147,25 @@ func readLogin(d deps, file, sha string, stdin bool) (bbsql.StoredLogin, string)
 	if err != nil {
 		return bbsql.StoredLogin{}, reasonLoginInvalid
 	}
+	return parseLogin(raw)
+}
+
+// readHandover fetches the login document from the key keeper (see handover.go) and checks it the same way as a file. The keeper gives it
+// once, so a failure here means starting the set-up again.
+func readHandover(d deps, id, pipe string) (bbsql.StoredLogin, string) {
+	fetch := d.handover
+	if fetch == nil {
+		fetch = fetchHandover
+	}
+	raw, err := fetch(context.Background(), id, pipe)
+	if err != nil {
+		return bbsql.StoredLogin{}, reasonLoginHandover
+	}
+	return parseLogin(raw)
+}
+
+// parseLogin checks the login document and wipes it. It returns "" on success or the fixed reason of the failure.
+func parseLogin(raw []byte) (bbsql.StoredLogin, string) {
 	defer wipe(raw)
 	var in loginInput
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -199,12 +219,24 @@ func runSetSQLLogin(a answer, d deps, configPath, file, sha string, stdin bool) 
 		map[string]any{"saved": true})
 }
 
+// loginSource is where setup-sql gets a SQL login: a file Unravis made and hashed (File, SHA), or the key keeper (HandoverID, Pipe).
+type loginSource struct {
+	File, SHA, HandoverID, Pipe string
+}
+
 // runSetupSQL is the one elevated call the app makes to turn SQL collection on: it installs the SQL service when it is not there,
-// saves the login (or goes back to Windows sign-in with --windows-signin) and, with --enable, starts it. With Windows sign-in the owner
+// saves the login (from --login-file, or fetched from the key keeper with --login-handover; or goes back to Windows sign-in with
+// --windows-signin) and, with --enable, starts it. With Windows sign-in the owner
 // must run the printed grant first, so the app calls it without --enable and enables later; with a SQL login there is no grant.
-func runSetupSQL(a answer, d deps, configPath, file, sha string, windows, enable bool) int {
-	if (file == "") == !windows {
-		// exactly one of --login-file and --windows-signin
+func runSetupSQL(a answer, d deps, configPath string, src loginSource, windows, enable bool) int {
+	ways := 0
+	for _, on := range []bool{windows, src.File != "", src.HandoverID != ""} {
+		if on {
+			ways++
+		}
+	}
+	// exactly one of --windows-signin, --login-file and --login-handover (which needs a well-formed id and pipe name)
+	if ways != 1 || src.HandoverID != "" && !validHandover(src.HandoverID, src.Pipe) {
 		return a.failLogin(reasonLoginInvalid)
 	}
 	if !d.sqlMgr.Env.IsAdmin() {
@@ -219,7 +251,12 @@ func runSetupSQL(a answer, d deps, configPath, file, sha string, windows, enable
 	var login bbsql.StoredLogin
 	if !windows {
 		var reason string
-		if login, reason = readLogin(d, file, sha, false); reason != "" {
+		if src.HandoverID != "" {
+			login, reason = readHandover(d, src.HandoverID, src.Pipe)
+		} else {
+			login, reason = readLogin(d, src.File, src.SHA, false)
+		}
+		if reason != "" {
 			return a.failLogin(reason)
 		}
 	}

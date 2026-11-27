@@ -51,7 +51,15 @@ if (write) {
   console.log(`wrote ${failures.length} entries to ${baselineFile}`);
   process.exit(0);
 }
-const baseline = new Set(fs.existsSync(baselineFile) ? fs.readFileSync(baselineFile, 'utf8').split('\n').map((s) => s.trim()).filter((s) => s && !s.startsWith('#')) : []);
+const readList = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').map((s) => s.trim()).filter((s) => s && !s.startsWith('#')) : []);
+const baseline = new Set(readList(baselineFile));
+// The race job concatenates the Linux baselines, so no sibling file can be swapped in for it. On a Windows host the
+// failures that only happen there (privileges, the race detector's pointer checks on Windows-only code) are added from
+// the two Windows baselines. --windows-extra <file>[,<file>] picks other files, for the tests.
+if (hostOS === 'win32') {
+  const dflt = ['../../docs/desktop/baseline-go-tests.windows.txt', '../../docs/desktop/baseline-go-race.windows.txt'].map((p) => fileURLToPath(new URL(p, import.meta.url)));
+  for (const f of (opt('--windows-extra') ? opt('--windows-extra').split(',') : dflt)) for (const l of readList(f)) baseline.add(l);
+}
 // Quarantine (docs/ci/THREAD-GATE.md section 3): docs/ci/flaky-tests.txt lists tests that are flaky or depend on the host.
 // One line each: "<package>.<Test> <BL-id> until=<YYYY-MM-DD> <reason>". A quarantined failure is reported, not new. A line
 // without a BL-id or a valid until date, or past its date, quarantines nothing (a ::warning:: says so), so a test that is

@@ -60,11 +60,19 @@ type HSRequest struct {
 	Conclusion    string              `json:"conclusion,omitempty"`
 	Reason        string              `json:"reason,omitempty"`
 	SupersededBy  string              `json:"supersededBy,omitempty"`
-	RunID         string              `json:"runId,omitempty"`   // the finished run this request made, so the page can run it again
-	Labels        []string            `json:"labels,omitempty"`  // what a machine must have to take it (the "Needs" column)
-	Display       string              `json:"display,omitempty"` // a plain line for a request that was replaced
+	RunID         string              `json:"runId,omitempty"`  // the finished run this request made, so the page can run it again
+	Labels        []string            `json:"labels,omitempty"` // what a machine must have to take it (the "Needs" column)
+	Covers        []HSCovered         `json:"covers,omitempty"`
+	Display       string              `json:"display,omitempty"` // a plain line about coverage or replacement
 	Waiting       bool                `json:"waiting,omitempty"` // queued and no machine takes it at its next look
 	Why           *localci.WaitReason `json:"why,omitempty"`     // queued requests: why it has not started
+}
+
+// HSCovered is an earlier push included in a coalesced run.
+type HSCovered struct {
+	SHA    string `json:"sha,omitempty"`
+	Number int    `json:"number,omitempty"`
+	Title  string `json:"title,omitempty"`
 }
 
 // HSQueueCounts are the sizes of the lists.
@@ -108,7 +116,16 @@ func (v *ciView) Queue(doneLimit int) HSQueue {
 		q.Paused = localci.IsPaused(v.dir)
 	}
 	var queued, running, done []localci.Request
+	covering := make(map[string]localci.Request)
 	for _, r := range rs {
+		if r.State != localci.StateSuperseded {
+			for _, c := range r.Covers {
+				prev := covering[c.ID]
+				if prev.ID == "" || r.EnqueuedAt.After(prev.EnqueuedAt) || (r.EnqueuedAt.Equal(prev.EnqueuedAt) && r.ID > prev.ID) {
+					covering[c.ID] = r
+				}
+			}
+		}
 		switch r.State {
 		case localci.StateQueued:
 			queued = append(queued, r)
@@ -145,7 +162,11 @@ func (v *ciView) Queue(doneLimit int) HSQueue {
 		done = done[:doneLimit]
 	}
 	for _, r := range done {
-		q.Done = append(q.Done, v.requestOf(r))
+		h := v.requestOf(r)
+		if newest := covering[r.ID]; r.State == localci.StateSuperseded && newest.ID != "" {
+			h.Display = hsReplacementLine(v.rd(newest.ID))
+		}
+		q.Done = append(q.Done, h)
 	}
 	q.Error = strings.Join(errs, " ")
 	return q
@@ -159,13 +180,36 @@ func (v *ciView) requestOf(r localci.Request) HSRequest {
 	if r.Priority < localci.PriorityFor(r.Kind) {
 		h.PriorityLabel = hsPriorityFirst
 	}
+	var coveredLabels []string
+	for _, c := range r.Covers {
+		sha := shaOnly(c.SHA)
+		sha = sha[:min(7, len(sha))]
+		h.Covers = append(h.Covers, HSCovered{SHA: sha, Number: c.Number, Title: clip(v.rd(c.Title))})
+		label := sha
+		if c.Number > 0 {
+			label = "#" + strconv.Itoa(c.Number)
+		}
+		if label != "" {
+			coveredLabels = append(coveredLabels, label)
+		}
+	}
 	if r.State == localci.StateSuperseded || r.SupersededBy != "" {
-		h.Display = "Replaced by a newer request"
-		if r.SupersededBy != "" {
-			h.Display += " (" + h.SupersededBy + ")"
+		h.Display = hsReplacementLine(h.SupersededBy)
+	} else if r.Active() && len(coveredLabels) > 0 {
+		const shown = 6
+		h.Display = "Covers " + strings.Join(coveredLabels[:min(shown, len(coveredLabels))], ", ")
+		if more := len(coveredLabels) - shown; more > 0 {
+			h.Display += fmt.Sprintf(" and %d more", more)
 		}
 	}
 	return h
+}
+
+func hsReplacementLine(id string) string {
+	if id == "" {
+		return "Replaced by a newer request"
+	}
+	return "Replaced by a newer request (" + id + ")"
 }
 
 // ---------------------------------------------------------------- policy

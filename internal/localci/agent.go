@@ -413,7 +413,7 @@ func (a *Agent) checkDrainMark() {
 	}
 }
 
-// checkCancels stops the running requests that someone cancelled or that a newer head replaced.
+// checkCancels stops running requests that were explicitly cancelled or superseded.
 func (a *Agent) checkCancels() {
 	a.mu.Lock()
 	var todo []*agentJob

@@ -169,19 +169,18 @@ func TestWriteProfileLinksMachineScopeLeavesStartMenuAndQuitToTheWorker(t *testi
 	}
 }
 
-func TestWriteProfileLinksRemovesItsTmpFileOnFailure(t *testing.T) {
+func TestWriteProfileLinksKeepsAForeignTmpFile(t *testing.T) {
 	e := newEnv(t, "1.0.0")
 	l := machineLayout(e)
-	// The temporary file path is an empty folder, so writing the temporary file fails (and its cleanup removes the folder).
-	if err := os.MkdirAll(l.StartupLink+".tmp", 0o755); err != nil {
-		t.Fatal(err)
-	}
+	tmp := l.StartupLink + ".tmp"
+	writeFile(t, tmp, "foreign file")
 	err := e.r.WriteProfileLinks(l, true, nil)
 	if err == nil {
 		t.Fatal("want the write error")
 	}
-	if exists(l.StartupLink + ".tmp") {
-		t.Fatal("a .tmp file was left")
+	data, err := os.ReadFile(tmp) //nolint:gosec // test reads its own temp-dir path
+	if err != nil || string(data) != "foreign file" {
+		t.Fatalf("the foreign temporary file changed: %q, %v", data, err)
 	}
 	if !exists(l.DesktopLink) {
 		t.Fatal("the other links must still be tried")

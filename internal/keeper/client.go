@@ -30,6 +30,19 @@ type Client struct {
 // NewClient makes a client over d.
 func NewClient(d Dialer) *Client { return &Client{Dialer: d} }
 
+// pipeName is the keeper pipe this client dials, "" when it does not dial a named pipe (a test's in-memory listener).
+func (c *Client) pipeName() string {
+	switch d := c.Dialer.(type) {
+	case PipeDialer:
+		return d.Name
+	case *PipeDialer:
+		if d != nil {
+			return d.Name
+		}
+	}
+	return ""
+}
+
 // MaxClientCalls is how many keeper calls one Unravis process has open at once (the keeper allows a session more than this).
 const MaxClientCalls = 6
 

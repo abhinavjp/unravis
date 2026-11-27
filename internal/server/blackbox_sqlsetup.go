@@ -3,16 +3,19 @@ package server
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/keeper"
 	"api-audit-explorer/internal/sqlaccess"
 )
 
-// keeperLoginFile is the keeper side of "turn SQL collection on with this saved login": the keeper writes the login into a short-lived
-// private file for the Blackbox helper, so the saved password never reaches this process.
-type keeperLoginFile interface {
-	LoginFileSaved(ctx context.Context, ref keeper.SQLRef) (blackbox.SQLLoginFile, error)
+// keeperHandover is the keeper side of "turn SQL collection on with this saved login": the keeper keeps the login in memory under a
+// one-time id, the elevated helper fetches it over the keeper's pipe, and RevokeHandover forgets what is left. The saved password never
+// reaches this process and is written to no file.
+type keeperHandover interface {
+	HandoverSaved(ctx context.Context, ref keeper.SQLRef) (keeper.SQLHandover, error)
+	RevokeHandover(ctx context.Context, id string) error
 }
 
 // bbSQLSetupReq is "turn SQL collection on". Mode "login" uses the SQL login of the connection given (typed, or a saved one); mode "windows"
@@ -59,6 +62,8 @@ func (h *handler) bbSQLSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var file blackbox.SQLLoginFile
+	var handover keeperHandover // set when the login is a saved one the key keeper holds
+	var handoverRef keeper.SQLRef
 	if req.Mode == "login" {
 		if !h.tests.allow() {
 			writeError(w, http.StatusTooManyRequests, "Too many connection tests in the last minute. Wait a minute, then try again.")
@@ -107,15 +112,15 @@ func (h *handler) bbSQLSetup(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, bbSQLNotReady{Reason: "access", Error: "This login is not ready for the Blackbox, so nothing was changed.", Report: rep}, maxResponseBytes)
 			return
 		}
-		if kl, held := k.(keeperLoginFile); k != nil && held {
-			f, err := kl.LoginFileSaved(ctx, *ref)
-			if writeKeeperError(w, err) {
+		if k != nil {
+			// A saved login stays in the keeper. It is handed over after the PC is locked (below), so the keeper's few minutes start when
+			// the helper does, and never goes through a file.
+			var held bool
+			if handover, held = k.(keeperHandover); !held {
+				writeError(w, http.StatusServiceUnavailable, "This build cannot hand a saved login to the Blackbox.")
 				return
 			}
-			file = f // the keeper removes it; the helper only reads it
-		} else if k != nil {
-			writeError(w, http.StatusServiceUnavailable, "This build cannot hand a saved login to the Blackbox.")
-			return
+			handoverRef = *ref
 		} else {
 			f, err := blackbox.WriteSQLLoginFile("", stored)
 			if err != nil {
@@ -132,7 +137,23 @@ func (h *handler) bbSQLSetup(w http.ResponseWriter, r *http.Request) {
 	defer h.bb.pcMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), bbSQLSetupTimeout)
 	defer cancel()
-	out, err := pc.SetupSQL(ctx, file.Path, file.SHA, req.Mode == "windows", req.Enable)
+	var out blackbox.SQLSetupOutcome
+	var err error
+	if handover != nil {
+		var ho keeper.SQLHandover
+		if ho, err = handover.HandoverSaved(ctx, handoverRef); writeKeeperError(w, err) {
+			return
+		}
+		// Whatever the helper did not take is forgotten by the keeper when this ends, however it ends.
+		defer func() {
+			rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer rcancel()
+			_ = handover.RevokeHandover(rctx, ho.ID)
+		}()
+		out, err = pc.SetupSQLHandover(ctx, ho.ID, ho.Pipe, req.Enable)
+	} else {
+		out, err = pc.SetupSQL(ctx, file.Path, file.SHA, req.Mode == "windows", req.Enable)
+	}
 	if err != nil {
 		bbPCFailure(w, err)
 		return
