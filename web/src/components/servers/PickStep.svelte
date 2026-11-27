@@ -118,4 +118,6 @@
   .pick-filter.on { border-color: var(--text); font-weight: 600; }
   .sv-small { padding: 4px 10px; }
   .pick-wrap { overflow-y: hidden; }
+  /* On a phone the machine list must fit without sideways scrolling. */
+  @media (max-width: 640px) { .pick-wrap :global(th), .pick-wrap :global(td) { padding: 6px 4px; } .pick-wrap :global(.sv-note) { font-size: 11px; } .pick-wrap :global(strong) { font-size: 12px; } }
 </style>
