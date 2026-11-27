@@ -54,10 +54,10 @@ watch_stop_and_judge() {
 # (resource desktop-first-instance in .github/local-ci.yml). Elsewhere, or with no Go toolchain, it just runs the command.
 desk_lock() {
   case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) ;; *) "$@"; return $? ;; esac
-  if [ ! -x "$tmp/unravis-ci.exe" ]; then
-    CGO_ENABLED=0 go build -o "$tmp/unravis-ci.exe" ./cmd/unravis-ci >/dev/null 2>&1 || { warn "could not build the CI lock helper: this run may collide with the CI agent"; "$@"; return $?; }
+  if [ ! -x "$tmp/homestretch.exe" ]; then
+    CGO_ENABLED=0 go build -o "$tmp/homestretch.exe" ./cmd/homestretch >/dev/null 2>&1 || { warn "could not build the CI lock helper: this run may collide with the CI agent"; "$@"; return $?; }
   fi
-  "$tmp/unravis-ci.exe" exclusive desktop-first-instance -- "$@"
+  "$tmp/homestretch.exe" ci exclusive desktop-first-instance -- "$@"
 }
 
 step "1. Branch is current with develop"

@@ -175,6 +175,12 @@ try {
     # The releases window (read-only release status, its own icon). A GUI program like the app, so it opens no console; it ships inside the setup program and updates with it.
     Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $GuiLdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-releases.exe'), './cmd/unravis-releases')
     Invoke-Sign @((Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), (Join-Path $UtilityRoot 'dist\unravis-cli.exe'), (Join-Path $UtilityRoot 'dist\unravis-releases.exe'))
+    # Homestretch (BL-708): the release and CI command line, `homestretch.exe`, and its short name `hs.exe` (a copy of it). Console programs.
+    # They are for the person who cuts releases and runs CI, not part of the installer payload, so setup and its manifest are unchanged.
+    # The old unravis-ci program stays in the source tree as a shim (cmd/unravis-ci); it is not built here because nothing in dist ever shipped it.
+    Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\homestretch.exe'), './cmd/homestretch')
+    Copy-Item -LiteralPath (Join-Path $UtilityRoot 'dist\homestretch.exe') -Destination (Join-Path $UtilityRoot 'dist\hs.exe') -Force
+    Invoke-Sign @((Join-Path $UtilityRoot 'dist\homestretch.exe'), (Join-Path $UtilityRoot 'dist\hs.exe'))
 
     # The one-file installer comes last: it embeds the programs above with a manifest of their SHA-256, so setup refuses a
     # payload that was changed after the build. The payload folder is cleared first and is not committed (see its README.txt).
@@ -215,6 +221,10 @@ try {
         if ($Subsystem -ne 3) { throw "unravis-setup.exe: PE subsystem $Subsystem, expected 3" }
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-lite.exe')
         if ($Subsystem -ne 3) { throw "unravis-lite.exe: PE subsystem $Subsystem, expected 3" }
+        foreach ($Name in @('homestretch.exe', 'hs.exe')) {
+            $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot "dist\$Name")
+            if ($Subsystem -ne 3) { throw "${Name}: PE subsystem $Subsystem, expected 3" }
+        }
     } finally {
         # The programs stay in dist; the copies in the source tree go, so a later `go test` does not carry them.
         Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -notin @('README.txt', '.gitignore') } | Remove-Item -Recurse -Force

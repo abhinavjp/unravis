@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   What it does, in order. Nothing is checked out or changed on this PC: branches and the merge are made on GitHub.
-    0. Checks the holds (freeze windows): `unravis-ci hold check --project <Project>`. An active hold stops it with the hold's
+    0. Checks the holds (freeze windows): `homestretch hold check --project <Project>`. An active hold stops it with the hold's
        reason, owner and end (exit 5). Holds that cannot be read stop it too: not knowing is not "free". Checked again before the merge.
     1. Reads the release lock (read only, never written here). A held lock with merges on hold stops it (or waits, -WaitMinutes).
     2. Picks the commit: the tip of develop, or -UpTo <sha> (a commit that is on develop).
@@ -28,9 +28,9 @@
 .PARAMETER SkipNotesCheck  Do not stop when What's new notes are still waiting in docs/whatsnew/fragments (see "What's new check" below).
 .PARAMETER Repo       owner/name. Default abhinavjp/unravis.
 .PARAMETER Project    The project id the holds are checked for (a hold for "all" counts too). Default unravis.
-.PARAMETER CiStore    The CI store folder that holds holds.json. Default: the one unravis-ci uses (under LOCALAPPDATA).
-.PARAMETER CiExe      The unravis-ci.exe that runs the hold check. Default: built from this checkout (cmd/unravis-ci) into
-                      %TEMP%, else unravis-ci.exe on PATH. Without one the promotion is refused.
+.PARAMETER CiStore    The CI store folder that holds holds.json. Default: the one Homestretch uses (under LOCALAPPDATA).
+.PARAMETER CiExe      The homestretch.exe (or the old unravis-ci.exe, same arguments) that runs the hold check. Default: built from this checkout (cmd/homestretch) into
+                      %TEMP%, else homestretch.exe or unravis-ci.exe on PATH. Without one the promotion is refused.
 
 .NOTES
   What's new check (read only, before anything is created): people-visible changes bring a small note file in docs/whatsnew/fragments/.
@@ -59,7 +59,7 @@ function Stop-Here([string]$msg) { Write-Host $msg -ForegroundColor Red; exit 1 
 function Invoke-Gh { $out = & gh @args 2>&1; if ($LASTEXITCODE -ne 0) { throw "gh $($args -join ' ') failed: $($out | Out-String)" }; ($out | Out-String).Trim() }
 
 # --- 0. holds (freeze windows) -----------------------------------------------------------------------------------------
-# The check is unravis-ci's own (`hold check`, exit 5 while a hold covers the project), so the script and the CLI cannot disagree
+# The check is Homestretch's own (`homestretch hold check`, exit 5 while a hold covers the project), so the script and the CLI cannot disagree
 # about what "active" means. It runs before anything on GitHub is read or made (so also in -DryRun), and again before the merge
 # (a hold may be added while CI runs). Fail closed: an exit other than 0 (free) or 5 (held), or no checker at all, refuses.
 function Resolve-HoldChecker {
@@ -70,18 +70,18 @@ function Resolve-HoldChecker {
     }
     $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     $go = Get-Command go -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($go -and (Test-Path -LiteralPath (Join-Path $root 'cmd\unravis-ci\main.go'))) {
+    if ($go -and (Test-Path -LiteralPath (Join-Path $root 'cmd\homestretch\main.go'))) {
         $outDir = Join-Path ([System.IO.Path]::GetTempPath()) 'unravis-promote-hold'
         $null = New-Item -ItemType Directory -Force -Path $outDir
-        $exe = Join-Path $outDir 'unravis-ci.exe'
+        $exe = Join-Path $outDir 'homestretch.exe'
         Push-Location $root
-        try { $buildOut = & $go.Source build -o $exe ./cmd/unravis-ci 2>&1; $buildExit = $LASTEXITCODE } finally { Pop-Location }
+        try { $buildOut = & $go.Source build -o $exe ./cmd/homestretch 2>&1; $buildExit = $LASTEXITCODE } finally { Pop-Location }
         if ($buildExit -eq 0) { return $exe }
-        Write-Host "Could not build unravis-ci from this checkout for the hold check: $($buildOut | Out-String)" -ForegroundColor Yellow
+        Write-Host "Could not build homestretch from this checkout for the hold check: $($buildOut | Out-String)" -ForegroundColor Yellow
     }
-    $onPath = Get-Command unravis-ci -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $onPath = $null; foreach ($n in 'homestretch', 'unravis-ci') { $onPath = Get-Command $n -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($onPath) { break } }
     if ($onPath) { return $onPath.Source }
-    Stop-Here 'No unravis-ci to check the holds with (no Go to build it from this checkout, none on PATH). Promote is refused until the holds can be checked; pass -CiExe <path to unravis-ci.exe>.'
+    Stop-Here 'No homestretch to check the holds with (no Go to build it from this checkout, none on PATH). Promote is refused until the holds can be checked; pass -CiExe <path to homestretch.exe>.'
 }
 $HoldChecker = Resolve-HoldChecker
 function Assert-NotHeld([string]$When) {
@@ -93,10 +93,10 @@ function Assert-NotHeld([string]$When) {
     if ($holdExit -eq 0) { Write-Host "Holds: none active for $Project ($When)."; return }
     if ($holdExit -eq 5) {
         Write-Host $holdOut -ForegroundColor Red
-        Write-Host "Promote refused ($When): a hold is active for $Project. Wait until it ends, or have it lifted (unravis-ci hold lift <id> --reason ...)." -ForegroundColor Red
+        Write-Host "Promote refused ($When): a hold is active for $Project. Wait until it ends, or have it lifted (homestretch hold lift <id> --reason ...)." -ForegroundColor Red
         exit 5
     }
-    Stop-Here "Promote refused ($When): the holds could not be checked (unravis-ci hold check exit $holdExit): $holdOut"
+    Stop-Here "Promote refused ($When): the holds could not be checked (homestretch hold check exit $holdExit): $holdOut"
 }
 Assert-NotHeld 'before start'
 
