@@ -43,4 +43,4 @@ Add `--post-required --context ci.yml=local/build` only on the PC that should po
 
 - The cross-PC view lags about 60 s.
 - Done claims stay for about 7 days as tombstones.
-- If the second PC lacks gcc, its `ci.yml` runs fail on `go-race`. Install gcc first or label it so it takes only `fast-gate.yml`.
+- If the second PC lacks gcc, its `ci.yml` runs fail on `go-race`. Install gcc before enrolling it.
