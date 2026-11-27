@@ -43,7 +43,7 @@ type Options struct {
 	// Origin names what this job reads (machine, kind, folder). A job folder that already holds a different origin is refused, so a
 	// resume can never mix files from another machine or folder into an earlier run.
 	Origin string
-	Limits     Limits
+	Limits Limits
 	// Free reports free bytes on the staging drive. Nil means the OS check; if the check cannot be made the job runs anyway.
 	Free func(dir string) (int64, error)
 	// Progress is called from several goroutines, one call at a time.

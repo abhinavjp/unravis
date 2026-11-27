@@ -221,7 +221,7 @@ type srvReplaceBody struct {
 type srvBrowseBody struct {
 	// Machine is the Salt machine to read; empty for a server read directly.
 	Machine string `json:"machine"`
-	Dir string `json:"dir"`
+	Dir     string `json:"dir"`
 }
 
 type srvPullBody struct {
