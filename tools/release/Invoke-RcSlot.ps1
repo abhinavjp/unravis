@@ -8,18 +8,22 @@
   the decision instead and changes nothing). Missing tools and failed promotions or releases exit 1.
     1 Single instance (lock file in the state folder; a second run says "busy").
     2 Tools: git, gh (signed in), pwsh, and Node exactly 22.23.5 in -NodeDir (put first on PATH for the child scripts).
-    3 git fetch origin (tags too); the last rc tag is the newest v<x.y.z>-rc.<n> by n, then by version.
+    3 git fetch --tags --force origin; the last release tag is the newest v<x.y.z> or v<x.y.z>-rc.<n> in SemVer order (version first; a stable tag
+      is above any rc of its version; rcs by number).
     4 Newest green develop: the newest completed ci.yml push run on develop that succeeded; its commit G must be on origin/develop.
     5 Product change between the tag and G (git diff <tag>...<G>): internal/, cmd/, web/src/, tools/release/, go.mod, go.sum, root *.go;
       tests, test data and *.md do not count.
     6 No release in flight: no open promote/* pull request into master, release lock not held (the lock branch is only read, never written).
-    7 master does not already contain G.
-  All seven passed: Promote-Develop.ps1 -UpTo G from a detached work tree (-WorkTree), then Release.ps1 -Channel rc -Yes from a work tree at
+    7 Something left to release: master does not contain G (full path), or it does but the newest release tag does not (a release failed
+      after its promotion: "release-only", Promote-Develop.ps1 is skipped). Both contain G: nothing to do.
+  All seven passed: Promote-Develop.ps1 -UpTo G from a detached work tree (-WorkTree) (not in release-only mode), then Release.ps1 -Channel rc -Yes from a work tree at
   origin/master, then the new rc tag and the "carries" list are read back and written to status.json. After a release (only then) the
   housekeeping script runs if it is installed. Nothing is ever installed on this PC. A signing passphrase, Proton Pass or UAC stop shows up as
   a "failed" run with that text as the reason.
 
-  status.json: { at (UTC), outcome released|skipped|failed|busy, reason, rc, previous, gSha, carries[] }. It is written for EVERY run.
+  A held release lock or an open promote/* pull request older than 3 hours is a failed run (stuck?), not a skip. The new rc tag must contain G.
+
+  status.json: { at (UTC), outcome running|released|skipped|failed|busy, reason, rc, previous, gSha, carries[] }. It is written for EVERY run; 'running' is written before the promote/release and overwritten at the end (a killed run leaves it).
 
 .PARAMETER Repo        GitHub repository (default abhinavjp/unravis).
 .PARAMETER RepoFolder  The checkout used to read git. Default: "repo" in <StateDir>\rcslot.json, else the checkout this script is in.
@@ -95,26 +99,35 @@ function Get-ProductPaths {
     return @($Paths | Where-Object { Test-ProductPath $_ })
 }
 
-function Get-RcKey {
+# Release tags (stable vX.Y.Z and rc vX.Y.Z-rc.N) are ordered like SemVer: version first; for the same version a stable tag is above any rc,
+# and rcs go by number. After a stable X.Y.Z numbering restarts at X.Y.(Z+1)-rc.1, so the rc number alone says nothing across versions.
+function Get-ReleaseKey {
     param([string]$Tag)
-    $m = [regex]::Match(([string]$Tag).Trim(), '^v(\d+\.\d+\.\d+)-rc\.(\d+)$')
+    $m = [regex]::Match(([string]$Tag).Trim(), '^v(\d+\.\d+\.\d+)(-rc\.(\d+))?$')
     if (-not $m.Success) { return $null }
-    try { return [pscustomobject]@{ Rc = [long]$m.Groups[2].Value; Version = [version]$m.Groups[1].Value } } catch { return $null }
+    try {
+        $rc = if ($m.Groups[3].Success) { [long]$m.Groups[3].Value } else { [long]::MaxValue }
+        return [pscustomobject]@{ Rc = $rc; Version = [version]$m.Groups[1].Value }
+    } catch { return $null }
 }
 
-function Compare-RcKey {
+function Test-RcTag { param([string]$Tag) return ([string]$Tag).Trim() -match '^v\d+\.\d+\.\d+-rc\.\d+$' }
+
+function Compare-ReleaseKey {
     param($A, $B)
+    $c = $A.Version.CompareTo($B.Version)
+    if ($c -ne 0) { return $c }
     if ($A.Rc -ne $B.Rc) { return $(if ($A.Rc -gt $B.Rc) { 1 } else { -1 }) }
-    return $A.Version.CompareTo($B.Version)
+    return 0
 }
 
-function Get-LastRcTag {
+function Get-LastReleaseTag {
     param([string[]]$Tags)
     $best = $null
     foreach ($t in $Tags) {
-        $k = Get-RcKey $t
+        $k = Get-ReleaseKey $t
         if (-not $k) { continue }
-        if (-not $best -or (Compare-RcKey $k $best.Key) -gt 0) { $best = @{ Tag = ([string]$t).Trim(); Key = $k } }
+        if (-not $best -or (Compare-ReleaseKey $k $best.Key) -gt 0) { $best = @{ Tag = ([string]$t).Trim(); Key = $k } }
     }
     if ($best) { return $best.Tag }
     return $null
@@ -122,11 +135,24 @@ function Get-LastRcTag {
 
 function Test-RcNewer {
     param([string]$Tag, [string]$Than)
-    $a = Get-RcKey $Tag; $b = Get-RcKey $Than
+    $a = Get-ReleaseKey $Tag; $b = Get-ReleaseKey $Than
     if (-not $a) { return $false }
     if (-not $b) { return $true }
-    return ((Compare-RcKey $a $b) -gt 0)
+    return ((Compare-ReleaseKey $a $b) -gt 0)
 }
+
+# A time from a lock record or gh output. ConvertFrom-Json may already have turned an ISO string into a [datetime]. $null when unreadable.
+function ConvertTo-UtcTime {
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    $t = [datetime]::MinValue
+    $st = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+    if ([datetime]::TryParse([string]$Value, [Globalization.CultureInfo]::InvariantCulture, $st, [ref]$t)) { return $t }
+    return $null
+}
+
+$script:StuckHours = 3
 
 # What the rc carries: first-parent subjects from develop, one line each, no repeats, at most $Max.
 function Get-Carries {
@@ -151,7 +177,7 @@ function New-SlotResult {
 
 # Reads the release-lock answer (a gh api result). $null = free to go, else why not. Anything odd is a skip: never a guess that it is free.
 function Get-LockRefusal {
-    param($Api)
+    param($Api, [datetime]$Now = [datetime]::UtcNow)
     $text = ($Api.Lines -join "`n")
     $unreadable = New-Refusal 'skipped' 'release lock unreadable'
     if ($Api.Code -ne 0) {
@@ -173,6 +199,17 @@ function Get-LockRefusal {
     if ($rec.holdMerges -is [bool] -and -not $rec.holdMerges) { return $null }
     $who = Format-OneLine ([string]$rec.requester) 40
     if (-not $who) { $who = 'unknown' }
+    # The freshest sign of life in the record (heartbeat, started ...). Held for over 3 hours is a stuck release, not a normal wait. Unparsable: plain skip.
+    $latest = $null
+    foreach ($f in 'heartbeat', 'updated', 'at', 'started') {
+        $p = $rec.PSObject.Properties[$f]
+        if (-not $p) { continue }
+        $t = ConvertTo-UtcTime $p.Value
+        if ($t -and (-not $latest -or $t -gt $latest)) { $latest = $t }
+    }
+    if ($latest -and ($Now.ToUniversalTime() - $latest).TotalHours -gt $script:StuckHours) {
+        return (New-Refusal 'failed' "release lock held by $who for over $($script:StuckHours) hours (stuck?): run Release.ps1 -Status")
+    }
     return (New-Refusal 'skipped' "release lock held by $who")
 }
 
@@ -291,11 +328,11 @@ function Step-Tools {
 function Step-LastTag {
     param($c)
     $rf = $script:Cfg.RepoFolder
-    if ((Invoke-RcGit $rf @('fetch', '--tags', 'origin')).Code -ne 0) { return (New-Refusal 'failed' 'git fetch origin failed') }
-    $t = Invoke-RcGit $rf @('tag', '--list', 'v*-rc.*')
+    if ((Invoke-RcGit $rf @('fetch', '--tags', '--force', 'origin')).Code -ne 0) { return (New-Refusal 'failed' 'git fetch origin failed') }
+    $t = Invoke-RcGit $rf @('tag', '--list', 'v*')
     if ($t.Code -ne 0) { return (New-Refusal 'failed' 'git tag --list failed') }
-    $tag = Get-LastRcTag $t.Lines
-    if (-not $tag) { return (New-Refusal 'skipped' 'no rc tag found (the first rc is released by hand)') }
+    $tag = Get-LastReleaseTag $t.Lines
+    if (-not $tag) { return (New-Refusal 'skipped' 'no release tag found (the first rc is released by hand)') }
     $c.Tag = $tag
 }
 
@@ -330,11 +367,18 @@ function Step-Product {
 
 function Step-InFlight {
     param($c)
-    $pr = Invoke-RcGh @('pr', 'list', '-R', $script:Cfg.Repo, '--base', 'master', '--state', 'open', '--limit', '100', '--json', 'headRefName')
+    $pr = Invoke-RcGh @('pr', 'list', '-R', $script:Cfg.Repo, '--base', 'master', '--state', 'open', '--limit', '100', '--json', 'headRefName,createdAt')
     if ($pr.Code -ne 0) { return (New-Refusal 'failed' 'gh pr list failed') }
     try { $prs = @(($pr.Lines -join "`n") | ConvertFrom-Json -ErrorAction Stop) } catch { return (New-Refusal 'failed' 'gh pr list gave unreadable output') }
     $open = @($prs | Where-Object { ([string]$_.headRefName) -like 'promote/*' } | Select-Object -First 1)
-    if ($open.Count -gt 0) { return (New-Refusal 'skipped' ('promotion pull request open (' + (Format-OneLine ([string]$open[0].headRefName) 60) + ')')) }
+    if ($open.Count -gt 0) {
+        $branch = Format-OneLine ([string]$open[0].headRefName) 60
+        $made = ConvertTo-UtcTime $open[0].createdAt
+        if ($made -and ([datetime]::UtcNow - $made).TotalHours -gt $script:StuckHours) {
+            return (New-Refusal 'failed' "promotion pull request $branch open for over $($script:StuckHours) hours (red or stuck build?)")
+        }
+        return (New-Refusal 'skipped' "promotion pull request open ($branch)")
+    }
     return (Get-LockRefusal (Invoke-RcGh @('api', "repos/$($script:Cfg.Repo)/contents/lock.json?ref=release-lock")))
 }
 
@@ -342,7 +386,12 @@ function Step-NotOnMaster {
     param($c)
     $on = Test-GitAncestor $c.GSha 'origin/master'
     if ($null -eq $on) { return (New-Refusal 'failed' 'git merge-base against origin/master failed') }
-    if ($on) { return (New-Refusal 'skipped' 'nothing to promote (master already contains the green commit)') }
+    if (-not $on) { return }
+    # Master has G. If the newest release tag has it too, the release is done. If not, a release failed after its promotion: release only.
+    $tagHas = Test-GitAncestor $c.GSha $c.Tag
+    if ($null -eq $tagHas) { return (New-Refusal 'failed' "git merge-base against $($c.Tag) failed") }
+    if ($tagHas) { return (New-Refusal 'skipped' 'nothing to promote (master already contains the green commit and the newest release tag has it)') }
+    $c.ReleaseOnly = $true
 }
 
 # ---- Work tree ----------------------------------------------------------------------------------------------------------------
@@ -362,6 +411,7 @@ function Clear-WorkTree {
     $top = Invoke-RcGit $wt @('rev-parse', '--show-toplevel')
     $t = [string]($top.Lines | Select-Object -First 1)
     if ($top.Code -ne 0 -or -not $t -or -not (Test-SamePath $t $wt) -or (Test-SamePath $t $script:Cfg.RepoFolder)) { return "refusing to clean $wt (it is not a work tree of its own)" }
+    if ((Invoke-RcGit $wt @('symbolic-ref', '-q', 'HEAD')).Code -eq 0) { return "refusing to clean $wt (it is on a branch)" }
     foreach ($a in @('reset', '--hard', '-q'), @('clean', '-fdxq'), @('checkout', '--detach', '-q')) {
         if ((Invoke-RcGit $wt $a).Code -ne 0) { return "could not clean the work tree ($($a[0]) failed)" }
     }
@@ -417,13 +467,15 @@ function Invoke-SlotAct {
     $fail = { param($why) New-SlotResult 'failed' $why '' $prev $g }
     $wt = $script:Cfg.WorkTree
     try {
-        $dev = Get-RefSha 'origin/develop'
-        if (-not $dev) { return (& $fail 'origin/develop cannot be read') }
-        $why = Update-WorkTree $dev
-        if ($why) { return (& $fail $why) }
-        $run = Invoke-RcScript $wt (Join-Path $wt 'tools\release\Promote-Develop.ps1') @('-UpTo', $g, '-CiWaitMinutes', '60', '-Repo', $script:Cfg.Repo)
-        Save-LastOutput 'promote' $run
-        if ($run.Code -ne 0) { return (& $fail (Get-RunFailure 'promote' $run)) }
+        if (-not $Ctx.ReleaseOnly) {
+            $dev = Get-RefSha 'origin/develop'
+            if (-not $dev) { return (& $fail 'origin/develop cannot be read') }
+            $why = Update-WorkTree $dev
+            if ($why) { return (& $fail $why) }
+            $run = Invoke-RcScript $wt (Join-Path $wt 'tools\release\Promote-Develop.ps1') @('-UpTo', $g, '-CiWaitMinutes', '60', '-Repo', $script:Cfg.Repo)
+            Save-LastOutput 'promote' $run
+            if ($run.Code -ne 0) { return (& $fail (Get-RunFailure 'promote' $run)) }
+        }
 
         if ((Invoke-RcGit $script:Cfg.RepoFolder @('fetch', 'origin', 'master')).Code -ne 0) { return (& $fail 'git fetch origin master failed') }
         if ((Test-GitAncestor $g 'origin/master') -ne $true) { return (& $fail "promote finished but master does not contain $(Get-ShortSha $g)") }
@@ -431,7 +483,7 @@ function Invoke-SlotAct {
         if (-not $master) { return (& $fail 'origin/master cannot be read') }
         $why = Update-WorkTree $master
         if ($why) { return (& $fail $why) }
-        $run = Invoke-RcScript $wt (Join-Path $wt 'tools\release\Release.ps1') @('-Channel', 'rc', '-Yes', '-Requester', $script:Cfg.Requester, '-WaitMinutes', '30', '-Repo', $script:Cfg.Repo)
+        $run = Invoke-RcScript $wt (Join-Path $wt 'tools\release\Release.ps1') @('-Channel', 'rc', '-Yes', '-Requester', $script:Cfg.Requester, '-WaitMinutes', '30', '-CiWaitMinutes', '60', '-Repo', $script:Cfg.Repo)
         Save-LastOutput 'release' $run
         if ($run.Code -ne 0) { return (& $fail (Get-RunFailure 'release' $run)) }
         return (Read-ReleaseResult -Previous $prev -GSha $g -Wt $wt)
@@ -450,9 +502,13 @@ function Read-ReleaseResult {
     $rl = Invoke-RcGh @('release', 'list', '-R', $script:Cfg.Repo, '--limit', '30', '--json', 'tagName,isDraft')
     $new = $null
     if ($rl.Code -eq 0) {
-        try { $new = Get-LastRcTag @(($rl.Lines -join "`n" | ConvertFrom-Json -ErrorAction Stop) | Where-Object { -not $_.isDraft } | ForEach-Object { [string]$_.tagName }) } catch { $new = $null }
+        try { $new = Get-LastReleaseTag @(($rl.Lines -join "`n" | ConvertFrom-Json -ErrorAction Stop) | Where-Object { -not $_.isDraft } | ForEach-Object { [string]$_.tagName }) } catch { $new = $null }
     }
-    if (-not $new -or -not (Test-RcNewer $new $Previous)) { return (New-SlotResult 'failed' 'no new tag' '' $Previous $GSha) }
+    if (-not $new -or -not (Test-RcTag $new) -or -not (Test-RcNewer $new $Previous)) { return (New-SlotResult 'failed' 'no new tag' '' $Previous $GSha) }
+    # Release.ps1 may have resumed an older unfinished version: the new rc must carry G, else this slot failed and the next one retries.
+    if ((Invoke-RcGit $script:Cfg.RepoFolder @('fetch', '--tags', '--force', 'origin')).Code -ne 0) { return (New-SlotResult 'failed' 'git fetch origin failed' '' $Previous $GSha) }
+    $has = Test-GitAncestor $GSha $new
+    if ($has -ne $true) { return (New-SlotResult 'failed' "release finished $new which does not contain $(Get-ShortSha $GSha)" '' $Previous $GSha) }
     $log = Invoke-RcGit $script:Cfg.RepoFolder @('log', '--first-parent', '--pretty=%s', "$Previous..$GSha")
     $carries = if ($log.Code -eq 0) { @(Get-Carries $log.Lines) } else { @() }
     return (New-SlotResult 'released' "released $new$note" $new $Previous $GSha $carries)
@@ -502,13 +558,16 @@ function Invoke-SlotRun {
     if (-not $Steps) { $Steps = Get-SlotSteps }
     if (-not $Act) { $Act = { param($c) Invoke-SlotAct $c } }
     if (-not $AfterRelease) { $AfterRelease = { Invoke-PostReleaseHousekeeping } }
-    $ctx = @{ Tag = ''; GSha = ''; Lock = $null }
+    $ctx = @{ Tag = ''; GSha = ''; Lock = $null; ReleaseOnly = $false }
     try {
         try {
             $d = Get-SlotDecision -Steps $Steps -Ctx $ctx
             if ($d.Go -and $Cfg.DryRun) {
-                $res = New-SlotResult 'go' "would promote up to $(Get-ShortSha $ctx.GSha) and release an rc (last rc $($ctx.Tag))" '' $ctx.Tag $ctx.GSha
+                $what = if ($ctx.ReleaseOnly) { "release an rc only (master already has $(Get-ShortSha $ctx.GSha), the newest tag $($ctx.Tag) does not)" } else { "promote up to $(Get-ShortSha $ctx.GSha) and release an rc (last tag $($ctx.Tag))" }
+                $res = New-SlotResult 'go' "would $what" '' $ctx.Tag $ctx.GSha
             } elseif ($d.Go) {
+                # A killed run leaves this trace; the final status overwrites it.
+                Write-SlotStatus -Dir $Cfg.StateDir -Result (New-SlotResult 'running' "started $(Get-UtcStamp)" '' $ctx.Tag $ctx.GSha)
                 $res = @(& $Act $ctx) | Select-Object -Last 1
             } else {
                 $res = New-SlotResult $d.Outcome $d.Reason '' $ctx.Tag $ctx.GSha
@@ -529,8 +588,11 @@ function Invoke-SlotRun {
 # Same refusals as Housekeeping -Install (the Claude desktop app sandbox redirects %LOCALAPPDATA% writes). Housekeeping.ps1 is dot-sourced
 # INSIDE this function: it has parameters of its own (Install, DryRun, Repo ...) that must not overwrite ours, and its main block does not
 # run when dot-sourced. Its wording is adjusted to this script.
+function Test-TempClaudePath { param([string]$Path) return ([string]$Path -match '(?i)\\Temp\\claude\\') }
+
 function Get-RcInstallRefusal {
     param([string]$Self, [string]$LocalAppData, [object]$PackageName = $null, [scriptblock]$Probe = $null)
+    if (Test-TempClaudePath $Self) { return 'Run -Install from the repository checkout, not from a Temp\claude folder: the housekeeping cleanup prunes it.' }
     $hk = Join-Path $PSScriptRoot '..\maint\Housekeeping.ps1'
     if (-not (Test-Path -LiteralPath $hk -PathType Leaf)) { return 'tools/maint/Housekeeping.ps1 was not found next to this script, so the install checks cannot run. Run -Install from the repository checkout.' }
     . $hk
@@ -553,6 +615,7 @@ function Resolve-RepoFolder {
 
 function Register-RcSlotTask {
     param([string]$RepoFolder, [string]$StateDir)
+    if (Test-TempClaudePath $PSCommandPath) { throw 'Run -Install from the repository checkout, not from a Temp\claude folder: the housekeeping cleanup prunes it.' }
     & git -C $RepoFolder rev-parse --git-dir 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "$RepoFolder is not a git checkout" }
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
@@ -564,7 +627,7 @@ function Register-RcSlotTask {
     $action = New-ScheduledTaskAction -Execute $pwsh -Argument $arg
     $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Hours 2) -RepetitionDuration (New-TimeSpan -Days 3650)
     # StartWhenAvailable: after sleep one catch-up slot runs, never two. Interactive logon: the user's gh and Proton Pass sessions are needed.
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 3) -MultipleInstances IgnoreNew
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 6) -MultipleInstances IgnoreNew
     $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
     Register-ScheduledTask -TaskName $script:RcTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
     Write-Host "registered '$($script:RcTask)' (every 2 hours, user level), script copied to $StateDir, repository $RepoFolder"
