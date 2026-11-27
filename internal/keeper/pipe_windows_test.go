@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+
+	"api-audit-explorer/internal/keeperwire"
 )
 
 func testPipeName(t *testing.T) string {
@@ -54,7 +56,7 @@ func TestRealPipe(t *testing.T) {
 	}
 
 	// Read the pipe's real owner before anything connects (the listener's pending instance is the one handle).
-	pipeOwnerSID, err := pipeOwner(l.(*pipeListener).pending)
+	pipeOwnerSID, err := keeperwire.PipeOwner(l.(*pipeListener).pending)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +131,7 @@ func TestRealPipe(t *testing.T) {
 	} else {
 		t.Logf("skipped: the pipe is owned by %s, which the production check trusts (the test process is an elevated administrator)", pipeOwnerSID)
 	}
-	if err := NewClient(PipeDialer{Name: name, RequireKeeperOwner: true, extraOwners: []string{u.User.Sid.String()}}).Ping(context.Background()); err != nil {
+	if err := NewClient(PipeDialer{Name: name, RequireKeeperOwner: true, ExtraOwners: []string{u.User.Sid.String()}}).Ping(context.Background()); err != nil {
 		t.Fatalf("owner check trusting this account: %v", err)
 	}
 	if p := NewPipeDialer(name); !p.RequireSession0 || !p.RequireKeeperOwner {

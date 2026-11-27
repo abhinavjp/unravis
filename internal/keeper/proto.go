@@ -7,6 +7,11 @@
 // the result. There is no operation that returns a password or a read key, in any form. A secret travels the other way only: from the
 // person who types it, through their Unravis, into the keeper, once.
 //
+// The one narrow exception is the Blackbox SQL set-up hand-over (sql.handover.*, RV-SEC-2): so that a saved SQL login never has to be
+// written to a file for the elevated set-up helper, the keeper holds it in memory under a random one-time id for about five minutes
+// and gives it, once, to a caller in the same Windows session as the person who asked for the set-up. The id travels from the person's
+// Unravis to the helper on its command line; the login itself travels only over the keeper pipe, straight into the helper.
+//
 // Wire format (protocol version 1):
 //
 //   - One request per connection. Every frame is a 4-byte big-endian length followed by that many bytes, at most MaxFrame.
@@ -24,43 +29,10 @@
 package keeper
 
 import (
-	"encoding/binary"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
+
+	"api-audit-explorer/internal/keeperwire"
 )
-
-// ProtocolVersion is the request version this keeper speaks.
-const ProtocolVersion = 1
-
-// MaxFrame bounds one frame (request, response or chunk).
-const MaxFrame = 1 << 20
-
-// Request is what a client sends.
-type Request struct {
-	V    int             `json:"v"`
-	Op   string          `json:"op"`
-	Args json.RawMessage `json:"args,omitempty"`
-}
-
-// Response is what the keeper answers.
-type Response struct {
-	OK     bool            `json:"ok"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *WireError      `json:"error,omitempty"`
-	Stream bool            `json:"stream,omitempty"`
-}
-
-// WireError is a refusal or a failure. Code is one of the Code* constants; Message is safe to show; Detail carries the structured part
-// (a driver's connect classification, the existing entry of a duplicate, a Blackbox read kind).
-type WireError struct {
-	Code    string          `json:"code"`
-	Message string          `json:"message"`
-	Detail  json.RawMessage `json:"detail,omitempty"`
-}
-
-func (e *WireError) Error() string { return e.Message }
 
 // Error codes.
 const (
@@ -91,16 +63,21 @@ const (
 	OpPing   = "ping"
 	OpStatus = "status"
 
-	OpSQLList      = "sql.list"
-	OpSQLSave      = "sql.save"
-	OpSQLDelete    = "sql.delete"
-	OpSQLDescribe  = "sql.describe"
-	OpSQLTest      = "sql.test"
-	OpSQLAccess    = "sql.access"
-	OpSQLLoginFile = "sql.loginfile"
-	OpSQLHealth    = "sql.health"
-	OpSQLLane      = "sql.lane"
-	OpSQLImport    = "sql.import"
+	OpSQLList     = "sql.list"
+	OpSQLSave     = "sql.save"
+	OpSQLDelete   = "sql.delete"
+	OpSQLDescribe = "sql.describe"
+	OpSQLTest     = "sql.test"
+	OpSQLAccess   = "sql.access"
+	OpSQLHealth   = "sql.health"
+	OpSQLLane     = "sql.lane"
+	OpSQLImport   = "sql.import"
+
+	// The Blackbox SQL set-up hand-over: mint (the person's Unravis), take (the elevated set-up helper), revoke (the person's Unravis,
+	// when the set-up ends).
+	OpSQLHandover       = "sql.handover"
+	OpSQLHandoverTake   = keeperwire.OpSQLHandoverTake
+	OpSQLHandoverRevoke = "sql.handover.revoke"
 
 	OpMongoList     = "mongo.list"
 	OpMongoDescribe = "mongo.describe"
@@ -152,44 +129,24 @@ const (
 	chunkEnd  = 'Z'
 )
 
-var errFrameTooLarge = errors.New("keeper frame too large")
+// The wire format lives in keeperwire so the elevated Blackbox setup helper can ask for its hand-over without linking the keeper.
+const (
+	ProtocolVersion = keeperwire.ProtocolVersion
+	MaxFrame        = keeperwire.MaxFrame
+)
+
+type (
+	Request   = keeperwire.Request
+	Response  = keeperwire.Response
+	WireError = keeperwire.WireError
+)
+
+var errFrameTooLarge = keeperwire.ErrFrameTooLarge
 
 // WriteFrame writes one length-prefixed frame.
-func WriteFrame(w io.Writer, payload []byte) error {
-	if len(payload) > MaxFrame {
-		return errFrameTooLarge
-	}
-	buf := make([]byte, 4+len(payload))
-	binary.BigEndian.PutUint32(buf, uint32(len(payload)))
-	copy(buf[4:], payload)
-	_, err := w.Write(buf)
-	return err
-}
+func WriteFrame(w io.Writer, payload []byte) error { return keeperwire.WriteFrame(w, payload) }
 
 // ReadFrame reads one length-prefixed frame.
-func ReadFrame(r io.Reader) ([]byte, error) {
-	var head [4]byte
-	if _, err := io.ReadFull(r, head[:]); err != nil {
-		return nil, err
-	}
-	n := binary.BigEndian.Uint32(head[:])
-	if n > MaxFrame {
-		return nil, errFrameTooLarge
-	}
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		if errors.Is(err, io.EOF) {
-			err = io.ErrUnexpectedEOF
-		}
-		return nil, err
-	}
-	return buf, nil
-}
+func ReadFrame(r io.Reader) ([]byte, error) { return keeperwire.ReadFrame(r) }
 
-func writeJSONFrame(w io.Writer, v any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Errorf("keeper: encode frame: %w", err)
-	}
-	return WriteFrame(w, b)
-}
+func writeJSONFrame(w io.Writer, v any) error { return keeperwire.WriteJSONFrame(w, v) }

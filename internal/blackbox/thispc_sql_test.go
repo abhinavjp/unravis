@@ -66,6 +66,38 @@ func TestSetupSQLWindowsSigninAndDeclinedPromptRemoveTheFile(t *testing.T) {
 	}
 }
 
+// A login the key keeper holds goes by a one-time id: the command line holds the id and the pipe name and no file is touched.
+func TestSetupSQLHandoverArgsCarryOnlyTheIdAndThePipe(t *testing.T) {
+	f := &fakeElev{answer: `{"ok":true,"installed":true,"loginSaved":true,"started":true}`}
+	tmp := t.TempDir()
+	t.Setenv("TMP", tmp)
+	t.Setenv("TEMP", tmp)
+	out, err := sqlPC(f).SetupSQLHandover(t.Context(), "0123456789abcdef0123456789abcdef", `\\.\pipe\UnravisKeeper`, true)
+	if err != nil || !out.Installed || !out.LoginSaved || !out.Started {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if len(f.calls) != 1 || !f.calls[0].elevated || f.calls[0].args[0] != "setup-sql" {
+		t.Fatalf("calls %+v", f.calls)
+	}
+	line := strings.Join(f.calls[0].args, " ")
+	for _, want := range []string{"--login-handover 0123456789abcdef0123456789abcdef", `--keeper-pipe \\.\pipe\UnravisKeeper`, "--enable"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("missing %q in %s", want, line)
+		}
+	}
+	for _, bad := range []string{"--login-file", "--login-sha256", "--windows-signin"} {
+		if strings.Contains(line, bad) {
+			t.Errorf("a file or Windows-sign-in flag on a hand-over: %s", line)
+		}
+	}
+	if ents, _ := os.ReadDir(tmp); len(ents) != 0 {
+		t.Errorf("the set-up left %d entries in the temp folder", len(ents))
+	}
+	if _, err := sqlPC(f).SetupSQLHandover(t.Context(), "", "x", false); err == nil || len(f.calls) != 1 {
+		t.Errorf("an empty hand-over id started the helper: %v", err)
+	}
+}
+
 func TestClearSQLLoginAndTheGuard(t *testing.T) {
 	f := &fakeElev{answer: `{"ok":true}`}
 	if err := sqlPC(f).ClearSQLLogin(t.Context()); err != nil || len(f.calls) != 1 || f.calls[0].args[0] != "clear-sql-login" || !f.calls[0].elevated {
