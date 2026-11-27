@@ -124,35 +124,38 @@ func TestHousekeepNeverRemovesCurrentEvenOverSize(t *testing.T) {
 
 func TestHousekeepFreeSpaceRemovesUntilEnough(t *testing.T) {
 	from := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-	s, dir, _ := filled(t, 6, from, 1000)
-	// total 10000, other 3500, recordings 6000: free is 5%.
-	disk := &fakeDisk{dir: dir, total: 10000, other: 3500}
-	now := from.Add(5 * time.Hour)
-	res, err := s.Housekeep(Limits{MinFreePercent: 20}, disk, now)
+	// 30 hourly files: the newest 24 are the keep floor, so the six oldest may go.
+	s, dir, _ := filled(t, 30, from, 1000)
+	// total 40000, other 9000, recordings 30000: free is 2.5%.
+	disk := &fakeDisk{dir: dir, total: 40000, other: 9000}
+	now := from.Add(29 * time.Hour)
+	res, err := s.Housekeep(Limits{MinFreePercent: 10}, disk, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Needs free >= 2000: recordings must be <= 4500, so two files go.
-	if res.DiskLow || !res.DiskKnown || res.FreePercent < 20 {
+	// Needs free >= 4000: recordings must be <= 27000, so three files go.
+	if res.DiskLow || res.FloorHeld || !res.DiskKnown || res.FreePercent < 10 {
 		t.Fatalf("%+v", res)
 	}
-	if len(res.Removed) != 2 || res.Removed[0] != "bb-20261027-00.ndjson" {
+	if len(res.Removed) != 3 || res.Removed[0] != "bb-20261027-00.ndjson" {
 		t.Fatalf("removed %v", res.Removed)
 	}
 }
 
 func TestHousekeepDiskLowWhenNothingMoreMayGo(t *testing.T) {
+	// Only the file being written exists: nothing may go, and the floor was not
+	// what stopped it (the floor case is in housekeeping_floor_test.go).
 	from := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-	s, dir, _ := filled(t, 3, from, 1000)
+	s, dir, _ := filled(t, 1, from, 1000)
 	disk := &fakeDisk{dir: dir, total: 10000, other: 9000}
-	res, err := s.Housekeep(Limits{MinFreePercent: 10}, disk, from.Add(2*time.Hour))
+	res, err := s.Housekeep(Limits{MinFreePercent: 10}, disk, from)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.DiskLow {
+	if !res.DiskLow || res.FloorHeld {
 		t.Fatalf("%+v", res)
 	}
-	if len(res.Removed) != 2 || s.CurrentFile() == "" {
+	if len(res.Removed) != 0 || s.CurrentFile() == "" {
 		t.Fatalf("removed %v", res.Removed)
 	}
 	if _, err := os.Stat(filepath.Join(dir, s.CurrentFile())); err != nil {
