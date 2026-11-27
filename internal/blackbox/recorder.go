@@ -132,6 +132,7 @@ type Recorder struct {
 	resumedFlag  bool // next sample follows a disk-low pause
 	forceHK      bool
 	lastSkipMsg  string
+	floorHeldMsg bool // the keep-floor event was raised and the floor still holds
 	clockFwd     bool // the wall clock jumped forward since the last housekeeping pass
 	lastFreeMem  time.Time
 	self         selfTracker // this run's own cost; tick goroutine only
@@ -569,6 +570,17 @@ func (r *Recorder) housekeep(now time.Time) {
 		}
 	} else {
 		r.lastSkipMsg = ""
+	}
+	// The keep floor stopped a removal the free-space rule wanted: say so once,
+	// not every minute, and again only after the floor stopped holding.
+	switch {
+	case res.FloorHeld && !r.floorHeldMsg:
+		r.floorHeldMsg = true
+		r.event(EventHousekeeping, FloorHeldMessage)
+	case !res.FloorHeld && err == nil && !res.Incomplete() && res.DiskKnown:
+		// Only a fresh disk reading says the floor stopped holding; a failed read
+		// says nothing, so it must not re-arm the event.
+		r.floorHeldMsg = false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
