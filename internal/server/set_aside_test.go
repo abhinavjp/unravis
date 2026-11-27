@@ -68,7 +68,7 @@ func TestSetAsideRouteIsRefusedForAHealthyFile(t *testing.T) {
 	if _, err := service.Remember("prod", audit.ConnectionInput{URI: "mongodb://db.example", TLSMode: "system"}, "audit", false); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(path)
+	before, err := os.ReadFile(path) //nolint:gosec // test reads its own temp file
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestSetAsideRouteIsRefusedForAHealthyFile(t *testing.T) {
 	if res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), "saved-file-not-damaged") {
 		t.Fatalf("healthy file: %d %s", res.Code, res.Body)
 	}
-	after, err := os.ReadFile(path)
+	after, err := os.ReadFile(path) //nolint:gosec // test reads its own temp file
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("a refused set-aside touched the healthy file: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSetAsideRouteRefusesAFourthCopyWithPlainWords(t *testing.T) {
 	if !strings.Contains(res.Body.String(), folder) || strings.Contains(res.Body.String(), "administrator") {
 		t.Fatalf("the full message must name %s and not ask for an administrator: %s", folder, res.Body)
 	}
-	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, damaged) {
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, damaged) { //nolint:gosec // test reads its own temp file
 		t.Fatalf("the damaged file moved: %v", err)
 	}
 }
@@ -174,7 +174,7 @@ func TestSetAsideRouteReportsAFailedMoveAsLeftAsItWas(t *testing.T) {
 	if res.Code != http.StatusServiceUnavailable || !strings.Contains(res.Body.String(), "left as it was") {
 		t.Fatalf("a failed move = %d %s", res.Code, res.Body)
 	}
-	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, damaged) {
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, damaged) { //nolint:gosec // test reads its own temp file
 		t.Fatalf("the unreadable file changed: %v", err)
 	}
 }

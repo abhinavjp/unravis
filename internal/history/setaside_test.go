@@ -91,7 +91,7 @@ func TestSetAsideRefusesAHealthyOrMissingFile(t *testing.T) {
 	if _, err := service.SetAside(); !errors.Is(err, ErrNotDamaged) {
 		t.Fatalf("healthy file: %v, want ErrNotDamaged", err)
 	}
-	after, err := os.ReadFile(path)
+	after, err := os.ReadFile(path) //nolint:gosec // test reads its own temp file
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("a refused set-aside changed the healthy file: %v", err)
 	}
@@ -134,11 +134,11 @@ func TestSetAsideRefusesAFourthCopyAndRemovesNothing(t *testing.T) {
 	if _, err := service.SetAside(); !errors.Is(err, ErrSetAsideFull) {
 		t.Fatalf("fourth set-aside: %v, want ErrSetAsideFull", err)
 	}
-	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, fourth) {
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, fourth) { //nolint:gosec // test reads its own temp file
 		t.Fatalf("the fourth damaged file was moved or changed: %v", err)
 	}
 	for name, want := range copies {
-		if got, err := os.ReadFile(filepath.Join(filepath.Dir(path), name)); err != nil || !bytes.Equal(got, want) {
+		if got, err := os.ReadFile(filepath.Join(filepath.Dir(path), name)); err != nil || !bytes.Equal(got, want) { //nolint:gosec // test reads its own temp file
 			t.Fatalf("older copy %q was removed or changed: %v", name, err)
 		}
 	}

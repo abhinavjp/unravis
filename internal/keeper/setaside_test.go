@@ -28,14 +28,14 @@ func TestMongoSetAsideThroughTheKeeper(t *testing.T) {
 	if _, err := m.Remember("Audit prod", mongoLink, "events", false); err != nil {
 		t.Fatal(err)
 	}
-	healthy, err := os.ReadFile(path)
+	healthy, err := os.ReadFile(path) //nolint:gosec // test reads its own temp file
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.SetAside(); !errors.Is(err, history.ErrNotDamaged) {
 		t.Fatalf("a healthy file: %v, want ErrNotDamaged", err)
 	}
-	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, healthy) {
+	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, healthy) { //nolint:gosec // test reads its own temp file
 		t.Fatalf("a refused set-aside changed the healthy file: %v", err)
 	}
 
@@ -50,7 +50,7 @@ func TestMongoSetAsideThroughTheKeeper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := os.ReadFile(filepath.Join(filepath.Dir(path), name)); err != nil || !bytes.Equal(got, damaged) {
+	if got, err := os.ReadFile(filepath.Join(filepath.Dir(path), name)); err != nil || !bytes.Equal(got, damaged) { //nolint:gosec // test reads its own temp file
 		t.Fatalf("the kept copy %q differs from the damaged file: %v", name, err)
 	}
 	if items, err := m.List(); err != nil || len(items) != 0 {
@@ -72,7 +72,7 @@ func TestMongoSetAsideThroughTheKeeper(t *testing.T) {
 	if _, err := m.SetAside(); !errors.Is(err, history.ErrSetAsideFull) {
 		t.Fatalf("a fourth set-aside: %v, want ErrSetAsideFull", err)
 	}
-	if got, err := os.ReadFile(path); err != nil || string(got) != "the fourth" {
+	if got, err := os.ReadFile(path); err != nil || string(got) != "the fourth" { //nolint:gosec // test reads its own temp file
 		t.Fatalf("the fourth damaged file was moved: %v", err)
 	}
 }
