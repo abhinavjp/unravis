@@ -257,6 +257,10 @@ func TestLookupMapsTheMergedImporterEvents(t *testing.T) {
 			resource.Metric{ID: resource.RedisMem, Unit: "bytes", Scale: 1}, true},
 		{"blackbox redis blocked", bb(metric("redis-info", "redis-a", tm, 3, "count", "metric", "blocked_clients")),
 			resource.Metric{ID: resource.RedisBlocked, Unit: "count", Scale: 1}, true},
+		{"blackbox process cpu", bb(metric("win-procsnap", "web-a", tm, 9, "percent-host", "metric", "cpu", "process", "w3wp", "pid", "1240")),
+			resource.Metric{ID: resource.ProcCPU, Unit: "percent-host", Scale: 1}, true},
+		{"blackbox process private", bb(metric("win-procsnap", "web-a", tm, 9, "bytes", "metric", "private-bytes", "process", "w3wp", "pid", "1240")),
+			resource.Metric{ID: resource.ProcPrivate, Unit: "bytes", Scale: 1}, true},
 		{"blackbox derived tcp figure is not mapped", bb(pdh("web-a", tm, "Blackbox TCP", "", "Retransmits/sec", 3, "")), resource.Metric{}, false},
 		{"sql counter", pdh("sql-a", tm, "SQLServer:Wait Statistics", "Average wait time (ms)", "Lock waits", 3, ""), resource.Metric{}, false},
 	}

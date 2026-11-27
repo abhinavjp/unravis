@@ -763,6 +763,8 @@ func TestBuildCaseKeepsTheBlackboxHostFigureNames(t *testing.T) {
 		}
 		ev = append(ev, caseEvent("blackbox-source", "counter", n, a))
 	}
+	ev = append(ev, caseEvent("blackbox-source", "metric", len(keep)+1, map[string]string{"metric": "working-set", "process": "w3wp", "pid": "1240"}),
+		caseEvent("blackbox-source", "metric", len(keep)+2, map[string]string{"metric": "cpu", "process": "AcmePayroll", "pid": "77"}))
 	// A disk letter or any other instance name is not one of the Blackbox's own.
 	ev = append(ev, caseEvent("blackbox-source", "counter", len(keep), map[string]string{"object": "PhysicalDisk", "counter": "Disk Reads/sec", "instance": "0 C:"}))
 	e, _ := mustBuildCase(t, CaseInput{Events: ev, Now: testNow, Key: caseKey(11)})
@@ -771,6 +773,12 @@ func TestBuildCaseKeepsTheBlackboxHostFigureNames(t *testing.T) {
 		if got["object"] != k[0] || got["counter"] != k[1] || got["instance"] != k[2] {
 			t.Errorf("%v exported as %v", k, got)
 		}
+	}
+	if got := eventByID(t, e, 11, caseEvID("blackbox-source", len(keep)+1)).Attrs; got["metric"] != "working-set" || got["process"] != "w3wp" || got["pid"] != "1240" {
+		t.Errorf("a process figure exported as %v", got)
+	}
+	if got := eventByID(t, e, 11, caseEvID("blackbox-source", len(keep)+2)).Attrs["process"]; strings.Contains(got, "Acme") {
+		t.Errorf("a process name = %q reached the export", got)
 	}
 	if got := eventByID(t, e, 11, caseEvID("blackbox-source", len(keep))).Attrs["instance"]; strings.Contains(got, "C:") || !strings.HasPrefix(got, "instance-") {
 		t.Errorf("a disk letter instance = %q, want a keyed label", got)
