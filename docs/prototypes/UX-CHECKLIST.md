@@ -17,7 +17,7 @@ Test it by looking at the screen with the explanations hidden: cover the title, 
 - [ ] "Is everything fine?" can be answered in a few seconds from the top of the screen.
 
 ## Plain words
-- [ ] Every label and status is a word a new person knows. If a technical term is needed, it is explained in place (a short line under it, not a tooltip only).
+- [ ] Every label and status is a word a new person knows. If a technical term is needed, its explanation sits behind a "?" next to it, not inline.
 - [ ] No internal names, abbreviations, ids or branch names in primary text. If shown, they are secondary and explained.
 - [ ] Button text says what will happen ("Retry failed step"), not just a verb ("Run").
 - [ ] Numbers carry their unit and meaning ("3 of 8 steps done", not "3/8").
@@ -33,3 +33,23 @@ Test it by looking at the screen with the explanations hidden: cover the title, 
 - [ ] Impeccable and AI Slop Detector were run and findings fixed.
 - [ ] Works at phone width; light and dark both readable.
 - [ ] Nothing in the prototype says it is a demo in a way that hides what the real screen would show.
+
+## Text budget (can I scan this in 5 seconds?)
+- [ ] First screen has at most 120 visible words (count them).
+- [ ] A stranger gets the main point from headings, numbers and icons alone in 5 seconds.
+- [ ] No label over 8 words; no sentence over 20 words.
+- [ ] Anything explainable by an icon, number, short chip or status colour plus shape is not a sentence.
+- [ ] Jargon help is behind a "?", not inline.
+- [ ] Detail (full logs, long reasons, step lists) is collapsed by default, one click away.
+- [ ] No text repeats what the layout already shows (counts shown twice, a banner that restates the cards).
+
+## Visual style (scans, does not read)
+- [ ] One clear focal point on the first screen.
+- [ ] At most 3 things compete for attention.
+- [ ] State uses icon shape plus colour, never colour alone.
+- [ ] Progress and order shown as bar or flow, not a paragraph.
+- [ ] Numbers or chips instead of sentences where possible.
+- [ ] Content is chunked into cards with space, not one long block.
+- [ ] Detail is collapsed by default.
+- [ ] Same pattern for the same thing everywhere.
+- [ ] Squint test: with the text blurred, the layout still shows what matters.

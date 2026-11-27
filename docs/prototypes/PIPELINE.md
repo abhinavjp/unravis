@@ -25,12 +25,15 @@ Cost rules: Sonnet everywhere, no Opus. One research pass. One reviewer per roun
 
 Search the web for 5 to 8 similar apps, screens or published redesigns for the same job. For a release manager or CI screen: Buildkite, GitHub Actions, GitLab, CircleCI, Vercel, Octopus, Azure DevOps, Argo CD, TeamCity. For other screens pick the closest products.
 
-The note has four short parts:
+The same pass also covers low-cognitive-load and ADHD-friendly design principles (see [Default visual style](#default-visual-style-adhd-friendly)). Do not run a second search for this.
+
+The note has five short parts:
 
 1. Goal and real data (from step 0).
 2. What similar screens do, with links. One line each.
 3. Patterns to copy, and why they fit our user.
 4. Patterns to avoid, and why.
+5. Visual style: one line saying how the prototype applies the ADHD-friendly defaults below.
 
 Keep the note under one page. It guides the build; it is not shown to the reviewer.
 
@@ -43,7 +46,7 @@ Research basis for this pipeline itself (why the steps look like this):
 
 ## Step 3: self-check
 
-Run [UX-CHECKLIST.md](UX-CHECKLIST.md) yourself. Fix everything it catches. The goldfish should spend its time on what you could not see.
+Run [UX-CHECKLIST.md](UX-CHECKLIST.md) yourself, including its "Text budget" and "Visual style" sections. Fix everything it catches. The goldfish should spend its time on what you could not see.
 
 ## Steps 4 and 6: the goldfish review
 
@@ -51,11 +54,42 @@ Use [GOLDFISH-REVIEW-PROMPT.md](GOLDFISH-REVIEW-PROMPT.md). Rules:
 
 - Spawn a separate agent (Agent tool, Sonnet, not a fork). Never review in your own context.
 - Give it ONLY the filled prompt: the file path, and the three user questions for this screen. Do not give it the research note, the brief, earlier reviews, the conversation, or an explanation of the product. Any extra sentence makes it less of a goldfish.
+- The reviewer judges balance, not only clarity: "does this scan visually, or read as a wall of text?" (the scan test in the prompt).
 - Reviewing is read-only and may run in the cloud or on the PC. Building and fixing run on the PC (project rule: delegate and hub-delegate).
 - Save the reviewer's reply unchanged as the review file. Do not edit findings you dislike. Reject them in the triage table instead.
 - Triage table at the bottom of each review file: finding id, fixed / rejected, one line what changed or why not.
 
 Why a new agent in round 2: a reviewer that already saw the screen remembers it. Round 2 checks that the fixes work for someone seeing it fresh.
+
+## Balance: clear, not wordy
+
+Reviews that only ask for clarity push authors to explain everything inline, and the screen turns into a wall of text (this happened on the Homestretch run page). Clear and short must hold together.
+
+- **One in, one out.** A fix may not add text without removing or shortening text elsewhere.
+- **Fix order for a confusing item:** (1) remove or rename it; (2) show it as an icon, a number or a short chip; (3) put the explanation behind a "?" (tooltip or small popover) or in a collapsed section; (4) add inline text only as the last resort.
+- **Jargon help always goes behind a "?"**, never inline.
+- **Text budget** (starting values; adjust with experience and record each change here):
+  - First screen at 1440x900: at most 120 visible words.
+  - A card or row label: at most 8 words.
+  - A banner: one sentence, at most 20 words.
+  - Every sentence over 20 words is cut or collapsed.
+- **Count after each fix round.** The author counts the visible words of the first screen and writes "words on first screen: N" in the triage of the review file. It must not grow versus the previous round without a reason.
+
+## Default visual style (ADHD-friendly)
+
+Every prototype uses this style unless nachi says otherwise (nachi, 27 Nov 2026: not a monotonous wall of text).
+
+- One focal point per screen.
+- At most 1 to 3 attention items at once.
+- Icons and shapes plus colour, never colour alone.
+- Progress bars, step flows and diagrams over sentences.
+- Numbers over words.
+- Chunked cards with generous space.
+- Progressive disclosure: detail collapsed, one click away.
+- Consistent patterns: the same thing looks and sits the same everywhere.
+- Calm: no monotone block of same-weight text.
+
+The reviewer judges "does this scan visually, or read as a wall of text?". The checklist section "Visual style" is the self-check.
 
 ## Honest limits
 

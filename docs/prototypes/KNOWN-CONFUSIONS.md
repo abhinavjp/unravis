@@ -6,4 +6,5 @@ If the confusion points at a missing check, also add it to [UX-CHECKLIST.md](UX-
 
 Format: `date | screen | what confused | what fixed it`
 
-(empty; add the first line when it happens)
+2026-11-27 | Homestretch run page after review rounds 1 and 2 | too much text: fixing clarity findings added inline explanations until the screen was a lot to read | text budget, "one in, one out", jargon help behind "?", scan test and balance check added to the pipeline, checklist and reviewer prompt.
+2026-11-27 | all prototypes | monotone wall of text, same weight everywhere | ADHD-friendly visual style is now the default (see PIPELINE.md and the checklist).
