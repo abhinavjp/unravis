@@ -287,7 +287,7 @@ try {
 
     # ---- RV-SUP-6: a failed gh must stop the run, a stuck run must not hang it (static + fake gh) -----------------------------------
     $relLines = $rel -split "\r?\n"
-    Assert-That 'gh: -RunWatchMinutes exists, default 90, forwarded to the worker (not in the bootstrap skip-list)' ($rel -match '\[ValidateRange\(1, 1440\)\] \[int\]\$RunWatchMinutes = 90' -and $rel -notmatch "-eq 'RunWatchMinutes'")
+    Assert-That 'gh: -RunWatchMinutes exists, default 120, forwarded to the worker (not in the bootstrap skip-list)' ($rel -match '\[ValidateRange\(1, 1440\)\] \[int\]\$RunWatchMinutes = 120' -and $rel -notmatch "-eq 'RunWatchMinutes'")
     Assert-That 'gh: no unbounded gh run watch is left in the code' (-not ($relLines | Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'gh run watch' }))
     Assert-That 'gh: a run that does not finish stops the release and says it is NOT published, with the run URL' ($rel -match '(?s)Wait-RunFinished \$id \$RunWatchMinutes.*?Fail "The release\.yml run[^\r\n]*\$runUrl[^\r\n]*NOT published')
     $unchecked = @()
@@ -329,6 +329,11 @@ try {
             Assert-That 'fake gh: Find-Run that can never ask GitHub stops the run' ((Get-ThrownMessage { Find-Run 'release.yml' 'v1' '' 1 }) -match 'gh could not list the release\.yml runs')
             $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = '[{"databaseId":7,"headSha":"abc","createdAt":"2026-11-27T10:00:00Z"}]' } }
             Assert-That 'fake gh: Find-Run returns the run of that commit' ((Find-Run 'release.yml' 'v1' 'abc' 5) -eq 7)
+            $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = '<html>bad gateway' } }
+            Assert-That 'fake gh: Find-Run that only ever gets non-JSON stops the run (after trying until the deadline)' ((Get-ThrownMessage { Find-Run 'release.yml' 'v1' '' 1 }) -match 'gh could not list the release\.yml runs')
+            $seq = @{ n = 0 }
+            $script:ghReply = { param($a) $seq.n++; if ($seq.n -eq 1) { [pscustomobject]@{ Code = 0; Out = '<html>bad gateway' } } else { [pscustomobject]@{ Code = 0; Out = '[{"databaseId":9,"headSha":"abc","createdAt":"2026-11-27T10:00:00Z"}]' } } }
+            Assert-That 'fake gh: Find-Run retries one non-JSON answer like a failed call' ((Find-Run 'release.yml' 'v1' 'abc' 20) -eq 9 -and $seq.n -eq 2)
 
             $state = @{ n = 0 }
             $script:ghReply = { param($a) [pscustomobject]@{ Code = 0; Out = '{"status":"completed","conclusion":"success"}' } }
@@ -352,6 +357,47 @@ try {
             $w = Wait-RunFinished 5 1 6>$null
             Assert-That 'fake gh: one failed read in between is tolerated' ($w.Done -and $w.Conclusion -eq 'success')
         } finally { $script:RunPollSeconds = $oldPoll; $script:RunUnreadableMinutes = $oldBad }
+    }
+    Assert-That 'gh: the verify run lookup does not throw on an answer that is not JSON (it is retried, then the withdraw path says so)' ($rel -match '(?s)\$vtext = .*?try \{ \$id = \(\$vtext \| ConvertFrom-Json[^\r\n]*\} catch \{ \$id = \$null \}')
+
+    & {
+        # Fail and the tag-push cleanup, run for real against a fake git: exit 1 becomes a throw, state and audit are recorded.
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Release.ps1'), [ref]$null, [ref]$null)
+        $want = 'Fail', 'Get-LastDone', 'Stop-AfterFailedTagPush'
+        $defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)
+        Assert-That 'tag/fail: Fail, Get-LastDone and Stop-AfterFailedTagPush are found in Release.ps1' ($defs.Count -eq 3)
+        $text = (($defs | ForEach-Object { $_.Extent.Text }) -join "`n") -replace '\bexit 1\b', "throw 'EXIT1'"
+        . ([scriptblock]::Create($text))
+        $order = 'Preflight', 'Tag', 'Wait', 'Sign', 'Publish', 'Feed', 'Verify'
+        $data = 'd'; $Version = '0.1.0-rc.70'; $audit = 'a'; $CheckOnly = $false
+        function Protect-ReasonText([string]$Text) { return $Text }
+        function Set-ReleaseState($d, $v, $done, $status, $reason, $extra) { $script:states.Add([pscustomobject]@{ Done = $done; Status = $status; Reason = $reason }) }
+        function Write-AuditEntry($path, $entry) { $script:audits.Add("$($entry.event)") }
+        function git {
+            $script:gitLog.Add("$args"); $global:LASTEXITCODE = 0
+            if ($args[0] -eq 'ls-remote') { $global:LASTEXITCODE = $script:lsCode; return $script:lsOut }
+            if ($args[0] -eq 'tag' -and $args[1] -eq '-d') { $script:tags.Remove($args[2]) | Out-Null }
+        }
+        $oldW = $script:withdrawOnly; $oldO = $script:ownsVersion; $oldS = $script:stage; $oldE = $script:extra
+        try {
+            $script:ownsVersion = $true; $script:extra = @{}; $script:stage = 'Tag'; $script:withdrawOnly = $false
+            foreach ($case in @(
+                    @{ Name = 'the push failed and GitHub has no such tag'; Code = 0; Out = ''; TagFailed = $true },
+                    @{ Name = 'the push failed and GitHub could not be asked'; Code = 128; Out = ''; TagFailed = $false },
+                    @{ Name = 'the push landed after all'; Code = 0; Out = 'abc123 refs/tags/v0.1.0-rc.70'; TagFailed = $false })) {
+                $script:states = [System.Collections.Generic.List[object]]::new(); $script:audits = [System.Collections.Generic.List[string]]::new(); $script:gitLog = [System.Collections.Generic.List[string]]::new()
+                $script:tags = @{ 'v0.1.0-rc.70' = 1 }; $script:lsCode = $case.Code; $script:lsOut = $case.Out
+                $m = Get-ThrownMessage { Stop-AfterFailedTagPush 'v0.1.0-rc.70' ('c' * 40) 'git push tag failed: rejected' } 6>$null
+                Assert-That "tag push: $($case.Name): the local tag is removed and the run stops with the push error" ($m -eq 'EXIT1' -and -not $script:tags.ContainsKey('v0.1.0-rc.70') -and $script:states.Count -eq 1 -and $script:states[0].Reason -match 'git push tag failed')
+                Assert-That "tag push: $($case.Name): 'tag-failed' is $(if ($case.TagFailed) { 'written' } else { 'not written' })" (($script:audits -contains 'tag-failed') -eq $case.TagFailed)
+            }
+            $script:states = [System.Collections.Generic.List[object]]::new(); $script:withdrawOnly = $true; $script:stage = 'Verify'
+            $m = Get-ThrownMessage { Fail 'gh could not list the releases' } 6>$null
+            Assert-That 'fail: a stop during a withdraw-only run keeps withdraw-pending (the release is never verified again)' ($m -eq 'EXIT1' -and $script:states[0].Status -eq 'withdraw-pending' -and $script:states[0].Done -eq 'Feed')
+            $script:withdrawOnly = $false
+            $m = Get-ThrownMessage { Fail 'gh could not list the releases' } 6>$null
+            Assert-That 'fail: an ordinary stop is still stopped' ($script:states[1].Status -eq 'stopped')
+        } finally { $script:withdrawOnly = $oldW; $script:ownsVersion = $oldO; $script:stage = $oldS; $script:extra = $oldE }
     }
 
     # ---- release train: the develop side of a promotion merge (real git, throw-away repo, no network) ----------------------------

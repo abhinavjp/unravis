@@ -42,7 +42,7 @@
 .PARAMETER LastGreen    Release the newest master commit whose CI is green now, instead of waiting for the head's CI.
 .PARAMETER Again        Release even though the newest tag of this channel already holds this commit and finished.
 .PARAMETER CiWaitMinutes  How long to wait for CI on the master head before giving up (default 45).
-.PARAMETER RunWatchMinutes  How long to wait for one GitHub Actions run (the release build, the verify run) before giving up (default 90, 1 to 1440). A run still going then is NOT treated as good: the release stays unpublished and the same command can be run again.
+.PARAMETER RunWatchMinutes  How long to wait for one GitHub Actions run (the release build, the verify run) before giving up (default 120, 1 to 1440; the build, smoke test and draft take up to 90 minutes in a row, plus queue time). A run still going then is NOT treated as good: the release stays unpublished and the same command can be run again.
 .PARAMETER Status    Print where the release machinery is (lock, state, last audit entries) and stop. -Json for a machine-readable form.
 .PARAMETER Pinned    (internal) The commit this run releases. Set only by the bootstrap; do not pass it by hand.
 .PARAMETER LockId    (internal) The release-lock record this run belongs to. Set only by the bootstrap.
@@ -66,7 +66,7 @@ param(
     [switch]$LastGreen,
     [switch]$Again,
     [int]$CiWaitMinutes = 45,
-    [ValidateRange(1, 1440)] [int]$RunWatchMinutes = 90,
+    [ValidateRange(1, 1440)] [int]$RunWatchMinutes = 120,
     [switch]$Status,
     [switch]$Json,
     [string]$Pinned,
@@ -326,6 +326,8 @@ $script:addedKeys = @()
 $script:checkedHead = $null
 function Done([string]$name) { if (-not $CheckOnly) { Set-ReleaseState $data $Version $name 'running' '' $script:extra } }
 function Fail([string]$msg, [string]$status = 'stopped') {
+    # A withdraw-only run (the last verify did not pass) must never leave 'withdraw-pending': any other status would let a later run verify that release again.
+    if ($script:withdrawOnly -and $status -eq 'stopped') { $status = 'withdraw-pending' }
     Write-Host "`nSTOPPED at $script:stage : $msg" -ForegroundColor Red
     if ($script:ownsVersion -and -not $CheckOnly) {
         # The reason can be the output of a failed command (Run throws it whole): it goes to state.json and audit.jsonl, which the Releases app shows.
@@ -335,6 +337,16 @@ function Fail([string]$msg, [string]$status = 'stopped') {
         if ($status -ne 'withdrawn') { Write-Host "Fix it, then run the same command again: it continues at $script:stage by itself." -ForegroundColor Yellow }
     }
     exit 1
+}
+# The tag push threw. The local tag always goes: a stale one on this commit would block every later run once master has moved on.
+# If the push did land, the next run fetches the tag back and the 'tagging' line (written before the push) still vouches for it.
+# 'tag-failed' is only written when GitHub itself answered "no such tag" (if it could not be asked, nobody knows).
+function Stop-AfterFailedTagPush([string]$tag, [string]$head, [string]$pushError) {
+    $lrAfter = git ls-remote --tags origin "refs/tags/$tag"
+    $asked = ($LASTEXITCODE -eq 0)
+    git tag -d $tag 2>&1 | Out-Null
+    if ($asked -and -not $lrAfter) { Write-AuditEntry $audit @{ event = 'tag-failed'; version = $Version; commit = $head } }
+    Fail $pushError
 }
 function Get-LastDone { $i = $order.IndexOf($script:stage); if ($i -le 0) { return '' } else { return $order[$i - 1] } }
 function Run([string]$what, [scriptblock]$cmd) { $out = & $cmd 2>&1; if ($LASTEXITCODE -ne 0) { throw "$what failed: $($out | Out-String)" }; $out }
@@ -361,9 +373,12 @@ function Find-Run([string]$workflow, [string]$branchOrTag, [string]$sha, [int]$t
     $deadline = (Get-Date).AddSeconds($timeoutSec); $k = 0; $ghFailed = $false
     while ((Get-Date) -lt $deadline) {
         $out = & gh run list --repo $Repo --workflow $workflow --branch $branchOrTag --limit 10 --json databaseId,headSha,createdAt
-        $ghFailed = ($LASTEXITCODE -ne 0)   # a blip is retried until the deadline; only a last failure stops the run
+        $ghFailed = ($LASTEXITCODE -ne 0)   # a blip (failed call or an answer that is not JSON) is retried until the deadline; only a last failure stops the run
         if (-not $ghFailed) {
-            $runs = ConvertFrom-GhLines @($out | ForEach-Object { "$_" }) "list the $workflow runs"
+            $runs = @(); $text = (@($out | ForEach-Object { "$_" }) -join "`n").Trim()
+            if ($text) { try { $runs = @($text | ConvertFrom-Json) } catch { $ghFailed = $true } }
+        }
+        if (-not $ghFailed) {
             $hit = $runs | Where-Object { -not $sha -or $_.headSha -eq $sha } | Sort-Object createdAt -Descending | Select-Object -First 1
             if ($hit) { return $hit.databaseId }
         }
@@ -676,13 +691,7 @@ try {
             try {
                 if (-not $localTag) { Run 'git tag' { git -c tag.gpgSign=false tag $tag $head } | Out-Null }
                 Run 'git push tag' { git push origin $tag } | Out-Null
-            } catch {
-                # Not on GitHub: drop the local tag so the next run starts clean from preflight.
-                # Only when GitHub itself answered "no such tag": if it could not be asked, the push may have gone through, and the local tag stays.
-                $lrAfter = git ls-remote --tags origin "refs/tags/$tag"
-                if ($LASTEXITCODE -eq 0 -and -not $lrAfter) { git tag -d $tag 2>&1 | Out-Null; Write-AuditEntry $audit @{ event = 'tag-failed'; version = $Version; commit = $head } }
-                Fail $_.Exception.Message
-            }
+            } catch { Stop-AfterFailedTagPush $tag $head $_.Exception.Message }
             Write-Host "Pushed $tag."
             Write-AuditEntry $audit @{ event = 'tagged'; version = $Version; commit = $head }
         } else { Write-Host "Tag $tag is already on GitHub; continuing." }
@@ -785,7 +794,10 @@ try {
                 Start-Sleep -Seconds 4
                 $vl = gh run list --repo $Repo --workflow verify-release.yml --limit 20 --json databaseId,displayTitle
                 if ($LASTEXITCODE -ne 0) { continue }   # a failed list is tried again until the 3 minutes are over; then it is said below
-                $id = ($vl | ConvertFrom-Json | Where-Object { "$($_.displayTitle)" -match [regex]::Escape($nonce) } | Select-Object -First 1).databaseId
+                $vtext = (@($vl | ForEach-Object { "$_" }) -join "`n").Trim()
+                if (-not $vtext) { continue }
+                # An answer that is not JSON is tried again like a failed list (it would otherwise throw and skip the withdraw below).
+                try { $id = ($vtext | ConvertFrom-Json | Where-Object { "$($_.displayTitle)" -match [regex]::Escape($nonce) } | Select-Object -First 1).databaseId } catch { $id = $null }
             }
             if (-not $id) { $why = "the verify run (id $nonce) did not show up within 3 minutes (or GitHub could not be asked)" }
         }
