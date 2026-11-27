@@ -265,7 +265,7 @@ func Connect(ctx context.Context, c Config) (*Client, error) {
 		if herr == nil {
 			return &Client{cfg: c, conn: ssh.NewClient(sc, chans, reqs)}, nil
 		}
-		raw.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
+		raw.Close() //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 		if got != "" && got != c.HostKey {
 			if seen == "" {
 				seen = got
@@ -334,7 +334,7 @@ func (cl *Client) DialTunnel(ctx context.Context) (net.Conn, error) {
 	case <-ctx.Done():
 		go func() {
 			if r := <-ch; r.c != nil {
-				r.c.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
+				r.c.Close() //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 			}
 		}()
 		return nil, ctx.Err()
@@ -428,7 +428,7 @@ func (cl *Client) run(ctx context.Context, cmd string, limit int) (result, error
 	go func() { done <- sess.Run(cmd) }()
 	select {
 	case <-ctx.Done():
-		sess.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
+		sess.Close() //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 		return result{}, ctx.Err()
 	case err := <-done:
 		if stdout.over {
@@ -631,18 +631,18 @@ func (cl *Client) Open(ctx context.Context, path string, off int64) (io.ReadClos
 	}
 	pipe, err := sess.StdoutPipe()
 	if err != nil {
-		sess.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
+		sess.Close() //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 		return nil, ErrUnreachable
 	}
 	var stderr limited
 	stderr.max = maxStderr
 	sess.Stderr = &stderr
 	if err := sess.Start(commands(cl.cfg.OS).open(lit, off)); err != nil {
-		sess.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
+		sess.Close() //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 		return nil, ErrCommand
 	}
 	r := &stream{sess: sess, pipe: pipe}
-	stop := context.AfterFunc(ctx, func() { r.Close() }) //nolint:errcheck // best-effort cleanup, nothing to do on failure
+	stop := context.AfterFunc(ctx, func() { r.Close() }) //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 	r.stop = stop
 	return r, nil
 }

@@ -393,7 +393,7 @@ func (j *job) copyFile(ctx context.Context, pf PlanFile, out string) FileResult 
 	if err := part.Sync(); err != nil {
 		return fail("Could not write to the staging folder: " + err.Error())
 	}
-	part.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
+	part.Close() //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 
 	fr.RawBytes, fr.OutBytes, fr.Scrubbed, fr.Dropped = off, outBytes, scrubbed, dropped
 	fr.SHA256 = hex.EncodeToString(h.Sum(nil))
@@ -480,7 +480,7 @@ func readLine(br *bufio.Reader, h io.Writer, max int) (line []byte, n int, parti
 	for {
 		chunk, e := br.ReadSlice('\n')
 		if len(chunk) > 0 {
-			h.Write(chunk) //nolint:errcheck // best-effort cleanup, nothing to do on failure
+			h.Write(chunk) //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 			n += len(chunk)
 			if !tooLong {
 				if len(buf)+len(chunk) > max {

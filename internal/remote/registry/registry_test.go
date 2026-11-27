@@ -299,7 +299,7 @@ func TestDamagedOrEditedFileIsLeftAloneAndNotUsed(t *testing.T) {
 		}
 	}
 	unknown, _ := xorProtector{}.Protect([]byte(`{"version":1,"records":[],"extra":1}`))
-	os.WriteFile(path, unknown, 0o600) //nolint:errcheck // test helper, error not needed
+	os.WriteFile(path, unknown, 0o600) //nolint:errcheck,gosec // test helper, error not needed
 	if _, err := s.List(); !errors.Is(err, ErrCorrupt) {
 		t.Errorf("unknown field accepted: %v", err)
 	}

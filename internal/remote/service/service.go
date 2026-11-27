@@ -289,7 +289,7 @@ func (s *Service) BlackboxSource(ctx context.Context, id string) (blackbox.Sourc
 	}
 	src, err := s.bbSource(cn, e)
 	if err != nil {
-		cn.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
+		cn.Close() //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 		return nil, nil, err
 	}
 	return src, cn, nil

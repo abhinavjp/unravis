@@ -112,7 +112,7 @@ func startServer(t *testing.T, fs *fakeServer) *fakeServer {
 		t.Fatal(err)
 	}
 	fs.ln = ln
-	t.Cleanup(func() { ln.Close() }) //nolint:errcheck // test helper, error not needed
+	t.Cleanup(func() { ln.Close() }) //nolint:errcheck,gosec // test helper, error not needed
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -128,7 +128,7 @@ func startServer(t *testing.T, fs *fakeServer) *fakeServer {
 func (fs *fakeServer) serve(c net.Conn, cfg *ssh.ServerConfig) {
 	sc, chans, reqs, err := ssh.NewServerConn(c, cfg)
 	if err != nil {
-		c.Close() //nolint:errcheck // test helper, error not needed
+		c.Close() //nolint:errcheck,gosec // test helper, error not needed
 		return
 	}
 	defer sc.Close() //nolint:errcheck // test helper, error not needed
@@ -141,30 +141,30 @@ func (fs *fakeServer) serve(c net.Conn, cfg *ssh.ServerConfig) {
 				OrigHost string
 				OrigPort uint32
 			}
-			ssh.Unmarshal(nc.ExtraData(), &p) //nolint:errcheck // test helper, error not needed
+			ssh.Unmarshal(nc.ExtraData(), &p) //nolint:errcheck,gosec // test helper, error not needed
 			fs.mu.Lock()
 			fs.tcpSeen = append(fs.tcpSeen, net.JoinHostPort(p.Host, strconv.Itoa(int(p.Port))))
 			fs.mu.Unlock()
 			if fs.onTCP == nil {
-				nc.Reject(ssh.Prohibited, "no") //nolint:errcheck // test helper, error not needed
+				nc.Reject(ssh.Prohibited, "no") //nolint:errcheck,gosec // test helper, error not needed
 				continue
 			}
 			back := fs.onTCP(p.Host, p.Port)
 			if back == nil {
-				nc.Reject(ssh.ConnectionFailed, "refused") //nolint:errcheck // test helper, error not needed
+				nc.Reject(ssh.ConnectionFailed, "refused") //nolint:errcheck,gosec // test helper, error not needed
 				continue
 			}
 			ch, _, err := nc.Accept()
 			if err != nil {
-				back.Close() //nolint:errcheck // test helper, error not needed
+				back.Close() //nolint:errcheck,gosec // test helper, error not needed
 				continue
 			}
-			go func() { io.Copy(ch, back); ch.CloseWrite() }() //nolint:errcheck // test helper, error not needed
-			go func() { io.Copy(back, ch); back.Close() }()    //nolint:errcheck // test helper, error not needed
+			go func() { io.Copy(ch, back); ch.CloseWrite() }() //nolint:errcheck,gosec // test helper, error not needed
+			go func() { io.Copy(back, ch); back.Close() }()    //nolint:errcheck,gosec // test helper, error not needed
 			continue
 		}
 		if nc.ChannelType() != "session" {
-			nc.Reject(ssh.UnknownChannelType, "no") //nolint:errcheck // test helper, error not needed
+			nc.Reject(ssh.UnknownChannelType, "no") //nolint:errcheck,gosec // test helper, error not needed
 			continue
 		}
 		ch, creqs, err := nc.Accept()
@@ -174,22 +174,22 @@ func (fs *fakeServer) serve(c net.Conn, cfg *ssh.ServerConfig) {
 		go func() {
 			for r := range creqs {
 				if r.Type != "exec" {
-					r.Reply(false, nil) //nolint:errcheck // test helper, error not needed
+					r.Reply(false, nil) //nolint:errcheck,gosec // test helper, error not needed
 					continue
 				}
 				var p struct{ Command string }
-				ssh.Unmarshal(r.Payload, &p) //nolint:errcheck // test helper, error not needed
-				r.Reply(true, nil)           //nolint:errcheck // test helper, error not needed
+				ssh.Unmarshal(r.Payload, &p) //nolint:errcheck,gosec // test helper, error not needed
+				r.Reply(true, nil)           //nolint:errcheck,gosec // test helper, error not needed
 				fs.mu.Lock()
 				fs.cmds = append(fs.cmds, p.Command)
 				fs.mu.Unlock()
 				out, errText, exit := fs.handler(p.Command)
-				ch.Write(out) //nolint:errcheck // test helper, error not needed
+				ch.Write(out) //nolint:errcheck,gosec // test helper, error not needed
 				if errText != "" {
-					ch.Stderr().Write([]byte(errText)) //nolint:errcheck // test helper, error not needed
+					ch.Stderr().Write([]byte(errText)) //nolint:errcheck,gosec // test helper, error not needed
 				}
-				ch.SendRequest("exit-status", false, ssh.Marshal(struct{ S uint32 }{uint32(exit)})) //nolint:errcheck // test helper, error not needed
-				ch.Close()                                                                          //nolint:errcheck // test helper, error not needed
+				ch.SendRequest("exit-status", false, ssh.Marshal(struct{ S uint32 }{uint32(exit)})) //nolint:errcheck,gosec // test helper, error not needed
+				ch.Close()                                                                          //nolint:errcheck,gosec // test helper, error not needed
 				return
 			}
 		}()
@@ -307,7 +307,7 @@ func TestKeyAuthWithAndWithoutPassphrase(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pass=%q: %v", pass, err)
 		}
-		cl.Close() //nolint:errcheck // test helper, error not needed
+		cl.Close() //nolint:errcheck,gosec // test helper, error not needed
 		if pass != "" {
 			c.Passphrase = "wrong"
 			if _, err := Connect(ctx(t), c); err == nil || strings.Contains(err.Error(), secret) {
@@ -324,7 +324,7 @@ func TestKeyboardInteractiveAnswersOnlyAPasswordPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("password prompt: %v", err)
 	}
-	cl.Close() //nolint:errcheck // test helper, error not needed
+	cl.Close() //nolint:errcheck,gosec // test helper, error not needed
 
 	fs2 := startServer(t, &fakeServer{password: "pw", kiPrompt: "Verification code: "})
 	if _, err := Connect(ctx(t), fs2.cfg()); err == nil {
@@ -378,7 +378,7 @@ func TestLinuxCommandsAreExactAndConfinedToAllowedFolders(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, err := io.ReadAll(rc)
-	rc.Close() //nolint:errcheck // test helper, error not needed
+	rc.Close() //nolint:errcheck,gosec // test helper, error not needed
 	if err != nil || string(b) != "hello" {
 		t.Fatalf("%q %v", b, err)
 	}
@@ -454,7 +454,7 @@ func TestWindowsScriptsAgainstARealPowerShell(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a b.log"), content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	os.MkdirAll(filepath.Join(dir, "sub"), 0o700) //nolint:errcheck // test helper, error not needed
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o700) //nolint:errcheck,gosec // test helper, error not needed
 	fs := startServer(t, &fakeServer{password: "pw"})
 	fs.handler = func(cmd string) ([]byte, string, int) {
 		args := strings.Fields(cmd)
@@ -497,7 +497,7 @@ func TestWindowsScriptsAgainstARealPowerShell(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, err := io.ReadAll(rc)
-		rc.Close() //nolint:errcheck // test helper, error not needed
+		rc.Close() //nolint:errcheck,gosec // test helper, error not needed
 		if err != nil || !bytes.Equal(got, content[off:]) {
 			t.Fatalf("off %d: got %d bytes, want %d (%v)", off, len(got), len(content[off:]), err)
 		}
@@ -514,9 +514,9 @@ func TestDialTunnelReachesOnlyTheConfiguredAddress(t *testing.T) {
 	rec, srvSide := net.Pipe()
 	go func() {
 		buf := make([]byte, 4)
-		io.ReadFull(srvSide, buf)                      //nolint:errcheck // test helper, error not needed
-		srvSide.Write(append([]byte("echo:"), buf...)) //nolint:errcheck // test helper, error not needed
-		srvSide.Close()                                //nolint:errcheck // test helper, error not needed
+		io.ReadFull(srvSide, buf)                      //nolint:errcheck,gosec // test helper, error not needed
+		srvSide.Write(append([]byte("echo:"), buf...)) //nolint:errcheck,gosec // test helper, error not needed
+		srvSide.Close()                                //nolint:errcheck,gosec // test helper, error not needed
 	}()
 	fs := startServer(t, &fakeServer{password: "pw", onTCP: func(string, uint32) net.Conn { return rec }})
 	c := fs.cfg()
@@ -527,7 +527,7 @@ func TestDialTunnelReachesOnlyTheConfiguredAddress(t *testing.T) {
 	if _, err := cl.DialTunnel(ctx(t)); !errors.Is(err, ErrNoTunnel) {
 		t.Fatalf("no tunnel configured: %v", err)
 	}
-	cl.Close() //nolint:errcheck // test helper, error not needed
+	cl.Close() //nolint:errcheck,gosec // test helper, error not needed
 
 	c.Tunnel = "127.0.0.1:7790"
 	cl, err = Connect(ctx(t), c)
@@ -539,9 +539,9 @@ func TestDialTunnelReachesOnlyTheConfiguredAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn.Write([]byte("ping")) //nolint:errcheck // test helper, error not needed
+	conn.Write([]byte("ping")) //nolint:errcheck,gosec // test helper, error not needed
 	got, _ := io.ReadAll(conn)
-	conn.Close() //nolint:errcheck // test helper, error not needed
+	conn.Close() //nolint:errcheck,gosec // test helper, error not needed
 	if string(got) != "echo:ping" {
 		t.Fatalf("%q", got)
 	}
@@ -558,7 +558,7 @@ func TestDialTunnelReachesOnlyTheConfiguredAddress(t *testing.T) {
 		if _, err := cl2.DialTunnel(ctx(t)); err == nil {
 			t.Errorf("Tunnel %q was dialled", bad)
 		}
-		cl2.Close() //nolint:errcheck // test helper, error not needed
+		cl2.Close() //nolint:errcheck,gosec // test helper, error not needed
 	}
 	if len(fs.tcpSeen) != 1 {
 		t.Fatalf("a refused address still reached the server: %v", fs.tcpSeen)
@@ -593,7 +593,7 @@ func TestKeyboardInteractivePromptShapes(t *testing.T) {
 			t.Fatalf("prompt %q: signed in=%v", prompt, err == nil)
 		}
 		if err == nil {
-			cl.Close() //nolint:errcheck // test helper, error not needed
+			cl.Close() //nolint:errcheck,gosec // test helper, error not needed
 		} else if fs.secretSeen.Load() != 0 {
 			t.Fatalf("prompt %q got the stored password", prompt)
 		}
@@ -623,7 +623,7 @@ func TestASilentServerTimesOutAndCancels(t *testing.T) {
 	defer func() {
 		mu.Lock()
 		for _, c := range held {
-			c.Close() //nolint:errcheck // test helper, error not needed
+			c.Close() //nolint:errcheck,gosec // test helper, error not needed
 		}
 		mu.Unlock()
 	}()
@@ -660,10 +660,10 @@ func TestWindowsJunctionOutOfTheAllowedFolderIsRefused(t *testing.T) {
 	}
 	base := t.TempDir()
 	allowed, outside := filepath.Join(base, "logs"), filepath.Join(base, "secret")
-	os.MkdirAll(allowed, 0o700)                                                                                                    //nolint:errcheck // test helper, error not needed
-	os.MkdirAll(outside, 0o700)                                                                                                    //nolint:errcheck // test helper, error not needed
-	os.WriteFile(filepath.Join(outside, "key.txt"), []byte("private"), 0o600)                                                      //nolint:errcheck // test helper, error not needed
-	os.WriteFile(filepath.Join(allowed, "ok.log"), []byte("fine"), 0o600)                                                          //nolint:errcheck // test helper, error not needed
+	os.MkdirAll(allowed, 0o700)                                                                                                    //nolint:errcheck,gosec // test helper, error not needed
+	os.MkdirAll(outside, 0o700)                                                                                                    //nolint:errcheck,gosec // test helper, error not needed
+	os.WriteFile(filepath.Join(outside, "key.txt"), []byte("private"), 0o600)                                                      //nolint:errcheck,gosec // test helper, error not needed
+	os.WriteFile(filepath.Join(allowed, "ok.log"), []byte("fine"), 0o600)                                                          //nolint:errcheck,gosec // test helper, error not needed
 	if out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(allowed, "jn"), outside).CombinedOutput(); err != nil { //nolint:gosec // fixed test command
 		t.Skipf("cannot make a junction here: %v %s", err, out)
 	}
@@ -687,7 +687,7 @@ func TestWindowsJunctionOutOfTheAllowedFolderIsRefused(t *testing.T) {
 	}
 	defer cl.Close() //nolint:errcheck // test helper, error not needed
 	if rc, err := cl.Open(ctx(t), filepath.Join(allowed, "jn", "key.txt"), 0); err == nil {
-		rc.Close() //nolint:errcheck // test helper, error not needed
+		rc.Close() //nolint:errcheck,gosec // test helper, error not needed
 		t.Fatal("read a file through a junction that leaves the allowed folder")
 	}
 	if _, err := cl.List(ctx(t), filepath.Join(allowed, "jn")); err == nil {
@@ -697,5 +697,5 @@ func TestWindowsJunctionOutOfTheAllowedFolderIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a normal file in the allowed folder: %v", err)
 	}
-	rc.Close() //nolint:errcheck // test helper, error not needed
+	rc.Close() //nolint:errcheck,gosec // test helper, error not needed
 }

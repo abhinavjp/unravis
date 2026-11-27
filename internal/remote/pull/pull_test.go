@@ -136,7 +136,7 @@ func TestPullScrubsHashesAndLeavesNoRawSecretOnDisk(t *testing.T) {
 	if string(b) != "[removed]\nfine\n" {
 		t.Errorf("b.log = %q", b)
 	}
-	filepath.Walk(dir, func(p string, fi os.FileInfo, _ error) error { //nolint:errcheck // test helper, error not needed
+	filepath.Walk(dir, func(p string, fi os.FileInfo, _ error) error { //nolint:errcheck,gosec // test helper, error not needed
 		if fi != nil && !fi.IsDir() {
 			c, _ := os.ReadFile(p) //nolint:gosec // path comes from a checked, app-owned location
 			for _, s := range []string{"hunter2", "pw@h", "s3cretpw"} {
