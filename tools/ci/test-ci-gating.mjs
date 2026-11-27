@@ -66,6 +66,10 @@ for (const n of ['desktop-sidecar', 'linux-gates', 'powershell-syntax']) {
   assert.ok(real[n].needs.includes('changes'), `${n} needs changes`)
 }
 
+// BL-719: only pull requests cancel a running run; pushes to develop and master queue.
+const ciText = fs.readFileSync(path.join(here, '..', '..', '.github', 'workflows', 'ci.yml'), 'utf8')
+assert.match(ciText, /^ {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}\r?$/m, 'ci.yml: only pull request runs cancel')
+
 // The checker itself: it must catch what it is for.
 const sample = (extra) => `name: CI
 jobs:
