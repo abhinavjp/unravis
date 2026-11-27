@@ -157,8 +157,9 @@ export const BB_TEXT = {
   applyIntervalWarn: 'Unravis can still slow recording when the PC is busy.',
   applyNoChange: 'Nothing is changed yet.',
   // Beside Apply while it is off (RV-UI-11). Unreadable reuses applyUnreadable.
-  applyWaitLoading: "Loading this PC's settings",
-  applyWaitBusy: 'Another change is being applied',
+  applyWaitLoading: "Loading this PC's settings.",
+  applyWaitBusy: 'Another change is being applied.',
+  applyWaitNotInstalled: 'No Blackbox service is installed on this PC.',
   applyUnreadable: 'The settings of the service on this PC could not be read, so they cannot be changed here.',
   applied: 'Applied. The service restarted with the new settings.',
   appliedNoRestart: 'Applied. The service was stopped, so the new settings are used when it next starts.',

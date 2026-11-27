@@ -87,7 +87,7 @@
   const thisPc = $derived<ThisPc>(list?.thisPc ?? { available: false, scanned: false, installed: false, running: false, listed: false });
   // Why Apply is off, in words beside the button (RV-UI-11). Null when it is on.
   const applyBlocked = $derived(applyWait({ working: !!working, hasSettings: !!thisPc.settings, readingSettings: loading || scanning, installed: thisPc.installed }));
-  const applyWhy = $derived(applyBlocked === 'busy' ? T.applyWaitBusy : applyBlocked === 'loading' ? T.applyWaitLoading : applyBlocked === 'unreadable' ? T.applyUnreadable : '');
+  const applyWhy = $derived(applyBlocked === 'busy' ? T.applyWaitBusy : applyBlocked === 'loading' ? T.applyWaitLoading : applyBlocked === 'unreadable' ? T.applyUnreadable : applyBlocked === 'unavailable' ? T.applyWaitNotInstalled : '');
   const current = $derived.by(() => {
     if (view.kind === 'list' || view.kind === 'add') return null;
     const id = view.id;
@@ -471,6 +471,8 @@
               {#if working}<p class="bb-note" role="status">{working}</p>{/if}
               {#if actionNote}<p class="bb-ok" role="status">{actionNote}</p>{/if}
               {#if actionError}<div class="inline-error" role="alert">{actionError}</div>{/if}
+              <!-- The look at the list after an Apply (or an add) can fail while the change itself worked: say so here too, not only on the list (RV-UI-12). -->
+              {#if loadError}<div class="inline-error" role="alert" data-status-load-error>{T.loadFailed} {loadError}</div><div class="bb-actions"><button type="button" class="secondary-button" onclick={() => load()}>{T.retry}</button></div>{/if}
             </div>
             {#if actionError && reloadHint}<div class="bb-actions"><button type="button" class="secondary-button" onclick={reload}>{T.reload}</button></div>{/if}
 

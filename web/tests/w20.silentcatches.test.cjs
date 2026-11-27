@@ -95,17 +95,34 @@ test('Apply reason: another change in progress wins, then settings loading, then
   assert.equal(bb.applyWait({ working: false, hasSettings: true, readingSettings: true, installed: true }), null);
 });
 
-test('Apply reason: when the service is not installed the "could not be read" line is not shown (no approved words for it)', () => {
+test('Apply reason: a PC with no service says so in plain words, and does not claim its settings could not be read', () => {
   assert.equal(bb.applyWait({ working: false, hasSettings: false, readingSettings: false, installed: false }), 'unavailable');
-  // 'unavailable' is still a blocked state, so the buttons stay off, but the panel has no words for it.
+  // 'unavailable' is a blocked state, so the buttons stay off; the reason beside them is its own sentence, not the unreadable one.
+  assert.equal(BB_TEXT.applyWaitNotInstalled, 'No Blackbox service is installed on this PC.');
+  assert.notEqual(BB_TEXT.applyWaitNotInstalled, BB_TEXT.applyUnreadable);
   const panel = read('src/components/BlackboxPanel.svelte');
-  assert.match(panel, /applyBlocked === 'unreadable' \? T\.applyUnreadable : ''\)/);
+  assert.match(panel, /applyBlocked === 'unreadable' \? T\.applyUnreadable : applyBlocked === 'unavailable' \? T\.applyWaitNotInstalled : ''\)/);
   assert.match(panel, /applyWait\(\{[^}]*installed: thisPc\.installed \}\)/);
 });
 
+test('Apply reasons are whole sentences with a full stop', () => {
+  for (const key of ['applyWaitLoading', 'applyWaitBusy', 'applyWaitNotInstalled', 'applyUnreadable']) assert.match(BB_TEXT[key], /\.$/, key);
+});
+
+test('After an Apply the status screen shows a failed look at the list too, with Try again', () => {
+  const panel = read('src/components/BlackboxPanel.svelte');
+  assert.match(panel, /\{#if loadError\}<div class="inline-error" role="alert" data-status-load-error>\{T\.loadFailed\} \{loadError\}<\/div>[\s\S]*?\{T\.retry\}/);
+  // It sits in the status view (after its action messages), not only in the list view.
+  assert.ok(panel.indexOf('data-status-load-error') > panel.indexOf("view.kind === 'status' && current"));
+});
+
+test('Browser Back closing the Connections drawer is left unguarded on purpose, and says why', () => {
+  assert.match(read('src/lib/appState.svelte.ts'), /Left unguarded on purpose \(W-20\): this is Browser Back/);
+});
+
 test('Apply reason: the words are the approved ones and the panel shows them beside both Apply buttons', () => {
-  assert.equal(BB_TEXT.applyWaitLoading, "Loading this PC's settings");
-  assert.equal(BB_TEXT.applyWaitBusy, 'Another change is being applied');
+  assert.equal(BB_TEXT.applyWaitLoading, "Loading this PC's settings.");
+  assert.equal(BB_TEXT.applyWaitBusy, 'Another change is being applied.');
   const panel = read('src/components/BlackboxPanel.svelte');
   assert.match(panel, /disabled=\{applyBlocked !== null\} aria-describedby=\{applyWhy \? 'bb-apply-why' : undefined\}/);
   assert.match(panel, /disabled=\{applyBlocked !== null\} aria-describedby=\{applyWhy \? 'bb-status-apply-why' : undefined\}/);

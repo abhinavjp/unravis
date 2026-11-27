@@ -1724,6 +1724,8 @@ function closeDrawerById(id: string) {
   if (id === 'glossary') void closeGlossary();
   else if (id === 'coverage') void closeCoverage();
   else if (id === 'side') void closeSidePanel();
+  // Left unguarded on purpose (W-20): this is Browser Back, and the history entry is already gone when it is called, so refusing here would leave the
+  // drawer open with no entry behind it. Closing only hides the drawer; the adding goes on in the app state.
   else if (id === 'connections') void closeConnections();
 }
 export function onWindowKey(event: KeyboardEvent) {
