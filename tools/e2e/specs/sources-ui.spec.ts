@@ -156,7 +156,7 @@ test('SRC-10: the Connections drawer lists the saved Mongo connection without it
   await expect(drawer).toContainText('mongodb://demo-mongo.example.invalid:27017');
   expect(await drawer.innerText()).not.toMatch(/mongodb(\+srv)?:\/\/[^\s]*@/i);
   await expect(drawer.getByRole('button', { name: 'Create a connection' })).toHaveCount(0);
-  await expect(drawer.getByRole('button', { name: /Use settings|Forget/ })).toHaveCount(0);
+  await expect(drawer.getByRole('button', { name: /Use settings|Remove/ })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(drawer).toHaveCount(0);
 });
