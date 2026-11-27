@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fetchLaneDays, groupSources, readableByDay, runNotice, shiftDays, type LaneDay, type LaneRunResult, type LaneSource } from '../../lib/lanes';
+  import { dayListView, fetchLaneDays, groupSources, readableByDay, runNotice, shiftDays, type LaneDay, type LaneRunResult, type LaneSource } from '../../lib/lanes';
   import { DAY_TEXT, HUB_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
   import LaneRunner from './LaneRunner.svelte';
   import StateSticker from './StateSticker.svelte';
@@ -25,6 +25,7 @@
 
   // A failed read must not look like "the case holds nothing" (RV-UI-8): it says so, keeps the days already shown and offers Try again.
   let loadFailed = $state(false);
+  const shown = $derived(dayListView({ loaded, loadFailed, daysHeld: days.length, byDayCount: byDay.length, canReadSql: !!onReadSql }));
   async function load() {
     try { days = await fetchLaneDays(caseId); loadFailed = false; } catch { loadFailed = true; }
     loaded = true;
@@ -42,12 +43,12 @@
   <div class="nutshell"><b>{NUTSHELL}</b><p>{DAY_TEXT.lead}</p></div>
   <h3 id="day-head">{DAY_TEXT.heading}</h3>
 
-  {#if loadFailed && days.length === 0}
+  {#if shown.view === 'failed'}
     <div class="empty"><p class="say bad" role="alert" data-load-failed>{DAY_TEXT.loadFailed}</p><div class="actions"><button type="button" class="btn-primary" data-load-retry onclick={() => void load()}>{DAY_TEXT.tryAgain}</button></div></div>
-  {:else if loaded && byDay.length === 0}
+  {:else if shown.view === 'empty'}
     <div class="empty"><p>{DAY_TEXT.nothingHeld}</p><p class="hint">{DAY_TEXT.onlyByDay}</p>{#if onReadSql}<div class="actions"><button type="button" class="btn-primary" data-read-first onclick={() => onReadSql?.()}>{DAY_TEXT.readFirst}</button></div>{/if}</div>
   {:else}
-    {#if loadFailed}<p class="say bad" role="alert" data-load-failed>{DAY_TEXT.refreshFailed} <button type="button" class="btn" data-load-retry onclick={() => void load()}>{DAY_TEXT.tryAgain}</button></p>{/if}
+    {#if shown.stale}<p class="say bad" role="alert" data-load-failed>{DAY_TEXT.refreshFailed} <button type="button" class="btn" data-load-retry onclick={() => void load()}>{DAY_TEXT.tryAgain}</button></p>{/if}
     <div class="field">
       <h4>{DAY_TEXT.holds}</h4>
       <ul class="rows">
@@ -89,5 +90,5 @@
     {/if}
     {#if said}<p class="say {said.good ? 'good' : 'bad'}" role={said.good ? 'status' : 'alert'} data-said>{said.text}</p>{/if}
   {/if}
-  {#if onCancel && !(loaded && !loadFailed && byDay.length === 0 && onReadSql)}<div class="actions"><button type="button" class="btn" onclick={() => onCancel?.()}>{DAY_TEXT.cancel}</button></div>{/if}
+  {#if onCancel && shown.cancel}<div class="actions"><button type="button" class="btn" onclick={() => onCancel?.()}>{DAY_TEXT.cancel}</button></div>{/if}
 </section>

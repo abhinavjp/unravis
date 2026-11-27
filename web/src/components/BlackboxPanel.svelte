@@ -86,7 +86,7 @@
   const items = $derived(list?.items ?? []);
   const thisPc = $derived<ThisPc>(list?.thisPc ?? { available: false, scanned: false, installed: false, running: false, listed: false });
   // Why Apply is off, in words beside the button (RV-UI-11). Null when it is on.
-  const applyBlocked = $derived(applyWait({ working: !!working, hasSettings: !!thisPc.settings, readingSettings: loading || scanning }));
+  const applyBlocked = $derived(applyWait({ working: !!working, hasSettings: !!thisPc.settings, readingSettings: loading || scanning, installed: thisPc.installed }));
   const applyWhy = $derived(applyBlocked === 'busy' ? T.applyWaitBusy : applyBlocked === 'loading' ? T.applyWaitLoading : applyBlocked === 'unreadable' ? T.applyUnreadable : '');
   const current = $derived.by(() => {
     if (view.kind === 'list' || view.kind === 'add') return null;
@@ -437,9 +437,9 @@
             {/if}
             <p class="bb-note">{T.adminNote}</p>
             <div class="bb-actions">
-              <button type="button" class="primary-button" disabled={applyBlocked !== null} aria-describedby={applyBlocked ? 'bb-apply-why' : undefined} onclick={() => apply(current)}>{T.apply}</button>
+              <button type="button" class="primary-button" disabled={applyBlocked !== null} aria-describedby={applyWhy ? 'bb-apply-why' : undefined} onclick={() => apply(current)}>{T.apply}</button>
               <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'status', id: current.id })}>{T.cancel}</button>
-              {#if applyBlocked && !(applyBlocked === 'unreadable' && applyProblem)}<span class="bb-reason" id="bb-apply-why">{applyWhy}</span>{/if}
+              {#if applyWhy && !(applyBlocked === 'unreadable' && applyProblem)}<span class="bb-reason" id="bb-apply-why">{applyWhy}</span>{/if}
             </div>
           </section>
 
@@ -493,12 +493,12 @@
                 {#if controls.start}<button type="button" class="primary-button" disabled={!!working} onclick={start}>{T.start}</button>{/if}
                 {#if controls.stop}<button type="button" class="secondary-button" disabled={!!working} onclick={askStop} aria-expanded={stopAsk}>{T.stop}</button>{/if}
                 {#if canChangeKey(item)}<button type="button" class="secondary-button" disabled={!!working} onclick={openKey} aria-expanded={keyOpen}>{T.changeKey}</button>{/if}
-                <button type="button" class="secondary-button" disabled={applyBlocked !== null} aria-describedby={applyBlocked ? 'bb-status-apply-why' : undefined} onclick={() => openApply(item)}>{T.apply}</button>
+                <button type="button" class="secondary-button" disabled={applyBlocked !== null} aria-describedby={applyWhy ? 'bb-status-apply-why' : undefined} onclick={() => openApply(item)}>{T.apply}</button>
                 <button type="button" class="secondary-button" disabled={!!working} onclick={() => snapshot(item)}>{T.snapshot}</button>
                 <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.remove}</button>
                 <button type="button" class="quiet-button" disabled={!!working} onclick={() => check(item)}>{T.check}</button>
               </div>
-              {#if applyBlocked}<p class="bb-note bb-reason" id="bb-status-apply-why">{applyWhy}</p>{/if}
+              {#if applyWhy}<p class="bb-note bb-reason" id="bb-status-apply-why">{applyWhy}</p>{/if}
               {#if stopAsk && controls.stop}
                 <div class="bb-confirm" role="group" aria-label={T.stopTitle}>
                   <strong>{T.stopTitle}</strong>

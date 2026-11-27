@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, type Snippet } from 'svelte';
+  import { closeUnlessBusy } from '../lib/drawerBusy';
 
   // The one drawer template: a title row (title, one-line purpose, close button), optional header extras such as tabs, the body, and an optional footer of actions.
   // Modal (the default): the scrim, the dialog box, Esc to close and a Tab trap, as Glossary, Patterns, Ledger, Export and Connections use it.
@@ -59,7 +60,7 @@
   onMount(() => { if (focusOnOpen) titleElement?.focus({ preventScroll: true }); });
 
   // While busy nothing closes the drawer. Esc is still taken (so the page behind does not step up either), but the close is skipped.
-  const close = () => { if (!busy) onClose(); };
+  const close = () => { closeUnlessBusy(busy, onClose); };
 
   function onKey(event: KeyboardEvent) {
     if (event.key === 'Escape') { event.preventDefault(); if (stopEscape) event.stopPropagation(); close(); return; }
@@ -82,7 +83,7 @@
   </div>
   {#if headerExtra}{@render headerExtra()}{/if}
   {#if busy}
-    {#if busyText}<div class="drawer-busy" role="status"><span>{busyText}</span></div>{/if}
+    {#if busyText}<div class="drawer-busy" role="status"><span class="spinner" aria-hidden="true"></span><span>{busyText}</span></div>{/if}
     <div class="drawer-busy-bar" aria-hidden="true"></div>
   {/if}
   {@render children()}
@@ -106,9 +107,10 @@
   .drawer-close.busy:hover { color: var(--text-2); background: transparent; }
   /* The busy line and the moving hatched bar (the approved prototype). The bar stands still when the person asked for less motion. */
   .drawer-busy { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-3) 0 0; padding: var(--space-2) var(--space-3); color: var(--text); background: var(--surface-2); border: 1px solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-3); }
+  .drawer-busy .spinner { flex: none; width: 12px; height: 12px; border: 2px solid var(--control-line); border-top-color: var(--accent); border-radius: 50%; animation: spin 900ms linear infinite; }
   .drawer-busy-bar { height: 4px; margin-top: var(--space-3); background-color: var(--surface-2); background-image: var(--hatch); background-size: 12px 12px; border-radius: 1px; animation: drawer-busy-slide 1.2s linear infinite; }
   @keyframes drawer-busy-slide { to { background-position: 12px 0; } }
-  @media (prefers-reduced-motion: reduce) { .drawer-busy-bar { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .drawer-busy-bar { animation: none; } .drawer-busy .spinner { animation-duration: 4s; } }
 
   /* The footer holds the drawer's actions. It stays at the bottom edge of a modal drawer and sits under a hairline. */
   .drawer-footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin-top: auto; padding: var(--space-3) 0 0; border-top: 1px solid var(--hairline); }

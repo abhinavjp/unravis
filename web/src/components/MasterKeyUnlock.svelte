@@ -28,7 +28,8 @@
     pass = '';
     // An empty box is not a wrong key: nothing was sent, so say what to do and keep focus in the box.
     const empty = unlockProblemBeforeSend(attempt);
-    if (empty) { problem = empty; await tick(); field?.focus(); return; }
+    // Cleared first, then set after the page updated, so a repeated press announces the same sentence again.
+    if (empty) { problem = ''; await tick(); problem = empty; field?.focus(); return; }
     busy = true;
     problem = '';
     try {

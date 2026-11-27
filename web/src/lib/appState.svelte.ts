@@ -11,7 +11,7 @@ import { bumpEpoch } from './evidenceMemo';
 import { defaultQuery } from './time';
 import { initialComparison, kindLabel, queryFingerprint, resultNotes, rankComparisons, stateLabel } from './presentation';
 import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, serializeRecordFilters, shouldSelectAddedSource, writeInvestigationSnapshot, type InvestigationSnapshot } from './investigation';
-import { buildWorkspace, classifyRestoreFailure, createWorkspaceSaver, parseWorkspace, planRestore, pruneWorkspace, queueWorkspace, RESTORE_TIMEOUT_MS, sourceMatches, workspaceFailureNote, workspaceSaveAllowed, type Workspace, type WorkspaceDatabase } from './caseWorkspace';
+import { buildWorkspace, classifyRestoreFailure, createWorkspaceSaver, parseWorkspace, planRestore, pruneWorkspace, queueWorkspace, RESTORE_TIMEOUT_MS, sourceMatches, workspaceFailureNote, workspaceNoteAfter, workspaceSaveAllowed, type Workspace, type WorkspaceDatabase } from './caseWorkspace';
 import { forgetSavedRecord, forgetSourceSaved, registerSourceSaved, resolveSavedRecent, savedIdFor, suggestedConnectionLabel } from './sourceSaved';
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
@@ -20,6 +20,7 @@ import { afterUnlock, CASE_CALL_MARK, CASE_TRACING_MARK, createRoute, go as move
 import { onCasesLocked } from './lockSignal';
 import { requestCase, requestFilesView } from './startIntent';
 import { CASE_RESTORE_TEXT, restoreFailureNote } from './copy/caseRestoreCopy';
+import { closeUnlessBusy } from './drawerBusy';
 import { isSourceExists } from './wizardAuditAdd';
 import { draftHasContent, readSavedDraft } from './wizardDraftStore';
 import { holdLedger, setLedgerCase } from './ledgerStore.svelte';
@@ -869,6 +870,7 @@ async function restoreCaseWorkspace(id: string) {
   const run = ++restoreSequence;
   const alive = () => run === restoreSequence && activeCaseId === id;
   restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null; savedWindows = null; savedTraceSources = null;
+  workspaceNote = workspaceNoteAfter('restore-start', !!info?.demo, workspaceNote); // a note from an earlier read must not outlive a new one
   workspaceSaver.cancel(); workspaceSaver.forget();
   const ctx: RestoreRun = { id, run, workspace: null, keepTab, databases: [], recent: null };
   restoreRun = ctx;
@@ -877,7 +879,7 @@ async function restoreCaseWorkspace(id: string) {
   let workspace: Workspace | null;
   try { workspace = parseWorkspace(await api.caseWorkspace(id)); } catch {
     // Not read: nothing is saved over the case's own settings, and the person must hear that their changes are not kept. The demo has no workspace, so it stays quiet; a superseded run (not alive) is no one's business.
-    if (alive()) { restoreRun = null; setRestore('idle'); if (!info?.demo) workspaceNote = CASE_RESTORE_TEXT.workspaceUnreadable; }
+    if (alive()) { restoreRun = null; setRestore('idle'); workspaceNote = workspaceNoteAfter('workspace-unreadable', !!info?.demo, workspaceNote); }
     return;
   }
   if (!alive()) return;
@@ -968,6 +970,7 @@ export function setActiveCase(id: string, options: { restore?: boolean } = {}) {
   workspaceSaver.flush();
   restoreSequence++;
   restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null; restoreRun = null; savedWindows = null; savedTraceSources = null;
+  workspaceNote = workspaceNoteAfter('case-changed', !!info?.demo, workspaceNote); // the note was about the case being left
   setRestore('idle');
   activeCaseId = id;
   if (id) importCaseHint = false;
@@ -1050,6 +1053,7 @@ export async function openCreatedCase(id: string) {
   setActiveCase(id, { restore: false });
   // A case just made has no workspace yet, so there is nothing to restore; what it connects from now on is saved with it.
   restoredCaseId = id;
+  workspaceNote = workspaceNoteAfter('case-changed', !!info?.demo, workspaceNote); // also when the case id did not change: a fresh read follows
   let hasSources = sources.length > 0;
   try {
     const loaded = (await api.sources()) ?? [];
@@ -1063,7 +1067,7 @@ export async function openCreatedCase(id: string) {
     hasSources = loaded.length > 0;
   } catch {
     // The list could not be read: the screen still opens, but it may show the old sources without the new ones, so the person is told (RV-UI-8).
-    workspaceNote = CASE_RESTORE_TEXT.sourcesUnreadable;
+    workspaceNote = workspaceNoteAfter('sources-unreadable', !!info?.demo, workspaceNote);
   }
   if (go('case') && !hasSources) showImportPopup(null);
 }
@@ -1731,7 +1735,7 @@ export function onWindowKey(event: KeyboardEvent) {
   if (coverageSource) { void closeCoverage(); return; }
   if (sidePanel) { void closeSidePanel(); return; }
   // Adding databases is still running: the drawer stays (the drawer itself shows why).
-  if (connectionsOpen) { if (!sourceBusy) void closeConnections(); return; }
+  if (connectionsOpen) { closeUnlessBusy(sourceBusy, () => void closeConnections()); return; }
   const target = event.target;
   // Esc inside a text field belongs to the field (the Custom window boxes, any INPUT/TEXTAREA/contenteditable): it stays with the field and never closes the screen. SELECT and .popover keep their own exemption.
   if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.closest('.popover'))) return;
