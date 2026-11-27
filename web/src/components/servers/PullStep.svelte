@@ -77,7 +77,7 @@
                 <div class="sv-meter" class:sv-meter-wait={st.tone === 'wait' && !pct} class:sv-meter-bad={st.tone === 'bad'} role="progressbar" aria-label={t.label + ' ' + t.machine} aria-valuemin="0" aria-valuemax="100" aria-valuenow={pct ?? undefined}>
                   <i class:sv-unknown={pct === null && p.state === 'running'} style={pct === null ? undefined : 'width:' + pct + '%'}></i>
                 </div>
-                {#if p.job?.progress && p.state === 'running'}<div class="sv-sub">{T.pullFile(Math.min(p.job.progress.filesDone + 1, p.job.progress.filesTotal || 1), p.job.progress.filesTotal)}, {T.pullCopied(formatBytes(p.job.progress.jobBytes))}</div>{/if}
+                {#if p.job?.progress && p.job.progress.filesTotal > 0 && p.state === 'running'}<div class="sv-sub">{T.pullFile(Math.min(p.job.progress.filesDone + 1, p.job.progress.filesTotal || 1), p.job.progress.filesTotal)}, {T.pullCopied(formatBytes(p.job.progress.jobBytes))}</div>{/if}
               </td>
               <td><span class="sv-st" class:sv-st-ok={st.tone === 'ok'} class:sv-st-bad={st.tone === 'bad'}>{st.word}</span></td>
             </tr>

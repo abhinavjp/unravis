@@ -59,7 +59,7 @@ const (
 	maxListBytes = 4 << 20
 	maxListFiles = 20000
 	maxMachines  = 2000
-	defChunk     = 48 << 10
+	defChunk     = 128 << 10 // was 48 KiB; each chunk costs one ~5 s Salt round trip on the real master, so larger is near-linear faster. Unverified at 192 KiB.
 	maxChunk     = 192 << 10
 )
 

@@ -141,7 +141,7 @@ export const SV_TEXT = {
   pickShown: (shown: number, total: number, chosen: number) => shown + ' of ' + total + ' shown. ' + chosen + ' chosen.',
   pickLeftOut: (n: number) => n === 1 ? '1 machine was left out. The most is 20.' : n + ' machines were left out. The most is 20.',
   pickNoMatch: 'No machine matches. Change the words or the filter.',
-  pickNever: 'Not used yet',
+  pickNever: '–',
   pickBlackbox: 'Has Blackbox',
   pickColMachine: 'Machine',
   pickColHistory: 'History',
