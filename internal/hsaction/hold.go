@@ -95,7 +95,7 @@ type HoldAddArgs struct {
 
 // HoldAddedText is how the CLI and the page say a hold was added.
 func HoldAddedText(h releasehold.Hold) string {
-	return fmt.Sprintf("hold %s added: Promote is held for %s from %s until %s.\n  owner: %s\n  reason: %s\n  lift it early with: unravis-ci hold lift %s --reason \"...\"",
+	return fmt.Sprintf("hold %s added: Promote is held for %s from %s until %s.\n  owner: %s\n  reason: %s\n  lift it early with: homestretch hold lift %s --reason \"...\"",
 		h.ID, ProjectText(h.Project), WhenText(h.Start), WhenText(h.End), h.Owner, h.Reason, h.ID)
 }
 

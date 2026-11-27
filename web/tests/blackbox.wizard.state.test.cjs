@@ -34,12 +34,13 @@ function walkTo(s, id) {
 
 /* ------------------------------------------------------------------ the step list */
 
-test('the step list is 7 steps, or 8 when the SQL step applies (S-02, B-01)', () => {
-  assert.deepEqual(w.steps({ where: null, sqlSeen: false }), ['name', 'where', 'record', 'watch', 'keep', 'folder', 'review']);
-  assert.deepEqual(w.steps({ where: 'pc', sqlSeen: false }), ['name', 'where', 'record', 'watch', 'keep', 'folder', 'review']);
-  assert.deepEqual(w.steps({ where: 'pc', sqlSeen: true }), ['name', 'where', 'record', 'sql', 'watch', 'keep', 'folder', 'review']);
-  assert.deepEqual(w.steps({ where: 'pack', sqlSeen: false }), ['name', 'where', 'record', 'sql', 'watch', 'keep', 'folder', 'review']);
-  assert.equal(w.steps({ where: 'pack', sqlSeen: true }).length, 8);
+test('the step list is 7 steps; the SQL step and the Redis step each add one (S-02, B-01)', () => {
+  assert.deepEqual(w.steps({ where: null, sqlSeen: false, redisSeen: false }), ['name', 'where', 'record', 'watch', 'keep', 'folder', 'review']);
+  assert.deepEqual(w.steps({ where: 'pc', sqlSeen: false, redisSeen: false }), ['name', 'where', 'record', 'watch', 'keep', 'folder', 'review']);
+  assert.deepEqual(w.steps({ where: 'pc', sqlSeen: true, redisSeen: false }), ['name', 'where', 'record', 'sql', 'watch', 'keep', 'folder', 'review']);
+  assert.deepEqual(w.steps({ where: 'pc', sqlSeen: false, redisSeen: true }), ['name', 'where', 'record', 'redis', 'watch', 'keep', 'folder', 'review']);
+  assert.deepEqual(w.steps({ where: 'pack', sqlSeen: false, redisSeen: false }), ['name', 'where', 'record', 'sql', 'redis', 'watch', 'keep', 'folder', 'review']);
+  assert.equal(w.steps({ where: 'pack', sqlSeen: true, redisSeen: true }).length, 9);
 });
 
 test('stepIndex counts from 1 in the current list, so the "Step X of N" line is honest', () => {
@@ -47,9 +48,9 @@ test('stepIndex counts from 1 in the current list, so the "Step X of N" line is 
   assert.equal(w.stepIndex({ ...s7, step: 'name' }), 1);
   assert.equal(w.stepIndex({ ...s7, step: 'watch' }), 4);
   assert.equal(w.stepIndex({ ...s7, step: 'review' }), 7);
-  const s8 = ready('pack');
-  assert.equal(w.stepIndex({ ...s8, step: 'watch' }), 5);
-  assert.equal(w.stepIndex({ ...s8, step: 'review' }), 8);
+  const s9 = ready('pack');
+  assert.equal(w.stepIndex({ ...s9, step: 'watch' }), 6);
+  assert.equal(w.stepIndex({ ...s9, step: 'review' }), 9);
 });
 
 test('the SQL step appears and goes away with the choices, and the rail position follows the step, not the number', () => {
@@ -224,7 +225,9 @@ test('applyDefaultFolder records the USB and network drives of the list, even af
 test('next on a step with no choice (SQL) always moves on, and Review is the last step', () => {
   const s = { ...walkTo(ready('pack'), 'sql') };
   assert.equal(w.stepProblem(s, 'sql'), null);
-  assert.equal(w.next(s).step, 'watch');
+  assert.equal(w.next(s).step, 'redis');
+  assert.equal(w.stepProblem({ ...s, step: 'redis' }, 'redis'), null);
+  assert.equal(w.next({ ...s, step: 'redis' }).step, 'watch');
   const last = { ...s, step: 'review' };
   assert.equal(w.next(last), last);
 });
@@ -297,7 +300,7 @@ test('"Use defaults, go to review" fills the record, SQL and watch answers and l
   const r = w.useDefaultsToReview(s);
   assert.equal(r.step, 'review');
   assert.equal(r.returnTo, null);
-  assert.equal(r.maxSeen, 7, 'eight steps on the pack path: all reached');
+  assert.equal(r.maxSeen, 8, 'nine steps on the pack path: all reached');
   assert.equal(w.presetOf(r.settings.record), 'recommended');
   assert.equal(r.settings.intervalSeconds, 15);
   assert.deepEqual(r.settings.logPaths, ['C:\\inetpub\\logs\\LogFiles']);
@@ -612,4 +615,66 @@ test('when the step list shrinks, a step the owner never visited does not unlock
 test('nonLocalLetters: every drive that is not a local hard drive is refused (USB, network, CD or RAM disk), the Windows drive is left to its own guard', () => {
   const list = [drive('C', 'fixed', true), drive('D', 'fixed', false), drive('E', 'removable', false), drive('F', 'other', false), drive('Z', 'network', false)];
   assert.deepEqual(w.nonLocalLetters(list), ['E', 'F', 'Z']);
+});
+
+/* ------------------------------------------------------------------ SQL and Redis choices */
+
+test('a plain install writes no sql or redis block; only a real choice is written', () => {
+  const s = ready('pack');
+  const plain = w.buildSettings(s);
+  assert.equal('sql' in plain, false);
+  assert.equal('redis' in plain, false);
+  const deep = w.setSqlText(w.setSqlProfile(s, 'deep'), true);
+  assert.deepEqual(w.buildSettings(deep).sql, { profile: 'deep', queryText: true, queryTextMaxChars: 1000 });
+  const every = w.setSqlProfile(s, 'everything');
+  assert.deepEqual(w.buildSettings(every).sql, { profile: 'everything' });
+});
+
+test('query text exists only in the deep profile: leaving deep drops the tick, and the tick is refused elsewhere', () => {
+  const s = ready('pack');
+  assert.equal(w.setSqlText(s, true), s, 'refused on standard');
+  const deep = w.setSqlText(w.setSqlProfile(s, 'deep'), true);
+  assert.equal(deep.sqlChoice.text, true);
+  const back = w.setSqlProfile(deep, 'everything');
+  assert.equal(back.sqlChoice.text, false);
+  assert.equal('queryText' in (w.buildSettings(back).sql ?? {}), false);
+});
+
+test('the SQL and Redis blocks are left out when their step does not apply on this PC', () => {
+  let s = ready('pc');
+  s = w.setSqlProfile(s, 'deep');
+  s = w.setRedisProfile(s, 'everything');
+  const out = w.buildSettings(s);
+  assert.equal('sql' in out, false);
+  assert.equal('redis' in out, false);
+  s = w.setRedisSeen(s, true);
+  assert.deepEqual(w.buildSettings(s).redis, { profile: 'everything' });
+});
+
+test('Redis rows follow the starting point and keep only real differences as overrides', () => {
+  let s = ready('pack');
+  assert.equal(w.redisRowOn(s.redisChoice, 'slowlog'), true);
+  assert.equal(w.redisRowOn(s.redisChoice, 'latency'), false);
+  assert.equal(w.redisPresetNow(s.redisChoice), 'standard');
+  s = w.setRedisRow(s, 'latency', true);
+  assert.equal(w.redisPresetNow(s.redisChoice), 'custom');
+  assert.deepEqual(w.buildSettings(s).redis, { latency: true });
+  s = w.setRedisRow(s, 'latency', false);
+  assert.equal(w.redisPresetNow(s.redisChoice), 'standard', 'back to the starting point: no override left');
+  assert.equal('redis' in w.buildSettings(s), false);
+  s = w.setRedisProfile(w.setRedisRow(s, 'clients', true), 'everything');
+  assert.deepEqual(s.redisChoice.rows, {}, 'a new starting point clears the overrides');
+  assert.equal(w.redisRowOn(s.redisChoice, 'clients'), true);
+  s = w.setRedisRow(s, 'slowlog', false);
+  assert.deepEqual(w.buildSettings(s).redis, { profile: 'everything', slowlog: false });
+  s = w.setRedisRow(w.setRedisProfile(s, 'standard'), 'slowArgs', true);
+  assert.deepEqual(w.buildSettings(s).redis, { slowArgs: true });
+});
+
+test('"Use defaults, go to review" puts the SQL and Redis choices back to Standard', () => {
+  let s = ready('pack');
+  s = w.setRedisProfile(w.setSqlProfile(s, 'deep'), 'everything');
+  const r = w.useDefaultsToReview(s);
+  assert.deepEqual(r.sqlChoice, { profile: 'standard', text: false });
+  assert.deepEqual(r.redisChoice, { profile: 'standard', rows: {} });
 });

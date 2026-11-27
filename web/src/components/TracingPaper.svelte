@@ -6,6 +6,7 @@
   import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import { createSlowRead } from '../lib/slowRead.svelte';
   import TracingChart from './TracingChart.svelte';
+  import BlackboxLanes from './BlackboxLanes.svelte';
   import SuspectsRail from './SuspectsRail.svelte';
   import WindowPicker from '../lib/components/WindowPicker.svelte';
   import { comparisonQuickRanges, equalPeriodBefore, incidentQuickChips, incidentQuickRanges, quickRangeIsActive, withQuickRange, type QuickRange } from '../lib/tracing/pickerModel';
@@ -573,6 +574,8 @@
             {/if}
           </div>
           </div>
+          <!-- The Blackbox lanes of the same window, when the case holds a Blackbox recording. -->
+          <BlackboxLanes {caseId} fromMs={Date.parse(result.window.start)} toMs={Date.parse(result.window.end)} zone={timeZone.zone} />
         {/if}
       {/if}
     {/if}

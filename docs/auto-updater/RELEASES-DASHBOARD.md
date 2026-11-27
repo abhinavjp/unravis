@@ -1,8 +1,8 @@
 # Releases dashboard
 
-A small separate program, `unravis-releases`. It is not part of Unravis. It shows every release, read only.
+A small separate program, `unravis-releases` (it is the Homestretch window; it keeps its file name because setup installs it under that name and the Start-menu shortcut points at it). It is not part of Unravis. It shows every release, read only.
 
-Start: double-click `Start Releases.cmd` (rebuilds on each start, needs Go). It opens its own window (own taskbar entry, Unravis icon, no address bar or tabs). Closing the window ends the program.
+Start: double-click `Start Homestretch.cmd` (the old `Start Releases.cmd` calls it; rebuilds on each start, needs Go). It opens its own window (own taskbar entry, Unravis icon, no address bar or tabs). Closing the window ends the program.
 
 The window is Microsoft Edge in app mode (the WebView2 engine Windows already has) with its own profile folder, so it shares nothing with your browser. If Edge is missing, it opens the default browser. Flags: `--open` (default browser), `--print-link` (print the link only, for servers and tests), `--data`, `--port`.
 

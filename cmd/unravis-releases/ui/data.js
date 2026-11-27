@@ -5,7 +5,10 @@
 // D.at is when runs and machines were last read (the fast poll); D.snapshotAt is when the releases were last read (the slow
 // poll). Each moves only on a successful read, so when a read fails the old answer stays on screen and its time stays put.
 const D = { projects: [], pid: '', overview: null, runs: [], runsTotal: 0, machines: null, snapshot: null,
-  run: {}, logs: {}, at: 0, snapshotAt: 0, snapshotErr: '', err: '', loaded: false, projectsErr: '' };
+  run: {}, logs: {}, at: 0, snapshotAt: 0, snapshotErr: '', err: '', loaded: false, projectsErr: '',
+  // The queue, machine rules, holds and activity (BL-706). err holds one plain-words message per answer that failed;
+  // old is true when this program is too old to know the four routes (it answered 404 without a message).
+  ops: { queue: null, policy: null, holds: null, activity: null, err: {}, old: false, loaded: false } };
 
 // How often each kind of data is read, and how many missed reads it takes before the page calls its data old.
 const POLL = { fast: 4000, slow: 30000, warnAfter: 3 };
@@ -69,7 +72,7 @@ const Data = (() => {
     const res = await fetch(path + (q.toString() ? '?' + q.toString() : ''), { credentials: 'same-origin', cache: 'no-store' });
     let body = null;
     try { body = await res.json(); } catch (e) { /* not JSON */ }
-    if (!res.ok) { const e = new Error((body && body.error) || (res.status === 401 ? 'This page needs a fresh link. Open the link that unravis-releases printed.' : `The server answered ${res.status}.`)); e.status = res.status; throw e; }
+    if (!res.ok) { const e = new Error((body && body.error) || (res.status === 401 ? 'This page needs a fresh link. Open the link that unravis-releases printed.' : `The server answered ${res.status}.`)); e.status = res.status; e.old = res.status === 404 && !(body && body.error); throw e; }
     return body;
   }
   const same = (key, val) => { const s = JSON.stringify(val); if (sig[key] === s) return true; sig[key] = s; return false; };
@@ -79,6 +82,7 @@ const Data = (() => {
     if (id === D.pid) return;
     D.pid = id; epoch++;
     D.overview = null; D.runs = []; D.runsTotal = 0; D.machines = null; D.run = {}; D.logs = {};
+    D.ops = { queue: null, policy: null, holds: null, activity: null, err: {}, old: false, loaded: false };
     for (const k of Object.keys(sig)) if (k !== 'projects' && k !== 'snapshot') delete sig[k];
     try { localStorage.setItem(SAVED, id); } catch (e) { /* not saved */ }
   }
@@ -107,6 +111,32 @@ const Data = (() => {
     D.overview = ov; D.runs = rs.runs || []; D.runsTotal = rs.total || 0; D.machines = ma;
     return c1 || c2 || c3;
   }
+
+  // The four Homestretch answers are loaded on their own, never inside loadFast: one of them failing must not blank the
+  // runs, and a program that is too old for them must still show its runs. It never throws.
+  const OPS = [['queue', '/api/queue', { limit: 50 }], ['policy', '/api/policy', {}], ['holds', '/api/holds', {}], ['activity', '/api/activity', { limit: 200 }]];
+  async function loadOps() {
+    if (!D.pid || D.ops.old) return false;
+    const my = epoch; const o = D.ops; let changed = false;
+    await Promise.all(OPS.map(async ([key, path, extra]) => {
+      try {
+        const v = await api(path, { ...P(), ...extra });
+        if (my !== epoch) return;
+        o.err[key] = '';
+        if (!same('ops-' + key, { ...v, now: '' })) changed = true;
+        o[key] = v;
+      } catch (e) {
+        if (my !== epoch) return;
+        if (e.old) { o.old = true; changed = true; return; }
+        if (o.err[key] !== e.message) { o.err[key] = e.message; changed = true; }
+      }
+    }));
+    if (my !== epoch) return false;
+    if (!o.loaded) { o.loaded = true; changed = true; }
+    return changed;
+  }
+  // refreshOps is for the moment after a write: it waits for the answers instead of skipping when a poll is running.
+  async function refreshOps() { const c = await loadOps(); onChange(c ? 'data' : 'tick'); return c; }
 
   async function loadSlow() {
     const [pr, sn] = await Promise.all([loadProjects().catch(() => false), api('/api/snapshot').catch((e) => { D.snapshotErr = plainReason(e); return null; })]);
@@ -143,6 +173,7 @@ const Data = (() => {
       if (slow || !D.loaded) c = (await loadSlow().catch((e) => { D.projectsErr = e.message; return false; })) || c;
       c = (await loadFast()) || c;
       D.loaded = true;
+      c = (await loadOps()) || c;
       if (c || was !== D.err + '\n' + D.snapshotErr) onChange('data');
       else onChange('tick');
     } catch (e) {
@@ -173,5 +204,5 @@ const Data = (() => {
     try { body = await res.json(); } catch (e) { /* not JSON */ }
     return Object.assign({ ok: false, message: `The server answered ${res.status}.` }, body || {}, { status: res.status });
   }
-  return { api, act, start, tick, pick, loadRun, loadLog, logKey, get epoch() { return epoch; } };
+  return { api, act, start, tick, pick, loadRun, loadLog, logKey, refreshOps, get epoch() { return epoch; } };
 })();
