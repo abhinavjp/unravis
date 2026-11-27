@@ -94,7 +94,7 @@ func writeLinkFile(link string, data []byte) (err error) {
 		return err
 	}
 	tmp := link + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // tmp is link + ".tmp", a path the installer itself builds
 	if err != nil {
 		return err
 	}
