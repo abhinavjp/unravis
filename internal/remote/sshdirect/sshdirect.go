@@ -26,13 +26,13 @@ import (
 
 // Errors shown to people.
 var (
-	ErrNoHostKey     = errors.New("This server's host key has not been pinned yet. Compare its fingerprint and pin it first.")
-	ErrSignIn        = errors.New("The server did not accept the sign-in.")
-	ErrNoTunnel      = errors.New("This server has no Blackbox address set.")
-	ErrTunnelRefused = errors.New("The server did not let this PC reach the Blackbox address. Check that the recorder is running there and which address it listens on.")
-	ErrUnreachable   = errors.New("Could not reach the server.")
-	ErrCommand       = errors.New("The server could not complete that request.")
-	ErrListTooLarge  = errors.New("That folder holds too many files to list at once.")
+	ErrNoHostKey     = errors.New("This server's host key has not been pinned yet. Compare its fingerprint and pin it first.")                                            //nolint:staticcheck // shown to the person as a sentence
+	ErrSignIn        = errors.New("The server did not accept the sign-in.")                                                                                               //nolint:staticcheck // shown to the person as a sentence
+	ErrNoTunnel      = errors.New("This server has no Blackbox address set.")                                                                                             //nolint:staticcheck // shown to the person as a sentence
+	ErrTunnelRefused = errors.New("The server did not let this PC reach the Blackbox address. Check that the recorder is running there and which address it listens on.") //nolint:staticcheck // shown to the person as a sentence
+	ErrUnreachable   = errors.New("Could not reach the server.")                                                                                                          //nolint:staticcheck // shown to the person as a sentence
+	ErrCommand       = errors.New("The server could not complete that request.")                                                                                          //nolint:staticcheck // shown to the person as a sentence
+	ErrListTooLarge  = errors.New("That folder holds too many files to list at once.")                                                                                    //nolint:staticcheck // shown to the person as a sentence
 )
 
 // HostKeyChanged means the server presented a key other than the pinned one. It is a hard stop: nothing was sent.
@@ -78,7 +78,7 @@ func (c Config) check() error {
 		}
 	}
 	if c.OS != "windows" && c.OS != "linux" {
-		return errors.New("Say whether the server runs Windows or Linux.")
+		return errors.New("Say whether the server runs Windows or Linux.") //nolint:staticcheck // shown to the person as a sentence
 	}
 	return nil
 }
@@ -143,7 +143,7 @@ func presented(ctx context.Context, c Config, algo string) (string, error) {
 	if err != nil {
 		return "", ErrUnreachable
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 	var fp string
 	cfg := &ssh.ClientConfig{
 		User:              c.User,
@@ -156,7 +156,7 @@ func presented(ctx context.Context, c Config, algo string) (string, error) {
 	}
 	sc, _, _, herr := handshake(ctx, conn, c, cfg)
 	if sc != nil {
-		sc.Close()
+		sc.Close() //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 	}
 	if fp != "" {
 		return fp, nil
@@ -169,17 +169,17 @@ func presented(ctx context.Context, c Config, algo string) (string, error) {
 
 // handshake runs the SSH handshake with a deadline and with cancellation: a server that accepts the connection and then says nothing cannot hold it open.
 func handshake(ctx context.Context, conn net.Conn, c Config, cfg *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
-	conn.SetDeadline(time.Now().Add(handshakeTimeout(c)))
-	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	conn.SetDeadline(time.Now().Add(handshakeTimeout(c)))   //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
+	stop := context.AfterFunc(ctx, func() { conn.Close() }) //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 	sc, chans, reqs, err := ssh.NewClientConn(conn, c.addr(), cfg)
 	if !stop() { // cancelled while the handshake ran
 		if sc != nil {
-			sc.Close()
+			sc.Close() //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 		}
 		return nil, nil, nil, ctx.Err()
 	}
 	if err == nil {
-		conn.SetDeadline(time.Time{})
+		conn.SetDeadline(time.Time{}) //nolint:errcheck,gosec // best-effort cleanup, nothing to do on failure
 	}
 	return sc, chans, reqs, err
 }
@@ -202,7 +202,7 @@ func (c Config) authMethods() ([]ssh.AuthMethod, error) {
 			signer, err = ssh.ParsePrivateKey([]byte(c.Secret))
 		}
 		if err != nil {
-			return nil, errors.New("The private key could not be read (wrong passphrase, or not an OpenSSH or PEM key).")
+			return nil, errors.New("The private key could not be read (wrong passphrase, or not an OpenSSH or PEM key).") //nolint:staticcheck // shown to the person as a sentence
 		}
 		return []ssh.AuthMethod{ssh.PublicKeys(signer)}, nil
 	case "password":
@@ -215,11 +215,11 @@ func (c Config) authMethods() ([]ssh.AuthMethod, error) {
 			if len(questions) == 1 && rePasswordPrompt.MatchString(questions[0]) {
 				return []string{c.Secret}, nil
 			}
-			return nil, errors.New("The server asked for something other than a password.")
+			return nil, errors.New("The server asked for something other than a password.") //nolint:staticcheck // shown to the person as a sentence
 		})
 		return []ssh.AuthMethod{ssh.Password(c.Secret), ki}, nil
 	}
-	return nil, errors.New("Sign-in must be a key or a password.")
+	return nil, errors.New("Sign-in must be a key or a password.") //nolint:staticcheck // shown to the person as a sentence
 }
 
 // Client is a connected server. Safe for concurrent use; each request opens its own channel.
@@ -265,7 +265,7 @@ func Connect(ctx context.Context, c Config) (*Client, error) {
 		if herr == nil {
 			return &Client{cfg: c, conn: ssh.NewClient(sc, chans, reqs)}, nil
 		}
-		raw.Close()
+		raw.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 		if got != "" && got != c.HostKey {
 			if seen == "" {
 				seen = got
@@ -293,11 +293,11 @@ func (cl *Client) Close() error { return cl.conn.Close() }
 func TunnelTarget(addr string) (host string, port int, err error) {
 	h, p, serr := net.SplitHostPort(addr)
 	if serr != nil {
-		return "", 0, errors.New("The Blackbox address must look like 127.0.0.1:7790.")
+		return "", 0, errors.New("The Blackbox address must look like 127.0.0.1:7790.") //nolint:staticcheck // shown to the person as a sentence
 	}
 	n, aerr := strconv.Atoi(p)
 	if aerr != nil {
-		return "", 0, errors.New("The Blackbox address must look like 127.0.0.1:7790.")
+		return "", 0, errors.New("The Blackbox address must look like 127.0.0.1:7790.") //nolint:staticcheck // shown to the person as a sentence
 	}
 	for _, r := range []string{grammar.Host(h), grammar.Port(n)} {
 		if r != "" {
@@ -334,7 +334,7 @@ func (cl *Client) DialTunnel(ctx context.Context) (net.Conn, error) {
 	case <-ctx.Done():
 		go func() {
 			if r := <-ch; r.c != nil {
-				r.c.Close()
+				r.c.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 			}
 		}()
 		return nil, ctx.Err()
@@ -357,7 +357,7 @@ func psCommand(script string) string {
 	u := utf16.Encode([]rune(script))
 	b := make([]byte, 0, len(u)*2)
 	for _, v := range u {
-		b = append(b, byte(v), byte(v>>8))
+		b = append(b, byte(v), byte(v>>8)) //nolint:gosec // value is range-checked or small by construction
 	}
 	return "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + base64.StdEncoding.EncodeToString(b)
 }
@@ -420,7 +420,7 @@ func (cl *Client) run(ctx context.Context, cmd string, limit int) (result, error
 	if err != nil {
 		return result{}, ErrUnreachable
 	}
-	defer sess.Close()
+	defer sess.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 	var stdout, stderr limited
 	stdout.max, stderr.max = limit, maxStderr
 	sess.Stdout, sess.Stderr = &stdout, &stderr
@@ -428,7 +428,7 @@ func (cl *Client) run(ctx context.Context, cmd string, limit int) (result, error
 	go func() { done <- sess.Run(cmd) }()
 	select {
 	case <-ctx.Done():
-		sess.Close()
+		sess.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 		return result{}, ctx.Err()
 	case err := <-done:
 		if stdout.over {
@@ -631,18 +631,18 @@ func (cl *Client) Open(ctx context.Context, path string, off int64) (io.ReadClos
 	}
 	pipe, err := sess.StdoutPipe()
 	if err != nil {
-		sess.Close()
+		sess.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 		return nil, ErrUnreachable
 	}
 	var stderr limited
 	stderr.max = maxStderr
 	sess.Stderr = &stderr
 	if err := sess.Start(commands(cl.cfg.OS).open(lit, off)); err != nil {
-		sess.Close()
+		sess.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 		return nil, ErrCommand
 	}
 	r := &stream{sess: sess, pipe: pipe}
-	stop := context.AfterFunc(ctx, func() { r.Close() })
+	stop := context.AfterFunc(ctx, func() { r.Close() }) //nolint:errcheck // best-effort cleanup, nothing to do on failure
 	r.stop = stop
 	return r, nil
 }

@@ -124,20 +124,20 @@ func Run(ctx context.Context, t transport.Transport, req Request, plan Plan, opt
 		return Result{}, ErrPlanTooLarge{plan.Problem}
 	}
 	if r := grammar.SafeWord(opt.JobID); r != "" {
-		return Result{}, errors.New("The job name is not valid.")
+		return Result{}, errors.New("The job name is not valid.") //nolint:staticcheck // shown to the person as a sentence
 	}
 	dir := filepath.Join(opt.StagingDir, opt.JobID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return Result{}, fmt.Errorf("Could not create the staging folder: %w", err)
+		return Result{}, fmt.Errorf("Could not create the staging folder: %w", err) //nolint:staticcheck // shown to the person as a sentence
 	}
 	if opt.Origin != "" {
 		op := filepath.Join(dir, "pull-origin.txt")
-		if b, err := os.ReadFile(op); err == nil {
+		if b, err := os.ReadFile(op); err == nil { //nolint:gosec // path comes from a checked, app-owned location
 			if strings.TrimSpace(string(b)) != opt.Origin {
-				return Result{}, errors.New("That job id belongs to a pull of another machine or folder, so it cannot be resumed here.")
+				return Result{}, errors.New("That job id belongs to a pull of another machine or folder, so it cannot be resumed here.") //nolint:staticcheck // shown to the person as a sentence
 			}
 		} else if err := os.WriteFile(op, []byte(opt.Origin+"\n"), 0o600); err != nil {
-			return Result{}, fmt.Errorf("Could not create the staging folder: %w", err)
+			return Result{}, fmt.Errorf("Could not create the staging folder: %w", err) //nolint:staticcheck // shown to the person as a sentence
 		}
 	}
 	if err := checkDisk(opt, dir, plan.Bytes); err != nil {
@@ -175,7 +175,7 @@ func Run(ctx context.Context, t transport.Transport, req Request, plan Plan, opt
 	res.Bytes = j.bytes()
 	res.Finished = time.Now().UTC()
 	if err := writeJSON(filepath.Join(dir, RecordName), res); err != nil {
-		return res, fmt.Errorf("Could not write the provenance record: %w", err)
+		return res, fmt.Errorf("Could not write the provenance record: %w", err) //nolint:staticcheck // shown to the person as a sentence
 	}
 	return res, nil
 }
@@ -185,15 +185,15 @@ func checkDisk(opt Options, dir string, need int64) error {
 	if free == nil {
 		free = func(d string) (int64, error) {
 			di, err := blackbox.OSDisk{}.Free(d)
-			return int64(di.Free), err
+			return int64(di.Free), err //nolint:gosec // value is range-checked or small by construction
 		}
 	}
 	f, err := free(dir)
 	if err != nil {
-		return nil // cannot tell: do not block
+		return nil //nolint:nilerr // deliberate: when free space cannot be read the pull is not blocked
 	}
 	if f < need+diskMargin {
-		return fmt.Errorf("There is not enough free disk space for this pull: it needs about %s and %s is free. Free some space or narrow the pull.", human(need+diskMargin), human(f))
+		return fmt.Errorf("There is not enough free disk space for this pull: it needs about %s and %s is free. Free some space or narrow the pull.", human(need+diskMargin), human(f)) //nolint:staticcheck // shown to the person as a sentence
 	}
 	return nil
 }
@@ -264,7 +264,7 @@ func (j *job) copyFile(ctx context.Context, pf PlanFile, out string) FileResult 
 	finalPath := filepath.Join(j.dir, out)
 
 	var st fileState
-	if b, err := os.ReadFile(statePath); err == nil {
+	if b, err := os.ReadFile(statePath); err == nil { //nolint:gosec // path comes from a checked, app-owned location
 		_ = json.Unmarshal(b, &st)
 	}
 	if st.Size != pf.Size || st.MTime != pf.MTime.Unix() { // new file, or the server file changed since: start over
@@ -278,11 +278,11 @@ func (j *job) copyFile(ctx context.Context, pf PlanFile, out string) FileResult 
 		st = fileState{Size: pf.Size, MTime: pf.MTime.Unix()}
 	}
 
-	part, err := os.OpenFile(partPath, os.O_RDWR|os.O_CREATE, 0o600)
+	part, err := os.OpenFile(partPath, os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // path comes from a checked, app-owned location
 	if err != nil {
 		return fail("Could not create the staging file.")
 	}
-	defer part.Close()
+	defer part.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 	if fi, err := part.Stat(); err != nil || fi.Size() < st.OutBytes {
 		st = fileState{Size: pf.Size, MTime: pf.MTime.Unix()} // the staged part is gone or short: restart
 	}
@@ -310,7 +310,7 @@ func (j *job) copyFile(ctx context.Context, pf PlanFile, out string) FileResult 
 	if err != nil {
 		return j.stopped(ctx, fr, "Could not open the file on the server: "+err.Error())
 	}
-	defer rc.Close()
+	defer rc.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 	br := bufio.NewReaderSize(&meter{r: rc, ctx: ctx, j: j}, 64<<10)
 	bw := bufio.NewWriterSize(part, 64<<10)
 
@@ -393,7 +393,7 @@ func (j *job) copyFile(ctx context.Context, pf PlanFile, out string) FileResult 
 	if err := part.Sync(); err != nil {
 		return fail("Could not write to the staging folder: " + err.Error())
 	}
-	part.Close()
+	part.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 
 	fr.RawBytes, fr.OutBytes, fr.Scrubbed, fr.Dropped = off, outBytes, scrubbed, dropped
 	fr.SHA256 = hex.EncodeToString(h.Sum(nil))
@@ -480,7 +480,7 @@ func readLine(br *bufio.Reader, h io.Writer, max int) (line []byte, n int, parti
 	for {
 		chunk, e := br.ReadSlice('\n')
 		if len(chunk) > 0 {
-			h.Write(chunk)
+			h.Write(chunk) //nolint:errcheck // best-effort cleanup, nothing to do on failure
 			n += len(chunk)
 			if !tooLong {
 				if len(buf)+len(chunk) > max {

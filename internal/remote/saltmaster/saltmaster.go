@@ -29,12 +29,12 @@ import (
 
 // Errors shown to people.
 var (
-	ErrNoMinion   = errors.New("The Salt master did not give an answer for that machine.")
-	ErrOffline    = errors.New("That machine did not answer. It may be off, or not connected to the Salt master.")
-	ErrBadReply   = errors.New("The Salt master gave an answer Unravis could not read.")
-	ErrMasterCmd  = errors.New("The Salt master could not run that request.")
-	ErrTooLarge   = errors.New("That folder holds too many files to list at once.")
-	ErrShortChunk = errors.New("The machine sent a piece of the file that was cut short. Nothing was kept from it.")
+	ErrNoMinion   = errors.New("The Salt master did not give an answer for that machine.")                           //nolint:staticcheck // shown to the person as a sentence
+	ErrOffline    = errors.New("That machine did not answer. It may be off, or not connected to the Salt master.")   //nolint:staticcheck // shown to the person as a sentence
+	ErrBadReply   = errors.New("The Salt master gave an answer Unravis could not read.")                             //nolint:staticcheck // shown to the person as a sentence
+	ErrMasterCmd  = errors.New("The Salt master could not run that request.")                                        //nolint:staticcheck // shown to the person as a sentence
+	ErrTooLarge   = errors.New("That folder holds too many files to list at once.")                                  //nolint:staticcheck // shown to the person as a sentence
+	ErrShortChunk = errors.New("The machine sent a piece of the file that was cut short. Nothing was kept from it.") //nolint:staticcheck // shown to the person as a sentence
 )
 
 // Runner runs one command on the jump host. sshdirect.Client satisfies it.
@@ -336,7 +336,7 @@ func (m Master) For(id, os string, allowed []string) (*Transport, error) {
 		return nil, errors.New(r)
 	}
 	if os != "windows" && os != "linux" {
-		return nil, errors.New("Say whether the machine runs Windows or Linux.")
+		return nil, errors.New("Say whether the machine runs Windows or Linux.") //nolint:staticcheck // shown to the person as a sentence
 	}
 	return &Transport{m: m, id: id, os: os, allowed: allowed}, nil
 }
@@ -582,7 +582,7 @@ func (t *Transport) Digest(ctx context.Context, path string) (string, error) {
 	}
 	h := strings.ToLower(f[0])
 	for _, c := range h {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return "", ErrBadReply
 		}
 	}

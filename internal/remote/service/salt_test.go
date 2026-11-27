@@ -74,7 +74,7 @@ func TestMachinesMarksTheTickedOnes(t *testing.T) {
 			t.Errorf("%s chosen=%v", m.ID, m.Chosen)
 		}
 	}
-	if !c.fakeConn.closed {
+	if !c.closed {
 		t.Error("the connection stayed open")
 	}
 	if !strings.HasPrefix(c.cmds[0], "sudo -n ") {
@@ -103,7 +103,7 @@ func TestSaltTestAndBrowseReadTheMachine(t *testing.T) {
 	if err != nil || len(files) != 1 || files[0].Name != "bb-20261126-07.ndjson" {
 		t.Fatalf("%+v %v", files, err)
 	}
-	if !c.fakeConn.closed {
+	if !c.closed {
 		t.Error("the connection stayed open")
 	}
 }
@@ -135,7 +135,7 @@ func TestSaltOfflineMachineIsAnError(t *testing.T) {
 	if !errors.Is(err, saltmaster.ErrOffline) {
 		t.Fatalf("got %v", err)
 	}
-	if !c.fakeConn.closed {
+	if !c.closed {
 		t.Error("the connection stayed open after a failure")
 	}
 }

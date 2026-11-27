@@ -37,7 +37,7 @@ const (
 	pem    = "-----BEGIN OPENSSH PRIVATE KEY-----\nSECRETKEYBODYSECRETKEYBODY\n-----END OPENSSH PRIVATE KEY-----\n"
 	fpA    = "SHA256:Zk3Hn1c0uV8mF2rXb9yQe7TgPwLd4oAiS5JhN6vCtMU"
 	fpB    = "SHA256:Aa3Hn1c0uV8mF2rXb9yQe7TgPwLd4oAiS5JhN6vCtMU"
-	passph = "PASSPHRASE-SECRET"
+	passph = "PASSPHRASE-SECRET" //nolint:gosec // test value, not a real credential
 )
 
 func open(t *testing.T) (*Store, string) {
@@ -74,7 +74,7 @@ func TestAddListGetAndTheSecretStaysSealed(t *testing.T) {
 		t.Fatalf("secret: %v", err)
 	}
 	// the file on disk is sealed, not readable JSON
-	raw, _ := os.ReadFile(path)
+	raw, _ := os.ReadFile(path) //nolint:gosec // path comes from a checked, app-owned location
 	if bytes.Contains(raw, []byte("hunter2")) || bytes.Contains(raw, []byte("web-01")) {
 		t.Fatal("plain text on disk")
 	}
@@ -286,7 +286,7 @@ func TestDamagedOrEditedFileIsLeftAloneAndNotUsed(t *testing.T) {
 	if _, err := s.Add(good()); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("add over a damaged file: %v", err)
 	}
-	if raw, _ := os.ReadFile(path); !bytes.Equal(raw, sealed) {
+	if raw, _ := os.ReadFile(path); !bytes.Equal(raw, sealed) { //nolint:gosec // path comes from a checked, app-owned location
 		t.Fatal("the damaged file was rewritten")
 	}
 	_ = e
@@ -299,7 +299,7 @@ func TestDamagedOrEditedFileIsLeftAloneAndNotUsed(t *testing.T) {
 		}
 	}
 	unknown, _ := xorProtector{}.Protect([]byte(`{"version":1,"records":[],"extra":1}`))
-	os.WriteFile(path, unknown, 0o600)
+	os.WriteFile(path, unknown, 0o600) //nolint:errcheck // test helper, error not needed
 	if _, err := s.List(); !errors.Is(err, ErrCorrupt) {
 		t.Errorf("unknown field accepted: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestConcurrentAddsAllLand(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			a := good()
-			a.Host = "node" + string(rune('a'+i)) + ".example"
+			a.Host = "node" + string(rune('a'+i)) + ".example" //nolint:gosec // value is range-checked or small by construction
 			if _, err := s.Add(a); err != nil {
 				t.Error(err)
 			}

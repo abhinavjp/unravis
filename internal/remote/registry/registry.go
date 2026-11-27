@@ -24,14 +24,14 @@ import (
 
 // Errors of the store. The text is shown to people, so it is plain.
 var (
-	ErrUnavailable = errors.New("The saved server list is unavailable on this PC.")
-	ErrCorrupt     = errors.New("The saved server list could not be read (damaged, or sealed for another user). It was left as it is.")
-	ErrNotFound    = errors.New("That server is not in the list.")
-	ErrDuplicate   = errors.New("That server is already in the list.")
-	ErrInvalid     = errors.New("The server details are not valid.")
-	ErrTooMany     = errors.New("The list is full. Remove a server before adding another.")
-	ErrHostKeySet  = errors.New("This server already has a pinned host key. Use the key-changed flow to replace it.")
-	ErrNoHostKey   = errors.New("This server has no pinned host key yet.")
+	ErrUnavailable = errors.New("The saved server list is unavailable on this PC.")                                                     //nolint:staticcheck // shown to the person as a sentence
+	ErrCorrupt     = errors.New("The saved server list could not be read (damaged, or sealed for another user). It was left as it is.") //nolint:staticcheck // shown to the person as a sentence
+	ErrNotFound    = errors.New("That server is not in the list.")                                                                      //nolint:staticcheck // shown to the person as a sentence
+	ErrDuplicate   = errors.New("That server is already in the list.")                                                                  //nolint:staticcheck // shown to the person as a sentence
+	ErrInvalid     = errors.New("The server details are not valid.")                                                                    //nolint:staticcheck // shown to the person as a sentence
+	ErrTooMany     = errors.New("The list is full. Remove a server before adding another.")                                             //nolint:staticcheck // shown to the person as a sentence
+	ErrHostKeySet  = errors.New("This server already has a pinned host key. Use the key-changed flow to replace it.")                   //nolint:staticcheck // shown to the person as a sentence
+	ErrNoHostKey   = errors.New("This server has no pinned host key yet.")                                                              //nolint:staticcheck // shown to the person as a sentence
 )
 
 // MaxEntries is the most servers the list holds.
@@ -605,7 +605,7 @@ func (s *Store) readLocked() (vault, error) {
 	if err != nil {
 		return vault{}, ErrUnavailable
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 	data, err := io.ReadAll(io.LimitReader(file, maxFileSize+1))
 	if err != nil {
 		return vault{}, ErrUnavailable

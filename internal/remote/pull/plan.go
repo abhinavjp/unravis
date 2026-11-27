@@ -102,7 +102,7 @@ func BuildPlan(ctx context.Context, t transport.Transport, req Request, lim Limi
 			pats[i] = "*"
 		}
 		if _, err := path.Match(pats[i], "x"); err != nil {
-			return Plan{}, errors.New("That file name pattern is not valid.")
+			return Plan{}, errors.New("That file name pattern is not valid.") //nolint:staticcheck // shown to the person as a sentence
 		}
 	}
 	infos, err := t.List(ctx, req.Dir)

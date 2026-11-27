@@ -242,7 +242,7 @@ func readAll(t *testing.T, tr *Transport, path string, off int64) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
+	defer rc.Close() //nolint:errcheck // test helper, error not needed
 	return io.ReadAll(rc)
 }
 
@@ -323,10 +323,10 @@ func TestWindowsMinionScripts(t *testing.T) {
 	var scripts []string
 	f2 := &recorder{id: "web-01", reply: p}
 	tr.m.R = f2
-	tr.Open(context.Background(), p, 0)
-	tr.Digest(context.Background(), p)
-	tr.List(context.Background(), `D:\Blackbox\snapshots`)
-	tr.readChunk(context.Background(), p, 10, 100)
+	_, _ = tr.Open(context.Background(), p, 0)
+	_, _ = tr.Digest(context.Background(), p)
+	_, _ = tr.List(context.Background(), `D:\Blackbox\snapshots`)
+	_, _ = tr.readChunk(context.Background(), p, 10, 100)
 	scripts = f2.cmds
 	if len(scripts) == 0 {
 		t.Fatal("nothing was sent")

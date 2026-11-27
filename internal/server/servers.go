@@ -352,7 +352,7 @@ func srvAction(r *http.Request) (context.Context, context.CancelFunc) {
 // place is reused.
 func (h *handler) srvSaveKey(r *http.Request, name, host, addr, key string) (string, error) {
 	if h.bb == nil {
-		return "", errors.New("Blackbox is not available in this build, so its key cannot be saved.")
+		return "", errors.New("Blackbox is not available in this build, so its key cannot be saved.") //nolint:staticcheck // shown to the person as a sentence
 	}
 	if addr == "" {
 		addr = "7790"
@@ -891,8 +891,8 @@ func srvFailureOf(err error) *srvFailure {
 func (h *handler) srvListPulledBlackbox(job *srvJob, res service.Pulled) {
 	note := ""
 	var id, name string
-	switch {
-	case h.bb == nil:
+	switch h.bb {
+	case nil:
 		note = "Blackbox is not available in this build, so the recording was kept as files only."
 	default:
 		label := "Pulled " + job.kind
@@ -982,17 +982,17 @@ func (h *handler) srvJobFile(w http.ResponseWriter, r *http.Request, arg string)
 		return
 	}
 	path := filepath.Join(h.servers.deps.StagingRoot, server, job, name)
-	info, err := os.Lstat(path)
+	info, err := os.Lstat(path) //nolint:gosec // name checked above: no separators, no dot prefix
 	if err != nil || !info.Mode().IsRegular() {
 		http.NotFound(w, r)
 		return
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path comes from a checked, app-owned location
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")

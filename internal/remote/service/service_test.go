@@ -260,7 +260,7 @@ func TestBlackboxPullKeepsTheRecordersOwnManifestAndIsReadAsAFolder(t *testing.T
 		t.Fatalf("%+v", res)
 	}
 	dir := res.BlackboxFolder.Path
-	if got, _ := os.ReadFile(filepath.Join(dir, "manifest.json")); !strings.Contains(string(got), `"web-01"`) {
+	if got, _ := os.ReadFile(filepath.Join(dir, "manifest.json")); !strings.Contains(string(got), `"web-01"`) { //nolint:gosec // path comes from a checked, app-owned location
 		t.Fatalf("the recorder's manifest.json is not there as it was: %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "bb-20261126-07.ndjson")); err != nil {

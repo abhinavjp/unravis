@@ -27,8 +27,8 @@ func (p *pipeTunnel) DialTunnel(ctx context.Context) (net.Conn, error) {
 	p.dials++
 	p.mu.Unlock()
 	a, b := net.Pipe()
-	srv := &http.Server{Handler: p.h}
-	go srv.Serve(&oneConn{c: b})
+	srv := &http.Server{Handler: p.h, ReadHeaderTimeout: 10 * time.Second}
+	go srv.Serve(&oneConn{c: b}) //nolint:errcheck // test helper, error not needed
 	return a, nil
 }
 
@@ -59,7 +59,7 @@ func TestSourceReadsThroughTheTunnelWithTheKeyInTheHeaderOnly(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/files/bb-20261126-09.ndjson":
-			io.WriteString(w, "line one\n")
+			io.WriteString(w, "line one\n") //nolint:errcheck,gosec // test helper, error not needed
 		case "/redirect":
 			http.Redirect(w, r, "http://elsewhere.invalid/", http.StatusFound)
 		default:
@@ -75,7 +75,7 @@ func TestSourceReadsThroughTheTunnelWithTheKeyInTheHeaderOnly(t *testing.T) {
 		t.Fatalf("%v (uri %q)", err, gotURI)
 	}
 	b, _ := io.ReadAll(rc)
-	rc.Close()
+	rc.Close() //nolint:errcheck,gosec // test helper, error not needed
 	if string(b) != "line one\n" || strings.Contains(gotURI, "the-read-key") {
 		t.Fatalf("%q uri=%q", b, gotURI)
 	}

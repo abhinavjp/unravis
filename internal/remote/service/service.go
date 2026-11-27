@@ -65,11 +65,11 @@ func New(d Deps) (*Service, error) {
 
 // Plain sentences the screen shows as they are.
 var (
-	ErrNeedHostKey   = errors.New("Check this server's host key first. Unravis connects only to a server whose key you have compared and pinned.")
-	ErrNoSSH         = errors.New("This server is set up without an SSH or Salt connection, so there is nothing to browse or pull. Add one to use it.")
-	ErrKeyNotShown   = errors.New("The server is now presenting a different host key than the one you compared. Nothing was pinned. Compare the key again.")
-	ErrFolderNotKind = errors.New("That folder is not on this server's list for that kind of log. Add it to the allowed folders first.")
-	ErrNoBlackbox    = errors.New("This server has no Blackbox set up. Add its Blackbox key first.")
+	ErrNeedHostKey   = errors.New("Check this server's host key first. Unravis connects only to a server whose key you have compared and pinned.")           //nolint:staticcheck // shown to the person as a sentence
+	ErrNoSSH         = errors.New("This server is set up without an SSH or Salt connection, so there is nothing to browse or pull. Add one to use it.")      //nolint:staticcheck // shown to the person as a sentence
+	ErrKeyNotShown   = errors.New("The server is now presenting a different host key than the one you compared. Nothing was pinned. Compare the key again.") //nolint:staticcheck // shown to the person as a sentence
+	ErrFolderNotKind = errors.New("That folder is not on this server's list for that kind of log. Add it to the allowed folders first.")                     //nolint:staticcheck // shown to the person as a sentence
+	ErrNoBlackbox    = errors.New("This server has no Blackbox set up. Add its Blackbox key first.")                                                         //nolint:staticcheck // shown to the person as a sentence
 )
 
 // entry loads a server.
@@ -289,7 +289,7 @@ func (s *Service) BlackboxSource(ctx context.Context, id string) (blackbox.Sourc
 	}
 	src, err := s.bbSource(cn, e)
 	if err != nil {
-		cn.Close()
+		cn.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 		return nil, nil, err
 	}
 	return src, cn, nil
@@ -320,7 +320,7 @@ const BlackboxPattern = blackbox.ManifestName + "|bb-*.ndjson"
 func (s *Service) request(e registry.Entry, req pull.Request) (pull.Request, error) {
 	fk, ok := folderKind[req.Kind]
 	if !ok {
-		return req, fmt.Errorf("Pulling %q is not supported. Choose Blackbox, IIS, Redis, SQL Server or other logs.", req.Kind)
+		return req, fmt.Errorf("Pulling %q is not supported. Choose Blackbox, IIS, Redis, SQL Server or other logs.", req.Kind) //nolint:staticcheck // shown to the person as a sentence
 	}
 	found := false
 	for _, f := range e.Folders[fk] {

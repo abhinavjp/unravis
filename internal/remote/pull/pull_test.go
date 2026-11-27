@@ -124,7 +124,7 @@ func TestPullScrubsHashesAndLeavesNoRawSecretOnDisk(t *testing.T) {
 			t.Errorf("%+v", fr)
 		}
 	}
-	got, _ := os.ReadFile(filepath.Join(dir, "job1", "a.log"))
+	got, _ := os.ReadFile(filepath.Join(dir, "job1", "a.log")) //nolint:gosec // path comes from a checked, app-owned location
 	want := "ok line\n[removed]\nconnect [removed] now\nlast line no newline\n"
 	if string(got) != want {
 		t.Errorf("a.log = %q", got)
@@ -132,13 +132,13 @@ func TestPullScrubsHashesAndLeavesNoRawSecretOnDisk(t *testing.T) {
 	if res.Files[0].Scrubbed != 2 {
 		t.Errorf("scrubbed = %d", res.Files[0].Scrubbed)
 	}
-	b, _ := os.ReadFile(filepath.Join(dir, "job1", "b.log"))
+	b, _ := os.ReadFile(filepath.Join(dir, "job1", "b.log")) //nolint:gosec // path comes from a checked, app-owned location
 	if string(b) != "[removed]\nfine\n" {
 		t.Errorf("b.log = %q", b)
 	}
-	filepath.Walk(dir, func(p string, fi os.FileInfo, _ error) error {
+	filepath.Walk(dir, func(p string, fi os.FileInfo, _ error) error { //nolint:errcheck // test helper, error not needed
 		if fi != nil && !fi.IsDir() {
-			c, _ := os.ReadFile(p)
+			c, _ := os.ReadFile(p) //nolint:gosec // path comes from a checked, app-owned location
 			for _, s := range []string{"hunter2", "pw@h", "s3cretpw"} {
 				if bytes.Contains(c, []byte(s)) {
 					t.Errorf("%s holds %q", p, s)
@@ -174,7 +174,7 @@ func TestResumeAfterADroppedConnection(t *testing.T) {
 			if err != nil || !res.OK() || !res.Files[0].Verified {
 				t.Fatalf("second run: %+v %v", res, err)
 			}
-			got, _ := os.ReadFile(filepath.Join(dir, "j", "big.log"))
+			got, _ := os.ReadFile(filepath.Join(dir, "j", "big.log")) //nolint:gosec // path comes from a checked, app-owned location
 			if strings.Count(string(got), "[removed]") != 50 || strings.Count(string(got), "\n") != 50 {
 				t.Errorf("output wrong: %d lines", strings.Count(string(got), "\n"))
 			}
@@ -279,7 +279,7 @@ func TestLongLinesBinaryAndDisk(t *testing.T) {
 			bin = fr
 		}
 	}
-	got, _ := os.ReadFile(filepath.Join(dir, "j", "long.log"))
+	got, _ := os.ReadFile(filepath.Join(dir, "j", "long.log")) //nolint:gosec // path comes from a checked, app-owned location
 	if string(got) != "short\nafter\n" || long.Dropped != 1 || !long.Verified {
 		t.Errorf("long: %q %+v", got, long)
 	}
@@ -313,7 +313,7 @@ func TestSafeName(t *testing.T) {
 			t.Errorf("safeName(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if a, b := safeName("Dup.log", used), safeName("dup.LOG", used); a == b || strings.ToLower(a) == strings.ToLower(b) {
+	if a, b := safeName("Dup.log", used), safeName("dup.LOG", used); a == b || strings.EqualFold(a, b) {
 		t.Errorf("duplicates collide: %q %q", a, b)
 	}
 }

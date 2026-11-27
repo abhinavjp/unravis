@@ -35,4 +35,4 @@ type Transport interface {
 }
 
 // ErrNotAllowed means a path is outside the folders the person allowed (or is not a plain path).
-var ErrNotAllowed = errors.New("That path is outside the folders you allowed.")
+var ErrNotAllowed = errors.New("That path is outside the folders you allowed.") //nolint:staticcheck // shown to the person as a sentence

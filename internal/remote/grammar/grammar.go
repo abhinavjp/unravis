@@ -117,7 +117,7 @@ func StrictPath(s string) string {
 		return r
 	}
 	for i := 0; i < len(s); i++ {
-		if s[i] == ':' && !(i == 1 && reWinDrive.MatchString(s)) {
+		if s[i] == ':' && (i != 1 || !reWinDrive.MatchString(s)) {
 			return "A colon is only allowed after the drive letter."
 		}
 	}

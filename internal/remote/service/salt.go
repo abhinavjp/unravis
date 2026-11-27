@@ -17,10 +17,10 @@ import (
 
 // Plain sentences the screen shows as they are.
 var (
-	ErrNoSalt           = errors.New("This server is not set up with a Salt master, so there are no machines behind it.")
-	ErrNeedMachine      = errors.New("Choose which machine to read first.")
-	ErrMachineNotListed = errors.New("That machine is not on this server's list. Add it to the machines you ticked first.")
-	ErrNoExec           = errors.New("This connection cannot run commands on the jump host.")
+	ErrNoSalt           = errors.New("This server is not set up with a Salt master, so there are no machines behind it.")   //nolint:staticcheck // shown to the person as a sentence
+	ErrNeedMachine      = errors.New("Choose which machine to read first.")                                                 //nolint:staticcheck // shown to the person as a sentence
+	ErrMachineNotListed = errors.New("That machine is not on this server's list. Add it to the machines you ticked first.") //nolint:staticcheck // shown to the person as a sentence
+	ErrNoExec           = errors.New("This connection cannot run commands on the jump host.")                               //nolint:staticcheck // shown to the person as a sentence
 )
 
 func hasSalt(e registry.Entry) bool { return hasTransport(e, registry.TransportSalt) }
@@ -47,7 +47,7 @@ func (s *Service) Machines(ctx context.Context, id string) ([]MachineView, error
 	if err != nil {
 		return nil, err
 	}
-	defer cn.Close()
+	defer cn.Close() //nolint:errcheck // best-effort cleanup, nothing to do on failure
 	m, err := master(e, cn)
 	if err != nil {
 		return nil, err
