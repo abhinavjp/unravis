@@ -138,10 +138,18 @@ func firstJSON(out []byte) ([]byte, error) {
 		if s[i] != '{' && s[i] != '[' {
 			continue
 		}
-		var raw json.RawMessage
-		if json.NewDecoder(strings.NewReader(s[i:])).Decode(&raw) == nil {
-			return raw, nil
+		if i > 0 && s[i-1] != '\n' {
+			continue // the document starts a line, so a brace inside a warning is never taken for it
 		}
+		var raw json.RawMessage
+		dec := json.NewDecoder(strings.NewReader(s[i:]))
+		if dec.Decode(&raw) != nil {
+			continue
+		}
+		if len(strings.TrimSpace(s[i+int(dec.InputOffset()):])) != 0 {
+			continue // text after the document means this was not the reply
+		}
+		return raw, nil
 	}
 	return nil, ErrBadReply
 }
@@ -393,7 +401,7 @@ func (t *Transport) run(ctx context.Context, timeoutSec int, cmdline string, nee
 	return strings.ReplaceAll(s, "\r", ""), nil
 }
 
-var reMinionDown = regexp.MustCompile(`(?i)^minion did not return|^\[not connected\]|no response`)
+var reMinionDown = regexp.MustCompile(`(?i)^(minion did not return|\[not connected\]|no response)`)
 
 func (t *Transport) text(ctx context.Context, timeoutSec int, cmdline string, needShell bool) (string, error) {
 	s, err := t.run(ctx, timeoutSec, cmdline, needShell)
@@ -560,7 +568,9 @@ func (t *Transport) Digest(ctx context.Context, path string) (string, error) {
 	if t.win() {
 		cmdline = "(Get-FileHash -Algorithm SHA256 -LiteralPath " + t.lit(real) + ").Hash.ToLower()"
 	} else {
-		cmdline = "sha256sum -- " + t.lit(real)
+		// dd with nofollow refuses a symlink swapped in after the path was resolved. A failed read hashes nothing, which never matches
+		// the copy, so the pull discards it.
+		cmdline = "dd if=" + t.lit(real) + " iflag=nofollow status=none | sha256sum"
 	}
 	s, err := t.text(ctx, t.m.hashTimeout(), cmdline, false)
 	if err != nil {
@@ -588,7 +598,8 @@ func (t *Transport) readChunk(ctx context.Context, real string, off int64, n int
 		cmdline = "$f=[IO.File]::Open(" + t.lit(real) + ",3,1,3);try{[void]$f.Seek(" + strconv.FormatInt(off, 10) + ",0);$b=New-Object byte[] " + strconv.Itoa(n) +
 			";$n=$f.Read($b,0,$b.Length);[Convert]::ToBase64String($b,0,$n)}finally{$f.Dispose()}"
 	} else {
-		cmdline = "tail -c +" + strconv.FormatInt(off+1, 10) + " -- " + t.lit(real) + " | head -c " + strconv.Itoa(n) + " | base64 -w0"
+		// nofollow: a file swapped for a symlink after the path was resolved is refused, not followed.
+		cmdline = "dd if=" + t.lit(real) + " iflag=nofollow,skip_bytes,count_bytes skip=" + strconv.FormatInt(off, 10) + " count=" + strconv.Itoa(n) + " status=none | base64 -w0"
 	}
 	s, err := t.text(ctx, t.m.timeout(), cmdline, true)
 	if err != nil {

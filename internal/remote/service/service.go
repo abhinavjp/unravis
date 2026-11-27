@@ -380,6 +380,7 @@ func (s *Service) Pull(ctx context.Context, id, machine string, req pull.Request
 		StagingDir: filepath.Join(s.d.StagingRoot, e.ID),
 		JobID:      jobID,
 		Server:     label,
+		Origin:     t.machine + "|" + req.Kind + "|" + req.Dir,
 		Limits:     s.d.Limits,
 		Free:       s.d.Free,
 		Progress:   progress,

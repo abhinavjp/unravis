@@ -35,7 +35,7 @@ func (f *fakeMaster) reply(v any) []byte {
 }
 
 var (
-	reTail = regexp.MustCompile(`tail -c \+(\d+) -- '([^']*)' \| head -c (\d+) \| base64 -w0`)
+	reTail = regexp.MustCompile(`dd if='([^']*)' iflag=nofollow,skip_bytes,count_bytes skip=(\d+) count=(\d+) status=none \| base64 -w0`)
 )
 
 func (f *fakeMaster) Exec(_ context.Context, cmd string, _ int) ([]byte, error) {
@@ -78,9 +78,8 @@ func (f *fakeMaster) Exec(_ context.Context, cmd string, _ int) ([]byte, error) 
 		if m == nil {
 			return nil, errors.New("fake: unexpected chunk command: " + cmd)
 		}
-		start, _ := strconv.Atoi(m[1])
+		lo, _ := strconv.Atoi(m[2])
 		n, _ := strconv.Atoi(m[3])
-		lo := start - 1
 		hi := lo + n
 		if hi > len(f.data) {
 			hi = len(f.data)
@@ -359,4 +358,24 @@ func (r *recorder) Exec(_ context.Context, cmd string, _ int) ([]byte, error) {
 	r.cmds = append(r.cmds, cmd)
 	b, _ := json.Marshal(map[string]string{r.id: r.reply})
 	return b, nil
+}
+
+func TestFirstJSONSkipsWarningsAndRefusesTrailingText(t *testing.T) {
+	good := "[WARNING] odd {\"a\":1} thing\n{\"web-01\":true}\n"
+	got, err := firstJSON([]byte(good))
+	if err != nil || string(got) != `{"web-01":true}` {
+		t.Fatalf("%s %v", got, err)
+	}
+	if _, err := firstJSON([]byte("{\"a\":1} and then text")); err == nil {
+		t.Fatal("trailing text was accepted")
+	}
+}
+
+func TestMinionDownOnlyAtTheStart(t *testing.T) {
+	if !reMinionDown.MatchString("Minion did not return. [Not connected]") {
+		t.Fatal("a down minion was missed")
+	}
+	if reMinionDown.MatchString("line one\nthe log said no response from upstream") {
+		t.Fatal("log text mentioning no response was taken for a down minion")
+	}
 }

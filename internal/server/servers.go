@@ -977,7 +977,7 @@ func (h *handler) srvJobFile(w http.ResponseWriter, r *http.Request, arg string)
 	}
 	server, job, name := parts[0], parts[2], parts[4]
 	if !srvIDRe.MatchString(server) || !srvJobRe.MatchString(job) || name == "" || name != filepath.Base(name) ||
-		strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".part") || strings.HasSuffix(name, ".state") {
+		strings.HasPrefix(name, ".") || hasInternalSuffix(name) {
 		http.NotFound(w, r)
 		return
 	}
@@ -998,4 +998,10 @@ func (h *handler) srvJobFile(w http.ResponseWriter, r *http.Request, arg string)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+strings.NewReplacer("\"", "", "\r", "", "\n", "").Replace(name)+"\"")
 	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// hasInternalSuffix is true for the job's own bookkeeping files, which are never served as pulled files.
+func hasInternalSuffix(name string) bool {
+	low := strings.ToLower(name)
+	return strings.HasSuffix(low, ".part") || strings.HasSuffix(low, ".state") || strings.HasSuffix(low, ".tmp")
 }

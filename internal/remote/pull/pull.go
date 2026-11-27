@@ -40,6 +40,9 @@ type Options struct {
 	StagingDir string // the job folder is StagingDir/JobID
 	JobID      string // letters, digits, . _ - ; the same id resumes an earlier run
 	Server     string // label written to the provenance record
+	// Origin names what this job reads (machine, kind, folder). A job folder that already holds a different origin is refused, so a
+	// resume can never mix files from another machine or folder into an earlier run.
+	Origin string
 	Limits     Limits
 	// Free reports free bytes on the staging drive. Nil means the OS check; if the check cannot be made the job runs anyway.
 	Free func(dir string) (int64, error)
@@ -126,6 +129,16 @@ func Run(ctx context.Context, t transport.Transport, req Request, plan Plan, opt
 	dir := filepath.Join(opt.StagingDir, opt.JobID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return Result{}, fmt.Errorf("Could not create the staging folder: %w", err)
+	}
+	if opt.Origin != "" {
+		op := filepath.Join(dir, "pull-origin.txt")
+		if b, err := os.ReadFile(op); err == nil {
+			if strings.TrimSpace(string(b)) != opt.Origin {
+				return Result{}, errors.New("That job id belongs to a pull of another machine or folder, so it cannot be resumed here.")
+			}
+		} else if err := os.WriteFile(op, []byte(opt.Origin+"\n"), 0o600); err != nil {
+			return Result{}, fmt.Errorf("Could not create the staging folder: %w", err)
+		}
 	}
 	if err := checkDisk(opt, dir, plan.Bytes); err != nil {
 		return Result{}, err
@@ -400,6 +413,10 @@ func (j *job) copyFile(ctx context.Context, pf PlanFile, out string) FileResult 
 				_ = os.Remove(statePath)
 				return fail("The copy does not match the file on the server, so it was thrown away. Try again.")
 			}
+		} else if j.vanished(ctx, pf) {
+			_ = os.Remove(partPath)
+			_ = os.Remove(statePath)
+			return fail("The file is gone from the server, or is no longer a plain file, so the copy was thrown away.")
 		} else {
 			fr.Changed = true
 			fr.Note = "The file changed on the server while it was being copied, so this copy is a snapshot that could not be checked."
@@ -413,6 +430,20 @@ func (j *job) copyFile(ctx context.Context, pf PlanFile, out string) FileResult 
 	st.Result = &fr
 	_ = writeJSON(statePath, st)
 	return fr
+}
+
+// vanished reports whether a listing that worked no longer shows the file (listings hold plain files only).
+func (j *job) vanished(ctx context.Context, pf PlanFile) bool {
+	infos, err := j.t.List(ctx, j.req.Dir)
+	if err != nil {
+		return false
+	}
+	for _, fi := range infos {
+		if fi.Name == pf.Name {
+			return false
+		}
+	}
+	return true
 }
 
 // stable reports whether the server file still has the planned time and the size we read.
@@ -540,7 +571,7 @@ func safeName(name string, used map[string]bool) string {
 		n = n[:100]
 	}
 	low := strings.ToLower(n)
-	if strings.HasSuffix(low, ".part") || strings.HasSuffix(low, ".state") || low == RecordName {
+	if strings.HasSuffix(low, ".part") || strings.HasSuffix(low, ".state") || strings.HasSuffix(low, ".tmp") || low == RecordName {
 		n += "_"
 	}
 	base, ext := n, ""
