@@ -224,36 +224,87 @@ func TestQueueSameHeadIsNotQueuedTwice(t *testing.T) {
 	}
 }
 
-func TestQueueNewHeadMarksRunningAndCompleteEndsItSuperseded(t *testing.T) {
+func TestQueueNewHeadLeavesRunningUntilComplete(t *testing.T) {
 	q, _ := newTestQueue(t)
 	old := mustEnqueue(t, q, prReq(7, "aaaa"))
-	run, _ := q.Claim("a", nil)
-	if run == nil || run.ID != old.ID {
-		t.Fatal("not claimed")
+	if run, err := q.Claim("a", nil); err != nil || run == nil || run.ID != old.ID {
+		t.Fatalf("claim = %v, %v", run, err)
 	}
 	newer := mustEnqueue(t, q, prReq(7, "bbbb"))
-	st, _, ok := q.CancelRequested(old.ID)
-	if !ok || st != StateSuperseded {
-		t.Fatalf("marker = %q %v", st, ok)
+	if _, _, ok := q.CancelRequested(old.ID); ok {
+		t.Fatal("running request marked")
 	}
 	if got, _ := q.Get(old.ID); got.State != StateRunning {
-		t.Fatalf("a running request must stay running until its agent ends it: %+v", got)
+		t.Fatalf("old = %+v", got)
 	}
-	done, err := q.Complete(old.ID, "run1", "cancelled", "")
-	if err != nil {
-		t.Fatal(err)
+	if got, _ := q.Get(newer.ID); got.State != StateQueued {
+		t.Fatalf("new = %+v", got)
 	}
-	if done.State != StateSuperseded || done.RunID != "run1" {
-		t.Fatalf("completed = %+v", done)
+	if got, err := q.Claim("a", nil); err != nil || got != nil {
+		t.Fatalf("blocked claim = %v, %v", got, err)
 	}
-	if _, _, ok := q.CancelRequested(old.ID); ok {
-		t.Fatal("marker left behind")
+	done, err := q.Complete(old.ID, "run1", "success", "")
+	if err != nil || done.State != StateDone || done.Conclusion != "success" || done.RunID != "run1" {
+		t.Fatalf("completed = %+v, %v", done, err)
 	}
-	if got, _ := q.Claim("a", nil); got == nil || got.ID != newer.ID {
-		t.Fatalf("the newer request is not next: %v", got)
+	if got, err := q.Claim("a", nil); err != nil || got == nil || got.ID != newer.ID {
+		t.Fatalf("new claim = %v, %v", got, err)
 	}
 }
 
+func TestQueueThreeHeadsWhileRunning(t *testing.T) {
+	q, _ := newTestQueue(t)
+	old := mustEnqueue(t, q, prReq(7, "aaaa"))
+	if _, err := q.Claim("a", nil); err != nil {
+		t.Fatal(err)
+	}
+	middle := mustEnqueue(t, q, prReq(7, "bbbb"))
+	newest := mustEnqueue(t, q, prReq(7, "cccc"))
+	if got, _ := q.Get(middle.ID); got.State != StateSuperseded || got.SupersededBy != newest.ID || got.Reason != "a newer head cccc arrived" {
+		t.Fatalf("middle = %+v", got)
+	}
+	if got, _ := q.Get(old.ID); got.State != StateRunning {
+		t.Fatalf("old = %+v", got)
+	}
+	if _, _, ok := q.CancelRequested(old.ID); ok {
+		t.Fatal("old marked")
+	}
+	if got, _ := q.Get(newest.ID); got.State != StateQueued {
+		t.Fatalf("newest = %+v", got)
+	}
+}
+
+func TestQueueBusyKeyDoesNotBlockOtherKeys(t *testing.T) {
+	q, _ := newTestQueue(t)
+	mustEnqueue(t, q, prReq(7, "aaaa"))
+	if _, err := q.Claim("a", nil); err != nil {
+		t.Fatal(err)
+	}
+	mustEnqueue(t, q, prReq(7, "bbbb"))
+	push := mustEnqueue(t, q, Request{Kind: KindPush, Repo: "o/r", Ref: "main", SHA: "a", Workflow: "ci.yml"})
+	other := mustEnqueue(t, q, prReq(8, "cccc"))
+	for _, want := range []Request{other, push} {
+		got, err := q.Claim("a", nil)
+		if err != nil || got == nil || got.ID != want.ID {
+			t.Fatalf("claim = %v, %v; want %s", got, err, want.ID)
+		}
+	}
+}
+func TestQueueRunningPushDoesNotBlockAnotherBranch(t *testing.T) {
+	q, _ := newTestQueue(t)
+	request := func(ref, sha string) Request {
+		return Request{Kind: KindPush, Repo: "o/r", Ref: ref, SHA: sha, Workflow: "ci.yml"}
+	}
+	mustEnqueue(t, q, request("main", "a"))
+	if _, err := q.Claim("a", nil); err != nil {
+		t.Fatal(err)
+	}
+	mustEnqueue(t, q, request("main", "b"))
+	other := mustEnqueue(t, q, request("develop", "c"))
+	if got, err := q.Claim("a", nil); err != nil || got == nil || got.ID != other.ID {
+		t.Fatalf("claim = %v, %v", got, err)
+	}
+}
 func TestQueuePushesToTheSameBranchSupersede(t *testing.T) {
 	q, _ := newTestQueue(t)
 	a := mustEnqueue(t, q, Request{Kind: KindPush, Repo: "o/r", Ref: "develop", SHA: "a1", Workflow: "ci.yml"})
