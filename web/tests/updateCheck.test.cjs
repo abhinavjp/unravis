@@ -151,3 +151,24 @@ test('the screen reader line has no percentage', () => {
   assert.equal(upd.installAnnouncement({ ...base, install: { state: 'ready', version: '1.3.0', done: 1, total: 1 } }), 'Version 1.3.0 is ready to install.');
   assert.equal(upd.installAnnouncement(base), '');
 });
+
+test('a failed request for the check says unreachable, keeps a timeout message, and otherwise one plain sentence', () => {
+  const unreachable = 'Unravis could not be reached. It may have been closed or updated. Start Unravis again, then reload this page.';
+  const plain = 'Something went wrong in Unravis. Try again. If it keeps happening, open Help and copy the error log.';
+  assert.equal(upd.updateCheckFailureNote(Object.assign(new Error('Failed to fetch'), { code: 'unreachable', status: 0 })), unreachable);
+  assert.equal(upd.updateCheckFailureNote(Object.assign(new Error('x'), { reason: 'unreachable' })), unreachable);
+  assert.equal(upd.updateCheckFailureNote(Object.assign(new Error('The read took too long.'), { code: 'timeout', status: 0 })), 'The read took too long.');
+  for (const failure of [new Error('Request failed (500)'), new Error('boom'), new Error(''), new TypeError('Failed to fetch'), 'a string', undefined, Object.assign(new Error(''), { code: 'timeout' })]) {
+    const note = upd.updateCheckFailureNote(failure);
+    assert.equal(note, plain, String(failure));
+    assert.doesNotMatch(note, /Request failed|\(\d+\)/);
+  }
+  assert.notEqual(upd.updateCheckFailureNote(new Error('boom')), upd.updateCheckNote({ status: 'unreachable' }), 'a local failure is not the "could not check for updates" feed line');
+});
+
+test('the Help panel shows a failed request in its own note, and the update feed line only for an unreachable answer', () => {
+  const panel = fs.readFileSync(path.join(root, 'src/components/Glossary.svelte'), 'utf8');
+  assert.match(panel, /catch \(error\) \{ checkFailure = updateCheckFailureNote\(error\); \}/);
+  assert.doesNotMatch(panel, /catch \{ update = unreachableReply\(\); \}/);
+  assert.match(panel, /\{#if checkFailure\}[\s\S]*data-state="failed"[\s\S]*\{:else if update\}/);
+});

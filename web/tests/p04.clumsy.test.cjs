@@ -104,10 +104,10 @@ test('fixed: bidi marks copied from a chat or File Explorer stop a code from mat
   assert.deepEqual(failing.map((m) => 'U+' + m.codePointAt(0).toString(16).toUpperCase()), [], 'pasted codes wrapped in these marks are refused');
 });
 
-test('p04: every code failure is one sentence and an abort passes through', async () => {
+test('p04: every not-found code failure is one sentence and an abort passes through', async () => {
   const seen = new Set();
   for (const input of ['', 'nope', CODE.toUpperCase()]) {
-    const out = await resolveCode(input, async () => { throw new Error('404'); });
+    const out = await resolveCode(input, async () => { throw Object.assign(new Error('404'), { status: 404 }); });
     assert.equal(out.ok, false);
     seen.add(out.message);
   }
