@@ -1,6 +1,0 @@
-{
-  "schema": 1,
-  "changes": [
-    "A Blackbox now finds where the logs of its server are by itself (IIS sites and any moved log folder, SQL Server error logs, Redis, event logs) and lists them in a small file, so you no longer type folders by hand."
-  ]
-}

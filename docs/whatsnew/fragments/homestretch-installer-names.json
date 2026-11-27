@@ -1,6 +1,0 @@
-{
-  "schema": 1,
-  "changes": [
-    "The installer now puts Homestretch on your PC under its own name: the dashboard is Homestretch, and you can type homestretch or hs in a terminal. An older Unravis Releases shortcut is replaced for you."
-  ]
-}
