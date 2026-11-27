@@ -130,7 +130,7 @@ func TestScriptsBuildProgramsThatExist(t *testing.T) {
 	for _, sub := range []string{"tools", filepath.Join(".github", "workflows")} {
 		_ = filepath.WalkDir(filepath.Join(root, sub), func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
-				return nil
+				return nil //nolint:nilerr // skip entries that cannot be read
 			}
 			if d.IsDir() {
 				if d.Name() == "node_modules" {
@@ -150,14 +150,14 @@ func TestScriptsBuildProgramsThatExist(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, s := range scripts {
-		b, err := os.ReadFile(s)
+		b, err := os.ReadFile(s) //nolint:gosec // test reads repo scripts
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, m := range cmdRef.FindAllStringSubmatch(string(b), -1) {
 			name := m[1]
 			seen[name] = true
-			if _, err := os.Stat(filepath.Join(root, "cmd", name)); err != nil {
+			if _, err := os.Stat(filepath.Join(root, "cmd", name)); err != nil { //nolint:gosec // name is matched by a fixed regexp
 				rel, _ := filepath.Rel(root, s)
 				t.Errorf("%s builds cmd/%s, which does not exist", filepath.ToSlash(rel), name)
 			}
@@ -174,7 +174,7 @@ func TestScriptsBuildProgramsThatExist(t *testing.T) {
 func TestScriptsUseTheNewNames(t *testing.T) {
 	root := repoRoot(t)
 	read := func(rel string) string {
-		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel))) //nolint:gosec // fixed repo paths
 		if err != nil {
 			t.Fatal(err)
 		}
