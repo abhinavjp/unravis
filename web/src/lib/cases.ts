@@ -1,4 +1,5 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
+import { REQUEST_FAILED_MESSAGE } from './copy/requestFailedCopy';
 import { WRONG_CASE_KEY_REASON, signalIfAppLocked } from './lockSignal';
 import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
 import { pacedSleep } from './visibility';
@@ -234,7 +235,7 @@ async function sendOnce(path: string, init: RequestInit, signal: AbortSignal | u
 }
 
 async function refusal(response: Response): Promise<CaseApiError> {
-  let message = 'Request failed (' + response.status + ')';
+  let message = REQUEST_FAILED_MESSAGE;
   let reason = '';
   let column: string | undefined;
   let importId: number | undefined;
@@ -642,7 +643,7 @@ export function parseImportJob(body: unknown): ImportJob | null {
     const failure = asObject(raw.failure);
     const status = asNumber(raw.status);
     job.failure = new CaseApiError(
-      typeof failure?.error === 'string' && failure.error ? failure.error : 'Request failed (' + (status || 500) + ')',
+      typeof failure?.error === 'string' && failure.error ? failure.error : REQUEST_FAILED_MESSAGE,
       status || 500, asString(failure?.reason), typeof failure?.column === 'string' ? failure.column : undefined, typeof failure?.importId === 'number' ? failure.importId : undefined
     );
   }
@@ -748,7 +749,7 @@ export async function waitForImportJob(caseId: string, first: ImportJob, options
   options.onUpdate?.(job);
   for (;;) {
     if (job.state === 'done' && job.answer) return job.answer;
-    if (job.state === 'failed') throw job.failure ?? new CaseApiError('Request failed (500)', 500);
+    if (job.state === 'failed') throw job.failure ?? new CaseApiError(REQUEST_FAILED_MESSAGE, 500);
     await sleep(options.intervalMs ?? JOB_POLL_MS, options.signal);
     try {
       job = await fetchImportJob(caseId, first.id, options.signal);
@@ -773,7 +774,7 @@ export async function waitForCheckJob(caseId: string, first: ImportJob, options:
   for (;;) {
     if (job.checkReport) return job.checkReport;
     if (job.state === 'done') throw new CaseApiError('The server sent an answer that could not be read.', 200, 'unreadable');
-    if (job.state === 'failed') throw job.failure ?? new CaseApiError('Request failed (500)', 500);
+    if (job.state === 'failed') throw job.failure ?? new CaseApiError(REQUEST_FAILED_MESSAGE, 500);
     await sleep(options.intervalMs ?? JOB_POLL_MS, options.signal);
     try {
       job = await fetchImportJob(caseId, first.id, options.signal);
