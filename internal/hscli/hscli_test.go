@@ -349,7 +349,7 @@ func TestVersionAndProgramName(t *testing.T) {
 		t.Fatalf("version extra: %d", code)
 	}
 	for argv0, want := range map[string]string{
-		"hs": "hs", "hs.exe": "hs", "HS.EXE": "hs", `C:\tools\Hs.Exe`: "hs", "/usr/local/bin/hs": "hs",
+		"hs": "hs", "hs.exe": "hs", "HS.EXE": "hs", `C:\tools\Hs.Exe`: "hs", "/usr/local/bin/hs": "hs", // winok: argv[0] name table; the function only strips the path by string rules
 		"homestretch": "homestretch", "homestretch.exe": "homestretch", "hsx": "homestretch", "ths.exe": "homestretch", "": "homestretch",
 	} {
 		if got := ProgName(argv0); got != want {
