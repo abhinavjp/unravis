@@ -784,3 +784,28 @@ func TestFixedWordingPassesTheCausalLint(t *testing.T) {
 		}
 	}
 }
+
+func TestBlackboxWorkersAndSQLInstancesStaySeparateSeries(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		tm := at(time.Duration(i) * 15 * time.Second)
+		h.add(bb(pdh("web-a", tm, "W3SVC_W3WP", "pid-100", "Active Requests", float64(i), "")))
+		h.add(bb(pdh("web-a", tm, "W3SVC_W3WP", "pid-200", "Active Requests", float64(i+5), "")))
+		for n, v := range []float64{12, 0} {
+			e := bb(pdh("web-a", tm, "SQLServer:Memory Manager", "", "Memory Grants Pending", v, ""))
+			e.Attrs["sqlinstance"] = strconv.Itoa(n + 1)
+			h.add(e)
+		}
+	}
+	x := h.catalogue(importer.Window{})
+	if got := x.Series(resource.IISWPActive, resource.Filter{PID: 100}); len(got) != 1 || got[0].Proc.PID != 100 {
+		t.Fatalf("worker pid-100 series: %+v", got)
+	}
+	if got := x.Series(resource.IISWPActive, resource.Filter{PID: 200}); len(got) != 1 {
+		t.Fatalf("worker pid-200 series: %+v", got)
+	}
+	g := x.Series(resource.SQLMemGrantsPending, resource.Filter{})
+	if len(g) != 2 {
+		t.Fatalf("two SQL instances gave %d series: %+v", len(g), g)
+	}
+}
