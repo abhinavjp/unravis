@@ -85,10 +85,14 @@ These are in the design but have no backing code. They say so in plain words and
 
 ## Install
 
-`go build -o homestretch ./cmd/homestretch`, then copy or link it as `hs` (on Windows `hs.exe`). The program calls
-itself `hs` in messages when it was started under that name. `build.ps1` builds `dist\homestretch.exe` and `dist\hs.exe`
-(a copy) next to the other programs. They are not in the installer payload: they are for whoever cuts releases and runs
-CI on a PC with the checkout, so setup and its manifest are unchanged.
+Unravis Setup installs `bin\homestretch.exe` and its copy `bin\hs.exe` whenever they are in the payload. Both are
+available on `PATH` alongside `bin\unravis.exe`. For a standalone build, run `go build -o homestretch.exe ./cmd/homestretch`
+and copy it to `hs.exe`. The program calls itself `hs` in messages when started under that name.
+
+The dashboard is optional. Use `--with-releases` in silent setup or set `"releases": true` in the silent config
+to install `homestretch-app.exe` beside the main app and add `Homestretch.lnk` to the Start menu. Upgrades and
+repairs keep an installed dashboard current. When setup replaces an old `unravis-releases.exe`, it removes the old
+executable and any `Unravis Releases.lnk` that points to it. Uninstall also cleans up these legacy files.
 
 ## Old names and migration (BL-708)
 
@@ -97,7 +101,7 @@ CI on a PC with the checkout, so setup and its manifest are unchanged.
 | old | now | what it does |
 |---|---|---|
 | `unravis-ci <args>` | `homestretch ci <args>` | A shim: prints one line to stderr, `unravis-ci is now `homestretch ci`; forwarding`, then runs the same engine in the same process. Same arguments, same exit code, same stdout (including the name it prints for itself, `unravis-ci 0.1.0`), so a script that reads stdout sees no change. The line is left out when the agent starts the engine on itself (`run-item <id> --child`), so a run's log does not begin with it. |
-| `unravis-releases` | the Homestretch window | Unchanged in behaviour. It is a Windows GUI program (no console), so it prints nothing and keeps starting the window. It keeps its file name because setup installs `unravis-releases.exe` and the Start-menu shortcut `Unravis Releases.lnk` points at it. Only its message-box title now says Homestretch. |
+| `unravis-releases.exe` | `homestretch-app.exe` | The Windows GUI dashboard starts from the `Homestretch` Start-menu entry. |
 | `Start Releases.cmd` | `Start Homestretch.cmd` | The old file calls the new one. |
 
 What changed in the repository's own scripts: `tools/ci/prepush.sh` and `tools/release/Promote-Develop.ps1` build

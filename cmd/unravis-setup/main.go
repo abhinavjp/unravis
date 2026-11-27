@@ -125,7 +125,7 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	fl.BoolVar(&o.reopen, "reopen", false, "with --close-app: start the app again with its browser page (the person pressed Apply now), not only in the tray")
 	fl.BoolVar(&o.closeApp, "close-app", false, "with --silent --upgrade and the --expect flags: ask a running Unravis to quit, upgrade, then start it again (what an automatic update does)")
 	fl.BoolVar(&o.recover, "recover", false, "put back what a setup run that was cut off (power loss, a killed setup) changed, from its journal, and start Unravis again; installs nothing")
-	fl.BoolVar(&o.withReleases, "with-releases", false, "with --silent: also install (or keep) the optional read-only Unravis Releases window; off for a normal install")
+	fl.BoolVar(&o.withReleases, "with-releases", false, "with --silent: also install (or keep) the optional Homestretch dashboard; off for a normal install")
 	fl.BoolVar(&o.noRestart, "no-restart", false, "")
 	fl.BoolVar(&o.noBrowser, "no-browser", false, "do not open the setup window; print its address instead")
 	fl.BoolVar(&o.showVersion, "version", false, "print the version and exit")

@@ -87,6 +87,8 @@ type ServerOptions struct {
 	Update func() *UpdateStatus
 	// Diag is the diagnostics log served at /diag. Optional.
 	Diag *DiagLog
+	// Sources is the sources manifest served at /sources; nil or false before the first look answers 404.
+	Sources func() (SourcesDoc, bool)
 }
 
 // Server is the status HTTP server. Reading is allowed only with the read key;
@@ -112,6 +114,7 @@ func NewServer(o ServerOptions) *Server {
 	mux.HandleFunc("/status", s.guard(s.handleStatus))
 	mux.HandleFunc("/manifest", s.guard(s.handleManifest))
 	mux.HandleFunc("/diag", s.guard(s.handleDiag))
+	mux.HandleFunc("/sources", s.guard(s.handleSources))
 	mux.HandleFunc("/files", s.guard(s.handleFiles))
 	mux.HandleFunc("/files/", s.guard(s.handleFile))
 	mux.HandleFunc("/sql/files/", s.guard(s.handleSQLFile))
@@ -409,6 +412,17 @@ func (s *Server) handleDiag(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write(b)
+}
+
+// handleSources serves the sources manifest (where the logs of this server are). Paths and counts only.
+func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
+	if s.o.Sources != nil {
+		if doc, ok := s.o.Sources(); ok {
+			s.writeJSON(w, http.StatusOK, doc)
+			return
+		}
+	}
+	s.errorJSON(w, http.StatusNotFound, "no sources manifest yet")
 }
 
 func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
