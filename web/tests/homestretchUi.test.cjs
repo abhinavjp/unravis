@@ -330,3 +330,52 @@ test('every Ops button action in the markup has a handler, and the key shortcuts
   assert.match(app, /q: 'queue'/); assert.match(app, /h: 'holds'/); assert.match(app, /a: 'activity'/);
   assert.match(read('index.html'), /<script src="ops.js"><\/script>/);
 });
+
+test('times in the future read as how far away they are, not "just now"', () => {
+  const soon = new Date(Date.now() + 3 * 3600e3 + 60e3).toISOString();
+  const h = ops({ holds: Object.assign(holdFixture(), { active: [{ id: 'h1', project: 'unravis', reason: 'Demo', owner: 'nachi', state: 'active', start: NOW, end: soon }] }) });
+  assert.match(h.Ops.viewHolds(), /\(in 3 h\)/);
+  assert.match(h.Ops.holdLine(), /\(in 3 h\)/);
+  assert.doesNotMatch(h.Ops.holdLine(), /just now/);
+  const far = new Date(Date.now() + 3 * 86400e3 + 3600e3).toISOString();
+  const f = ops({ holds: Object.assign(holdFixture(), { active: [{ id: 'h1', project: 'unravis', reason: 'Demo', owner: 'nachi', state: 'active', start: NOW, end: far }] }) });
+  assert.match(f.Ops.holdLine(), /\(in 3 days\)/);
+});
+
+test('holds: a lifted hold shows when it was lifted, not its planned end; narrow tables carry cell labels', () => {
+  const fx = holdFixture(); fx.lifted[0].end = '2099-01-01T00:00:00Z'; fx.lifted[0].liftedAt = NOW;
+  const h = ops({ holds: fx }).Ops.viewHolds();
+  assert.doesNotMatch(h, /2099/, 'the planned end of a lifted hold is not shown as when it ended');
+  assert.match(h, /Ended or lifted/);
+  assert.match(h, /class="tbl qt"/); assert.match(h, /data-l="Lifted"/); assert.match(h, /data-l="Why"/);
+  const a = ops({ activity: { ciFound: true, now: NOW, entries: [{ time: NOW, actor: 'ui', person: 'nachi', action: 'hold.add', target: 'h1' }] } }).Ops.viewActivity();
+  assert.match(a, /class="tbl qt"/); for (const l of ['When', 'From', 'Who', 'On', 'Why']) assert.ok(a.includes(`data-l="${l}"`), l);
+});
+
+test('machines: the machine names in the grid open the drawer, and this PC finds its rules under the name "local"', () => {
+  const pol = policyFixture(); pol.machines = [{ name: 'local', state: 'ready', labels: [], slots: 1, running: 0, lastSeen: NOW, seenAgo: '1 min ago', drainAsked: false, denied: [] }];
+  const t = ops({ policy: pol });
+  assert.match(t.Ops.machinesExtra(), /class="thbtn" data-ops="drawer-open" data-name="local"/);
+  assert.match(t.Ops.machineCell({ id: 'm-9ebd7193', self: true }), /Rules and drain/, 'the enrolled id of this PC is matched to local');
+  assert.match(t.Ops.machineCell({ id: 'm-other', self: false }), /Who may build what, below/);
+});
+
+test('server messages start with a capital letter and the impact headline is not repeated', async () => {
+  const t = ops({ queue: queueFixture() });
+  t.setReply({ ok: false, status: 409, message: 'that job already finished.', error: 'finished' });
+  await t.click({ ops: 'top', id: 'a2' });
+  assert.match(t.Ops.state.note.text, /^That job already finished/);
+  t.setReply({ ok: false, status: 409, message: 'abhinavjp/unravis: any machine -> any except these: local', error: 'x' });
+  await t.click({ ops: 'top', id: 'a2' });
+  assert.match(t.Ops.state.note.text, /^abhinavjp\/unravis/, 'a project path is not capitalised');
+  const pol = policyFixture();
+  const s = ops({ policy: pol });
+  s.answers.push({ ok: false, status: 409, message: 'Refused.', dryRun: true, impact: { queued: 3, base: 'b1', line: 'Unique-headline-xyz: 2 queued jobs could not run.', stranded: ['q1', 'q2'], strandedCount: 2, noMachine: 0 } });
+  await s.click({ ops: 'pol-open', project: 'abhinavjp/unravis' });
+  await s.click({ ops: 'pol-mode', mode: 'only' });
+  await s.click({ ops: 'pol-mach', name: 'bp-pc-9' });
+  await s.click({ ops: 'pol-check' });
+  const d = s.Ops.machinesExtra();
+  assert.equal((d.match(/2 queued jobs would have no machine/g) || []).length, 1, 'the headline appears once');
+  assert.doesNotMatch(d, /Unique-headline-xyz/, 'the server line is not repeated under its own headline');
+});

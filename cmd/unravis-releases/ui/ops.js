@@ -9,6 +9,19 @@ const Ops = (() => {
   const repaint = () => render();
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   const ops = () => D.ops;
+  // A sentence from the server starts with a capital letter. A project path or an id (abhinavjp/unravis, q-2026...) is left as written.
+  const cap = (t) => { const x = String(t == null ? '' : t); return /^[a-z]+(?= |,|\.|$)/.test(x) ? x[0].toUpperCase() + x.slice(1) : x; };
+  // Times in the future (a hold's end) are not "just now": say how far away they are, and give the clock time.
+  const fut = (t) => {
+    const sec = (new Date(t).getTime() - Date.now()) / 1000; if (!(sec > 0)) return '';
+    if (sec < 60) return 'in under a minute';
+    if (sec < 3600) return `in ${Math.round(sec / 60)} min`;
+    if (sec < 86400) return `in ${Math.round(sec / 3600)} h`;
+    const n = Math.round(sec / 86400); return `in ${n} day${n === 1 ? '' : 's'}`;
+  };
+  const clock = (t) => { const d = new Date(t); return isNaN(d) ? '' : d.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' }); };
+  const at = (t) => { const f = t ? fut(t) : ''; return f ? `<time datetime="${esc(t)}" title="${esc(exact(t))}">${esc(f)}</time>` : when(t); };
+  const until = (t) => { const f = t ? fut(t) : ''; return f ? `<time datetime="${esc(t)}" title="${esc(exact(t))}">${esc(clock(t))} (${esc(f)})</time>` : when(t); };
   const stw = (icon, word, cls, tip) => `<span class="st c-${cls}"${tip ? ` title="${esc(tip)}"` : ''}>${ico(icon)}<span class="st-l">${esc(word)}</span></span>`;
   const cli = (line, note) => `<div class="cli-wrap"><div class="cli-line"><span class="pr" aria-hidden="true">$</span><code>${esc(line)}</code><button type="button" class="btn sm ghost" data-ocopy="${esc(line)}" title="Copy this command">${ico('copy')} Copy</button></div>${note ? `<p class="cli-note">${esc(note)}</p>` : ''}</div>`;
   const loading = '<div class="empty empty-top"><b>Loading…</b> Reading this PC’s queue, rules and holds.</div>';
@@ -22,7 +35,7 @@ const Ops = (() => {
     if (o.old) return head(title, lead) + `<div class="empty empty-top"><b>This copy of unravis-releases is older than this page.</b> It does not know about the queue, machine rules or holds yet, so nothing can be shown or changed here. Update unravis-releases, then open the new link it prints.</div>`;
     const v = o[key];
     if (!v) return head(title, lead) + `<div class="empty empty-top"><b>${esc(title)} could not be read.</b> ${esc(o.err[key] || 'Waiting for the first answer.')}</div>`;
-    if (!v.ciFound) return head(title, lead) + `<div class="empty empty-top"><b>No check records found for this project.</b> Homestretch reads them from the runs saved by <span class="mono">unravis-ci</span> on this PC. Start the agent once, and this page fills in.</div>`;
+    if (!v.ciFound) return head(title, lead) + `<div class="empty empty-top"><b>No check records found for this project.</b> This page reads them from the runs saved by <span class="mono">unravis-ci</span> on this PC. Start the agent once, and this page fills in.</div>`;
     return '';
   }
   const staleNote = (key) => { const o = ops(); const v = o[key]; return `${v && v.error ? `<div class="warnbox bad" role="status">${ico('failed')}<div class="wb"><b>Part of this could not be read.</b><p>${esc(v.error)}</p></div></div>` : ''}${o.err[key] ? `<div class="warnbox" role="status">${ico('waiting')}<div class="wb"><b>The last refresh failed.</b> ${esc(o.err[key])} Showing the last answer.</div></div>` : ''}`; };
@@ -32,7 +45,7 @@ const Ops = (() => {
   const actionWord = (a) => ACTION_WORD[a] || String(a || '');
   // A refusal or failure, in plain words. The server's own message is shown; nothing is swallowed.
   function plainFail(res) {
-    const m = String(res.message || '').trim();
+    const m = cap(String(res.message || '').trim());
     const e = res.error && !m.includes(res.error) ? ` (${res.error})` : '';
     if (res.status === 404 && !res.error) return 'This copy of unravis-releases cannot do that yet. Update it, then open the new link it prints.';
     if (res.status === 500) return `Something broke inside unravis-releases. ${m}${e}`.trim();
@@ -48,7 +61,7 @@ const Ops = (() => {
   }
   // After a change: show the server's own words and read the four answers again.
   async function finish(res, ok) {
-    O.note = res.ok ? { kind: 'ok', text: ok || res.message || 'Done.' } : { kind: 'bad', text: plainFail(res) };
+    O.note = res.ok ? { kind: 'ok', text: cap(ok || res.message || 'Done.') } : { kind: 'bad', text: plainFail(res) };
     try { await Data.refreshOps(); } catch (e) { /* the next poll shows it */ }
     repaint();
   }
@@ -119,14 +132,14 @@ const Ops = (() => {
   const prio = (r) => (r.priorityLabel === 'First' ? `<span class="chip prio first" title="Starts before the Normal jobs">${ico('up')}First</span>` : '<span class="chip prio" title="Starts in the usual order">Normal</span>');
   function runningRow(r) {
     const where = `<span class="why">Running on <b class="mono">${esc(r.claimedBy || 'a machine')}</b>${r.claimedAt ? `, started ${when(r.claimedAt)}` : ''}${r.attempts > 1 ? `, attempt ${r.attempts}` : ''}.</span>`;
-    return `<tr><td class="w-st">${st('running', 'Running')}</td><td>${jobCell(r)}</td><td class="whyc">${where}</td><td class="hide-s">${prio(r)}</td><td class="num hide-s">${when(r.enqueuedAt)}</td><td>${queueActions(r, true)}</td></tr>`;
+    return `<tr><td class="w-st">${st('running', 'Running')}</td><td>${jobCell(r)}</td><td class="whyc">${where}</td><td class="hide-s" data-l="Priority">${prio(r)}</td><td class="num hide-s" data-l="Queued">${when(r.enqueuedAt)}</td><td>${queueActions(r, true)}</td></tr>`;
   }
   function queuedRow(r, first, paused) {
     const need = (r.labels || []).length ? `<span class="why">Needs a machine with: ${r.labels.map((x) => `<span class="mono">${esc(x)}</span>`).join(', ')}.</span>` : '';
-    const text = r.why ? r.why.text : r.waiting ? 'No machine can take this yet.' : 'Waiting for a free machine.';
+    const text = r.why ? cap(r.why.text) : r.waiting ? 'No machine can take this yet.' : 'Waiting for a free machine.';
     const cls = r.why && r.why.code === 'ready' ? 'why ok' : 'why';
     const fix = fixBtn(r);
-    return `<tr><td class="w-st">${queuedState(r, first, paused)}</td><td>${jobCell(r)}</td><td class="whyc"><span class="${cls}">${esc(text)}</span>${need}${fix ? `<div class="fixes">${fix}</div>` : ''}</td><td class="hide-s">${prio(r)}</td><td class="num hide-s">${when(r.enqueuedAt)}</td><td>${queueActions(r, false)}</td></tr>`;
+    return `<tr><td class="w-st">${queuedState(r, first, paused)}</td><td>${jobCell(r)}</td><td class="whyc"><span class="${cls}">${esc(text)}</span>${need}${fix ? `<div class="fixes">${fix}</div>` : ''}</td><td class="hide-s" data-l="Priority">${prio(r)}</td><td class="num hide-s" data-l="Queued">${when(r.enqueuedAt)}</td><td>${queueActions(r, false)}</td></tr>`;
   }
   const RESULT = { success: ['passed', 'Passed'], failure: ['failed', 'Failed'], error: ['failed', 'Error'], cancelled: ['stopped', 'Cancelled'], superseded: ['skipped', 'Replaced'] };
   function doneRow(r) {
@@ -136,7 +149,7 @@ const Ops = (() => {
     const retry = r.runId ? (c && c.kind === 'retry' && c.id === r.runId
       ? confirmCell('retry', r.runId, 'Run this job again?', 'Yes, run it again')
       : `<button type="button" class="btn sm" data-ops="retry" data-id="${esc(r.runId)}" ${O.busy['retry:' + r.runId] ? 'disabled' : ''} title="Put this job back in the queue as a new run">${ico('rerun')}Retry</button>`) : '<span class="muted fs-xs" title="Only a job that made a run can be run again.">No run to repeat</span>';
-    return `<tr><td class="w-st">${st(s, w)}</td><td>${jobCell(r)}</td><td class="whyc"><span class="why">${esc(why) || '<span class="dim">nothing more recorded</span>'}</span></td><td class="num hide-s">${when(r.finishedAt)}</td><td>${retry}</td></tr>`;
+    return `<tr><td class="w-st">${st(s, w)}</td><td>${jobCell(r)}</td><td class="whyc"><span class="why">${esc(why) || '<span class="dim">nothing more recorded</span>'}</span></td><td class="num hide-s" data-l="Finished">${when(r.finishedAt)}</td><td>${retry}</td></tr>`;
   }
   function viewQueue() {
     const lead = 'The jobs waiting for a machine, the ones running now, and the ones that just finished.';
@@ -154,7 +167,7 @@ const Ops = (() => {
     const none = '<div class="empty-big"><h2>Nothing is waiting or running.</h2><p>When a pull request or a push needs checking, it appears here, with the reason if it has to wait.</p></div>';
     return `${head('Queue', lead, right)}${noteHtml()}${staleNote('queue')}
     <div class="nowline"><span>${stw('running', plural(c.running || 0, 'running', 'running'), 'running')}</span><span>${stw('waiting', (c.queued || 0) + ' queued', 'waiting')}</span><span><b>${c.waiting || 0} waiting</b> for a machine</span><span class="fork">${esc(FORK)}</span></div>
-    ${q.paused ? `<div class="warnbox" role="status">${ico('pause')}<div class="wb"><b>The queue is paused.</b> No machine starts a new job until it is resumed.${q.pausedReason ? `<p>${esc(q.pausedReason)}</p>` : ''}</div></div>` : ''}
+    ${q.paused ? `<div class="warnbox" role="status">${ico('pause')}<div class="wb"><b>The queue is paused.</b> No machine starts a new job until it is resumed.<p>It was paused with a pause file on this PC. Resuming removes that file.</p>${q.pausedReason ? `<p class="ev mono">${esc(q.pausedReason)}</p>` : ''}</div></div>` : ''}
     ${repos.length > 1 ? `<div class="chips qf" role="group" aria-label="Show jobs for">${[''].concat(repos).map((x) => `<button type="button" class="chipbtn" data-ops="repo" data-repo="${esc(x)}" aria-pressed="${x === repo}">${x ? esc(x) : 'All projects'}</button>`).join('')}</div>` : ''}
     <section class="sec"><div class="sh"><h2>Now and next</h2><span class="muted">running first, then in the order they will start</span></div>
     ${rows ? `<table class="tbl qt"><thead><tr><th class="w-st">State</th><th>Job</th><th>Where it is, or why it waits</th><th class="hide-s">Priority</th><th class="num hide-s">Queued</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>` : none}</section>
@@ -174,7 +187,7 @@ const Ops = (() => {
   function impactBox(e) {
     const i = e.impact || {}; const n = i.strandedCount || (i.stranded || []).length;
     const ids = (i.stranded || []).slice(0, 8).map((x) => `<span class="chip mono">${esc(x)}</span>`).join(' ') + ((i.stranded || []).length > 8 ? ` <span class="muted">and ${(i.stranded || []).length - 8} more</span>` : '');
-    if (n) return `<div class="warnbox bad in" role="alert">${ico('failed')}<div class="wb"><b>${plural(n, 'queued job would have', 'queued jobs would have')} no machine.</b><p>${esc(i.line || '')}</p><p>They would stay in the queue until a rule changes again.</p><p class="chips">${ids}</p>
+    if (n) return `<div class="warnbox bad in" role="alert">${ico('failed')}<div class="wb"><b>${plural(n, 'queued job would have', 'queued jobs would have')} no machine.</b><p>They would stay in the queue until a rule changes again.</p><p class="chips">${ids}</p>
       <label class="chk"><input type="checkbox" data-in="ack" ${e.ack ? 'checked' : ''}> <span>I understand they will wait until I change this again.</span></label></div></div>`;
     return `<div class="warnbox ok in" role="status">${ico('passed')}<div class="wb"><b>No queued job loses its machine.</b>${i.line ? `<p>${esc(i.line)}</p>` : ''}</div></div>`;
   }
@@ -209,7 +222,7 @@ const Ops = (() => {
     const body = ps.map((x) => `<tr><td class="hd">${esc(x.project)}<div class="ev">${esc(x.text || modeText[x.mode] || '')}${x.explicit ? '' : ' (the default)'}</div>${x.error ? `<div class="ev c-failed">${esc(x.error)}</div>` : ''}</td>${ms.map((m) => `<td>${allowed(x, m.name) ? st('passed', 'Allowed') : st('stopped', 'Not allowed')}</td>`).join('')}<td><button type="button" class="btn sm" data-ops="pol-open" data-project="${esc(x.project)}">Change</button></td></tr>`).join('');
     return `<section class="sec" id="rules"><div class="sh"><h2>Who may build what</h2><span class="muted">one rule for each project</span></div>
       <p class="note">Fit and permission are separate. A machine needs the right labels to be able to run a job, and the rule below to be allowed. ${esc(FORK)}</p>
-      ${ps.length && ms.length ? `<div class="tw"><table class="dtbl pm"><thead><tr><th>Project</th>${ms.map((m) => `<th>${esc(m.name)}<div class="ev">${esc((MSTATE[m.state] || [0, m.state])[1])}</div></th>`).join('')}<th><span class="sr">Change</span></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>${ms.length ? 'No project is listed.' : 'No machine has reported yet.'}</b> ${ms.length ? '' : 'Once a machine runs unravis-ci serve, you can choose who builds what here.'}</div>`}
+      ${ps.length && ms.length ? `<div class="tw"><table class="dtbl pm"><thead><tr><th>Project</th>${ms.map((m) => `<th><button type="button" class="thbtn" data-ops="drawer-open" data-name="${esc(m.name)}" title="Drain or resume ${esc(m.name)}, and choose which projects it may build">${esc(m.name)}</button><div class="ev">${esc((MSTATE[m.state] || [0, m.state])[1])}</div></th>`).join('')}<th><span class="sr">Change</span></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>${ms.length ? 'No project is listed.' : 'No machine has reported yet.'}</b> ${ms.length ? '' : 'Once a machine runs unravis-ci serve, you can choose who builds what here.'}</div>`}
       ${polEditor()}</section>`;
   }
 
@@ -218,7 +231,7 @@ const Ops = (() => {
     const c = O.confirm;
     if (m.drainAsked || m.state === 'draining') return `<div class="note"><b>This machine has been asked to drain.</b> It finishes what it is running and takes nothing new.</div><div class="row-actions mt8"><button type="button" class="btn" data-ops="m-resume" data-name="${esc(m.name)}" ${O.busy['mres:' + m.name] ? 'disabled' : ''}>${ico('play')}Resume this machine</button></div><p class="note">Resume only works before the machine has stopped. After that, start it again with <span class="mono">unravis-ci serve</span>.</p>`;
     if (c && c.kind === 'drain' && c.id === m.name) return `<div class="warnbox" role="status">${ico('waiting')}<div class="wb"><b>Drain ${esc(m.name)}?</b><p>It finishes the ${plural(m.running || 0, 'job', 'jobs')} it is running, takes nothing new, then stops. To bring it back after that, start it again with <span class="mono">unravis-ci serve</span>.</p></div></div><div class="row-actions"><button type="button" class="btn warn" data-ops="m-drain-yes" data-name="${esc(m.name)}">Drain it</button><button type="button" class="btn ghost" data-ops="confirm-no">Keep it running</button></div>`;
-    return `<div class="row-actions"><button type="button" class="btn" data-ops="m-drain" data-name="${esc(m.name)}" ${m.state === 'gone' ? 'disabled' : ''} title="Finish the current job, take nothing new, then stop">${ico('pause')}Drain this machine</button></div><p class="note">Drain is for taking a machine out of service without losing a job: it finishes what it runs, takes nothing new, then stops.</p>`;
+    return `<div class="row-actions"><button type="button" class="btn" data-ops="m-drain" data-name="${esc(m.name)}" ${m.state === 'gone' ? 'disabled' : ''} title="Finish the current job, take nothing new, then stop">${ico('pause')}Drain this machine</button></div><p class="note">Use Drain to take a machine out of service without losing a job.</p>`;
   }
   function drawerHtml() {
     if (!O.drawer || ops().old || !pol()) return '';
@@ -244,8 +257,9 @@ const Ops = (() => {
   function machineCell(x) {
     const o = ops();
     if (o.old) return '<span class="muted fs-xs">Drain and rules need a newer unravis-releases.</span>';
-    const m = polMachine(x.id);
-    if (!m) return `<span class="muted fs-xs">${o.loaded ? 'No rules are recorded for this machine yet.' : 'Reading the rules…'}</span>`;
+    const all = (pol() && pol().machines) || [];
+    const m = polMachine(x.id) || (x.self ? (polMachine('local') || (all.length === 1 ? all[0] : null)) : null);
+    if (!m) return `<span class="muted fs-xs">${o.loaded ? 'Rules for this machine are in Who may build what, below.' : 'Reading the rules…'}</span>`;
     const drain = m.drainAsked || m.state === 'draining' ? `<span class="chip warn">${ico('waiting')}Draining</span> ` : '';
     return `<div class="row-actions">${drain}<button type="button" class="btn sm" data-ops="drawer-open" data-name="${esc(m.name)}" title="Drain or resume this machine, and choose which projects it may build">${ico('pc')}Rules and drain</button></div>`;
   }
@@ -263,7 +277,7 @@ const Ops = (() => {
         ? confirmCell('lift', h.id, kind === 'active' ? 'Lift this hold now?' : 'Cancel this hold?', kind === 'active' ? 'Yes, lift it' : 'Yes, cancel it', reasonBox('Why'))
         : `<button type="button" class="btn sm" data-ops="lift" data-id="${esc(h.id)}" ${O.busy['lift:' + h.id] ? 'disabled' : ''} title="${kind === 'active' ? 'End the hold now, so Promote is allowed again' : 'Remove this hold before it starts'}">${kind === 'active' ? 'Lift it' : 'Cancel it'}</button>`;
     }
-    return `<tr><td class="w-st">${stw(ic, w, cls)}</td><td>${esc(projName(h.project))}</td><td>${esc(h.reason)}<div class="ev">Owner: ${esc(h.owner || 'not recorded')}${who}</div></td><td class="num">${when(h.start)}</td><td class="num">${when(h.end)}</td><td>${act}</td></tr>`;
+    return `<tr><td class="w-st">${stw(ic, w, cls)}</td><td data-l="Project">${esc(projName(h.project))}</td><td data-l="Why">${esc(h.reason)}<div class="ev">Owner: ${esc(h.owner || 'not recorded')}${who}</div></td><td class="num" data-l="${kind === 'lifted' || kind === 'ended' ? 'Started' : 'Starts'}">${at(h.start)}</td><td class="num" data-l="${kind === 'lifted' ? 'Lifted' : kind === 'ended' ? 'Ended' : 'Ends'}">${at(kind === 'lifted' ? (h.liftedAt || h.end) : h.end)}</td><td>${act}</td></tr>`;
   }
   const HOURS = [['1h', 'An hour'], ['4h', '4 hours'], ['12h', '12 hours'], ['24h', 'A day'], ['3d', '3 days'], ['7d', 'A week'], ['30d', '30 days']];
   function holdForm() {
@@ -279,16 +293,16 @@ const Ops = (() => {
     const h = ops().holds;
     const act = h.active || []; const up = h.upcoming || []; const past = (h.lifted || []).concat(h.ended || []);
     const top = act.length
-      ? `<div class="warnbox" role="status">${ico('lock')}<div class="wb">${act.map((x) => `<p><b>Promote is held for ${esc(projName(x.project))}</b> until ${when(x.end)}. ${esc(x.reason)} Owner: ${esc(x.owner || 'not recorded')}.</p>`).join('')}</div></div>`
+      ? `<div class="warnbox" role="status">${ico('lock')}<div class="wb">${act.map((x) => `<p><b>Promote is held for ${esc(projName(x.project))}</b> until ${until(x.end)}. ${esc(x.reason)} Owner: ${esc(x.owner || 'not recorded')}.</p>`).join('')}</div></div>`
       : `<div class="warnbox ok" role="status">${ico('passed')}<div class="wb"><b>No hold is active.</b> Promotion is allowed.</div></div>`;
     const rows = act.map((x) => holdRow(x, 'active')).concat(up.map((x) => holdRow(x, 'upcoming'))).join('');
     return `${head('Holds', lead)}${noteHtml()}${staleNote('holds')}${top}
     <section class="sec"><div class="sh"><h2>Holds that matter now</h2><span class="muted">active, and starting later</span></div>
-    ${rows ? `<table class="tbl"><thead><tr><th class="w-st">State</th><th>Project</th><th>Why</th><th class="num">Starts</th><th class="num">Ends</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="empty">No hold is active or planned.</p>'}</section>
+    ${rows ? `<table class="tbl qt"><thead><tr><th class="w-st">State</th><th>Project</th><th>Why</th><th class="num">Starts</th><th class="num">Ends</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="empty">No hold is active or planned.</p>'}</section>
     <section class="sec"><div class="sh"><h2>Start a hold</h2></div>${holdForm()}
       <p class="note mt8">A hold only stops Promote (moving a build from rc to stable). Checks, the queue and ordinary releases keep running. It ends by itself at the time you pick, or you can lift it early here.</p>
       ${cli('unravis-ci hold add --project <id> --until 4h --reason "demo on Friday"', 'Lift one early with: unravis-ci hold lift <id> --reason R')}</section>
-    ${past.length ? `<section class="sec"><div class="sh"><h2>Earlier holds</h2><span class="muted">lifted or ended</span></div><table class="tbl"><thead><tr><th class="w-st">State</th><th>Project</th><th>Why</th><th class="num">Started</th><th class="num">Ended</th><th><span class="sr">Actions</span></th></tr></thead><tbody>${(h.lifted || []).map((x) => holdRow(x, 'lifted')).join('')}${(h.ended || []).map((x) => holdRow(x, 'ended')).join('')}</tbody></table></section>` : ''}`;
+    ${past.length ? `<section class="sec"><div class="sh"><h2>Earlier holds</h2><span class="muted">lifted or ended</span></div><table class="tbl qt"><thead><tr><th class="w-st">State</th><th>Project</th><th>Why</th><th class="num">Started</th><th class="num">Ended or lifted</th><th><span class="sr">Actions</span></th></tr></thead><tbody>${(h.lifted || []).map((x) => holdRow(x, 'lifted')).join('')}${(h.ended || []).map((x) => holdRow(x, 'ended')).join('')}</tbody></table></section>` : ''}`;
   }
 
   // ---------- activity ----------
@@ -299,14 +313,14 @@ const Ops = (() => {
     const a = ops().activity; const all = (a.entries || []).slice().reverse();
     const n = (k) => (k === 'all' ? all.length : all.filter((e) => e.actor === k).length);
     const list = O.actor === 'all' ? all : all.filter((e) => e.actor === O.actor);
-    const row = (e) => `<tr><td class="num">${when(e.time)}</td><td><span class="chip actor-${esc(e.actor)}">${esc((ACTORS.find((x) => x[0] === e.actor) || [0, e.actor])[1])}</span></td><td>${esc(e.person || '') || '<span class="dim">not recorded</span>'}</td>
-      <td class="act">${esc(actionWord(e.action))}${e.outcome && e.outcome !== 'done' ? ` <span class="chip warn">${esc(e.outcome)}</span>` : ''}</td><td class="mono">${esc(e.target || '')}</td><td>${esc(e.reason || '')}${e.detail ? `<span class="ev">${esc(e.detail)}</span>` : ''}</td></tr>`;
+    const row = (e) => `<tr><td class="num" data-l="When">${when(e.time)}</td><td data-l="From"><span class="chip actor-${esc(e.actor)}">${esc((ACTORS.find((x) => x[0] === e.actor) || [0, e.actor])[1])}</span></td><td data-l="Who">${esc(e.person || '') || '<span class="dim">not recorded</span>'}</td>
+      <td class="act">${esc(actionWord(e.action))}${e.outcome && e.outcome !== 'done' ? ` <span class="chip warn">${esc(e.outcome)}</span>` : ''}</td><td class="mono" data-l="On">${esc(e.target || '')}</td><td data-l="Why">${esc(e.reason || '')}${e.detail ? `<span class="ev">${esc(e.detail)}</span>` : ''}</td></tr>`;
     return `${head('Activity', lead)}${staleNote('activity')}
     <div class="chips qf" role="group" aria-label="Show actions from">${ACTORS.map(([k, l]) => `<button type="button" class="chipbtn" data-ops="actor" data-actor="${k}" aria-pressed="${O.actor === k}">${l}<span class="n">${n(k)}</span></button>`).join('')}</div>
-    ${list.length ? `<table class="tbl"><thead><tr><th class="num">When</th><th>From</th><th>Who</th><th>Action</th><th>On</th><th>Why</th></tr></thead><tbody>${list.map(row).join('')}</tbody></table>`
+    ${list.length ? `<table class="tbl qt"><thead><tr><th class="num">When</th><th>From</th><th>Who</th><th>Action</th><th>On</th><th>Why</th></tr></thead><tbody>${list.map(row).join('')}</tbody></table>`
       : `<div class="empty-big"><h2>${all.length ? 'Nothing from that source.' : 'No change has been made yet.'}</h2><p>${all.length ? 'Pick Everyone to see all of it.' : 'When someone pauses the queue, moves a job, changes a rule or starts a hold, a line appears here.'}</p></div>`}
     ${a.skipped ? `<p class="note mt8">${plural(a.skipped, 'line', 'lines')} of the log could not be read and ${a.skipped === 1 ? 'was' : 'were'} left out.</p>` : ''}
-    <p class="note mt8">This list is read-only, newest first. There is no way to skip a rule from here, and none is offered.</p>`;
+    <p class="note mt8">This list is read-only, newest first.</p>`;
   }
 
   // ---------- small pieces other pages use ----------
@@ -314,7 +328,7 @@ const Ops = (() => {
   function holdLine() {
     const h = ops().holds; const act = (h && h.active) || [];
     if (!act.length) return '';
-    return `<div class="warnbox" role="status">${ico('lock')}<div class="wb">${act.map((x) => `<p><b>Promote is held</b> by ${esc(x.owner || 'someone')} until ${when(x.end)}${x.project && x.project !== 'all' ? ' for ' + esc(projName(x.project)) : ''}. ${esc(x.reason)}</p>`).join('')}<p><a href="#/holds">See the hold</a></p></div></div>`;
+    return `<div class="warnbox" role="status">${ico('lock')}<div class="wb">${act.map((x) => `<p><b>Promote is held</b> by ${esc(x.owner || 'someone')} until ${until(x.end)}${x.project && x.project !== 'all' ? ' for ' + esc(projName(x.project)) : ''}. ${esc(x.reason)}</p>`).join('')}<p><a href="#/holds">See the hold</a></p></div></div>`;
   }
   function queueCard() {
     const o = ops(); const q = o.queue;
@@ -388,7 +402,7 @@ const Ops = (() => {
     const h = O.hold; const project = h.project || D.pid;
     if (!h.reason.trim()) { O.note = { kind: 'bad', text: 'Say why, in a few words. The reason is shown on the Overview while the hold is active.' }; repaint(); return; }
     const args = project === 'all' ? { all: true, until: h.hours, reason: h.reason.trim() } : { project, until: h.hours, reason: h.reason.trim() };
-    run('hold', 'hold.add', args).then((res) => { if (!res) return; if (res.ok) O.hold.reason = ''; return finish(res); });
+    run('hold', 'hold.add', args).then((res) => { if (!res) return; if (res.ok) O.hold.reason = ''; return finish(res, 'Hold started. Promote is stopped until the time shown below. You can lift it from the list at any time.'); });
   }
   function copy(e) {
     const t = e.target.closest('[data-ocopy]'); if (!t) return;

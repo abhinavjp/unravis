@@ -394,6 +394,9 @@ select.in:focus-visible,input.in:focus-visible{outline:2px solid var(--focus);ou
 .pedit .sh{padding:0 0 8px;margin-bottom:12px}
 .pm td,.pm th{white-space:nowrap}
 .pm td.hd{font-weight:500}
+.thbtn{background:none;border:0;padding:0;font:inherit;font-weight:500;color:var(--text);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.thbtn:hover{color:var(--accent)}
+.thbtn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .holdform{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;padding:14px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-box)}
 .holdform .fld{margin:0}
 .holdform .fld.grow,.grow{flex:1;min-width:180px}
@@ -407,5 +410,14 @@ select.in:focus-visible,input.in:focus-visible{outline:2px solid var(--focus);ou
   .holdform{flex-direction:column;align-items:stretch}
   .qt td,.qt th{padding-left:8px;padding-right:8px}
   .cli-line{flex-wrap:wrap}
-}
+  /* tables of jobs, holds and activity become one block per row, so nothing is cut off */
+  .qt,.qt tbody,.qt tr,.qt td{display:block;width:auto}
+  .qt thead{display:none}
+  .qt tr{padding:10px 0;border-bottom:1px solid var(--line)}
+  .qt td{padding:3px 8px;border:0}
+  .qt td[data-l]::before{content:attr(data-l);display:block;font-size:var(--fs-xs);color:var(--text-2)}
+  .qt .hide-s{display:block}
+  .qt small{display:block}
+  .qt .st-l{display:inline}
+  .qt .num{text-align:left}
 }
