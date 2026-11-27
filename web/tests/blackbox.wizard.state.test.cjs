@@ -776,7 +776,8 @@ test('the counters problem is hidden while the row is off, and settingsProblem r
   assert.equal(w.stepProblem({ ...bad, step: 'review' }, 'review'), 'counters');
   assert.equal(bb.settingsProblem(bb.defaultSettings('web-a')), null, 'no counters block, no check');
   assert.equal(bb.settingsProblem({ ...bb.defaultSettings('web-a'), counters: { extra: ['\\Memory\\Pool Nonpaged Bytes'] } }), null);
-  assert.equal(bb.settingsProblem({ ...bb.defaultSettings('web-a'), counters: { extra: [] } }), 'counters');
+  assert.equal(bb.settingsProblem({ ...bb.defaultSettings('web-a'), counters: { extra: [] } }), null, 'the server accepts an empty list; the wizard refuses it on Record instead');
+  assert.equal(w.stepProblem({ ...withRows(s, { counters: true }, ''), step: 'record' }, 'record'), 'counters');
   assert.equal(bb.stepOfSetting('counters'), 'record');
 });
 

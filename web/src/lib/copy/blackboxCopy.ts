@@ -260,6 +260,7 @@ export const BB_TEXT = {
     port: 'Use a port from 1 to 65535.',
     bind: 'Listens on needs an address such as 127.0.0.1, or a server name. Spaces and other symbols are not allowed.',
     logs: 'Each log folder must be a full path.',
+    counters: 'Check the extra counters. Use up to 50, each like \\Process(w3wp)\\Page Faults/sec, with no wildcard and no computer name.',
     targets: 'Check the targets. Use up to 32 names, each 1 to 128 characters, with no \\ / : * ? " < > | and no name twice.'
   } as Record<SettingsProblem, string>,
 

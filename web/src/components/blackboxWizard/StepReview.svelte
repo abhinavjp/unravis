@@ -109,7 +109,7 @@
       <dt>{W['review.rowCounters']}</dt>
       <dd>{extraCounters.length > 0 ? W['review.on'] : W['review.off']}</dd>
       {#if extraCounters.length > 0}
-        <dt>{W['review.includes']}</dt>
+        <dt>{W['review.counters']}</dt>
         <dd>{extraCounters.join(', ')}</dd>
       {/if}
       <dt>{W['review.rowPaths']}</dt>

@@ -272,7 +272,7 @@ export function refusalText(error: unknown, table: Record<string, string>): stri
 }
 
 const REFUSED_FIELD: Record<string, SettingsProblem> = {
-  name: 'name', folder: 'folder', intervalSeconds: 'interval', keepDays: 'keep', maxGB: 'size', minFreePercent: 'free', port: 'port', bind: 'bind', logPaths: 'logs'
+  name: 'name', folder: 'folder', intervalSeconds: 'interval', keepDays: 'keep', maxGB: 'size', minFreePercent: 'free', port: 'port', bind: 'bind', logPaths: 'logs', 'counters.extra': 'counters'
 };
 
 /**
@@ -281,7 +281,7 @@ const REFUSED_FIELD: Record<string, SettingsProblem> = {
  */
 export function refusedField(error: unknown): SettingsProblem | null {
   if (!(error instanceof BlackboxError) || error.refusal.reason !== 'invalid-config') return null;
-  const m = /"(\w+)"/.exec(error.refusal.error ?? '');
+  const m = /"([\w.]+)"/.exec(error.refusal.error ?? '');
   return (m && REFUSED_FIELD[m[1]]) || null;
 }
 
@@ -648,7 +648,8 @@ export function settingsProblem(s: Settings): SettingsProblem | null {
   if (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535) return 'port';
   if (!validBind(s.bind)) return 'bind';
   if (s.logPaths.some(p => !/^[A-Za-z]:[\\/]/.test(p.trim()))) return 'logs';
-  if (s.counters && extraCountersProblem(s.counters.extra ?? [])) return 'counters';
+  // The Record step also refuses an empty list while the counters row is on; the server accepts an empty one.
+  if (s.counters?.extra?.length && extraCountersProblem(s.counters.extra)) return 'counters';
   if (targetsProblem(s.targets)) return 'targets';
   return null;
 }
