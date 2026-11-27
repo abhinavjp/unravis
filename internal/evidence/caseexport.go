@@ -193,7 +193,7 @@ var exportPolicy = map[string]map[string]attrPolicy{
 	"sql-pdh":      counterPolicy,
 	// The Blackbox's own recordings: the same counter names as the Windows counters, and a gap's length in intervals.
 	"blackbox-source": {"object": polObject, "counter": polEnum(counterNames), "instance": polNameKeep("instance", blackboxInstance), "sqlinstance": polNum, "intervals": polNum,
-		"metric": polEnum(redisInfoMetrics), "role": polEnum(redisRoles), "command": polEnum(redisCommands), "id": polNum,
+		"metric": polEnum(blackboxMetrics), "process": procName, "pid": polNum, "role": polEnum(redisRoles), "command": polEnum(redisCommands), "id": polNum,
 		"event": polEnum(redisLatencyEvents), "log": polEnum(winEventLogs), "error_number": polNum, "sql_severity": polNum},
 	"win-events": {"log": polEnum(winEventLogs), "provider": polEnum(winEventProviders), "id": polNum,
 		"app-pool": polName("pool"), "reason": polEnum(winEventReasons), "faulting-app": polEnum(faultingApps)},
