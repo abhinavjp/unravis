@@ -1,0 +1,851 @@
+{
+  "schema": 1,
+  "releases": [
+    {
+      "version": "0.1.0-rc.66",
+      "date": "2026-11-27",
+      "headline": "Improvements and fixes behind the scenes",
+      "highlights": [],
+      "changes": [
+        "The Investigation timeline shows Blackbox lanes under the chart when the case holds a Blackbox recording. Choose lanes opens a picker (up to 10 at once), and a short list says which lane moved first.",
+        "The Record step of Place a Blackbox now lists server facts, extra Windows counters and log and config file paths as their own rows, next to the Light and Recommended choices. Switch a row off, or type the Windows counters you want recorded, one per line, and Review shows what will be recorded.",
+        "The Place a Blackbox pop-up has a Redis step (Standard or Everything, single rows on or off) and the SQL step has a starting point, with query text only for Deep.",
+        "Homestretch P4: read-only API for queue, policy, holds and activity (BL-704)",
+        "Homestretch P4: show hold owners and activity people by name; secrets stay hidden",
+        "Homestretch P4: lint, nilerr note in the read-only test",
+        "Homestretch P5: action registry and write channel (BL-705)",
+        "BL-705: live check covers all 12 actions on a copy of the store",
+        "BL-705: hold test expects the refused and invalid lifts in the activity log",
+        "BL-705: add BL-720 for the serve and agent tests that time out on a loaded PC",
+        "BL-705: renumber the loaded-PC test item to BL-722 (develop took BL-720)",
+        "BL-705: security review fixes for the write channel",
+        "BL-705: quote the method in the refusal log; note why G706 is safe",
+        "Homestretch UI: Queue, Machines rules, Holds and Activity pages on the real read and action routes (BL-706)",
+        "Homestretch UI review fixes: future times, reachable machine drawer, narrow tables, plain hold copy, tests, BL-706 verified on a store copy (BL-706)",
+        "Web test: allow the one action POST (Data.act), still no other writes",
+        "BL-707: move the unravis-ci engine into internal/cicli so homestretch can run it",
+        "BL-707: homestretch (alias hs): one command line over the action registry, promote and release",
+        "BL-707: CLI.md, backlog status, BL-722 names the moved tests",
+        "BL-707: lint nit in the forward test, CLI.md hold lift matches help, backlog notes the actor check",
+        "BL-707: mark the argv0 name table as Windows-safe",
+        "Homestretch P8 (BL-708): homestretch and hs are the canonical names; unravis-ci is a shim",
+        "BL-707 leftovers: hold-added text names homestretch hold lift; BL-722 note says TestServe fails every time",
+        "BL-708: lint-clean the shim script tests (gosec, nilerr)",
+        "Setup wizard stops waiting after 20 failed progress reads (W-21, RV-UXS-1)",
+        "W-16: removing a saved connection asks first and reports failure",
+        "Blackbox wizard: Redis step and SQL starting point (B9, first slice)",
+        "W-15: Export says Download started and recovers from a failed save",
+        "Investigation timeline: Blackbox lanes and the Choose lanes picker",
+        "No \"Request failed (500)\" on screen; AI access shows the reason (W-18)",
+        "Open-by-code and the Help update line stop saying \"not found\" for other failures (W-17)",
+        "Releases dashboard says when its data is old (W-05)",
+        "Place a Blackbox wizard: Record step as collector rows (server facts, extra counters, file paths)",
+        "W-20: show failed reads and why buttons are off (silent catches)",
+        "Record rows review fixes: Review sends a counters problem back to Record, map the server's counters refusal, accept an empty counters block, distinct Review label",
+        "W-02: the page says when the app has stopped or was started again",
+        "Pin that Review also refuses an empty counters list"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.65",
+      "date": "2026-11-27",
+      "headline": "Improvements and fixes behind the scenes",
+      "highlights": [],
+      "changes": [
+        "A case that holds a Blackbox recording now shows the Resource counters panel, with the host CPU, memory and Redis figures the recorder read.",
+        "CI queue controls: queue top, queue pause/resume, queue list, --json on status and runs",
+        "Blackbox: Redis collector, local-only client and sealed password (B4, BL-693)",
+        "CLI owner retry codes: pin the rule, note why W-50 needs no code change (RV-SUP-5, W-50)",
+        "W-38: update health file is written safely (RV-SUP-7)",
+        "W-48: a stale backup .part file does not block setup",
+        "Lite launch link lives 10 minutes so a slow first start does not expire it (RV-LITE-1, W-52)",
+        "Homestretch round 4: build plan and backlog (BL-668..BL-675)",
+        "Blackbox: sql-status in plain words (B3 read-only part, BL-692)",
+        "W-41: shipped programs are checked for the test-only switch; a failed session file is no longer silent",
+        "Unlocking a case key erases the case if it expired while locked (RV-DAT-8, W-47)",
+        "Blackbox: config set, validate, history and rollback with auto-rollback and audit chain (B5, BL-694)",
+        "Blackbox: the support log keeps its size cap when it cannot rotate (RV-BB-12, W-37)",
+        "Hold store and activity log packages (BL-670)",
+        "unravis-ci hold add|lift|list|check and activity (BL-670)",
+        "Promote-Develop.ps1 refuses while a hold is active, fails closed (BL-670)",
+        "localci: per-project machine policy, honoured by the claim",
+        "localci: a drain mark can be withdrawn (resume)",
+        "localci: WhyWaiting says in one place why a queued request waits",
+        "unravis-ci: policy set/show, machines list/allow/deny/resume; queue list says why",
+        "Activity: hold add records who ran it, the owner goes in the target (BL-670)",
+        "Lint: drop unused nolint directives, mark the test read (BL-670)",
+        "Fix a test data race in the codemode second-net tests: guard the script's answer with a mutex",
+        "CLI legacy flag scan no longer reads flag values (RV-SUP-4, W-49)",
+        "Blackbox self-update: a pending marker with no result no longer skips a version for good (RV-BB-5, W-44)",
+        "Secret scan: allowlist internal/crashlog/crashlog_test.go (fake credentials on purpose)",
+        "Blackbox: bundle command, one zip with manifest and hashes (B8 part 1, BL-697)",
+        "Drop an unused nolint directive in the policy read",
+        "Remote tool: Blackbox settings, gated changes and bundle pull through Salt (B6, BL-695)",
+        "Redis tests: stub the listener trust check so they pass on a Windows runner",
+        "Blackbox: timeline source for its own recordings (B11 slice 1)",
+        "Blackbox: timeline reads SQL, HTTP queue, IIS worker and TCP groups (B11 slice 2a)",
+        "codemode test: read the worker's answer under its mutex (race in TestSecondNetsStopWhatTheGuardMissed)",
+        "Blackbox: timeline reads the Redis group (B11 slice 2b)",
+        "Small clean-ups: update checker state on the handler, refcounted recovery locks (W-43)",
+        "Blackbox: timeline reads event log, SQL log and dump groups (B11 slice 2c)",
+        "Blackbox source: round-trip test against the recorder's Sample type and a real-route import test",
+        "Blackbox source feeds the resource metrics",
+        "Blackbox source reads ASP.NET, memory, VM and disk/CPU groups",
+        "Blackbox source reads the busiest-process list",
+        "Investigation paging marks a read cut by an empty page with a cursor (RV-SRV-11, W-46)"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.63",
+      "date": "2026-11-26",
+      "headline": "A safer build line and a faster check before every release",
+      "highlights": [
+        {
+          "text": "The \"Local CI\" runner that checks every change now keeps its build cache small, so a long day of checks cannot fill the disk."
+        },
+        {
+          "text": "The check runner stops taking new work when the drive has under 10 GB free, instead of failing halfway."
+        },
+        {
+          "text": "A hand-added entry for this PC's Blackbox now counts as listed, so it no longer shows up as missing."
+        }
+      ],
+      "changes": [
+        "gofmt agent.go",
+        "Agent: claim nothing while the store's drive has under 10 GB free (BL-592); tick BL-586i, note BL-591/592 status",
+        "Cache trim: skip a vanished file without the nilerr pattern",
+        "CI: pre-push gate, Windows-risk scan, PR template and failure analysis (#326)",
+        "BL-362: unravis-sandbox worker (QuickJS-ng wasm on wazero) (#325)",
+        "Homestretch: cap the runner's build cache (8 GB, half for untrusted runs)",
+        "Blackbox: a hand-added entry for this PC's Blackbox counts as listed (#322)",
+        "Backlog: daily security and performance sweep 2026-11-25 (evening run) (#320)",
+        "gofmt run.go",
+        "Local CI: each job gets its own checkout; pipe-security elevation test skips on the local runner only"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.62",
+      "date": "2026-11-26",
+      "headline": "AI access, a command-line tool and many safety fixes",
+      "highlights": [
+        {
+          "text": "A new \"AI access\" screen lets you choose what an AI assistant may read, and switch it off again.",
+          "image": "/whatsnew/rc62/ai-access.jpg",
+          "alt": "The AI access panel open beside the analysis"
+        },
+        {
+          "text": "A small command-line program, with a doctor command that checks your setup and explains what it finds."
+        },
+        {
+          "text": "The Slowest tab shows a readable API name, and the Blackbox SQL check tests access first."
+        },
+        {
+          "text": "Secret scrubbing found and fixed more places where a password could slip into a copied report."
+        }
+      ],
+      "changes": [
+        "Scrubber reads name and value records with unquoted member names (SWP-1122-14)",
+        "Bump mongo-driver to 2.10.1 (two security fixes)",
+        "Stream the file reads of the rollback checks (SWP-1021-3)",
+        "Add the CLI core: error codes, envelopes, output peek, table, capability matrix",
+        "Add the offline Blackbox reader (BL-391)",
+        "Fix Blackbox showing Unreachable after repeated Check again",
+        "Add the thin CLI program: version, schema, completion, blackbox inspect --offline",
+        "Widen the page: one width system for every screen (BL-545)",
+        "CLI owner side: /cli/v1 routes, in-process MCP tool backend (BL-385, BL-318)",
+        "CLI side: attach, audit compare/groups/guide, sources list, app status (BL-385)",
+        "CLI: audit timeline, timelines compare, requests, slowest, breakdown, activity (BL-386)",
+        "CLI: cases list and cases show (BL-387)",
+        "CLI: doctor (BL-387)",
+        "CLI: JSON Lines streaming for audit requests and slowest (BL-392)",
+        "CLI: app start --headless and app stop (BL-390)",
+        "Test parity of the CLI and MCP adapters, snapshot commands and schemas (BL-393)",
+        "Blackbox charts: show the SQL service's samples (BL-546)",
+        "Blackbox SQL: opt-in extras seam (P1b foundation)",
+        "Blackbox SQL: check access first, with sql.profile and sql.extras settings (BL-547)",
+        "Blackbox SQL: stored SQL login on the recorder host, remote server, extras wiring (BL-548)",
+        "Blackbox SQL: turn collection on from the app (setup-sql, keeper hand-off, Collect SQL data panel) (BL-549)",
+        "Blackbox SQL: opt-in query text, app side (scrub package, deep-only flag, switch with warning, SQL service status) (BL-550)",
+        "Blackbox SQL: Everything-profile samplers round 1 (grants, workers, pendingio, latches, rg)",
+        "Blackbox SQL: ERRORLOG sampler on the recorder host, system_health plumbing (BL-553)",
+        "Slowest tab: readable API / source column (BL-538); When filter Date box marked with the refused pair (BL-506)",
+        "UI strict-CSP compatibility: richText tooltips, lint gate, CSP Playwright run (BL-323)",
+        "Code mode privacy: identifier tokens, error scrubbing, script clock (BL-365, pure package)",
+        "Ledger drawer: one plain line and the privacy notice, no repeated intro (BL-495g)",
+        "BL-341: Go MCP SDK spike, verdict GO (parity tests, both wire lifecycles)",
+        "Bump cookie to 0.18.3 (RUSTSEC-2026-0594)",
+        "Code-mode audit store: code_runs, code_run_calls and hash chain (BL-369)",
+        "BL-342: MCP stdio dispatch on the official Go SDK, ten tools unchanged",
+        "Fix e2e: read the richText chart tooltip from the canvas, not the old HTML tooltip",
+        "Hint popovers: pin click, Enter, Space, Esc and blur; never hover alone (BL-495f)",
+        "Case page: mount the Resource counters panel (BL-495j)",
+        "Create guide: a reload goes back to the guide with the kept draft (BL-495h)",
+        "BL-343: structured results, text copy and stable error codes on the MCP server",
+        "Audit store hardening: rowid guard, swallowed writes, import wait, durable commits, keyed hashes (BL-369)",
+        "BL-343 follow-up: a cut page is partial, wider untrusted lists, partial rule from quality",
+        "e2e: de-flake SWEEP-F1-11, STORY-05 and STORY-07 (wait for a settled page)",
+        "BL-346: MCP installation grants store (enroll, claim, approve, revoke, expiry, stop)",
+        "BL-346 hardening: review 1 of #260 (stop fails closed, invisible text, revision floor, contested enroll, store ACL)",
+        "BL-364: typed bindings for code mode (unravis.d.ts from the real tool catalog)",
+        "BL-344: MCP dispatcher on the ag pipe (grants, revoke gate, global stop)",
+        "BL-348 slice 1: grant source scope, tier ceiling, identifiers in the revoke gate (security)",
+        "BL-363: code-mode broker (strip, audit, budgets, privacy Guard on every answer) up to the worker interface",
+        "BL-363: backlog note with PR number",
+        "BL-363: lint fixes (gosec)",
+        "BL-363: wall clock watcher sleeps on one timer instead of a 20 ms ticker (idle-power ticker rule)",
+        "BL-363: review 1 of #267 (source scope, panics sealed, second nets on every path, stop reading after a stopping call, wire fold)",
+        "BL-363: review 2 of #267 (scope note cannot be forged or cut off, panicked call still gets a row, host made before begin)",
+        "BL-348 slice 2: small-count suppression, tier projection, differencing (security)",
+        "BL-363: review 3 of #267 (scope note first in the reason, invisible characters dropped, fuzz through the store's own cleaning)",
+        "BL-363: lint (gosec) in the fuzz helper",
+        "BL-363: gofmt",
+        "BL-350 budgets and BL-351 prune: per-host call limits, 90-day ledger prune (security)",
+        "BL-363: lint, seeded math/rand/v2 in the fuzz helper",
+        "BL-363: lint (seeded test generator)",
+        "BL-363: code run applies the grant's tier (review 4 of #267, M1)",
+        "BL-349 aliases, signed cursors, handle limits for the MCP server (security)",
+        "BL-349 backlog note (PR #269)",
+        "BL-348: hide record counts in provenance for a suppressing bridge",
+        "BL-349 review fixes: sealed cursor position, lock hook and 423 gate, CancelAll for every host, mint racing stop",
+        "Backlog sweep: CLI, CSP, privacy and accessibility fixes",
+        "Fix CI failures from strict CSP and accessibility changes",
+        "Limit the stable scrollbar gutter to case home",
+        "BL-347 AI access screen and BL-345 bridge credential/endpoint (security)",
+        "WIP: unfinished work kept for the Runner Hub redo on the PC",
+        "WIP: unfinished work kept for the Runner Hub redo on the PC",
+        "Daily sweep 2026-11-25: five new findings in the MCP ledger, enroll, shared lock and prune (docs only)",
+        "Hide the folded-value count under suppression: distinct is the listed rows plus one for Other",
+        "docs: model and effort policy for the factory (Opus only for high risk)",
+        "BL-363: AdmitCodeCall checks the grant on every call and gives its slots back on a panic (review 5 of #267, M1, M2)",
+        "BL-349: review of #269 SHOULD fixes: recursive cursor secrecy test, aliases cleared at startup, CancelAll logs a failed host list",
+        "BL-363: end rechecks the grant without the call's own deadline; tests for the broker's callCtx and refusal paths (review 6 of #267)",
+        "AI access screen review: a re-enroll that changes the card text makes the card stale, a transient claim fault keeps the nonce, the credential file is closed before it is removed",
+        "Fix lint in the code-call admit tests and broker (errcheck, SA4000)",
+        "MCP access screen: review follow-ups (PPID alone keeps the card, refused enroll message, claim 404 retries, reload after overlap)",
+        "Check the end results in the admit tests (errcheck)",
+        "Sealed run cursors: test cross-run replay, decoded-part leak and page change",
+        "Lint: gosec and bodyclose findings in the agent and admin tests",
+        "Lint: check the returns of end() in the code call tests",
+        "Lint: remaining test file reads in the agent tests",
+        "Restore the generated web files to develop's (they are not part of this PR)",
+        "Lint: drop the unused gosec directive in the agent test",
+        "Review fixes for #271: spec heading wait, h1 first in the DOM, gutter scoped to the home view, Setup CSP reason, scrubber comma carry gated on a tool",
+        "Lint: drop the redundant tool gate on the comma carry (De Morgan, QF1001)",
+        "AI access e2e: the demo page is already open, one 409 is expected, specs share one grant store",
+        "Code mode server wiring, slice 1 (BL-574): settings file, case resolver, /api/code routes",
+        "Code mode: retry a failed crash sweep, refuse a settings save when the file cannot be read, match MCP user agents by prefix; note what a worker needs",
+        "Code mode: gofmt the mount call, check errors on deferred closes",
+        "CLI owner lease: one pipe-mode owner per profile across sign-in sessions (BL-390)",
+        "Package the thin command-line program into the setup payload (BL-394 slice B)",
+        "docs: daily security and performance sweep 2026-11-23",
+        "Backlog batch 2: parity, chart transport, idle power, scrubbing",
+        "Refresh adapter snapshots after the develop sync",
+        "Correct the release scrubber verification host",
+        "Fix changed-code lint findings",
+        "Blackbox SQL: Everything-profile samplers batch B (perfctr, mem, conns, trans, waiting, agdetail, locks, facts)",
+        "Document audited Windows power bounds",
+        "Installer: add the unravis command folder to PATH (BL-394 slice A)",
+        "Blackbox SQL: deep samplers bb:qhash and gated bb:qtext",
+        "Spec: local pipeline (CI on the owner's PC instead of GitHub), BL-580 to BL-586",
+        "localci: package scaffold and YAML dependency",
+        "Scrubber review fixes (SWP-1122-12): fail closed on unfinished secret tags, escaped-quote JSON pairs, case-insensitive XML close, line cap for open states; Go and PowerShell kept in parity",
+        "localci: GitHub Actions expression evaluator (strict subset)",
+        "localci: strict workflow parser, matrix, job graph, local-ci.yml overrides",
+        "PR 276 review fixes: independent parity golden for follow-up tools, erased id check, closed cases schemas, archived table pages, idle rollback retry, rate-limited memory trim",
+        "PR 276 chart review fixes: versioned Blackbox frame, stepped chart width that keeps the zoom, JSON retry on a dropped body, safer case re-read",
+        "Local CI runner: run, shims, shell, Job Object kill, unravis-ci CLI, per-step local env",
+        "PR 276 round 2: e2e spec reads the versioned Blackbox frame, spec and comment match the shipped layout",
+        "PR 276: RESCASE-05 expects the stepped chart width",
+        "Local CI runner: review fixes (Windows trufflehog hang, redaction, artifact path traversal, job timeout, continue-on-error per instance, job outputs, lineWriter, job-object races)",
+        "PR 276: guard that the M4 answer keeps the window's last sample",
+        "Local pipeline spec: scope is CI only, releases untouched (Release.ps1 change moved to future work)",
+        "Local pipeline spec: research on other CI managers, modules, config and extraction plan",
+        "go.mod: make go.yaml.in/yaml/v3 a direct requirement (go mod tidy)",
+        "localci: git host interface, gh implementation and the Trusted allow-list check",
+        "localci: run store (runs, index.jsonl, caches, log lookup) with tests",
+        "localci: bare mirror, merge-ref worktrees and base-branch runner definition, with tests",
+        "localci: RunPR orchestration (trust, checkout, run, store, cleanup) with tests",
+        "unravis-ci: run-pr, runs and log commands",
+        "Local pipeline spec: one UI for runs and releases (tabs, project switcher), UI research",
+        "Scrubber round 2: bounded split-tag carry, quote/tag precedence, PS key reader under tags, next-line tags, parity table",
+        "Local CI: keep the core free of project names, add a purity test",
+        "BL-574 slice 2a: end live code runs before a case is closed, rekeyed, archived, erased or locked; 423 on run while locked",
+        "BL-574 slice 2a review fixes: stop runs after the erase claims the case, refuse a move when a run will not end, tighter tests",
+        "BL-573: CI job that opens a case written by the branch with the develop build",
+        "Local CI slice 2 security fixes: sealed git, profile isolation, owner-only trust",
+        "Local pipeline spec: slice 2 trust rules and the honest limit of the isolated profile",
+        "Local pipeline spec: name the gh keyring case in the limit of the isolated profile",
+        "Local CI slice 3: queue, poller, agent, cron, keep-awake and the serve/status/cancel/rerun/drain/run-item commands",
+        "BACKLOG: BL-582 local CI slice 3 (agent and queue), live results and what is not live",
+        "Local CI slice 3: usage text, child trust-flag test, notes on where it differs from the spec",
+        "Local CI: steps get a placeholder GH_TOKEN/GITHUB_TOKEN so a plain gh call does not use the owner's login",
+        "Queue.Get: look in the order a request moves, so a claim in flight is never missed",
+        "Local CI: --trust-owner-branch for hand-started runs of the owner's own pull request",
+        "Local CI slice 4: commit statuses, shadow phase, compare and fallback",
+        "Local CI slice 4: notes, live results and backlog (BL-583, BL-584)",
+        "Local CI slice 4: compare refuses a missing state folder; notes and backlog corrected",
+        "Releases app: read-only CI data layer, project record and JSON routes (BL-584 slice 5, part 1)",
+        "Releases app: Overview and Runs tabs UI, project record wiring (BL-584 slice 5, part 2)",
+        "Fix promote-dist self-test on Windows (cwd lock, config paths, sharedRepository)",
+        "Local CI slice 5: lint fixes, plain-word errors, phone and duration polish, audit notes (BL-584)",
+        "BL-584: tick the live-verified slice 5 UI sub-item, leave the seeded-only one open",
+        "Local CI fleet core: claims and leases as git refs, agent records, GitHub claim host",
+        "serve: claim requests on the host, publish this PC, save the comparison on a timer; claims command",
+        "gofmt claim.go",
+        "releasedash: /api/machines reads the synced agents file, shown only with more than one PC or when the project enables it",
+        "Releases UI: read-only Machines tab; an unknown project= in the address is an error, not a silent fallback",
+        "localci: opt-in live tests of the claim host against a real repo (LOCALCI_LIVE_REPO)",
+        "Releases UI: Machines cards stack as label and value pairs on a phone",
+        "localci: lint fixes (test helper nolints, unused nolint, rune conversion)",
+        "docs: slice 6 notes (many PCs) and backlog BL-585",
+        "Slice 6 notes: fact-check fixes; Machines tab says the list refreshes about once a minute",
+        "CI cutover step 1: fast-gate.yml can also be run by hand, merged like a pull request (BL-586)",
+        "CI cutover runbook and BL-586 sub-items (BL-586, docs only)",
+        "Local CI runner: the base-branch map gates configured workflows, not their on: (BL-586d)",
+        "CI cutover runbook and BL-586 sub-items (BL-586, docs only)",
+        "CUTOVER.md: Blocker R resolved by the runner change; tick BL-586d; lint nolint in the test helper",
+        "RunPR: refuse a pull request retargeted since it was queued",
+        "Poller test: the mapped push branch must be queued, not only the unmapped one skipped",
+        "Gate-on test: run the schedule refusal without bash",
+        "Backlog: name the slice 3 build entry BL-582a so it does not clash with the spec's BL-582",
+        "compare-go-failures: print the last lines of a new failure's own output so the CI log says why",
+        "gofmt codeapi_test.go",
+        "BL-573: gosec notes on the test file paths",
+        "Tick BL-573: compat-upgrade ran green on #281",
+        "cmdtree test: gosec note on the erased.json read",
+        "Explain four short tickers for the BL-424 scan (agent, fleet, status timer, code stop)",
+        "secretscrub: a key opened inside a dropped split tag still masks its value (R3-1)",
+        "idle-ok notes: no project-specific word in the localci core (TestCorePurity)",
+        "local CI status tests: wait for each post (a newer state replaces one not yet sent), shadow test allows a skipped state",
+        "casestore contract: a slow runner may spend the scan budget before the first event",
+        "Local pipeline: a Windows host compares Go failures with its own baseline (baseline-go-tests.windows.txt)",
+        "BL-574 slice 2b: MCP surface and grant scope of Code mode",
+        "BL-574 2b review: duplicate call id answers 400, exact execute keys, record M1 and L1 in the backlog",
+        "BL-574: code-mode settings Load stats the open handle and refuses a file others can write",
+        "BL-371 slice 1: unravis code types and code run through the owner pipe",
+        "BL-371: code.run schema says what the owner does with a short or zero timeoutMs",
+        "Code CLI review round 1: limit_exceeded in the run schema, honest Windows comment, backlog notes",
+        "Settings Load: say plainly that Windows does not read the DACL back",
+        "Fix lint (gosec, unused nolint) and make the main-wiring test run on Linux",
+        "Retrigger CI",
+        "BL-574 M1: code mode is its own permission of an MCP grant",
+        "BL-574 M1 review: honest card copy (no worker yet), refusal names Start over, backlog follow-up",
+        "BL-574 L1: count code runs in the shared limiter (at once, per hour, result bytes); note mcpaudit v5 is one-way",
+        "gofmt dispatch.go",
+        "L1 review: refund the hourly run on broker refusals, tests for busy rows, duplicate id, panic; doc wording",
+        "BL-574 remainder: name the sealed run in CLI TIMEOUT/CANCELED, pin the broker wiring in main, read the Windows settings DACL back on Load",
+        "settingsfile: nolint note for the SID cast",
+        "BL-351: ledger rows for enroll, approve, scope_change and revoke",
+        "BL-351 review: revoke row written after running calls are cancelled and only for a live grant; code mode not part of scope_change",
+        "MCP injection and privacy regression suite (BL-354)",
+        "BL-315 Go half: local-only crash capture (internal/crashlog)",
+        "Local runner: short per-run TEMP, Windows go-test baseline, idle-ok notes on CI ticker loops",
+        "BL-354 review: canary finder also reads base64 runs inside a larger text",
+        "Crash capture: keep the dump when a panic unwinds main's defer",
+        "Backlog notes for BL-315 (Go half), BL-351 and BL-354",
+        "Local runner: wait for the other-PC note in TestTwoPCsRunAnItemOnce; baseline two environment tests on Windows",
+        "MCP ledger: stop, resume and expire rows; settle the GOTRACEBACK spec",
+        "BL-351: note the expire-dedupe limits, test the Scope path of an expiry",
+        "BL-353: keep a copy of the MCP store before the first upgrade; an older build says so and leaves the newer store alone",
+        "BL-350: identical in-flight comparisons share one run",
+        "BL-350: review fixes (takeover reads the grant at run time, keeps the remaining deadline)",
+        "BL-324: Trusted Types report-only and freezePrototype trial harness; both flags stay off (note records why)",
+        "BL-324: count the LazyHost notice as a finding; freeze rerun shows 53 of 103 screens lose their charts",
+        "BL-371: command-line window gate for code run (closed by default, in-memory, 1-60 min)",
+        "Local runner: give each run's profile the usual Windows folders (Desktop, Start Menu Programs and Startup)",
+        "Homestretch: rebuild the Releases app page on live data with the config theme system, bundled fonts and the X1a mark",
+        "docs: rc cadence runbook (every 2 hours, failure cases)",
+        "Codemode golden tests: compare at LF so a CRLF checkout passes",
+        "Make the command line tests portable to Windows paths and less timing-fragile",
+        "Windows and race fixes: log tests use long paths, lock wait test waits from another goroutine, 1ns timeout test retries, run-item reads childStdin before its goroutine starts",
+        "Fix Windows and flaky tests in mcpsrv and power; fix EcoQoS restore on Windows 10/Server 2022",
+        "Fix the last two develop CI failures: real temp folder in TestAppProgramOnDisk, wait for the worker script in the tier test race",
+        "Keep the favicon source LF on checkout so check-dist matches on the Windows runner",
+        "Secret scan: allowlist the 6 Go test files added since #195 that hold fake credentials",
+        "Rebuild web files for promotion 93ef961",
+        "localci: a late status tick no longer posts running on top of the result",
+        "codemode tests: hand the fake worker to the test under a lock"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.61",
+      "date": "2026-11-23",
+      "headline": "Clearer buttons and stronger secret scrubbing",
+      "highlights": [
+        {
+          "text": "Buttons on the All operations and Slowest rows are quiet, one size, and say what they will do."
+        },
+        {
+          "text": "Setup no longer stops because of leftover Unravis files, and the Welcome page has folder buttons."
+        },
+        {
+          "text": "The secret scrubber reads more shapes, such as command-line options, so fewer passwords leak into reports."
+        },
+        {
+          "text": "Locator start times take digits only and real days."
+        }
+      ],
+      "changes": [
+        "Sweep 2026-11-22 evening: fast-gate web scope, promote branch reuse rule, scrubbed web build env, UI audit guards",
+        "promote-dist: build first, commit clone only after the build clone is deleted; real npm ci works",
+        "Merge develop; allow-list the commit clone's git config, push to the URL, test the call sites",
+        "Merge develop; pin the commit clone against personal git settings, dry run before the build, tests for every check",
+        "promote-dist: fail closed when git cannot read the clone config; version-proof planted-config tests; private temp per test run",
+        "promote-dist: test the dry commit clone for real, best-effort clean-up, git errors name the subcommand",
+        "All operations row buttons and Show only: quiet buttons of one size that name their request (BL-495 part)",
+        "Nightly Linux e2e job with a known-failure list; fix the stale specs it found (BL-030)",
+        "Promote-Develop: keep a single parent commit an array; backlog item for the M4 equal-timestamp tie-break",
+        "Go 1.27.4 and blocking govulncheck scans (BL-460)",
+        "Triage the three Rust findings, waive them with expiry dates, osv scan blocking (BL-460a)",
+        "Secret scan: allowlist 6 fake-credential Go test files, tag one ps1 line (BL-536)",
+        "Diff coverage report for changed Go lines (BL-451)",
+        "Slowest tab: Nearby activity and Inspect window are quiet row buttons that name their request or window (BL-495 part)",
+        "cargo-deny policy and job for the desktop Rust tree (BL-449)",
+        "Wire contracts: schemas and golden answers for info, version, errors (BL-445)",
+        "M4: tie-break values of one instant by source line (BL-535)",
+        "Slowest tab: 11 px line under each API name and headings lined up with their notes (BL-537)",
+        "Blackbox add by address: name \"Listens on 127.0.0.1\" as a cause",
+        "Secret scrubber reads name and value records: JSON, YAML list, plist (SWP-1122-13)",
+        "Mutation testing of the desktop Rust core with cargo-mutants (BL-452)",
+        "Locator start time: digits only and real days (BL-540)",
+        "e2e: wait for a settled layout in SWEEP-F1-02 and UIFIX-18e (BL-539)",
+        "Backlog: merged PR numbers and CI audit proof in place of \"audit re-run pending\" (BL-473 to BL-475, BL-492, BL-495n, BL-505, BL-510, BL-521, BL-537)",
+        "Setup: leftover Unravis files no longer block install; folder buttons on Welcome (BL-541)",
+        "Secret scrubber reads command-line options with a separate value (SWP-1122-10)",
+        "Fix two review findings: proxy credentials reach dependency code; folder name alone made a setup working folder deletable",
+        "Review tweaks: drop proxy values with a login even without a scheme; Explorer's desktop.ini and Thumbs.db do not make a work folder foreign",
+        "Backup folders count as ours only for files setup backs up (Codex P2); baseline lists the two new Windows-only tests; lint De Morgan",
+        "Fuzz the secret scrubber nightly, and fix the two leaks it found (BL-450)",
+        "gofmt the new test",
+        "Rebuild web files for promotion fa9ceb2"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.60",
+      "date": "2026-11-23",
+      "headline": "A big tidy of the screens and quicker charts",
+      "highlights": [
+        {
+          "text": "About 100 fixes across analysis, cases, Blackbox, setup and accessibility: bigger click targets, better contrast, readable small text."
+        },
+        {
+          "text": "Charts draw faster on long ranges and pause while the window is hidden."
+        },
+        {
+          "text": "The Story so far page re-reads itself when you come back to it."
+        },
+        {
+          "text": "Every chart now shows axis titles, units and one precision.",
+          "image": "/whatsnew/rc60/chart-axes.jpg",
+          "alt": "The Requests over time chart with titled axes on both sides"
+        }
+      ],
+      "changes": [
+        "UI audit fixes, desktop first: pop-up close button, ? and i buttons, edges, small text, contrast (BL-473, 474, 476, 477, 478)",
+        "deps: Bump the gomod group with 3 updates",
+        "Backlog: BL-462 release train verified live",
+        "Releases app: fix the four rc.59 log bugs",
+        "Store: go-sqlite3 0.37 (read transactions are ReadOnly) and series test fits the scan budget under -race",
+        "UI audit fixes batch 2: tap targets group 1, phone add-files heads, phone header, r4 audit screen (BL-475, BL-482, BL-472)",
+        "Commit generated web files once per promotion, not per PR (BL-491)",
+        "Slow call screen: raise the four 10 px labels to 11 px without moving the lanes (BL-483)",
+        "UI audit fixes batch 3: tap targets groups 2 and 3, hour squares and zoom handles (BL-475)",
+        "UI/UX sweep: 99 findings fixed across analysis, cases, Blackbox, setup and accessibility (BL-494, BL-495)",
+        "UIFIX-13a: the \"old rules\" legend square border follows PR 157 (control line colour)",
+        "UI audit fixes batch 4: tap targets group 4, tick the audit-proved items (BL-475, BL-472 to BL-483)",
+        "Backlog housekeeping: tick BL-476, 477, 478, 483, fix duplicate ids, drop stale lines",
+        "UI audit fixes batch 5: heatmap legend colours (BL-493), Blackbox charts tab strip (BL-496), audit hit-area check (BL-497)",
+        "Investigation timeline: show the UTC times of both windows as visible text (BL-505)",
+        "When filter: 24-hour time box (BL-495 part)",
+        "Backlog: claim parallel build slices (BL-423, 424, 429, 430, 441a, 441b, Story so far refresh)",
+        "Harden release supply chain: promotion head pin, Make-Keys build, npm policy (SUP-1, SUP-3, SUP-4)",
+        "Server: web page requests no longer spend the launch and session-proof limits (sweep WEB-1, WEB-2)",
+        "BL-430: M4 downsampling for chart series (width, first/last per pixel column)",
+        "Releases app: hide secrets in stop reasons and test names, more secret shapes, fast dashboard polls (sweep REL-1..4, dashboard performance)",
+        "Test hygiene: per-test Linux baseline for internal/server and internal/setup, race-aware budget tests, two timing flakes (BL-441a, BL-441b)",
+        "Backlog: security and performance sweep 2026-11-22 (SWP-1122-2, -5 to -9)",
+        "Story so far: re-read the case story once after any successful add (BL-162, BL-164 leftover)",
+        "Scrubbers: a password value runs to the next semicolon or end of line (OTA-1, OTA-2)",
+        "Blackbox SQL: settings fallback only when the open itself is refused (sweep finding 2)",
+        "Web UI idle behaviour: pause polls and chart work while hidden (BL-429)",
+        "Bound the SQLite pool, memory limit, ticker audit and leak tests (BL-423, BL-424)",
+        "Scrubbers: escaped quotes, colon and prefixed keys, XML forms, slog keys",
+        "Requests over time: axis titles, units and one precision (BL-495 part)",
+        "Slow call screen: 24 px press areas for the Timeline crumb, the lane bars and the phone minimap box (BL-492)",
+        "Add sources wizard guards: card and tab switch, reset, changed elsewhere (BL-520, BL-148 leftovers)",
+        "Scrubbers: escaped-quote JSON, prefixed KEY=value and XML secret forms (one shared reader)",
+        "Backlog: remove the claimed block, all six slices are merged",
+        "Clickable table rows are real buttons: Slow call lists, Show only (BL-495 part)",
+        "Axis titles, one unit and one precision on the other time charts (BL-510)",
+        "Sidecar build tag without the embedded dashboard (BL-422, layout A)",
+        "Go fuzz targets for manifest, control file, locator and MCP stdio; nightly fuzz workflow (BL-450)",
+        "Story so far: read again when the person comes back to the page (BL-162, BL-164)",
+        "Story so far: a failed health read on the page read keeps the checks (BL-162, BL-164)",
+        "Backlog tidy: split BL-495 into parts a to m, fix three stale lines, check ids are defined once",
+        "Fix the red develop CI: CRLF-proof web tests, junction refusal stage, race-skip timing tests",
+        "Rebuild web files for promotion aa44dc6"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.59",
+      "date": "2026-11-22",
+      "headline": "Releases app and a screen-by-screen UI check",
+      "highlights": [
+        {
+          "text": "A separate Releases app shows each release step by step, with logs and checks."
+        },
+        {
+          "text": "The Create-case flow picks the computer for every file by itself."
+        },
+        {
+          "text": "A UI check now photographs every demo screen in dark and light, on desktop and phone."
+        }
+      ],
+      "changes": [
+        "BL-110 step 1 review follow-up: peer checks, TMPDIR guard, stop-reply fuzz, lint",
+        "BL-016 read: read the history Query Store kept while off",
+        "Shell: verified ui-pipe client and hello route (BL-307 slice)",
+        "Backlog pipeline: groom handoffs for 6 research items",
+        "UI audit: every demo screen, dark/light, desktop/phone, with a Markdown report (BL-470)",
+        "Backlog: daily security and performance sweep 2026-11-21",
+        "Releases app: auto-update through the Unravis OTA (BL-199) and review follow-ups",
+        "BL-183 (b): notice before the Windows prompt in --recover, and a way out for a refused machine journal",
+        "Releases app: live status from the moment Release.ps1 starts",
+        "BL-110 step 1 follow-up: CLIDialer vs DefaultDialer (structural TMPDIR guard), SYSTEM note for IIS targets",
+        "Fix the data race in the Slowest store test; trim two fixed baseline entries",
+        "Release train cutover: PRs target develop (rules, dependabot, status)",
+        "BL-016 Timeline text and demo off databases; an unread OFF history is never \"saved no history\"",
+        "Release train: Supply chain and desktop-windows run on promotion and master only; first measured fast-gate seconds",
+        "Release workflows: bump GitHub Actions pins (attest v4.2.2, artifact v7/v8) from dependabot #127",
+        "BACKLOG: tick BL-194 on rc.56; BL-202 covered by #95",
+        "UI audit: add-files screens with fixture uploads (BL-481, BL-482)",
+        "Release manager: check the develop side of promotion merges (BL-490)",
+        "BL-016 PR-6: opt-in live probe for the Query Store OFF history read",
+        "BL-140 PR 7: SQL service reads settings through ReadVerifiedSettings (safe fallback)",
+        "Create-case flow: pick the computer for every file by itself, plus a UX pass",
+        "blackbox: built vm group stays quiet when it goes not applicable, reopen backs off (BL-113 follow-up 2)",
+        "deps: Bump @playwright/test",
+        "deps: safe parts of #111 and #112 (svelte, svelte-check, vite, mssqldb, mongo drivers, x/*); hold typescript 7 and go-sqlite3 0.37",
+        "Releases app: TeamCity-style release detail (steps, logs, tests, checks, files, changes)",
+        "Promote-Develop: rename Gh to Invoke-Gh (it called itself); test cycle report"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.58",
+      "date": "2026-11-22",
+      "headline": "Blackbox learns about virtual machines",
+      "highlights": [
+        {
+          "text": "Blackbox can tell when a program runs in a virtual machine and read its memory balloon."
+        },
+        {
+          "text": "Setup refuses to follow a shortcut folder that could point somewhere unsafe."
+        }
+      ],
+      "changes": [
+        "BL-183 (c): processSID reports an invalid or empty SID as unknown (follow-up to #75)",
+        "BL-183 (a): ReadFileProven, a machine-journal reader that proves the file on the handle it reads (not wired yet)",
+        "Authenticode for stable releases (SignPath, gated, untested)",
+        "Release: pin attestation to exact workflow and tag (BL-203), rc.56 timings, tick BL-199/200",
+        "blackbox: add a 'not applicable' group outcome and a PDH absent status (BL-113 step 1)",
+        "SWP-1021-1: setup locks folders through a no-follow handle, refuses junctions",
+        "BL-183 (a): read the machine journal only through ReadFileProven, and write it with owner Administrators",
+        "BL-140 (b): ReadVerifiedSettings, one open that proves the SQL settings file and reads it (not wired yet)",
+        "Desktop (Tauri) app: decisions, groomed backlog, specs and plan",
+        "blackbox: vm group, VMware balloon (BL-113 V2)",
+        "Desktop shell skeleton: workspace, ipc-core, Job Object (BL-306/320/321/322)",
+        "BL-140 (b): real-NTFS tests for the settings reader, and a fixed word for every refusal (not wired yet)",
+        "BL-110 step 1: read-only .NET diag-probe (IPC codec, probe core, dialers, command)",
+        "Shell: single instance and WebView2 lockdown (BL-309, BL-311)",
+        "BL-031b: make the release web dist check blocking",
+        "blackbox: vm-probe capture command (BL-113 V3)",
+        "Shell startup hardening: WebView2 policy check, mitigations, PE check (BL-325, BL-326)",
+        "blackbox: quiet not-applicable recheck, vm re-detects a vanished counter (BL-113 follow-up)",
+        "Shell supervisor state machine (BL-307, pure logic)",
+        "BL-016 web: show the history Query Store kept while it is off"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.57",
+      "date": "2026-11-22",
+      "headline": "A safer update check",
+      "highlights": [
+        {
+          "text": "A withdrawn update stays withdrawn, even after the signed list expires."
+        },
+        {
+          "text": "Unravis checks for updates at the interval the update list asks for."
+        }
+      ],
+      "changes": [
+        "BL-183(c): a program with no reported owner is not the person's",
+        "Release manager: heartbeat during CI wait, consistent step name, no blank version in busy text",
+        "OTA hardening A (S2): withdrawals outlive expiry, same-number control refused, live feed harness",
+        "OTA hardening B, C and sweep fixes: last-look re-check, channel check interval, SWP-2/3/4/6"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.56",
+      "date": "2026-11-21",
+      "headline": "Blackbox update state and a releases dashboard",
+      "highlights": [
+        {
+          "text": "Unravis shows each Blackbox's update state."
+        },
+        {
+          "text": "A read-only releases dashboard, as a separate app."
+        },
+        {
+          "text": "Saved links survive when a source with no label cannot be matched to one connection."
+        }
+      ],
+      "changes": [
+        "BL-143: keep saved links when an unlabelled source cannot be matched to one connection",
+        "BL-032: gofmt pass over 38 older Go files",
+        "BL-183(a): check the journal folder before parsing the journal",
+        "Show each Blackbox's update state in Unravis (BL-155)",
+        "Add read-only releases dashboard (separate app)",
+        "Release manager: one release at a time for everyone, pinned commit, faster release (BL-199, BL-200)",
+        "BL-031a: check that the committed web build matches the source"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.55",
+      "date": "2026-11-21",
+      "headline": "Case screens audited, times in London by default",
+      "highlights": [
+        {
+          "text": "Times show in London by default, with 24-hour pickers and a zone choice."
+        },
+        {
+          "text": "Case home tabs say \"Read SQL Server\" and \"Read MongoDB\" instead of step numbers."
+        },
+        {
+          "text": "Add data, then Files, opens the same Add files pop-up everywhere."
+        },
+        {
+          "text": "Updates can be paused, withdrawn or rolled out in stages by a signed control file."
+        }
+      ],
+      "changes": [
+        "UX audit 2026-11-21: case screens audited on Linux, first fixes",
+        "Close a case from Case home again; screenshot steps match the UI; axe clean",
+        "Case home tabs: \"Read SQL Server\" and \"Read MongoDB\" instead of Step 7 / Step 8 (BL-175)",
+        "Start screen: one help line per block, no stray \"·\", Restore as a button (BL-176)",
+        "One file-add flow on an open case: Add data > Files opens the Add files pop-up (BL-164)",
+        "Silent update gaps, in-use tracking, Scan this PC settings copy",
+        "Setup --recover: no-touch recovery of a cut-off update (BL-170)",
+        "e2e: refresh stale specs for the tile wizard (BL-182)",
+        "Signed control file: pause, withdraw, staged rollout (BL-155 G2+G3)",
+        "e2e: Blackbox, docs and security specs follow the new pop-ups (BL-182)",
+        "Start screen and phone header: BL-158 and BL-163",
+        "Fix stale tracing and lane e2e specs to match the app",
+        "Times in London by default, 24-hour pickers, zone choice; guide drops Guided analysis (BL-180, BL-181)",
+        "Remove the dead import and audit pages (BL-190)",
+        "Audit third pass: times follow the zone everywhere, reflow at 320 px, wizard focus clear of its sticky bar (BL-191, BL-192)",
+        "Refresh the signed feed before it expires (BL-155 G5)",
+        "Skip Windows-only archive and netstat specs off Windows",
+        "e2e: follow London default, 24-hour pickers, zone select",
+        "Backup feed address (G4) and Blackbox update from a folder (G7)",
+        "Backup address: refuse dot segments and escaped paths; docs note on folder control files",
+        "Release manager: one command, no prompts, keys decided by rule, threat model (BL-194)",
+        "e2e: fix the 3 Windows failures (BB-17a wording, TRACE-04 colour fade, WCARD-05 settling); tick BL-182",
+        "BL-140: prove the folders above the SQL settings file"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.54",
+      "date": "2026-11-21",
+      "headline": "Quiet updates",
+      "highlights": [
+        {
+          "text": "Updates install while nobody uses the app: no window, then a restart, with an automatic roll-back if it fails."
+        },
+        {
+          "text": "Blackbox services restart after an upgrade unless you stopped them on purpose."
+        }
+      ],
+      "changes": [
+        "Install-Dev: hop from an old install with no trusted keys",
+        "Timeline help buttons 24 px; Files card says \"ready to add\" (BL-163, part of BL-164)",
+        "Silent, idle-aware updates (no window, restart, rollback notice)",
+        "Backlog: close low UX items with reasons; BL-164 scope stated",
+        "Blackbox: restart services after an upgrade unless stopped on purpose"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.53",
+      "date": "2026-11-21",
+      "headline": "One name for each scan",
+      "highlights": [
+        {
+          "text": "Add source shows one scan name and one confirmation line."
+        }
+      ],
+      "changes": [
+        "Add-source consistency: one scan name, one confirmation line (BL-157, BL-162)",
+        "Release: -Yes skips the typed confirmations (checks still run)"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.52",
+      "date": "2026-11-21",
+      "headline": "The first signed updater",
+      "highlights": [
+        {
+          "text": "Unravis can check a signed update list, download an update and hand it to the installer."
+        },
+        {
+          "text": "If an update fails, Unravis rolls back and skips the bad version."
+        },
+        {
+          "text": "Unravis Lite, a read-only viewer for Blackbox files."
+        },
+        {
+          "text": "A diagnostics log and cause finder for Blackbox."
+        }
+      ],
+      "changes": [
+        "Auto-updater: signed update check (U1-U3) and Apache-2.0 licence",
+        "Auto-updater U4: download and hand-off to the installer, key-making script",
+        "Auto-updater U7: Unravis Lite (read-only Blackbox viewer)",
+        "Lite: fixes from the Windows check (folder check, hold window on error)",
+        "Auto-updater U5: roll back a bad update, skip the bad version",
+        "Blackbox: diagnostics log, cause finder, Diagnostics view; fix false \"Running late\"",
+        "Auto-updater U6: Blackbox service self-update",
+        "Auto-updater U8: offline verify of a release folder",
+        "Auto-updater U1b: build attestation checked before signing",
+        "OTA: one-command dev install, release pipeline, verify workflow, --check-update, public keys",
+        "Release: optional Proton Pass CLI passphrase",
+        "UX audit and Drawer Tab trap fix (Blackbox panel focus leak)"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.50",
+      "date": "2026-11-20",
+      "headline": "Release pipeline work",
+      "highlights": [
+        {
+          "text": "Behind-the-scenes work on how Unravis is built, signed and released. Nothing you use changed in this version."
+        }
+      ],
+      "changes": [
+        "Source wizard: toggle switches keep their shape inside the sources panel (more specific rule)"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.49",
+      "date": "2026-11-20",
+      "headline": "Release pipeline work",
+      "highlights": [
+        {
+          "text": "Behind-the-scenes work on how Unravis is built, signed and released. Nothing you use changed in this version."
+        }
+      ],
+      "changes": [
+        "Source wizard round 4 review fixes: Files tile counts catalog kinds, Find on this PC says Added only after a database is chosen, focus after Change, forced-colors switch, scroll padding",
+        "Source wizard round 4: Mongo test keeps the list for choosing, toggles, compact rows, reopen resets, Remove keeps scroll, pinned footer, tile badges"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.48",
+      "date": "2026-11-20",
+      "headline": "Release pipeline work",
+      "highlights": [
+        {
+          "text": "Behind-the-scenes work on how Unravis is built, signed and released. Nothing you use changed in this version."
+        }
+      ],
+      "changes": [
+        "Source wizard round 3 review fixes: other-machine recorder no longer hides this PC's, add-ticked guard, accurate recorder hint",
+        "Source wizard round 3: leave popup is a modal, even source cards, restyled sources rail and Back button, Blackbox row in Find on this PC, add a recorder once"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.47",
+      "date": "2026-11-20",
+      "headline": "Release pipeline work",
+      "highlights": [
+        {
+          "text": "Behind-the-scenes work on how Unravis is built, signed and released. Nothing you use changed in this version."
+        }
+      ],
+      "changes": [
+        "Open-folder tests: expand the short temp path (the path check refuses 8.3 aliases on purpose)"
+      ]
+    },
+    {
+      "version": "0.1.0-rc.45",
+      "date": "2026-11-15",
+      "headline": "Release pipeline work",
+      "highlights": [
+        {
+          "text": "Behind-the-scenes work on how Unravis is built, signed and released. Nothing you use changed in this version."
+        }
+      ],
+      "changes": [
+        "test(call-detail): import-skipped lane copy is its own text and never says 'not been imported'",
+        "fix(call-detail): import-skipped lane says the file was set aside, not 'not imported' (+ test)",
+        "build(web): rebuild embedded web/dist for the re-review fixes",
+        "fix(review): held SQL day with data shows over a not-imported reason, downsampleWindows always terminates, lane says 'not imported' (+ tests)",
+        "docs(backlog): record rc.43 live check, C-3 IIS/SQL-only click change and lane-gap wording",
+        "build(web): rebuild embedded web/dist for the pr10 review fixes",
+        "test(slowcall): guard every slice with indexOf>=0, scope CSS assertions to the rule, render the chart marks (P7)",
+        "fix(call-detail): lane gap says 'no file' with an import prompt; one combined Nearby capped/truncated note (+ tests)",
+        "fix(tracing): read pre-window QS file rows separately so they cannot fill the window cap (A-1) (+ test)",
+        "fix(pr10-review): held-lane reason, downsample merge, call-detail focus/window, IIS-only click, CI gofmt check (+ tests)",
+        "feat(call-detail): rename to \"Call detail\", any API/IIS call opens it, compared-with-normal line, whole-span readout",
+        "FIX-35/TEST-03,TEST-04: pin SQL lane test time; behaviour tests for window keys, overlapping loads, popup states (+ tests)",
+        "docs: record PR #2 review leftovers as unticked backlog items BL-045..048",
+        "FIX-37/DATA-01: check verdict row counts are *int omitempty, sent only when the file was counted (+ tests)",
+        "FIX-26/DATA-12: IIS buckets say clientErrors 0 where 4xx was counted, omit it where not counted (+ tests)",
+        "FIX-25/DATA-13: a lane with range-less or never-imported listed files is marked partial (+ tests)",
+        "FIX-28/DATA-15: held SQL lane decodes each saved health run once, cached by run id, time and content hash (+ tests)",
+        "CI-02: gate gofmt on PR-changed Go blobs (scoped; pre-existing repo pass deferred)",
+        "FIX-36/CI-04: record e2e manual-only and PR #2 review follow-ups as unticked backlog items",
+        "FIX-34/UI-07: delete dead DrillPopup, drillOpen and setDrillOpen (+ tests)",
+        "DATA-10: a capped or timed-out Query Store file read with no in-window rows is flagged, not silent (+ test)",
+        "FIX-10+18/DATA-04: held SQL lane block length follows the merged point span (+ test)",
+        "FIX-32/UI-05,UI-11: name Shift+Enter in the chart label and tooltip; lane hint is a button that Esc closes; bucket selector is a slider (+ tests)",
+        "FIX-29/FIX-30 UI-02, UI-03, UI-09: debounce strip key commits and add Page/End keys; clear old slow rows and show a loading line; memoise window-independent screen parts (+ tests)",
+        "FIX-31+FIX-33/UI-04,UI-08,UI-10: lane gap reasons, quiet readout, group role, Space/aria-selected, 200-row cap (+ tests)",
+        "FIX-16/UI-12,UI-13: Add all stops after dispose/clear and notes failures, close reason while importing, Query Store explained, check copy moved (+ tests)",
+        "FIX-22-23/SEC-08,SEC-09,SEC-10: scoped link removal, recheck link before reopen, addressOnly slash password (+ tests)",
+        "FIX-24+FIX-20/DATA-10,DATA-11: qs-file keeps intervals straddling the window start; Query Store series busy time from summed duration (+ tests)",
+        "FIX-18/DATA-04,DATA-08: downsample the Query Store series per window with true block span; cap a lane window at 90 days (+ tests)",
+        "FIX-21/DATA-07: legacy adapter merges the activity user/operation filter into its first $match so it runs before the scan cap; correct the filter comment (+ tests)",
+        "FIX-27/DATA-14: payload object keys replaced by a placeholder segment in field paths (+ tests)",
+        "FIX-38/SEC-07: guard the discover-batch handoff with beginRun against shutdown (+ tests)",
+        "FIX-10/DATA-09: Query Store state (off, read-only, denied, starts later) reaches the held SQL lane reason (+ tests)",
+        "DATA-05/DATA-06 integration: retarget api-seen reader-error test to degrade",
+        "SEC-07: guard import handoff wg.Add under j.mu against shutdown (+ race tests)",
+        "DATA-05: a failing api-seen read degrades to a warning, other lanes survive (+ test)",
+        "DATA-06: api-seen unsupported window says broad-scan; not-imported/skipped reasons preserved (+ tests)",
+        "DATA-02 follow-up: record BL-029 (api-seen empty-selection residual edge)",
+        "UI-06: import popup requestClose waits for importing/stopping (+ behaviour test)",
+        "SEC-06: cap check-request spool to MaxCaseBytes; TEST-01: import-check negative tests",
+        "DATA-03: dedupe held SQL lane points by T, newest run wins (+ overlap test)",
+        "DATA-02: filter api-seen SQLBusy by selected audit source ids (+ two-source test)",
+        "UI-01: Esc inside text fields no longer closes the Slow call screen (+ behaviour test)",
+        "DOC-02: align BL-009 cross-reference with softened BL-010/011",
+        "DOC-01/02/03: honest backlog verification status + refresh record_perf comment",
+        "SEC-01/SEC-02: remove live-case screenshots from the tip, scrub local paths",
+        "CI-02 prep: gofmt the 13 PR-changed Go files",
+        "CI-01: drop the global eol=lf rule, keep binary guards + helper normalisation",
+        "CI-01: make web tests line-ending safe; add .gitattributes (LF)",
+        "Slow call screen: scroll with the page, roomier layout (rc.37)",
+        "Timeline: rc.36 slow-call history fixes, acceptance and backlog",
+        "CI: ignore local investigation scratch and machine config",
+        "Blackbox handoff: single prompt source, per-tier prompting guide, owner go recorded",
+        "Blackbox: Qoder orchestration brief (plan, packets, graph, batch review, PR rules)",
+        "Blackbox handoff: open a PR, never merge without explicit human testing",
+        "Blackbox handoff: prompt for Qoder with repo link and clone steps",
+        "Timeline drill and slow-call screen work, Blackbox expansion backlog and design docs",
+        "Timeline: the SQL lane draws the saved Query Store day (statements, average time, slowest-statement diamonds) and the suspects list reads call times",
+        "Timeline: the web-server lane shows response-time line, slowest-request diamond and refused (4xx) counts from the IIS logs",
+        "Timeline: say when the files listed for a SQL or IIS lane were never imported",
+        "Timeline phase 4: the API lane draws the Run Analysis chart (P95 line, gaps, red slowest-request diamonds, legend, sentence)"
+      ]
+    }
+  ]
+}
