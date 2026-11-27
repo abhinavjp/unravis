@@ -57,6 +57,9 @@ type BlackboxPC interface {
 	// SetupSQL turns SQL collection on (one prompt); ClearSQLLogin deletes the saved SQL login.
 	SetupSQL(ctx context.Context, loginFile, loginSHA string, windows, enable bool) (blackbox.SQLSetupOutcome, error)
 	ClearSQLLogin(ctx context.Context) error
+	// SetupSQLHandover is SetupSQL for a saved login the key keeper holds: the helper fetches it from the keeper by the one-time id, so
+	// no file is made and the login never reaches this process.
+	SetupSQLHandover(ctx context.Context, handoverID, keeperPipe string, enable bool) (blackbox.SQLSetupOutcome, error)
 }
 
 // BlackboxDeps wires the Blackbox pages. Only Store is required; a missing ThisPC

@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
-	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/keeper"
@@ -109,11 +109,12 @@ func TestSQLClearLogin(t *testing.T) {
 // heldSQLList is a saved list whose password the keeper holds: the app process never sees it.
 type heldSQLList struct {
 	fakeSavedSQL
-	loginFile blackboxLoginFile
-	asked     int
+	mu      sync.Mutex
+	minted  int
+	revoked []string
 }
 
-type blackboxLoginFile = blackbox.SQLLoginFile
+const heldHandoverID = "0123456789abcdef0123456789abcdef"
 
 func (h *heldSQLList) Held(string) (bool, error) { return true, nil }
 func (h *heldSQLList) TestSaved(context.Context, keeper.SQLRef) (dbhealth.TestResult, string, error) {
@@ -128,31 +129,60 @@ func (h *heldSQLList) LaneSaved(context.Context, keeper.SQLRef, string, dbhealth
 func (h *heldSQLList) AccessSaved(context.Context, keeper.SQLRef) (sqlaccess.Report, error) {
 	return readyReport(), nil
 }
-func (h *heldSQLList) LoginFileSaved(context.Context, keeper.SQLRef) (blackbox.SQLLoginFile, error) {
-	h.asked++
-	return h.loginFile, nil
+func (h *heldSQLList) HandoverSaved(context.Context, keeper.SQLRef) (keeper.SQLHandover, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.minted++
+	return keeper.SQLHandover{ID: heldHandoverID, Pipe: `\\.\pipe\UnravisKeeper`}, nil
+}
+func (h *heldSQLList) RevokeHandover(_ context.Context, id string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.revoked = append(h.revoked, id)
+	return nil
 }
 
-func storedFor(t *testing.T) bbsql.StoredLogin {
+func newHeldSetup(t *testing.T) (*bbEnv, *heldSQLList, string) {
 	t.Helper()
-	s, err := sqlaccess.StoredLoginFor(dbhealth.SQLTarget{Server: "db01", Auth: "sql", Username: "u", Password: "from-keeper", Encrypt: "mandatory"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s
+	tmp := t.TempDir()
+	t.Setenv("TMP", tmp)
+	t.Setenv("TEMP", tmp)
+	t.Setenv("TMPDIR", tmp) // winok: TMP and TEMP (what Windows reads) are set on the lines above
+	saved := &heldSQLList{fakeSavedSQL: fakeSavedSQL{in: sqlconn.Input{Server: "db01", Auth: "sql", Username: "u", Encrypt: "mandatory"}}}
+	return newBBEnvWith(t, nil, WithSQLConnections(saved)), saved, tmp
 }
 
-func TestSQLSetupWithASavedLoginTheKeeperMakesTheFile(t *testing.T) {
-	// The keeper (not this process) writes the file; here a file stands in for what it wrote.
-	f, err := blackbox.WriteSQLLoginFile(t.TempDir(), storedFor(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	saved := &heldSQLList{fakeSavedSQL: fakeSavedSQL{in: sqlconn.Input{Server: "db01", Auth: "sql", Username: "u", Encrypt: "mandatory"}}, loginFile: f}
-	t.Cleanup(func() { blackbox.RemoveSQLLoginFile(f) })
-	b := newBBEnvWith(t, nil, WithSQLConnections(saved))
+// The keeper holds a saved login: the app asks it for a one-time hand-over, the helper fetches the login from the keeper, and no file is
+// made anywhere in the temp folder.
+func TestSQLSetupWithASavedLoginUsesAKeeperHandoverAndMakesNoFile(t *testing.T) {
+	b, saved, tmp := newHeldSetup(t)
 	res := b.post(sqlSetupPath, `{"mode":"login","enable":true,"savedId":"saved1"}`)
-	if res.Code != http.StatusOK || saved.asked != 1 || !b.pc.loginFileOK {
-		t.Fatalf("setup = %d %s asked=%d fileOK=%v", res.Code, res.Body, saved.asked, b.pc.loginFileOK)
+	if res.Code != http.StatusOK || !b.pc.loginFileOK {
+		t.Fatalf("setup = %d %s fileOK=%v", res.Code, res.Body, b.pc.loginFileOK)
+	}
+	if saved.minted != 1 || len(saved.revoked) != 1 || saved.revoked[0] != heldHandoverID {
+		t.Fatalf("minted %d revoked %v: the hand-over must be asked for once and ended once", saved.minted, saved.revoked)
+	}
+	if strings.Contains(res.Body.String(), heldHandoverID) {
+		t.Fatalf("the one-time id reached the browser: %s", res.Body)
+	}
+	if ents, _ := os.ReadDir(tmp); len(ents) != 0 {
+		t.Fatalf("the set-up left %d entries in the temp folder", len(ents))
+	}
+}
+
+// A refused prompt or a failed helper still ends the hand-over, so the login does not wait out its minutes in the keeper.
+func TestSQLSetupEndsTheHandoverWhenTheHelperFails(t *testing.T) {
+	b, saved, tmp := newHeldSetup(t)
+	b.pc.failNext = blackbox.ErrDeclined
+	res := b.post(sqlSetupPath, `{"mode":"login","enable":true,"savedId":"saved1"}`)
+	if res.Code == http.StatusOK {
+		t.Fatalf("a declined prompt answered ok: %s", res.Body)
+	}
+	if saved.minted != 1 || len(saved.revoked) != 1 {
+		t.Fatalf("minted %d revoked %v", saved.minted, saved.revoked)
+	}
+	if ents, _ := os.ReadDir(tmp); len(ents) != 0 {
+		t.Fatalf("left %d entries in the temp folder", len(ents))
 	}
 }

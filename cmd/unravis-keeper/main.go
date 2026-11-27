@@ -1,6 +1,8 @@
 // Command unravis-keeper is the Unravis Key Keeper (P14): a small Windows service that holds saved SQL Server passwords, saved MongoDB
 // link passwords and Blackbox read keys, and does the work that needs them (the fixed checks, the keyed Blackbox reads and the MongoDB
-// audit sources opened from saved links) on behalf of Unravis, over a local named pipe. It never hands a secret back.
+// audit sources opened from saved links) on behalf of Unravis, over a local named pipe. It never hands a secret back, except the one
+// narrow Blackbox SQL set-up hand-over (internal/keeper: sql.handover.*), which gives a saved login once, from memory, to an elevated
+// set-up helper in the same Windows session as the person who asked (a non-elevated caller is refused).
 //
 // It installs nothing. The installer registers it as a service (P14 installer work); on a developer PC "unravis-keeper console" runs the
 // same thing in the foreground with the keeper folder taken from UNRAVIS_KEEPER_DIR, for trying it by hand.
@@ -127,8 +129,11 @@ func serve(ctx context.Context, d deps, dir, pipe string, logf func(string, ...a
 		Log:     audit,
 		Limiter: keeper.NewRateLimiter(nil, 0),
 	})
-	// A login file an earlier run left behind (it stopped within the file's short life) is removed before anything else is served.
-	blackbox.SweepSQLLoginFiles("")
+	// Older keepers wrote a saved SQL login to a temp file for the set-up helper (RV-SEC-2 replaced that with a hand-over in memory). Any such
+	// file an old run left behind is removed before anything else is served. Only the count is logged, never a name or content.
+	if n := blackbox.SweepSQLLoginFiles(""); n > 0 && logf != nil {
+		logf("Removed %d leftover SQL login file(s) an older key keeper had left in its temp folder.", n)
+	}
 	// The audit sources opened from saved MongoDB links (P14b) run on the same repository Unravis uses, with its default limits.
 	hosted := keeper.NewAuditHost(func() keeper.HostedRepo { return store.New() })
 	defer hosted.Close()
