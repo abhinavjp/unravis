@@ -52,8 +52,10 @@ Research basis for this pipeline itself (why the steps look like this):
 Run, in this order, and fix until nothing is open:
 
 1. `node tools/prototypes/precheck.mjs <file.html> [--out <dir>]`. Plain node and Playwright, no network. It prints PASS, WARN or FAIL with the exact element text and exits 1 on any FAIL. It checks: visible words on the first screen at 1440x900, label length, sentence length, console and page errors, horizontal overflow at 390x844 and 1440x900, every button and link (dead ones fail; changes outside the viewport warn "hidden-state"), and contrast when axe-core is installed. Mark a deliberately inert element with `data-proto-inert`. It also writes first-screen screenshots and `visible-text.txt` for the author.
-2. The Impeccable skill (on the PC).
-3. The AI Slop Detector skill (on the PC). If a skill is not installed, search for it, install it, then use it. Do not skip a skill because it is missing.
+2. Impeccable (`~/.claude/skills/impeccable`, on the PC): design critique and audit of the rendered page (its `critique` and `audit` references). Its `impeccable detect` command is a bundled rule checker; the installed copy has no launcher (`scripts/impeccable`), so `detect` cannot run offline here. Do not fetch one with `npx` unreviewed. Use the critique and audit read-through instead, and run `detect` only if nachi installs the launcher.
+3. AI Slop Detector = the `audit-ai-design-slop` skill (`~/.claude/skills/audit-ai-design-slop`, MengTo/Skills, text only: no scripts, no downloads, read-only). Run it on the rendered page at 1440 and 390 and keep its P0 and P1 findings in the design-gate file. This is the named detector; to swap it for another, change this line and the skill file together. The Impeccable `detect` rules are NOT this detector. The `the-antislop` skill checks writing, not UI, so it is not used here.
+
+If a skill is not installed, search for it, read every file in it, install it only if it is text only (no scripts, no network), then use it. Do not skip a skill because it is missing.
 
 Write the findings and what was done about each (fixed, or rejected with one line) in ONE file per prototype, `docs/prototypes/reviews/<slug>-design-gate.md`, with one section per run of the gate. Run the gate after the build, again after every fix round, and once more before delivery (step 8). A goldfish review does not start while the gate has open findings.
 
