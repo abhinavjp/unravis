@@ -287,7 +287,7 @@ func (b *builder) sample(ev evidence.Event) error {
 		return nil
 	}
 	v := *ev.Value
-	isPDH := ev.Source == sourceWinCounters || ev.Source == sourceSQLPDH
+	isPDH := ev.Source == sourceWinCounters || ev.Source == sourceSQLPDH || ev.Source == sourceBlackbox
 	if isPDH && ev.Kind == "counter" {
 		object, inst, ctr := ev.Attrs["object"], ev.Attrs["instance"], ev.Attrs["counter"]
 		class, _ := objectClass(object)
@@ -359,6 +359,9 @@ func labelOf(ev evidence.Event, procScoped bool) string {
 	case a["object"] != "" && a["counter"] != "":
 		if inst := a["instance"]; inst != "" && !procScoped {
 			return a["object"] + "(" + inst + ")\\" + a["counter"]
+		}
+		if n := a["sqlinstance"]; n != "" { // a recording ranks the SQL instances; one series each
+			return a["object"] + " [SQL instance " + n + "]\\" + a["counter"]
 		}
 		return a["object"] + "\\" + a["counter"]
 	case a["counter"] != "":

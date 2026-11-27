@@ -323,7 +323,7 @@ var (
 		"SQLServer:Exec Statistics", "SQLServer:Cursor Manager by Type", "SQLServer:Workload Group Stats",
 		"SQLServer:Resource Pool Stats", "SQLServer:Availability Replica", "SQLServer:Database Replica",
 		// Figures the Blackbox derives itself, so they are never filed under a Windows counter that means something else.
-		"Blackbox TCP", "Blackbox IIS")
+		"Blackbox TCP", "Blackbox IIS", "Blackbox Memory", "Blackbox VM", "Blackbox ASP.NET")
 	counterNames = fold("% Processor Time", "% User Time", "% Privileged Time", "% Idle Time", "% Interrupt Time", "% DPC Time",
 		"% C1 Time", "% C2 Time", "% C3 Time", "Processor Frequency", "% of Maximum Frequency", "Interrupts/sec", "DPCs Queued/sec",
 		"Processor Queue Length", "Context Switches/sec", "System Calls/sec", "Threads", "Processes",
@@ -376,7 +376,9 @@ var (
 		"Process ID", "Active Requests", "Active Threads Count", "Requests Rejected", "Requests / Sec",
 		// The Blackbox's own figures (objects "Blackbox TCP" and "Blackbox IIS") and the HTTP.sys queue length it reads.
 		"CurrentQueueSize", "RejectedRequests", "ArrivalRate", "Retransmits/sec", "Resets/sec", "Outbound Queue", "Connection Failures/sec", "Discarded Packets/sec",
-		"Outbound Errors/sec", "Worker Ping Latency (ms)")
+		"Outbound Errors/sec", "Worker Ping Latency (ms)",
+		// More host figures the Blackbox reads (memory lists, CPU utility) and two it sums or converts itself.
+		"Modified Page List Bytes", "% Processor Utility", "Standby Bytes", "Memory Ballooned")
 )
 
 var counterObjectCanon = canonicalValues(counterObjects)
