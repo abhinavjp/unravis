@@ -23,6 +23,16 @@ type Limits struct {
 // notice, not all at once.
 const MaxAgeRemovalsPerPass = 6
 
+// KeepFloor is the newest stretch of recordings the free-space rule may never
+// remove (RV-BB-2, PLAN O-1). When the drive is still too full after
+// everything older has gone, the Blackbox pauses and says so; it does not eat
+// into the last day, which is what an investigator needs most.
+const KeepFloor = 24 * time.Hour
+
+// FloorHeldMessage is the plain-English event text for a pass in which the
+// keep floor stopped a removal the free-space rule wanted.
+const FloorHeldMessage = "The disk is low, but the newest 24 hours of recordings are kept. Free some space on the recordings drive."
+
 // Housekeeping is what one housekeeping pass did.
 type Housekeeping struct {
 	Removed     []string // files removed, oldest first
@@ -31,6 +41,9 @@ type Housekeeping struct {
 	DiskKnown   bool     // false when the volume could not be read
 	DiskLow     bool     // still below the free-disk limit after removing what may go
 	Bytes       int64    // size of the recordings after the pass
+	// FloorHeld: the free-space rule wanted to remove a file but it is inside the
+	// newest 24 hours (KeepFloor), so it stayed. DiskLow is set with it.
+	FloorHeld bool
 }
 
 // Incomplete reports that a file could not be removed, so the pass may have
@@ -43,8 +56,10 @@ func (h Housekeeping) Incomplete() bool { return len(h.Skipped) > 0 }
 // under the size limit, then the oldest files until the free space of the
 // volume is at least the minimum. The file being written (and the one for the
 // current hour) is never removed, and nothing outside the recording files is
-// touched (the snapshots folder, the manifest). If the free space is still too
-// low when only protected files are left, DiskLow is set: the recorder pauses
+// touched (the snapshots folder, the manifest). The free-space rule also keeps
+// the newest KeepFloor (24 hours) of recordings. If the free space is still too
+// low when only protected files and the floor are left, DiskLow is set (and
+// FloorHeld when the floor was what stopped a removal): the recorder pauses
 // until space comes back. A file that cannot be removed (a reader downloading
 // it holds it open on Windows) is skipped and listed in Skipped; the pass goes
 // on with the next candidate and the next rule, and tries the file again next
@@ -113,8 +128,38 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 			remove(f)
 		}
 	}
-	// Free space.
+	// Free space. Invariant: this rule never removes a file whose hour is inside
+	// the keep floor, the newest KeepFloor of recordings. The floor is measured
+	// from the newest recording file, not from the clock: after a long stop or a
+	// clock jump, "now" says nothing about which recordings are the newest, and
+	// measuring from it could empty the folder. Files are whole hours, so the
+	// floor is the 24 newest hours: every file whose hour is later than
+	// (newest hour - 24h). The age and size rules above are not limited by it.
 	if disk != nil && l.MinFreePercent > 0 {
+		floorStart := time.Time{}
+		for _, f := range files {
+			if f.Hour.After(floorStart) {
+				floorStart = f.Hour
+			}
+		}
+		floorStart = floorStart.Add(-KeepFloor)
+		inFloor := func(f FileEntry) bool { return f.Hour.After(floorStart) }
+		// nextOutsideFloor is the oldest file that may go and is not in the floor.
+		// held reports that next() still had a candidate, so the floor is what
+		// stopped the pass, not an empty list.
+		nextOutsideFloor := func() (f FileEntry, ok, held bool) {
+			for _, c := range files {
+				if c.Name == cur || c.Name == protected || skipped[c.Name] || gone[c.Name] {
+					continue
+				}
+				if inFloor(c) {
+					held = true
+					continue
+				}
+				return c, true, held
+			}
+			return FileEntry{}, false, held
+		}
 		for {
 			info, err := disk.Free(s.dir)
 			if err != nil {
@@ -124,9 +169,10 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 			if res.FreePercent >= l.MinFreePercent {
 				break
 			}
-			f, ok := next()
+			f, ok, held := nextOutsideFloor()
 			if !ok {
 				res.DiskLow = true
+				res.FloorHeld = held
 				break
 			}
 			remove(f)

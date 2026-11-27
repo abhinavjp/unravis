@@ -292,7 +292,8 @@ func seedOld(t *testing.T, dir string, at ...time.Time) {
 // A reader holding the oldest file must not make a paused recorder start
 // writing again onto a full drive (review F4).
 func TestRecorderStaysPausedWhenHousekeepingCannotRemoveALockedFile(t *testing.T) {
-	old1, old2 := t0.Add(-3*time.Hour), t0.Add(-2*time.Hour)
+	// Older than the 24-hour keep floor, so the free-space rule may remove them.
+	old1, old2 := t0.Add(-50*time.Hour), t0.Add(-49*time.Hour)
 	g := newRig(t, func(c *Config) { seedOld(t, c.Folder, old1, old2) })
 	lockFiles(g.s, FileNameFor(old1))
 	g.r.Tick(g.clk.t)
