@@ -25,7 +25,7 @@ Your job: find everything that would confuse, stall or mislead you. You are not 
 ### How to look
 
 1. Open `{{FILE}}` in a browser (Playwright is installed; use Chromium). Look at the rendered screen only. Do NOT read the page source, comments, scripts, or any other file on disk. Do NOT search the web. If the file reveals things only in source, you did not see them.
-2. Take screenshots at 1440x900 and 390x844. If there is a light/dark switch, use both once.
+2. Read the rendered page text (innerText) and use screenshots sparingly: the first screen at 1440x900 and at 390x844, plus failure states. If there is a light/dark switch, use both once.
 3. Click every tab, button, menu, toggle, row, link and switch you can find. A prototype may have several states (for example passed, failed, running). Visit all of them. Write down how you reached each.
 4. Keep at most 8 screenshots in total.
 5. After each click, look at the whole page (scroll up and down). If you could not tell that anything happened, say so; that is a finding.
