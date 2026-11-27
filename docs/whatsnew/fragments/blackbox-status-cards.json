@@ -1,6 +1,0 @@
-{
-  "schema": 1,
-  "changes": [
-    "A Blackbox's status now shows how much it has recorded, how much room it may use and how long it keeps data, with a card for SQL Server, Redis and the sites it watches. A card appears only for what Unravis could read."
-  ]
-}
