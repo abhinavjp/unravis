@@ -23,7 +23,7 @@
     <div class="live-msg">
       <strong>{LIVENESS_TEXT.stoppedTitle}</strong>
       <span>{LIVENESS_TEXT.stoppedBody}{heard} {LIVENESS_TEXT.saved}</span>
-      <span><b>{LIVENESS_TEXT.stoppedStep}</b>{LIVENESS_TEXT.stoppedStepRest}</span>
+      <span><b>{LIVENESS_TEXT.stoppedStep}</b>{LIVENESS_TEXT.stoppedStepRest} {LIVENESS_TEXT.newPage}</span>
     </div>
     <button type="button" class="primary-button live-reload" data-testid="stopped-reload" onclick={reload}>{LIVENESS_TEXT.reload}</button>
   </div>

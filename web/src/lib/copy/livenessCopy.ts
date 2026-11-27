@@ -14,6 +14,8 @@ export const LIVENESS_TEXT = {
   /** The bold lead of the instruction line, then the rest of it. */
   stoppedStep: 'Start Unravis again',
   stoppedStepRest: ' from the Start menu or its tray icon, then press Reload.',
+  /** After an update the app comes back on a new address and opens its own page; this old page cannot follow it (the update bar's lost-app note is hidden while the banner shows). */
+  newPage: 'A new Unravis page may have opened: use that one.',
   reload: 'Reload this page',
   earlierTitle: 'Unravis was restarted.',
   earlierBody: 'This page was opened before that, so it can no longer talk to Unravis.',
@@ -34,6 +36,7 @@ export const livenessLintEntries = (): LintEntry[] => [
   { id: 'liveness.stopped.lastHeard', text: LIVENESS_TEXT.lastHeard('14:32') },
   { id: 'liveness.stopped.saved', text: LIVENESS_TEXT.saved },
   { id: 'liveness.stopped.step', text: LIVENESS_TEXT.stoppedStep + LIVENESS_TEXT.stoppedStepRest },
+  { id: 'liveness.stopped.newPage', text: LIVENESS_TEXT.newPage },
   { id: 'liveness.earlier.title', text: LIVENESS_TEXT.earlierTitle },
   { id: 'liveness.earlier.body', text: LIVENESS_TEXT.earlierBody },
   { id: 'liveness.earlier.step', text: LIVENESS_TEXT.earlierStep + LIVENESS_TEXT.earlierStepRest }

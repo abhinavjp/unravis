@@ -155,7 +155,8 @@ async function withApi(behave, fn) {
     const liveness = loadTypeScript('src/lib/liveness.svelte.ts');
     liveness.resetLiveness();
     // api.ts reports into livenessCore.ts, the same shared module the store mirrors.
-    return await fn(loadTypeScript('src/lib/api.ts', {}), liveness);
+    // cases.ts is the other request layer; it reports into the same core, and is loaded only when a test asks for it.
+    return await fn(loadTypeScript('src/lib/api.ts', {}), liveness, () => loadTypeScript('src/lib/cases.ts', {}));
   } finally {
     for (const name of names) {
       if (saved[name]) Object.defineProperty(globalThis, name, saved[name]);
@@ -213,6 +214,48 @@ test('a 401 on a live app, while the page watches, says earlier run; a 500 does 
   });
 });
 
+// cases.ts (the case, import and timeline calls) reports into the same liveness core as api.ts.
+test('cases.ts: three lost case requests in a row say stopped, and an answer clears it', async () => {
+  let up = false;
+  const ok = { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ cases: [], erased: [] }) };
+  await withApi(async () => { if (!up) throw new TypeError('Failed to fetch'); return ok; }, async (module, liveness, loadCases) => {
+    const cases = loadCases();
+    for (let i = 0; i < 2; i += 1) await assert.rejects(cases.listCases(), (e) => e.reason === 'unreachable');
+    assert.equal(liveness.liveness.stopped, false, 'two are a hiccup');
+    await assert.rejects(cases.listCases(), (e) => e.reason === 'unreachable');
+    assert.equal(liveness.liveness.stopped, true);
+    up = true;
+    await cases.listCases();
+    assert.equal(liveness.liveness.stopped, false, 'the app answered');
+  });
+});
+
+test('cases.ts: a 401 on a live app, while the page watches, says earlier run and forgets the session', async () => {
+  await withApi(async () => ({ ok: false, status: 401, headers: { get: () => null }, json: async () => ({ error: 'Invalid or missing session token.' }) }), async (module, liveness, loadCases) => {
+    const cases = loadCases();
+    const stop = liveness.startLivenessWatch(async () => {});
+    await assert.rejects(cases.listCases(), (e) => e.reason === 'no_session' && e.status === 401);
+    assert.equal(liveness.liveness.earlier, true);
+    assert.equal(module.readSessionToken(), '', 'the dead token is forgotten');
+    stop();
+  });
+});
+
+test('cases.ts: a 401 for a wrong case key is an answer, not an earlier run, and keeps the session', async () => {
+  await withApi(async () => ({ ok: false, status: 401, headers: { get: () => null }, json: async () => ({ error: 'That case key is not right.', reason: 'wrong-case-key' }) }), async (module, liveness, loadCases) => {
+    const cases = loadCases();
+    liveness.noteUnreachable(); liveness.noteUnreachable(); // two lost requests are pending when the wrong-key answer comes
+    const stop = liveness.startLivenessWatch(async () => {});
+    await assert.rejects(cases.listCases(), (e) => e.reason === 'wrong-case-key');
+    assert.equal(liveness.liveness.earlier, false);
+    assert.equal(liveness.liveness.stopped, false);
+    assert.ok(module.readSessionToken(), 'the token is kept');
+    liveness.noteUnreachable();
+    assert.equal(liveness.liveness.stopped, false, 'the answer cleared the earlier two, so one more is only the first of three');
+    stop();
+  });
+});
+
 // The banner and the update bar, rendered by Svelte itself (server render, no DOM).
 function loadComponent(file, mods) {
   const compiled = compile(fs.readFileSync(path.join(root, file), 'utf8'), { filename: path.basename(file), generate: 'server' });
@@ -237,6 +280,7 @@ test('the stopped banner renders amber text with the start step, the saved-files
   assert.match(body, /Unravis has stopped\./);
   assert.match(body, /Start Unravis again<\/b> from the Start menu or its tray icon, then press Reload\./);
   assert.match(body, /Cases and files you saved stay on this PC\./);
+  assert.match(body, /then press Reload\. A new Unravis page may have opened: use that one\./, 'after an update the app opens its own page, which this one cannot follow');
   assert.match(body, /updated\. Last heard from it at \d\d:\d\d\. Cases and files/, 'sentences are separated by a space');
   assert.match(body, /data-testid="stopped-reload"[^>]*>Reload this page<\/button>/);
   assert.doesNotMatch(body, /earlier-banner/);
