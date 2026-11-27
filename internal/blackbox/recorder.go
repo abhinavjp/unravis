@@ -577,7 +577,9 @@ func (r *Recorder) housekeep(now time.Time) {
 	case res.FloorHeld && !r.floorHeldMsg:
 		r.floorHeldMsg = true
 		r.event(EventHousekeeping, FloorHeldMessage)
-	case !res.FloorHeld && err == nil && !res.Incomplete():
+	case !res.FloorHeld && err == nil && !res.Incomplete() && res.DiskKnown:
+		// Only a fresh disk reading says the floor stopped holding; a failed read
+		// says nothing, so it must not re-arm the event.
 		r.floorHeldMsg = false
 	}
 	r.mu.Lock()

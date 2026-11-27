@@ -2,6 +2,7 @@ package blackbox
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -28,6 +29,11 @@ const MaxAgeRemovalsPerPass = 6
 // everything older has gone, the Blackbox pauses and says so; it does not eat
 // into the last day, which is what an investigator needs most.
 const KeepFloor = 24 * time.Hour
+
+// keepNewestFiles is the count rule of the keep floor: the newest 25 files by
+// hour order (24 whole hours plus the partly written current one) stay whatever
+// the clock says.
+const keepNewestFiles = 25
 
 // FloorHeldMessage is the plain-English event text for a pass in which the
 // keep floor stopped a removal the free-space rule wanted.
@@ -128,18 +134,29 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 			remove(f)
 		}
 	}
-	// Free space. Invariant: this rule never removes a file whose hour is inside
-	// the keep floor, the newest KeepFloor of recordings. Files are whole hours,
-	// so the floor is every file whose hour is later than (anchor - 24h), where
-	// the anchor is the EARLIER of the newest recording file's hour and the
-	// current hour. Taking the earlier one errs toward keeping more, and covers
-	// both clock faults: after a long stop "now" is far past the newest file, so
-	// the newest file anchors the floor (measuring from the clock would empty the
-	// folder); after a clock that ran ahead and was corrected, a file named in
-	// the future is the newest, so the current hour anchors the floor and the
-	// real recent files stay inside it. The age and size rules above are not
-	// limited by it.
+	// Free space. Invariant: this rule never removes a file that is in the keep
+	// floor. A file is in the floor when EITHER
+	//  1. its hour is not before (anchor - 24h), where the anchor is the EARLIER
+	//     of the newest recording file's hour and the current hour. The current
+	//     hour's file is only partly written, so the whole hours back to
+	//     anchor-24h are kept to cover a full 24 hours. Taking the earlier anchor
+	//     errs toward keeping more: after a long stop "now" is far past the newest
+	//     file, so the newest file anchors the floor (measuring from the clock
+	//     would empty the folder); after a clock that ran ahead and was corrected,
+	//     a file named in the future is the newest, so the current hour anchors
+	//     the floor; or
+	//  2. it is one of the newest keepNewestFiles files by name (hour) order,
+	//     whatever the clock says. This covers a clock that ran behind and was
+	//     corrected: the old files carry old names, the one new file carries the
+	//     real hour, and the time rule alone would hold only that one file.
+	// The age and size rules above are not limited by the floor.
 	if disk != nil && l.MinFreePercent > 0 {
+		byHour := append([]FileEntry(nil), files...)
+		sort.SliceStable(byHour, func(i, j int) bool { return byHour[i].Hour.Before(byHour[j].Hour) })
+		newest := map[string]bool{}
+		for i := len(byHour) - 1; i >= 0 && len(newest) < keepNewestFiles; i-- {
+			newest[byHour[i].Name] = true
+		}
 		anchor := time.Time{}
 		for _, f := range files {
 			if f.Hour.After(anchor) {
@@ -150,7 +167,7 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 			anchor = nowHour
 		}
 		floorStart := anchor.Add(-KeepFloor)
-		inFloor := func(f FileEntry) bool { return f.Hour.After(floorStart) }
+		inFloor := func(f FileEntry) bool { return !f.Hour.Before(floorStart) || newest[f.Name] }
 		// nextOutsideFloor is the oldest file that may go and is not in the floor.
 		// held reports that next() still had a candidate, so the floor is what
 		// stopped the pass, not an empty list.
