@@ -871,7 +871,7 @@ async function openReviewStep(page: Page): Promise<void> {
   await page.getByRole('radio', { name: /On another server/ }).click();
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'What should it record?' })).toBeVisible();
-  for (let i = 0; i < 5; i++) await page.getByRole('button', { name: 'Next', exact: true }).click();
+  for (let i = 0; i < 6; i++) await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Build the pack' })).toBeVisible();
   await expect(page.locator('.with-change button.change').first()).toBeVisible();
 }
