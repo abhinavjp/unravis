@@ -60,10 +60,11 @@ permissions:
 
 concurrency:
   # A push to master gets its own group per commit and is never cancelled: the release manager pins a master commit whose
-  # run on master is green, and a newer merge must not cancel that run. A push to develop is cancelled by the next one
-  # (only the newest develop commit needs the full run). A pull request is cancelled by its own next push.
+  # run on master is green, and a newer merge must not cancel that run. A push to develop is QUEUED, never cancelled (BL-719): several
+  # threads merge minutes apart and a cancelling group meant develop rarely got a finished full run, so red results stayed hidden;
+  # GitHub keeps one running and one pending run per group, the newest pending replaces older ones. A pull request is cancelled by its own next push.
   group: ci-${{ github.workflow }}-${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/develop' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:

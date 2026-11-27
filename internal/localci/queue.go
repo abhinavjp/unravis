@@ -338,8 +338,7 @@ func (q *Queue) Get(id string) (Request, error) {
 
 // Enqueue adds a request. The second result is false when an identical request (same key and head commit) is
 // already queued or running: that one is returned and nothing is added. For a pull request or a push, queued
-// or running requests of the same key with another head commit are superseded by the new one: a queued one is
-// retired at once, a running one gets a marker its agent acts on.
+// requests of the same key with another head commit are superseded by the new one. Running requests finish normally.
 func (q *Queue) Enqueue(r Request) (Request, bool, error) {
 	switch r.Kind {
 	case KindPR:
@@ -376,7 +375,9 @@ func (q *Queue) Enqueue(r Request) (Request, bool, error) {
 			if o.SHA == r.SHA && o.Workflow == r.Workflow {
 				return o, false, nil
 			}
-			stale = append(stale, o)
+			if f == "queued" {
+				stale = append(stale, o)
+			}
 		}
 	}
 	if err := writeAtomic(q.path("queued", r.ID), r); err != nil {
@@ -384,12 +385,37 @@ func (q *Queue) Enqueue(r Request) (Request, bool, error) {
 	}
 	if r.Kind != KindSchedule {
 		for _, o := range stale {
-			if _, err := q.retire(o.ID, StateSuperseded, r.ID, fmt.Sprintf("a newer head %s arrived", shortSHA(r.SHA))); err != nil && !errors.Is(err, ErrNoRequest) {
+			if err := q.supersedeQueued(o.ID, r.ID, fmt.Sprintf("a newer head %s arrived", shortSHA(r.SHA))); err != nil {
 				return r, true, err
 			}
 		}
 	}
 	return r, true, nil
+}
+
+// supersedeQueued retires an unclaimed request without interrupting a concurrent claim.
+func (q *Queue) supersedeQueued(id, by, reason string) error {
+	held, err := q.takeMarker(id, "supersede")
+	if err != nil || !held {
+		return err
+	}
+	defer q.dropMarker(id)
+	err = retryFS(func() error { return os.Rename(q.path("queued", id), q.path("done", id)) })
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	r, err := q.read(q.path("done", id))
+	if err != nil {
+		return err
+	}
+	r.State, r.FinishedAt, r.SupersededBy, r.Reason = StateSuperseded, q.now(), by, reason
+	if r.Conclusion == "" {
+		r.Conclusion = StateSuperseded
+	}
+	return writeAtomic(q.path("done", id), r)
 }
 
 // claimMarker is the exclusive lock of one request: whoever creates it (O_EXCL, one winner) may move the
@@ -533,6 +559,14 @@ func (q *Queue) Claim(agent string, labels []string) (*Request, error) {
 		return nil, err
 	}
 	sortClaimOrder(rs)
+	running, err := q.folderOf("running")
+	if err != nil {
+		return nil, err
+	}
+	busy := map[string]bool{}
+	for _, r := range running {
+		busy[r.Key()] = true
+	}
 	have := map[string]bool{}
 	for _, l := range labels {
 		have[l] = true
@@ -540,6 +574,9 @@ func (q *Queue) Claim(agent string, labels []string) (*Request, error) {
 	now := q.now()
 next:
 	for _, r := range rs {
+		if busy[r.Key()] {
+			continue
+		}
 		if r.DeferUntil.After(now) {
 			continue // another PC is running it; look again when the time is up
 		}

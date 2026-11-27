@@ -67,6 +67,8 @@ var ciLogCache = memo[readLogResult]{maxItems: 12, maxWeight: 400000}
 // CIRun is one row of the run list: a run that ended, one that is going, or a request that is still waiting (or was
 // stopped before it started).
 type CIRun struct {
+	Source   string `json:"source,omitempty"`
+	URL      string `json:"url,omitempty"`
 	ID       string `json:"id"`
 	Kind     string `json:"kind"` // run: it has a folder in the store; request: only the queue knows it
 	Status   string `json:"status"`
@@ -108,6 +110,7 @@ type CIStep struct {
 
 // CIJob is one job instance (one matrix combination) of a run.
 type CIJob struct {
+	URL    string   `json:"url,omitempty"`
 	Key    string   `json:"key"`
 	ID     string   `json:"id,omitempty"`
 	Label  string   `json:"label"`

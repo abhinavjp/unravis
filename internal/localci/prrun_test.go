@@ -472,6 +472,35 @@ func TestRunPRTrustOwnerBranchStillChecksWhoPushed(t *testing.T) {
 	}
 }
 
+// TestRunPRWebFlowCommitterNeedsTheOwnerAsPusher: a commit made in the web editor has web-flow as committer. It
+// keeps the owner's trust only when the host's record shows the owner pushed it; the same commit pushed by
+// anybody else, or with no readable record, runs the base definition.
+func TestRunPRWebFlowCommitterNeedsTheOwnerAsPusher(t *testing.T) {
+	needBash(t)
+	o := newOrigin(t)
+	web := []PRCommit{{SHA: strings.Repeat("a", 40), AuthorLogin: "acme", CommitterLogin: "web-flow"}}
+	for name, tc := range map[string]struct {
+		h    *fakeHost
+		want string
+	}{
+		"owner pushed":    {&fakeHost{pr: okPR(o, 3, o.evil, "acme"), commits: web, pusher: "acme"}, "workflow=PR"},
+		"another pusher":  {&fakeHost{pr: okPR(o, 3, o.evil, "acme"), commits: web, pusher: "alice"}, "workflow=base"},
+		"lookup failed":   {&fakeHost{pr: okPR(o, 3, o.evil, "acme"), commits: web, pusherErr: errors.New("gh: 502")}, "workflow=base"},
+		"no record found": {&fakeHost{pr: okPR(o, 3, o.evil, "acme"), commits: web, noPusher: true}, "workflow=base"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			opts, console := prOptions(t, o, tc.h)
+			res, err := RunPR(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("%v\n%s", err, console.String())
+			}
+			if log := logOf(t, opts.Store, res.RunID, "go"); !strings.Contains(log, tc.want) {
+				t.Fatalf("want %s:\n%s", tc.want, log)
+			}
+		})
+	}
+}
+
 func TestRunPRCommitListErrorIsAnError(t *testing.T) {
 	o := newOrigin(t)
 	h := &fakeHost{pr: okPR(o, 1, o.feature, "acme"), commitsErr: errors.New("gh: 502")}

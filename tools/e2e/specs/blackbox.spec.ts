@@ -245,5 +245,5 @@ test('BB-32: on this PC the Folder step greys out USB and network drives and ref
   }
   await path.fill('D:\\UnravisBlackbox');
   await next.click();
-  await expect(page.getByRole('dialog', { name: 'Check it, then place it' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Check it, then finish' })).toBeVisible();
 });

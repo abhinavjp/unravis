@@ -233,7 +233,7 @@ test('BB-09c: Esc with a half-typed key closes the status pop-up, a second Esc t
   await expect(again.getByRole('button', { name: /^Open status: / })).toHaveCount(9);
 });
 
-/* The Place pop-up (PR #13, BL-130). Steps: Name, Where, Record, SQL, Watch, Keep, Folder, Review. */
+/* The Place pop-up (PR #13, BL-130). Steps: Name, Where, Record, SQL, Redis, Watch, Keep, Folder, Review. */
 const pop = (page: Page) => page.locator('dialog.pop[open]');
 const stepTitle = (page: Page) => pop(page).locator('h2').first();
 
@@ -251,13 +251,13 @@ async function placeTo(page: Page, name: string, where: 'pack' | 'pc' = 'pack') 
 
 /** Presses Next until the step with this title shows. */
 async function nextUntil(page: Page, title: string) {
-  for (let i = 0; i < 8 && (await stepTitle(page).innerText()) !== title; i++) {
+  for (let i = 0; i < 9 && (await stepTitle(page).innerText()) !== title; i++) {
     await pop(page).getByRole('button', { name: 'Next', exact: true }).click();
   }
   await expect(stepTitle(page)).toHaveText(title);
 }
 
-test('BB-14: the place pop-up has eight named steps, saves nothing, and Leave adds no row', async ({ page, allow }) => {
+test('BB-14: the place pop-up has nine named steps, saves nothing, and Leave adds no row', async ({ page, allow }) => {
   // Review asks the server to check the settings; a demo run off Windows cannot read a D:\ path, so that answer may be 422.
   allow(/\/api\/blackbox\/validate/, 'Review check of a Windows path on a non-Windows demo');
   const posts: string[] = [];
@@ -266,9 +266,9 @@ test('BB-14: the place pop-up has eight named steps, saves nothing, and Leave ad
   });
   const dialog = await placeTo(page, 'bb-test-1');
   const rail = await pop(page).getByRole('button', { name: /, step \d/ }).evaluateAll((els) => els.map((e) => (e.getAttribute('aria-label') ?? '').replace(/, skipped$/, '')));
-  expect(rail).toEqual(['Name, step 1', 'Where, step 2', 'Record, step 3', 'SQL, step 4', 'Watch, step 5', 'Keep, step 6', 'Folder, step 7', 'Review, step 8']);
-  await expect(pop(page).getByText('Nothing saved until the last step')).toBeVisible();
-  await nextUntil(page, 'Check it, then place it');
+  expect(rail).toEqual(['Name, step 1', 'Where, step 2', 'Record, step 3', 'SQL, step 4', 'Redis, step 5', 'Watch, step 6', 'Keep, step 7', 'Folder, step 8', 'Review, step 9']);
+  await expect(pop(page).getByText('Nothing is saved or installed until the last step')).toBeVisible();
+  await nextUntil(page, 'Check it, then finish');
   await expect(pop(page).getByRole('button', { name: 'Build the pack' })).toBeVisible();
   await pop(page).getByRole('button', { name: 'Close set-up' }).click();
   await expect(page.getByRole('alertdialog', { name: 'Leave without placing it?' })).toBeVisible();
@@ -306,10 +306,10 @@ test('BB-14b: Esc inside the pop-up asks before leaving, and Keep going keeps ev
 test('BB-14c: the step number is said above the heading', async ({ page }) => {
   const dialog = await openDrawer(page);
   await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await expect(pop(page).locator('.shell-head')).toContainText('step 1 of 8');
+  await expect(pop(page).locator('.shell-head')).toContainText('step 1 of 9');
   await pop(page).getByLabel('Name', { exact: true }).fill('bb-heading');
   await pop(page).getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(pop(page).locator('.shell-head')).toContainText('step 2 of 8');
+  await expect(pop(page).locator('.shell-head')).toContainText('step 2 of 9');
 });
 
 test('BB-16: every out-of-range Keep setting is refused in its own words and keeps the pop-up on Keep', async ({ page }) => {
@@ -320,8 +320,8 @@ test('BB-16: every out-of-range Keep setting is refused in its own words and kee
   const next = pop(page).getByRole('button', { name: 'Next', exact: true });
   const cases: { label: string; bad: string[]; message: string; good: string }[] = [
     { label: 'Other', bad: ['0', '366', '-3', '1.5', ''], message: 'Enter a whole number of days from 1 to 365.', good: '7' },
-    { label: 'Use at most', bad: ['0', '0.05', '10001', '-1', ''], message: 'Enter a size from 0.1 to 10000 GB.', good: '2' },
-    { label: 'Stop when the disk is', bad: ['0', '51', '2.5', '-4', ''], message: 'Enter a whole number from 1 to 50 percent.', good: '10' }
+    { label: 'Disk space limit, in GB', bad: ['0', '0.05', '10001', '-1', ''], message: 'Enter a size from 0.1 to 10000 GB.', good: '2' },
+    { label: 'Pause recording when free disk space is below, in %', bad: ['0', '51', '2.5', '-4', ''], message: 'Enter a whole number from 1 to 50 percent.', good: '10' }
   ];
   for (const c of cases) {
     const field = pop(page).getByRole('spinbutton', { name: c.label, exact: true });
@@ -334,7 +334,7 @@ test('BB-16: every out-of-range Keep setting is refused in its own words and kee
     await field.fill(c.good);
   }
   // The edges are allowed.
-  for (const [label, edge, good] of [['Other', '1', '7'], ['Other', '365', '7'], ['Use at most', '0.1', '2'], ['Use at most', '10000', '2'], ['Stop when the disk is', '1', '10'], ['Stop when the disk is', '50', '10']]) {
+  for (const [label, edge, good] of [['Other', '1', '7'], ['Other', '365', '7'], ['Disk space limit, in GB', '0.1', '2'], ['Disk space limit, in GB', '10000', '2'], ['Pause recording when free disk space is below, in %', '1', '10'], ['Pause recording when free disk space is below, in %', '50', '10']]) {
     await pop(page).getByRole('spinbutton', { name: label, exact: true }).fill(edge);
     await next.click();
     await expect(stepTitle(page), label + ' = ' + edge).toHaveText('Where should recordings be saved?');
@@ -382,14 +382,14 @@ test('BB-16c: a bind address other than this computer is called out with the rea
   await pop(page).getByText('Advanced · port and who can connect').click();
   await pop(page).getByLabel('Listens on').fill('0.0.0.0');
   await expect(pop(page).getByText('This lets other computers on the network reach the status port. The read key is the only protection.')).toBeVisible();
-  await nextUntil(page, 'Check it, then place it');
+  await nextUntil(page, 'Check it, then finish');
   await expect(pop(page).getByText('This Blackbox listens on every address, so other computers can reach it. The read key is the only protection.')).toBeVisible();
 });
 
 /** Builds the pack on Review and returns the download. Windows only: off Windows the server refuses a D:\ folder. */
 async function buildPack(page: Page, name: string) {
   await placeTo(page, name);
-  await nextUntil(page, 'Check it, then place it');
+  await nextUntil(page, 'Check it, then finish');
   const build = pop(page).getByRole('button', { name: 'Build the pack' });
   await expect(build).toBeEnabled();
   const [download] = await Promise.all([page.waitForEvent('download'), build.click()]);

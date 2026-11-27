@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "changes": [
+    "The Blackbox lanes card on the Investigation timeline is readable again: it was cut to a fixed height and ran over the panel below it. Recorder gaps are now hatched, events in the list carry a red mark, and a few lines of wording match the approved prototype."
+  ]
+}
