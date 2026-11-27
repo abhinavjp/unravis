@@ -293,7 +293,7 @@ export const api = {
     }
     if (!response.ok) {
       let message = REQUEST_FAILED_MESSAGE;
-      try { message = ((await response.json()) as { error?: string }).error ?? message; } catch { /* status is enough */ }
+      try { message = ((await response.json()) as { error?: string }).error || message; } catch { /* status is enough */ }
       const mapped = plainApiMessage(response.status, message);
       reportError({ status: response.status, message: mapped, reqId });
       throw new Error(mapped);

@@ -24,6 +24,7 @@ const { createDrawerHistory, DRAWER_MARK } = loadTypeScript('src/lib/drawerHisto
 const { classifyStartupFailure, comparisonLabel, startupLintEntries, STARTUP_TEXT, COMPARISON_NOT_RUN, COMPARISON_NOT_RUN_FILTER } = loadTypeScript('src/lib/copy/startupCopy.ts');
 const { lintCopy, fleschKincaidGrade, MAX_GRADE } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
+const { REQUEST_FAILED_MESSAGE } = loadTypeScript('src/lib/copy/requestFailedCopy.ts');
 
 /* A history that behaves like the browser's: back() lands later, as a popstate the test delivers. */
 function fakeBrowser(url = '/app#view=where', state = { uvIdx: 0 }) {
@@ -219,8 +220,8 @@ test('an unreachable server keeps Retry', () => {
 });
 
 test('anything else keeps the message it had and keeps Retry', () => {
-  const server = Object.assign(new Error('Request failed (500)'), { name: 'ApiError', status: 500 });
-  assert.deepEqual(classifyStartupFailure({ hadToken: true, cause: server }), { kind: 'other', message: 'Request failed (500)', canRetry: true });
+  const server = Object.assign(new Error(REQUEST_FAILED_MESSAGE), { name: 'ApiError', status: 500 });
+  assert.deepEqual(classifyStartupFailure({ hadToken: true, cause: server }), { kind: 'other', message: REQUEST_FAILED_MESSAGE, canRetry: true });
   assert.equal(classifyStartupFailure({ hadToken: true, cause: new SyntaxError('Unexpected token <') }).kind, 'other');
   assert.equal(classifyStartupFailure({ hadToken: true, cause: 'odd' }).message, STARTUP_TEXT.fallback);
   assert.equal(classifyStartupFailure({ hadToken: true, cause: Object.assign(new Error('x'), { name: 'AbortError' }) }).kind, 'other');
@@ -242,7 +243,7 @@ test('the failed-comparison label names the filter problem and keeps the plain l
   const filter = 'The server could not use these filters or this time window. Check them and try again.';
   assert.equal(comparisonLabel(filter, [filter, null]), COMPARISON_NOT_RUN_FILTER);
   assert.equal(comparisonLabel('Select at least one source before running a comparison.', [filter, 'Select at least one source before running a comparison.']), COMPARISON_NOT_RUN_FILTER);
-  assert.equal(comparisonLabel('Request failed (500)', [filter, null]), COMPARISON_NOT_RUN);
+  assert.equal(comparisonLabel(REQUEST_FAILED_MESSAGE, [filter, null]), COMPARISON_NOT_RUN);
   assert.equal(comparisonLabel('', [null, '']), COMPARISON_NOT_RUN);
   assert.equal(COMPARISON_NOT_RUN_FILTER, 'Comparison not run: fix the filter first');
 });

@@ -7,6 +7,7 @@ const { loadTypeScript } = require('./helpers/loadTs.cjs');
 // W-18: no "Request failed (500)" on screen. A failed request with no message from the server says one plain sentence; the status stays in the
 // error log entry. The AI access panel adds the reason the server gave to its own "could not stop / resume" sentence, only when one was sent.
 const SENTENCE = 'Something went wrong in Unravis. Try again. If it keeps happening, open Help and copy the error log.';
+const JOB_ID = '0123456789abcdef0123456789abcdef';
 const TOKEN = 'link-session-token-0123456789abcdef+/=';
 const { REQUEST_FAILED_MESSAGE, isBareFailure, requestFailedLintEntries } = loadTypeScript('src/lib/copy/requestFailedCopy.ts');
 const { MCP_TEXT } = loadTypeScript('src/lib/copy/mcpGrantsCopy.ts');
@@ -65,6 +66,112 @@ test('a body that is not JSON, and a 502, give the same sentence; the status is 
 test('a message the server wrote is shown as it is', async () => {
   await withApi(async () => new Response(JSON.stringify({ error: 'The source is not set up.', code: 'no_source' }), { status: 500, headers: { 'Content-Type': 'application/json' } }), async ({ api }) => {
     await assert.rejects(api.info(), (error) => error.message === 'The source is not set up.' && error.code === 'no_source');
+  });
+});
+
+// Loads a fresh cases.ts with a recording error log, a tab that holds a session token, and a fetch that answers `respond`.
+async function withCases(respond, fn) {
+  const names = ['location', 'history', 'sessionStorage', 'fetch'];
+  const saved = Object.fromEntries(names.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  const store = new Map([['unravis.session', TOKEN]]);
+  const values = {
+    location: { hash: '', search: '', pathname: '/' },
+    history: { state: null, replaceState: () => {} },
+    sessionStorage: { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, String(v)); }, removeItem: (k) => { store.delete(k); } },
+    fetch: respond
+  };
+  for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: values[name] });
+  const logged = [];
+  const log = { configureClientLog: () => {}, dropClientLog: () => {}, reportAction: () => {}, reportError: (entry) => { logged.push(entry); } };
+  try {
+    const api = loadTypeScript('src/lib/api.ts', { './clientLog': log });
+    return await fn(loadTypeScript('src/lib/cases.ts', { './clientLog': log, './api': api }), logged);
+  } finally {
+    for (const name of names) {
+      if (saved[name]) Object.defineProperty(globalThis, name, saved[name]);
+      else delete globalThis[name];
+    }
+  }
+}
+
+test('a case route refused with an empty or non-JSON 500 says the plain sentence, and the error log entry carries 500', async () => {
+  for (const body of ['', '<html>Bad gateway</html>']) {
+    await withCases(async () => new Response(body, { status: 500, headers: { 'X-Request-Id': 'req-abc' } }), async (cases, logged) => {
+      const error = await cases.listHosts().then(() => null, (e) => e);
+      assert.equal(error.message, SENTENCE);
+      assert.equal(error.status, 500);
+      assert.equal(logged.length, 1, 'the status is written to the log');
+      assert.equal(logged[0].status, 500);
+      assert.equal(logged[0].message, SENTENCE);
+      assert.equal(logged[0].reqId, 'req-abc');
+    });
+  }
+});
+
+test('a case route refused with a blank error string says the plain sentence and logs the status', async () => {
+  for (const blank of ['', '   ']) {
+    await withCases(async () => new Response(JSON.stringify({ error: blank, reason: 'oops' }), { status: 500, headers: { 'Content-Type': 'application/json' } }), async (cases, logged) => {
+      const error = await cases.listHosts().then(() => null, (e) => e);
+      assert.equal(error.message, SENTENCE);
+      assert.equal(error.reason, 'oops');
+      assert.equal(logged.length, 1);
+      assert.equal(logged[0].status, 500);
+      assert.equal(logged[0].code, 'oops');
+    });
+  }
+});
+
+test('a case route refused with a message the server wrote shows it, and writes nothing extra to the log', async () => {
+  await withCases(async () => new Response(JSON.stringify({ error: 'That case is archived.', reason: 'case-archived' }), { status: 409, headers: { 'Content-Type': 'application/json' } }), async (cases, logged) => {
+    const error = await cases.listHosts().then(() => null, (e) => e);
+    assert.equal(error.message, 'That case is archived.');
+    assert.equal(logged.length, 0);
+  });
+});
+
+test('a failed import job with no error text says the plain sentence and logs the status', async () => {
+  await withCases(async () => new Response('{}'), async (cases, logged) => {
+    const job = cases.parseImportJob({ id: JOB_ID, state: 'failed', status: 422, failure: { reason: 'bad-file' } });
+    assert.ok(job, 'a failed job still parses');
+    assert.equal(job.failure.message, SENTENCE);
+    assert.equal(job.failure.status, 422);
+    assert.equal(job.failure.reason, 'bad-file');
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0].status, 422);
+    assert.equal(logged[0].code, 'bad-file');
+    const bare = cases.parseImportJob({ id: JOB_ID, state: 'failed', failure: { error: '  ' } });
+    assert.equal(bare.failure.message, SENTENCE);
+    assert.equal(bare.failure.status, 500);
+    assert.equal(logged[1].status, 500);
+    const worded = cases.parseImportJob({ id: JOB_ID, state: 'failed', failure: { error: 'The file is empty.' } });
+    assert.equal(worded.failure.message, 'The file is empty.');
+    assert.equal(logged.length, 2, 'a message the server wrote is not logged again');
+  });
+});
+
+test('the wait loops fall back to the plain sentence, and log the status, when a failed job carries no error', async () => {
+  await withCases(async () => new Response('{}'), async (cases, logged) => {
+    const failed = (kind) => ({ id: JOB_ID, state: 'failed', kind, bytesRead: 0, bytesTotal: 0, answer: null, checkReport: null, failure: null });
+    for (const [wait, kind] of [[cases.waitForImportJob, 'import'], [cases.waitForCheckJob, 'check']]) {
+      logged.length = 0;
+      const error = await wait('case0123456789abcdef', failed(kind)).then(() => null, (e) => e);
+      assert.equal(error.message, SENTENCE, kind);
+      assert.equal(error.status, 500);
+      assert.equal(logged.length, 1, kind);
+      assert.equal(logged[0].status, 500);
+    }
+  });
+});
+
+test('a blank error string from the server does not hide the plain sentence (shared layer and export download)', async () => {
+  const blank = async () => new Response(JSON.stringify({ error: '' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  await withApi(blank, async ({ api }, logged) => {
+    await assert.rejects(api.info(), (error) => error.message === SENTENCE);
+    const query = { sourceIds: [], start: '', end: '' };
+    await assert.rejects(api.export(query, 'key'), (error) => error.message === SENTENCE);
+    assert.equal(logged.length, 2);
+    assert.equal(logged[1].status, 500);
+    assert.equal(logged[1].message, SENTENCE);
   });
 });
 
