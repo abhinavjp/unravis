@@ -3,6 +3,7 @@ import { signalIfAppLocked } from './lockSignal';
 import { configureClientLog, dropClientLog, reportAction, reportError } from './clientLog';
 import { noticeKeeperRefusal, type KeeperStatus } from './keeper';
 import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
+import { REQUEST_FAILED_MESSAGE } from './copy/requestFailedCopy';
 import { UNREACHABLE_CODE, UNREACHABLE_MESSAGE } from './copy/unreachableCopy';
 import { noteAnswered, noteRefused, noteUnreachable } from './livenessCore';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
@@ -156,7 +157,8 @@ async function requestOnce<T>(path: string, init: RequestInit, signal: AbortSign
   // 423: the master key is locked. Tell the app so it shows the unlock screen; the caller still gets the refusal.
   await signalIfAppLocked(response);
   if (!response.ok) {
-    let message = 'Request failed (' + response.status + ')';
+    // No message from the server: the plain sentence. The status number is not shown; it goes to the error log entry below.
+    let message = REQUEST_FAILED_MESSAGE;
     let code: string | undefined;
     let stage: string | undefined;
     let reasons: string[] | undefined;
@@ -170,7 +172,7 @@ async function requestOnce<T>(path: string, init: RequestInit, signal: AbortSign
       if (Array.isArray(body.reasons)) reasons = body.reasons;
       if (typeof body.reason === 'string' && body.reason) reason = body.reason;
       if (Array.isArray(body.collections)) collections = body.collections.filter((c) => typeof c === 'string');
-    } catch { /* keep status message */ }
+    } catch { /* keep the plain sentence */ }
     const failure = new ApiError(plainApiMessage(response.status, message), code, stage, response.status, reasons, reason, collections);
     // Every ApiError is reported: it is, by construction, an error the caller
     // is about to show the user.
@@ -294,8 +296,8 @@ export const api = {
       throw noSession();
     }
     if (!response.ok) {
-      let message = 'Export failed (' + response.status + ')';
-      try { message = ((await response.json()) as { error?: string }).error ?? message; } catch { /* status is enough */ }
+      let message = REQUEST_FAILED_MESSAGE;
+      try { message = ((await response.json()) as { error?: string }).error || message; } catch { /* status is enough */ }
       const mapped = plainApiMessage(response.status, message);
       reportError({ status: response.status, message: mapped, reqId });
       throw new Error(mapped);

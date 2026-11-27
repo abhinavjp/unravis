@@ -10,6 +10,7 @@ const g = loadTypeScript('src/lib/mcpGrants.ts');
 const api = loadTypeScript('src/lib/mcpGrantsApi.ts');
 const { MCP_TEXT, TOOL_LABELS, mcpLintEntries, toolLabel } = loadTypeScript('src/lib/copy/mcpGrantsCopy.ts');
 const { lintCopy } = loadTypeScript('src/lib/copy/copylint.ts');
+const MCP_TEXT_REQUEST_FAILED = loadTypeScript('src/lib/copy/requestFailedCopy.ts').REQUEST_FAILED_MESSAGE;
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 const AGG = ['audit_get_guide', 'audit_list_sources', 'audit_compare', 'audit_get_groups', 'audit_get_timeline', 'audit_compare_timelines', 'audit_get_breakdown'];
@@ -260,7 +261,7 @@ test('a refusal keeps the server code and its fixed text; a stale card is told a
   fake(409, { error: 'This host changed since you opened it. Reload the list and look again.', code: 'stale' });
   await assert.rejects(() => api.mcpApi.revoke('claude', 1), (e) => e.code === 'stale' && e.status === 409 && /changed since/.test(e.message));
   fake(500, null);
-  await assert.rejects(() => api.mcpApi.deny('claude', 1), (e) => e.status === 500 && /refused \(500\)/.test(e.message));
+  await assert.rejects(() => api.mcpApi.deny('claude', 1), (e) => e.status === 500 && e.fromServer === false && e.message === MCP_TEXT_REQUEST_FAILED);
 });
 
 test('no session token means no request', async () => {
