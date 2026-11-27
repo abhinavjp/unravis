@@ -1,4 +1,0 @@
-{
-  "schema": 1,
-  "changes": ["The Investigation timeline shows Blackbox lanes under the chart when the case holds a Blackbox recording. Choose lanes opens a picker (up to 10 at once), and a short list says which lane moved first."]
-}
