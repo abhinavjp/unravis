@@ -36,8 +36,12 @@ export const MAX_LANES = 10;
 const GB = 1 / (1024 * 1024 * 1024);
 const MB = 1 / (1024 * 1024);
 
-const counterSel = (object: string, counter: string, instance?: string): string =>
-  'kind=counter;source=' + BB_SOURCE + ';attr.object=' + object + ';attr.counter=' + counter + (instance ? ';attr.instance=' + instance : '');
+/** `sqlInstance` is the rank of the SQL Server instance (1 is the first the recorder found); a lane without it mixes every instance. */
+const counterSel = (object: string, counter: string, instance?: string, sqlInstance?: string): string =>
+  'kind=counter;source=' + BB_SOURCE + ';attr.object=' + object + ';attr.counter=' + counter + (instance ? ';attr.instance=' + instance : '') + (sqlInstance ? ';attr.sqlinstance=' + sqlInstance : '');
+
+/** The host CPU figure is read on every sample, so a bucket that holds it is a bucket the recorder was running in. */
+export const PROBE_SEL = counterSel('Processor', '% Processor Time', '_Total');
 const metricSel = (metric: string): string => 'kind=metric;source=' + BB_SOURCE + ';attr.metric=' + metric;
 
 const lane = (
@@ -52,14 +56,14 @@ export const LANES: LaneDef[] = [
   lane('disk', 'host', 'ms', 'PhysicalDisk\\Avg. Disk sec/Transfer (_Total)', counterSel('PhysicalDisk', 'Avg. Disk sec/Transfer', '_Total'), { factor: 1000, on: true }),
   lane('dq', 'host', 'count', 'PhysicalDisk\\Current Disk Queue Length (_Total)', counterSel('PhysicalDisk', 'Current Disk Queue Length', '_Total')),
   lane('free', 'host', 'pct', 'LogicalDisk\\% Free Space (recordings-volume)', counterSel('LogicalDisk', '% Free Space', 'recordings-volume'), { worry: 'low' }),
-  lane('blk', 'sql', 'count', 'SQLServer:General Statistics\\Processes blocked', counterSel('SQLServer:General Statistics', 'Processes blocked'), { on: true }),
-  lane('lwt', 'sql', 'ms', 'SQLServer:Locks\\Lock Wait Time (ms) (_Total)', counterSel('SQLServer:Locks', 'Lock Wait Time (ms)', '_Total')),
-  lane('dl', 'sql', 'perSec', 'SQLServer:Locks\\Number of Deadlocks/sec (_Total)', counterSel('SQLServer:Locks', 'Number of Deadlocks/sec', '_Total'), { on: true }),
-  lane('gp', 'sql', 'count', 'SQLServer:Memory Manager\\Memory Grants Pending', counterSel('SQLServer:Memory Manager', 'Memory Grants Pending')),
-  lane('ple', 'sql', 's', 'SQLServer:Buffer Manager\\Page life expectancy', counterSel('SQLServer:Buffer Manager', 'Page life expectancy'), { worry: 'low' }),
-  lane('bat', 'sql', 'perSec', 'SQLServer:SQL Statistics\\Batch Requests/sec', counterSel('SQLServer:SQL Statistics', 'Batch Requests/sec')),
+  lane('blk', 'sql', 'count', 'SQLServer:General Statistics\\Processes blocked', counterSel('SQLServer:General Statistics', 'Processes blocked', undefined, '1'), { on: true }),
+  lane('lwt', 'sql', 'ms', 'SQLServer:Locks\\Lock Wait Time (ms) (_Total)', counterSel('SQLServer:Locks', 'Lock Wait Time (ms)', '_Total', '1')),
+  lane('dl', 'sql', 'perSec', 'SQLServer:Locks\\Number of Deadlocks/sec (_Total)', counterSel('SQLServer:Locks', 'Number of Deadlocks/sec', '_Total', '1'), { on: true }),
+  lane('gp', 'sql', 'count', 'SQLServer:Memory Manager\\Memory Grants Pending', counterSel('SQLServer:Memory Manager', 'Memory Grants Pending', undefined, '1')),
+  lane('ple', 'sql', 's', 'SQLServer:Buffer Manager\\Page life expectancy', counterSel('SQLServer:Buffer Manager', 'Page life expectancy', undefined, '1'), { worry: 'low' }),
+  lane('bat', 'sql', 'perSec', 'SQLServer:SQL Statistics\\Batch Requests/sec', counterSel('SQLServer:SQL Statistics', 'Batch Requests/sec', undefined, '1')),
   lane('hq', 'iis', 'count', 'HTTP Service Request Queues\\CurrentQueueSize', counterSel('HTTP Service Request Queues', 'CurrentQueueSize'), { on: true }),
-  lane('rej', 'iis', 'perSec', 'HTTP Service Request Queues\\RejectedRequests', counterSel('HTTP Service Request Queues', 'RejectedRequests')),
+  lane('rej', 'iis', 'count', 'HTTP Service Request Queues\\RejectedRequests', counterSel('HTTP Service Request Queues', 'RejectedRequests')),
   lane('wr', 'iis', 'count', 'W3SVC_W3WP\\Active Requests', counterSel('W3SVC_W3WP', 'Active Requests'), { on: true }),
   lane('ping', 'iis', 'ms', 'Blackbox IIS\\Worker Ping Latency (ms)', counterSel('Blackbox IIS', 'Worker Ping Latency (ms)')),
   lane('aq', 'iis', 'count', 'ASP.NET\\Requests Queued', counterSel('ASP.NET', 'Requests Queued')),
@@ -139,7 +143,7 @@ export interface LaneView {
  * the events of its kind in each bucket, over the buckets that fall in the recorded stretches (outside a gap).
  * An item that is undefined (nothing read) gives no points.
  */
-export function laneView(def: LaneDef, item: SeriesItem | undefined, events?: { times: readonly number[]; fromMs: number; toMs: number; bucketMs: number; gaps: readonly GapSpan[] }): LaneView {
+export function laneView(def: LaneDef, item: SeriesItem | undefined, events?: { times: readonly number[]; fromMs: number; toMs: number; bucketMs: number; present: ReadonlySet<number> }): LaneView {
   const points: LanePoint[] = [];
   if (def.mode === 'count') {
     if (events && events.bucketMs > 0) {
@@ -149,11 +153,9 @@ export function laneView(def: LaneDef, item: SeriesItem | undefined, events?: { 
         const slot = events.fromMs + Math.floor((t - events.fromMs) / events.bucketMs) * events.bucketMs;
         counts.set(slot, (counts.get(slot) ?? 0) + 1);
       }
-      // Every bucket outside a gap has a reading of 0 or more; a bucket inside a gap has none.
-      for (let t = events.fromMs; t < events.toMs; t += events.bucketMs) {
-        if (events.gaps.some((g) => t >= g.from && t < g.to)) continue;
-        points.push({ t, v: counts.get(t) ?? 0 });
-      }
+      // Only a bucket the recorder was running in has a count (0 or more). Before the first sample, after the last and
+      // inside a gap there is none: that is "not recorded", never zero.
+      for (const t of [...events.present].sort((a, b) => a - b)) points.push({ t, v: counts.get(t) ?? 0 });
     }
   } else {
     for (const p of item?.points ?? []) {

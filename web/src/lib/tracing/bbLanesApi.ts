@@ -1,6 +1,6 @@
 import { casePath, fetchSeries, json, listImports, send } from '../cases';
 import type { SeriesItem } from '../resource';
-import { BB_SOURCE, EVENT_KINDS, laneById } from './bbLanes';
+import { BB_SOURCE, EVENT_KINDS, PROBE_SEL, laneById } from './bbLanes';
 
 /**
  * What the Blackbox lanes read for one window: the series of the chosen lanes (GET /series) and the recorder's events
@@ -16,6 +16,8 @@ export interface BbData {
   /** The answer per lane id. A lane with no figure in the window has no entry. */
   series: Map<string, SeriesItem>;
   events: BbEvent[];
+  /** Starts of the buckets the recorder was running in (the host CPU figure is read on every sample). */
+  present: Set<number>;
   /** The server stopped a read at its limit, so a lane or the event list may be incomplete. */
   partial: boolean;
 }
@@ -55,8 +57,9 @@ export async function fetchBbEvents(caseId: string, fromMs: number, toMs: number
 
 /** Reads the chosen lanes and the events for a window. `width` is the chart width in pixels (the server cuts to it). */
 export async function fetchBbData(caseId: string, laneIds: readonly string[], fromMs: number, toMs: number, width: number, signal?: AbortSignal): Promise<BbData> {
-  const sels: string[] = [];
-  const ids: string[] = [];
+  // The first selector is the probe that tells where the recorder was running; the lanes follow in order.
+  const sels: string[] = [PROBE_SEL];
+  const ids: string[] = [''];
   for (const id of laneIds) {
     const def = laneById(id);
     if (def && def.sel) {
@@ -65,11 +68,14 @@ export async function fetchBbData(caseId: string, laneIds: readonly string[], fr
     }
   }
   const [view, ev] = await Promise.all([
-    sels.length > 0 ? fetchSeries(caseId, { fromMs, toMs, bucketMs: 0, sels, width }, signal) : Promise.resolve(null),
+    fetchSeries(caseId, { fromMs, toMs, bucketMs: 0, sels, width }, signal),
     fetchBbEvents(caseId, fromMs, toMs, signal)
   ]);
   const series = new Map<string, SeriesItem>();
-  if (view) view.series.forEach((item, i) => { if (ids[i]) series.set(ids[i], item); });
-  const bucketMs = view ? view.bucketMs : Math.max(1000, Math.ceil((toMs - fromMs) / Math.max(1, width)));
-  return { fromMs, toMs, bucketMs, series, events: ev.events, partial: !!view?.partial || ev.truncated };
+  const present = new Set<number>();
+  view.series.forEach((item, i) => {
+    if (i === 0) item.points.forEach((p) => { if (p.count > 0) present.add(p.t); });
+    else if (ids[i]) series.set(ids[i], item);
+  });
+  return { fromMs, toMs, bucketMs: view.bucketMs, series, events: ev.events, present, partial: view.partial || ev.truncated };
 }

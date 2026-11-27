@@ -77,10 +77,18 @@ test('a bucket with no reading is absent, never zero; an empty answer has no poi
   assert.equal(L.scaleLine(L.laneView(L.laneById('cpu'), undefined)), BBL_TEXT.noData);
 });
 
-test('a count lane counts events per bucket and leaves out buckets inside a gap', () => {
+test('a count lane counts events only in buckets the recorder was running in; outside them there is no reading, never zero', () => {
   const evt = L.laneById('evt');
-  const v = L.laneView(evt, undefined, { times: [1000, 1500, 61000], fromMs: 0, toMs: 180000, bucketMs: 60000, gaps: [{ from: 120000, to: 180000 }] });
-  assert.deepEqual(v.points, [{ t: 0, v: 2 }, { t: 60000, v: 1 }]);
+  const v = L.laneView(evt, undefined, { times: [1000, 1500, 61000], fromMs: 0, toMs: 300000, bucketMs: 60000, present: new Set([0, 60000, 180000]) });
+  assert.deepEqual(v.points, [{ t: 0, v: 2 }, { t: 60000, v: 1 }, { t: 180000, v: 0 }]);
+  const none = L.laneView(evt, undefined, { times: [1000], fromMs: 0, toMs: 300000, bucketMs: 60000, present: new Set() });
+  assert.deepEqual(none.points, [], 'a recording with no host figure has no count lane');
+});
+
+test('SQL lanes name the first instance, and the probe for where the recorder ran is the host CPU', () => {
+  for (const id of ['blk', 'lwt', 'dl', 'gp', 'ple', 'bat']) assert.ok(L.laneById(id).sel.includes(';attr.sqlinstance=1'), id);
+  assert.ok(L.PROBE_SEL.includes('attr.counter=% Processor Time'));
+  assert.equal(L.laneById('rej').unit, 'count', 'the HTTP.sys rejected figure is a running total, not a rate');
 });
 
 test('scale lines: high-is-bad starts at zero; low-is-bad says its lowest value too', () => {

@@ -32,6 +32,7 @@
   let hover = $state<{ x: number; t: number } | null>(null);
   let controller: AbortController | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let retry = $state(0);
 
   const COLOUR: Record<string, string> = {
     host: 'var(--series-6)', sql: 'var(--series-2)', iis: 'var(--series-3)', redis: 'var(--series-4)',
@@ -42,6 +43,8 @@
   $effect(() => {
     const id = caseId;
     present = null;
+    data = null;
+    status = 'idle';
     const c = new AbortController();
     caseHasBlackbox(id, c.signal).then((v) => { present = v; }, () => { present = false; });
     return () => c.abort();
@@ -51,8 +54,8 @@
   $effect(() => {
     const ids = [...chosen];
     const from = fromMs, to = toMs, id = caseId, w = Math.max(200, Math.round(width));
+    void retry;
     if (present !== true || !(to > from)) return;
-    if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       controller?.abort();
       controller = new AbortController();
@@ -63,12 +66,34 @@
         () => { if (controller === mine && !mine.signal.aborted) status = 'error'; }
       );
     }, 150);
+    // A newer choice, a new window or a new case drops the waiting read and the one in flight.
+    return () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      controller?.abort();
+    };
   });
 
   onDestroy(() => { if (timer) clearTimeout(timer); controller?.abort(); });
 
   const gaps = $derived(data ? gapSpans(data.events.filter((e) => e.kind === 'recording-gap'), data.fromMs, data.toMs) : []);
-  const marks = $derived((data?.events ?? []).filter((e) => e.kind !== 'recording-gap' && eventText(e.kind) !== ''));
+  // One mark per kind and bucket, so a burst of the same entry is one line; the lines are capped so 10 lanes stay light.
+  const allMarks = $derived.by(() => {
+    const d = data;
+    if (!d) return [];
+    const seen = new Set<string>();
+    const out: { start: number; kind: string }[] = [];
+    for (const e of d.events) {
+      if (e.kind === 'recording-gap' || eventText(e.kind) === '') continue;
+      const key = e.kind + ':' + Math.floor((e.start - d.fromMs) / Math.max(1, d.bucketMs));
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ start: e.start, kind: e.kind });
+    }
+    return out;
+  });
+  const marks = $derived(allMarks.slice(0, 200));
+  const listed = $derived(allMarks.slice(0, 50));
   const views = $derived.by((): LaneView[] => {
     const d = data;
     if (!d) return [];
@@ -77,14 +102,16 @@
       const def = laneById(id);
       if (!def) continue;
       const times = def.eventKind ? d.events.filter((e) => e.kind === def.eventKind).map((e) => e.start) : [];
-      out.push(laneView(def, d.series.get(id), { times, fromMs: d.fromMs, toMs: d.toMs, bucketMs: d.bucketMs, gaps }));
+      out.push(laneView(def, d.series.get(id), { times, fromMs: d.fromMs, toMs: d.toMs, bucketMs: d.bucketMs, present: d.present }));
     }
     return out;
   });
   const first = $derived(data ? firstToChange(views, data.fromMs, data.toMs).slice(0, 4) : []);
 
   const fmtTime = (ms: number): string =>
-    new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: zone || 'UTC' }).format(new Date(ms));
+    new Intl.DateTimeFormat('en-GB', toMs - fromMs > 24 * 3600 * 1000
+      ? { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: zone || 'UTC' }
+      : { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: zone || 'UTC' }).format(new Date(ms));
   const span = $derived(Math.max(1, toMs - fromMs));
   const xOf = (ms: number): number => ((ms - fromMs) / span) * 1000;
   const ticks = $derived([0, 1, 2, 3, 4, 5, 6].map((i) => fromMs + (span * i) / 6));
@@ -92,17 +119,20 @@
   function path(v: LaneView, h: number): string {
     const pad = 6;
     let d = '';
-    let pen = false;
-    // A reading further from the last one than twice the bucket is after a gap: the line breaks and never joins across it.
+    let run = 0;
+    // A reading further from the last one than 2.5 buckets is after a gap: the line breaks and never joins across it.
     const step = (data?.bucketMs ?? 0) * 2.5;
     let last = -Infinity;
     for (const p of v.points) {
       const y = h - pad - (p.v / v.top) * (h - 2 * pad);
-      const joined = pen && p.t - last <= step;
+      const joined = run > 0 && p.t - last <= step;
+      if (!joined && run === 1) d += 'l2 0';
       d += (joined ? 'L' : 'M') + xOf(p.t).toFixed(1) + ' ' + y.toFixed(1);
-      pen = true;
+      run = joined ? run + 1 : 1;
       last = p.t;
     }
+    // A lone reading is drawn as a short stroke, so it can be seen.
+    if (run === 1) d += 'l2 0';
     return d;
   }
 
@@ -127,14 +157,12 @@
     const f = Math.min(1, Math.max(0, (e.clientX - box.left) / Math.max(1, box.width)));
     hover = { x: f * 100, t: fromMs + f * span };
   }
+  // The reading of the bucket the pointer is in. Inside a gap, or in a bucket with no reading, there is none.
   function nearest(v: LaneView, t: number): number | null {
-    const step = (data?.bucketMs ?? 0) * 1.5;
-    let best: { d: number; v: number } | null = null;
-    for (const p of v.points) {
-      const d = Math.abs(p.t - t);
-      if (d <= step && (!best || d < best.d)) best = { d, v: p.v };
-    }
-    return best ? best.v : null;
+    const b = data?.bucketMs ?? 0;
+    if (b <= 0 || inGap(t)) return null;
+    const slot = fromMs + Math.floor((t - fromMs) / b) * b;
+    return v.points.find((p) => p.t === slot)?.v ?? null;
   }
   const inGap = (t: number): boolean => gaps.some((g) => t >= g.from && t < g.to);
 </script>
@@ -159,7 +187,7 @@
       {#if status === 'loading' && !data}
         <p class="hint" role="status">{BBL_TEXT.loading}</p>
       {:else if status === 'error'}
-        <p class="problem" role="alert">{BBL_TEXT.failed}</p>
+        <p class="problem" role="alert">{BBL_TEXT.failed} <button type="button" class="link" onclick={() => { retry += 1; }}>{BBL_TEXT.retry}</button></p>
       {:else if views.length === 0}
         <p class="hint">{BBL_TEXT.empty}</p>
       {:else}
@@ -177,7 +205,7 @@
                 <svg viewBox="0 0 1000 54" preserveAspectRatio="none" role="img" aria-label="{laneName(v.def.id)} over time">
                   {#each gaps as g, i (i)}<rect x={xOf(g.from)} y="0" width={xOf(g.to) - xOf(g.from)} height="54" class="gap" />{/each}
                   {#if v.points.length > 0}<path d={path(v, 54)} fill="none" stroke={colour(v.def.group)} stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round" />{/if}
-                  {#each marks as m (m.start + m.kind)}<line x1={xOf(m.start)} x2={xOf(m.start)} y1="0" y2="54" class="mark" vector-effect="non-scaling-stroke" />{/each}
+                  {#each marks as m, i (i)}<line x1={xOf(m.start)} x2={xOf(m.start)} y1="0" y2="54" class="mark" vector-effect="non-scaling-stroke" />{/each}
                 </svg>
                 <button type="button" class="rm" aria-label={BBL_TEXT.hide(laneName(v.def.id))} title={BBL_TEXT.hideTitle} onclick={() => hideLane(v.def.id)}>&times;</button>
               </div>
@@ -206,7 +234,7 @@
         <div class="events">
           <h4>{BBL_TEXT.eventsHeading}</h4>
           {#if marks.length === 0}<p class="hint">{BBL_TEXT.eventsNone}</p>
-          {:else}<ol>{#each marks as m (m.start + m.kind)}<li><time>{fmtTime(m.start)}</time> {eventText(m.kind)}</li>{/each}</ol>{/if}
+          {:else}<ol>{#each listed as m, i (i)}<li><time>{fmtTime(m.start)}</time> {eventText(m.kind)}</li>{/each}</ol>{#if allMarks.length > listed.length}<p class="hint">{BBL_TEXT.more(allMarks.length - listed.length)}</p>{/if}{/if}
         </div>
       {/if}
     </div>
