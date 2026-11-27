@@ -186,7 +186,7 @@
     {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{/if}
   {/if}
   {#if notice !== ''}<p class="say" role="status" data-notice>{notice}</p>{/if}
-  {#if mongoDamaged}<SavedFileDamaged page detail={damaged.detail} shared={damaged.shared} onRecheck={recheckDamaged} onDone={async (name, folder) => { notice = keptNote(name, folder); await finishRecentSetAside(name, folder); await load(false); announceConnectionsChanged(); }} />{/if}
+  {#if mongoDamaged}<SavedFileDamaged page {readOnly} detail={damaged.detail} shared={damaged.shared} onRecheck={recheckDamaged} onDone={async (name, folder) => { notice = keptNote(name, folder); await finishRecentSetAside(name, folder); await load(false); announceConnectionsChanged(); }} />{/if}
 
   {#if demo}
     <div class="empty" data-demo><p class="lead">{CONN_TEXT.demo}</p></div>

@@ -437,7 +437,15 @@ func (s *Service) readLocked() (vault, error) {
 		return vault{}, ErrCorrupt
 	}
 	plain, err := s.protector.Unprotect(data)
-	if err != nil || len(plain) == 0 || len(plain) > maxFileSize {
+	if err != nil {
+		// Only bytes that cannot be opened by this account are "unreadable". A sealer that failed for another reason (a service, an RPC call,
+		// a profile still loading) says nothing about the file, so it is reported as unavailable and set-aside is never offered.
+		if errors.Is(err, sealedfile.ErrBadData) {
+			return vault{}, ErrCorrupt
+		}
+		return vault{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if len(plain) == 0 || len(plain) > maxFileSize {
 		return vault{}, ErrCorrupt
 	}
 	var v vault

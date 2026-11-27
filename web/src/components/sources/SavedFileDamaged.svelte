@@ -10,12 +10,14 @@
   // detail: the server's own sentence (it names the real folder). shared: the list is the whole PC's, so the question says everyone is affected.
   // onDone gets the kept file's name and its folder, or '' when the file turned out to read fine. onRecheck: the set-aside failed, so the page
   // reads the list again and stops offering this when the file is not unreadable after all. page: the look of the Sources page, not the drawer.
-  let { onDone, onRecheck, detail = '', shared = false, page = false }: {
+  // readOnly: the page is read-only for this person (the same switch that disables Forget, Test, Edit and Add), so nothing here can be pressed.
+  let { onDone, onRecheck, detail = '', shared = false, page = false, readOnly = false }: {
     onDone: (keptName: string, folder: string) => void | Promise<void>;
     onRecheck?: () => void | Promise<void>;
     detail?: string;
     shared?: boolean;
     page?: boolean;
+    readOnly?: boolean;
   } = $props();
 
   let phase = $state<'idle' | 'ask'>('idle');
@@ -33,7 +35,7 @@
   }
 
   async function setAside() {
-    if (busy || phase !== 'ask') return;
+    if (busy || readOnly || phase !== 'ask') return;
     busy = true; problem = '';
     try {
       const reply = await api.setAsideConnections();
@@ -58,13 +60,13 @@
     <div class="set-aside-confirm" role="group" aria-label={SAVED_FILE_TEXT.button} data-set-aside-confirm onkeydown={onKey}>
       <p>{askText(shared)}</p>
       <div class={page ? 'actions' : 'saved-file-actions'}>
-        <button type="button" class={page ? 'btn' : 'secondary-button'} disabled={busy} data-set-aside onclick={() => void setAside()}>{busy ? SAVED_FILE_TEXT.working : SAVED_FILE_TEXT.yes}</button>
+        <button type="button" class={page ? 'btn' : 'secondary-button'} disabled={busy || readOnly} data-set-aside onclick={() => void setAside()}>{busy ? SAVED_FILE_TEXT.working : SAVED_FILE_TEXT.yes}</button>
         <button type="button" class={page ? 'btn' : 'secondary-button'} disabled={busy} bind:this={keepButton} data-set-aside-keep onclick={() => void keep()}>{SAVED_FILE_TEXT.keep}</button>
       </div>
     </div>
   {:else}
     <div class={page ? 'actions' : 'saved-file-actions'}>
-      <button type="button" class={page ? 'btn' : 'secondary-button'} bind:this={askButton} data-set-aside-ask onclick={() => void ask()}>{SAVED_FILE_TEXT.button}</button>
+      <button type="button" class={page ? 'btn' : 'secondary-button'} bind:this={askButton} disabled={readOnly} data-set-aside-ask onclick={() => void ask()}>{SAVED_FILE_TEXT.button}</button>
     </div>
   {/if}
 </div>

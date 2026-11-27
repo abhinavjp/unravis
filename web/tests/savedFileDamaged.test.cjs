@@ -108,10 +108,20 @@ test('one press only asks: nothing is sent until the person says yes, and No or 
   assert.match(part, /data-set-aside onclick=\{\(\) => void setAside\(\)\}/);
   assert.equal((part.match(/api\.setAsideConnections\(\)/g) ?? []).length, 1);
   assert.match(part, /async function ask\(\) \{[^}]*phase = 'ask'/);
-  assert.match(part, /if \(busy \|\| phase !== 'ask'\) return;/);
+  assert.match(part, /if \(busy \|\| readOnly \|\| phase !== 'ask'\) return;/);
   assert.match(part, /event\.key !== 'Escape'/);
   assert.match(part, /\{askText\(shared\)\}/);
   assert.match(part, /bind:this=\{keepButton\}/);
   assert.match(part, /disabled=\{busy\}/);
   assert.match(part, /role="alert"/);
+});
+
+test('a read-only page cannot press the set-aside button, like Forget, Test, Edit and Add', () => {
+  const page = read('src/components/sources/ConnectionsPage.svelte');
+  assert.match(page, /<SavedFileDamaged page \{readOnly\}/);
+  const panel = read('src/components/sources/SavedFileDamaged.svelte');
+  assert.match(panel, /readOnly = false/);
+  assert.match(panel, /<button[^>]*disabled=\{readOnly\}[^>]*data-set-aside-ask/);
+  assert.match(panel, /disabled=\{busy \|\| readOnly\} data-set-aside /);
+  assert.match(panel, /if \(busy \|\| readOnly \|\| phase !== 'ask'\) return;/);
 });

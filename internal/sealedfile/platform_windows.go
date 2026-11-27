@@ -83,12 +83,29 @@ func dpapi(protect bool, input []byte, flags uintptr) ([]byte, error) {
 		defer localFree.Call(uintptr(unsafe.Pointer(out.Data)))
 	}
 	if ok == 0 {
+		if !protect && isBadDataError(callErr) {
+			return nil, fmt.Errorf("Windows DPAPI operation failed: %w: %w", ErrBadData, callErr)
+		}
 		return nil, fmt.Errorf("Windows DPAPI operation failed: %w", callErr)
 	}
 	if out.Data == nil || out.Size == 0 || out.Size > maxBlob {
 		return nil, errors.New("Windows DPAPI returned invalid data")
 	}
 	return append([]byte(nil), unsafe.Slice(out.Data, out.Size)...), nil
+}
+
+// isBadDataError reports whether an Unprotect failure says the bytes cannot be opened by this account (ERROR_INVALID_DATA, ERROR_INVALID_PARAMETER, NTE_BAD_DATA,
+// NTE_BAD_KEY_STATE) rather than that the unsealing service could not be reached or used right now.
+func isBadDataError(err error) bool {
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		return false
+	}
+	switch uintptr(errno) {
+	case 13, 87, 0x80090005, 0x8009000B:
+		return true
+	}
+	return false
 }
 
 // lockSDDL is the access list of a machine-wide lock: SYSTEM and Administrators in full; any signed-in account and services may wait on
