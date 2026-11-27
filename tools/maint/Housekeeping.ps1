@@ -37,10 +37,11 @@
 .PARAMETER Install    Copy the scripts to %LOCALAPPDATA%\Unravis\maint, save the repository folder, and register the hourly user-level task
                       'Unravis-Housekeeping' (this is what makes the cleanup run on a checkout that does not have the hooks yet). Re-run after
                       the scripts change. It also removes the older daily 'Unravis-CleanScratch' task. Run it from a NORMAL terminal:
-                      it refuses when the process has a package identity (the Claude desktop app, whose sandbox
-                      redirects file writes to Packages\Claude_*\LocalCache while $env:LOCALAPPDATA still shows the real path), and when the
-                      script itself sits in such a redirect folder, because the installed copy would land there and the hourly task would
-                      keep running the old one.
+                      it refuses when a marker file written under %LOCALAPPDATA% turns up in a Packages\*\LocalCache\Local mirror (the Claude
+                      desktop app sandbox redirects file writes there while $env:LOCALAPPDATA still shows the real path), when the probe
+                      cannot be completed, when the package is Claude_*, and when the script itself sits in such a redirect folder, because the
+                      installed copy would land there and the hourly task would keep running the old one. Having a package identity alone
+                      (the Microsoft Store build of pwsh has one) does not refuse.
 .PARAMETER Uninstall  Remove that task.
 .PARAMETER Worker     Internal: a hook started this process in the background.
 .PARAMETER GoCacheLimitGB  Clean each Go build cache over this size (default 8, the runner cache cap). 0 turns the Go cache step off.
@@ -352,37 +353,84 @@ function Get-RepoFolder {
     return $null
 }
 
-# Get-PackageIdentityCode asks Windows whether THIS process has a package identity (kernel32 GetCurrentPackageFullName with an empty
-# buffer): 15700 (APPMODEL_ERROR_NO_PACKAGE) means a plain process; anything else (122 = a package name did not fit the empty buffer) means
-# it runs inside an MSIX package such as the Claude desktop app, whose sandbox redirects file-system writes to Packages\<name>\LocalCache.
-# Returns $null when the question itself could not be asked.
-function Get-PackageIdentityCode {
+# Get-PackageFullName asks Windows for the package identity of THIS process (kernel32 GetCurrentPackageFullName). Returns '' for a plain
+# process (15700 = APPMODEL_ERROR_NO_PACKAGE), the full name (for example Claude_1.2.3.0_x64__<id>, or Microsoft.PowerShell_7.7.0.0_x64__<id>
+# for the Microsoft Store build of pwsh), or $null when the question itself could not be asked. A package identity alone proves nothing
+# about redirection: the Store pwsh has one and writes straight to the real folders.
+function Get-PackageFullName {
     try {
         if (-not ('Unravis.PkgId' -as [type])) {
             Add-Type -Namespace Unravis -Name PkgId -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern int GetCurrentPackageFullName(ref int length, System.Text.StringBuilder name);'
         }
         $len = 0
-        return [int][Unravis.PkgId]::GetCurrentPackageFullName([ref]$len, $null)
+        $rc = [int][Unravis.PkgId]::GetCurrentPackageFullName([ref]$len, $null)
+        if ($rc -eq 15700) { return '' }
+        if ($rc -ne 122 -or $len -lt 1) { return $null }
+        $sb = New-Object System.Text.StringBuilder $len
+        if ([int][Unravis.PkgId]::GetCurrentPackageFullName([ref]$len, $sb) -ne 0) { return $null }
+        return $sb.ToString()
     } catch { return $null }
 }
 
+# Test-LocalAppDataRedirect is the direct probe: it writes a uniquely named marker under <LocalAppData>\Unravis, then looks for the same
+# marker under every <PackagesRoot>\*\LocalCache\Local mirror. A sandboxed process (the Claude desktop app) sees the real path but its file
+# writes land in that mirror. Returns 'direct' (marker only at the real path), 'redirected' (marker found in a mirror) or 'failed' (the
+# probe could not be completed). The marker folder is always removed. -AfterWrite is a test hook that runs after the marker is written
+# and receives its relative path (it can simulate a redirect by copying the marker into a fake mirror).
+function Test-LocalAppDataRedirect {
+    param([string]$LocalAppData, [string]$PackagesRoot, [scriptblock]$AfterWrite = $null)
+    $rel = 'Unravis\.probe-' + [guid]::NewGuid().ToString('N')
+    $probeDir = Join-Path $LocalAppData $rel
+    $marker = Join-Path $probeDir 'marker.txt'
+    try {
+        New-Item -ItemType Directory -Force -Path $probeDir -ErrorAction Stop | Out-Null
+        Set-Content -LiteralPath $marker -Value 'unravis redirect probe' -ErrorAction Stop
+        if ($null -ne $AfterWrite) { & $AfterWrite $rel }
+        if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return 'failed' }
+        if (Test-Path -LiteralPath $PackagesRoot -PathType Container) {
+            foreach ($pkg in @(Get-ChildItem -LiteralPath $PackagesRoot -Directory -Force -ErrorAction Stop)) {
+                $mirror = Join-Path (Join-Path $pkg.FullName 'LocalCache\Local') $rel
+                if (Test-Path -LiteralPath (Join-Path $mirror 'marker.txt') -PathType Leaf) { return 'redirected' }
+            }
+        }
+        return 'direct'
+    } catch { return 'failed' } finally {
+        # the unique marker folder goes from the real path and from every mirror (a redirected write may have landed there)
+        Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue
+        if ($PackagesRoot -and (Test-Path -LiteralPath $PackagesRoot -PathType Container)) {
+            foreach ($pkg in @(Get-ChildItem -LiteralPath $PackagesRoot -Directory -Force -ErrorAction SilentlyContinue)) {
+                Remove-Item -LiteralPath (Join-Path (Join-Path $pkg.FullName 'LocalCache\Local') $rel) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 # Get-InstallRefusal: why -Install must not run here, or $null. Inside the Claude desktop app $env:LOCALAPPDATA still shows the REAL path
-# while the sandbox redirects the file system underneath, so the "installed" copy would land in Packages\Claude_*\LocalCache\Local and the
-# hourly task would keep running the old copy from the real folder. Guard 1: the process has a package identity (-PackageCode is the test
-# hook for what Get-PackageIdentityCode would return; omit it to ask Windows). Guard 2: the script or LocalAppData path is itself inside a
-# Packages\<name>\LocalCache redirect root (a repository at D:\src\Packages\repo is not).
+# while the sandbox redirects file writes underneath, so the "installed" copy would land in Packages\Claude_*\LocalCache\Local and the
+# hourly task would keep running the old copy from the real folder. The decision is a direct probe (Test-LocalAppDataRedirect: a marker
+# file written under LocalAppData must not show up in a Packages\*\LocalCache\Local mirror, and the probe must complete). Also refused: a
+# package family starting with Claude_, and a script or LocalAppData path that is itself inside a Packages\<name>\LocalCache redirect root
+# (a repository at D:\src\Packages\repo is not). A package identity alone never refuses: the Microsoft Store build of pwsh has one
+# (Microsoft.PowerShell_*) and writes straight to the real folders. Test hooks: -PackageName ('' = none, $null = ask Windows) and -Probe
+# (a scriptblock returning 'direct', 'redirected' or 'failed', replacing the real probe).
 function Get-InstallRefusal {
-    param([string]$Self, [string]$LocalAppData, [object]$PackageCode = $null)
+    param([string]$Self, [string]$LocalAppData, [object]$PackageName = $null, [scriptblock]$Probe = $null)
     $how = 'Open a normal terminal (Windows Terminal or PowerShell, not the Claude app) and run -Install again from the repository.'
-    $code = if ($null -ne $PackageCode) { [int]$PackageCode } else { Get-PackageIdentityCode }
-    if ($null -eq $code) { return "Housekeeping.ps1 -Install could not tell whether it runs inside the Claude desktop app sandbox (the package identity check failed), so it stops rather than install into a redirected folder. $how" }
-    if ($code -ne 15700) {
-        return "Housekeeping.ps1 -Install was started inside a packaged app (the Claude desktop app sandbox, package identity code $code). The sandbox redirects file writes to Packages\Claude_*\LocalCache, so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. $how"
+    $pkg = if ($null -ne $PackageName) { [string]$PackageName } else { Get-PackageFullName }
+    if ($pkg -match '(?i)^Claude_') {
+        return "Housekeeping.ps1 -Install was started inside the Claude desktop app ($pkg). Its sandbox redirects file writes to Packages\Claude_*\LocalCache, so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. $how"
     }
     foreach ($p in $Self, $LocalAppData) {
         if ($p -and ([IO.Path]::GetFullPath($p) -match '(?i)\\AppData\\Local\\Packages\\[^\\]+\\LocalCache(\\|$)')) {
             return "Housekeeping.ps1 -Install was started from inside a redirected app folder ($p), so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. $how"
         }
+    }
+    $verdict = if ($null -ne $Probe) { [string](& $Probe) } else { Test-LocalAppDataRedirect -LocalAppData $LocalAppData -PackagesRoot (Join-Path $env:USERPROFILE 'AppData\Local\Packages') }
+    if ($verdict -eq 'redirected') {
+        return "Housekeeping.ps1 -Install found that file writes under %LOCALAPPDATA% are redirected into a Packages\<name>\LocalCache folder (a sandboxed app such as the Claude desktop app), so the installed copy would not reach the real %LOCALAPPDATA%\Unravis\maint and the hourly task would keep running the old one. $how"
+    }
+    if ($verdict -ne 'direct') {
+        return "Housekeeping.ps1 -Install could not check whether file writes under %LOCALAPPDATA% are redirected (the marker probe did not complete), so it stops rather than install into a redirected folder. $how"
     }
     return $null
 }

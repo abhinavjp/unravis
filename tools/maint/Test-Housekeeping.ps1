@@ -334,25 +334,46 @@ try {
     $normalLocal = 'C:\Users\Someone\AppData\Local'
     $sandboxLocal = 'C:\Users\Someone\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local'
     $selfOk = 'D:\Projects\unravis\tools\maint\Housekeeping.ps1'
-    # the real decision: a package identity (the Claude app) is refused even though LocalAppData and the script path look normal
-    $noPkg = 15700   # APPMODEL_ERROR_NO_PACKAGE
-    Check ($null -eq (Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageCode $noPkg)) 'install: a plain process (no package identity) with ordinary paths is allowed'
-    $why = Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageCode 122
-    Check ($why -and $why -match 'normal terminal' -and $why -match 'package identity code 122') 'install: a process with a package identity (code 122, as measured in the Claude app) is refused even with a real-looking LocalAppData'
-    Check ([bool](Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageCode 0)) 'install: any code other than 15700 is refused'
-    $why = Get-InstallRefusal -Self $selfOk -LocalAppData $sandboxLocal -PackageCode $noPkg
+    # the decision uses a direct redirection probe, not the package identity (the Store build of pwsh has one and is NOT redirected)
+    $direct = { 'direct' }; $redirected = { 'redirected' }; $failed = { 'failed' }
+    $storePwsh = 'Microsoft.PowerShell_7.7.0.0_x64__8wekyb3d8bbwe'
+    Check ($null -eq (Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageName '' -Probe $direct)) 'install: a plain process whose probe sees no redirect is allowed'
+    Check ($null -eq (Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageName $storePwsh -Probe $direct)) 'install: the Microsoft Store pwsh (a package identity, no redirect) is allowed'
+    $why = Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageName 'Claude_1.2.3.0_x64__pzs8sxrjxfjjc' -Probe $direct
+    Check ($why -and $why -match 'normal terminal' -and $why -match 'Claude desktop app') 'install: a Claude_* package identity is refused even when the probe sees nothing'
+    $why = Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageName $storePwsh -Probe $redirected
+    Check ($why -and $why -match 'normal terminal' -and $why -match 'redirected') 'install: a redirected marker is refused, whatever the package identity'
+    $why = Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageName '' -Probe $failed
+    Check ($why -and $why -match 'normal terminal' -and $why -match 'could not check') 'install: a probe that cannot complete is refused'
+    Check ([bool](Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal -PackageName '' -Probe { 'something odd' })) 'install: an unexpected probe answer is refused'
+    $why = Get-InstallRefusal -Self $selfOk -LocalAppData $sandboxLocal -PackageName '' -Probe $direct
     Check ($why -and $why -match 'normal terminal' -and $why -match 'redirected') 'install: LocalAppData inside a Packages\<name>\LocalCache redirect root is refused with a clear message'
-    Check ([bool](Get-InstallRefusal -Self ($sandboxLocal + '\x\Housekeeping.ps1') -LocalAppData $normalLocal -PackageCode $noPkg)) 'install: a script running from under the redirect root is refused'
-    Check ($null -eq (Get-InstallRefusal -Self 'D:\src\Packages\repo\tools\maint\Housekeeping.ps1' -LocalAppData $normalLocal -PackageCode $noPkg)) 'install: a repository in a folder that is merely named Packages is not refused'
-    # and the live question to Windows answers, and agrees with the decision for ordinary paths
-    $liveCode = Get-PackageIdentityCode
-    Check ($null -ne $liveCode) 'install: the package identity check can be asked of Windows (P/Invoke works)'
-    Check (([bool](Get-InstallRefusal -Self $selfOk -LocalAppData $normalLocal)) -eq ($liveCode -ne 15700)) 'install: with no hook the answer follows what Windows says about this very process'
-    if ([bool](Get-InstallRefusal -Self $selfOk -LocalAppData $sandboxLocal -PackageCode $noPkg)) {
-        $savedLocal = $env:LOCALAPPDATA; $thrown = $null
-        try { $env:LOCALAPPDATA = $sandboxLocal; try { Register-HousekeepingTask -RepoFolder $repo } catch { $thrown = $_.Exception.Message } } finally { $env:LOCALAPPDATA = $savedLocal }
-        Check ($thrown -and $thrown -match 'normal terminal') 'install: Register-HousekeepingTask throws before copying anything or registering a task'
-    }
+    Check ([bool](Get-InstallRefusal -Self ($sandboxLocal + '\x\Housekeeping.ps1') -LocalAppData $normalLocal -PackageName '' -Probe $direct)) 'install: a script running from under the redirect root is refused'
+    Check ($null -eq (Get-InstallRefusal -Self 'D:\src\Packages\repo\tools\maint\Housekeeping.ps1' -LocalAppData $normalLocal -PackageName '' -Probe $direct)) 'install: a repository in a folder that is merely named Packages is not refused'
+
+    # the real probe, on fake folders: a marker that stays at the real path is 'direct'; one that also shows up in a Packages mirror is 'redirected'
+    $pbLocal = Join-Path $base 'probe\Local'; $pbPkgs = Join-Path $base 'probe\Packages'
+    New-Item -ItemType Directory -Force -Path $pbLocal, (Join-Path $pbPkgs 'Claude_x\LocalCache\Local'), (Join-Path $pbPkgs 'Microsoft.PowerShell_8wekyb3d8bbwe\LocalCache\Local') | Out-Null
+    Check ((Test-LocalAppDataRedirect -LocalAppData $pbLocal -PackagesRoot $pbPkgs) -eq 'direct') 'redirect probe: a write that stays at the real path is direct'
+    Check (@(Get-ChildItem -LiteralPath (Join-Path $pbLocal 'Unravis') -Force -ErrorAction SilentlyContinue).Count -eq 0) 'redirect probe: the marker folder is removed again'
+    $mirrorHook = { param($rel) $d = Join-Path $pbPkgs ('Claude_x\LocalCache\Local\' + $rel); New-Item -ItemType Directory -Force -Path $d | Out-Null; Set-Content -LiteralPath (Join-Path $d 'marker.txt') -Value 'm' }
+    Check ((Test-LocalAppDataRedirect -LocalAppData $pbLocal -PackagesRoot $pbPkgs -AfterWrite $mirrorHook) -eq 'redirected') 'redirect probe: a marker that shows up under Packages\*\LocalCache\Local is redirected'
+    Check (@(Get-ChildItem -LiteralPath (Join-Path $pbPkgs 'Claude_x\LocalCache\Local\Unravis') -Force -ErrorAction SilentlyContinue).Count -eq 0) 'redirect probe: the mirror marker is removed again'
+    $pbFile = Join-Path $base 'probe\afile'; Set-Content -LiteralPath $pbFile -Value 'x'
+    Check ((Test-LocalAppDataRedirect -LocalAppData $pbFile -PackagesRoot $pbPkgs) -eq 'failed') 'redirect probe: a LocalAppData that cannot be written is failed, never direct'
+    $dropHook = { param($rel) Remove-Item -LiteralPath (Join-Path $pbLocal $rel) -Recurse -Force }
+    Check ((Test-LocalAppDataRedirect -LocalAppData $pbLocal -PackagesRoot $pbPkgs -AfterWrite $dropHook) -eq 'failed') 'redirect probe: a marker that cannot be read back at the real path is failed'
+    # the question to Windows about the package identity can be asked (P/Invoke works); '' or a name, never $null
+    Check ($null -ne (Get-PackageFullName)) 'install: the package identity can be asked of Windows (P/Invoke works)'
+
+    # Register-HousekeepingTask must throw before it copies or registers anything; the task cmdlets are stubbed so a regression could never register a real task
+    function Register-ScheduledTask { $script:registerCalled = $true }
+    function Unregister-ScheduledTask { $script:registerCalled = $true }
+    $script:registerCalled = $false
+    $savedLocal = $env:LOCALAPPDATA; $thrown = $null
+    try { $env:LOCALAPPDATA = $sandboxLocal; try { Register-HousekeepingTask -RepoFolder $repo } catch { $thrown = $_.Exception.Message } } finally { $env:LOCALAPPDATA = $savedLocal }
+    Check ($thrown -and $thrown -match 'normal terminal' -and -not $script:registerCalled) 'install: Register-HousekeepingTask throws before registering a task (task cmdlets stubbed)'
+    Remove-Item Function:\Register-ScheduledTask, Function:\Unregister-ScheduledTask -ErrorAction SilentlyContinue
 
     # ---- owner filter edge cases
     $script:ProcessLinesOverride = $null
