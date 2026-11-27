@@ -131,6 +131,7 @@ A model is not a real newbie. It knows what CI and release managers are, even wh
 - No blocker is open.
 - Text-budget numbers are recorded ("words on first screen: N" per round).
 - Delivered per step 8.
+- Every variant or state-set of a screen (for example the live run and the release run) gets its own design gate and goldfish review, not only the first one.
 - KNOWN-CONFUSIONS.md was read at step 0 and is updated if nachi finds something.
 
 ## What it costs
