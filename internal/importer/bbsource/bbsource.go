@@ -56,8 +56,8 @@ const (
 
 // Fixed known-gap sentences. Each passes evidence.LintCausal.
 const (
-	GapGroupsNotRead = "Of a Blackbox recording the host figures, the SQL host counters, the HTTP request queues, the IIS worker figures, the TCP figures, the Redis INFO figures, slow commands and latency spikes, event log counts, SQL log counts and new dump files, " +
-		"the start of each recorder run (sample 1 of a run) and the gaps are read so far; its process, disk, CLR and other groups are not in the timeline yet."
+	GapGroupsNotRead = "Of a Blackbox recording the host figures, the SQL host counters, the HTTP request queues, the IIS worker figures, the TCP figures, the ASP.NET, memory pressure, virtual machine and disk and CPU detail figures, the Redis INFO figures, slow commands and latency spikes, event log counts, SQL log counts and new dump files, " +
+		"the start of each recorder run (sample 1 of a run) and the gaps are read so far; its process, CLR and other groups are not in the timeline yet."
 	GapGroupCut     = "A sample with more than 16 SQL instances, 64 HTTP queues or IIS workers, 128 Redis slow commands or 32 Redis latency spikes shows the first of them only."
 	GapGroupDamaged = "A group of a sample that could not be read is left out; the host figures of that sample are kept."
 	GapPartialSum   = "A TCP figure that the recorder marked as covering only some network adapters is left out, not shown as a machine-wide total."
@@ -150,6 +150,12 @@ type line struct {
 	Events  json.RawMessage `json:"events"`
 	SQLLog  json.RawMessage `json:"sqlLog"`
 	Dumps   json.RawMessage `json:"dumps"`
+
+	// Host-wide groups: one set of figures per sample, no client names.
+	ASPNET      json.RawMessage `json:"aspnet"`
+	MemPressure json.RawMessage `json:"memPressure"`
+	VM          json.RawMessage `json:"vm"`
+	DiskCPU     json.RawMessage `json:"diskCpu"`
 }
 
 // figure is one number of a sample and how the timeline names it. The names are the Windows counter names, so a recording
