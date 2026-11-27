@@ -104,6 +104,9 @@ func (h *harness) catalogue(w importer.Window) resource.Index {
 
 func fp(v float64) *float64 { return &v }
 
+// bb re-labels an event as read from a Blackbox recording.
+func bb(e evidence.Event) evidence.Event { e.Source = "blackbox-source"; return e }
+
 // pdh is a win-counters sample. inst may be "".
 func pdh(host string, t time.Time, object, inst, counter string, v float64, unit string) evidence.Event {
 	a := map[string]string{"object": object, "counter": counter}
@@ -244,6 +247,17 @@ func TestLookupMapsTheMergedImporterEvents(t *testing.T) {
 			resource.Metric{ID: resource.SQLMemGrantsPending, Unit: "count", Scale: 1}, true},
 		{"sql grants outstanding not mapped", pdh("sql-a", tm, "SQLServer:Memory Manager", "", "Memory Grants Outstanding", 3, ""),
 			resource.Metric{}, false},
+		{"blackbox host cpu", bb(pdh("web-a", tm, "Processor", "_Total", "% Processor Time", 50, "percent-host")),
+			resource.Metric{ID: resource.HostCPU, Unit: "percent-host", Scale: 1}, true},
+		{"blackbox available MBytes", bb(pdh("web-a", tm, "Memory", "", "Available MBytes", 512, "")),
+			resource.Metric{ID: resource.HostMemAvailable, Unit: "bytes", Scale: 1 << 20}, true},
+		{"blackbox sql grants pending", bb(pdh("sql-a", tm, "SQLServer:Memory Manager", "", "Memory Grants Pending", 12, "")),
+			resource.Metric{ID: resource.SQLMemGrantsPending, Unit: "count", Scale: 1}, true},
+		{"blackbox redis mem", bb(metric("redis-info", "redis-a", tm, 3, "bytes", "metric", "used_memory", "role", "master")),
+			resource.Metric{ID: resource.RedisMem, Unit: "bytes", Scale: 1}, true},
+		{"blackbox redis blocked", bb(metric("redis-info", "redis-a", tm, 3, "count", "metric", "blocked_clients")),
+			resource.Metric{ID: resource.RedisBlocked, Unit: "count", Scale: 1}, true},
+		{"blackbox derived tcp figure is not mapped", bb(pdh("web-a", tm, "Blackbox TCP", "", "Retransmits/sec", 3, "")), resource.Metric{}, false},
 		{"sql counter", pdh("sql-a", tm, "SQLServer:Wait Statistics", "Average wait time (ms)", "Lock waits", 3, ""), resource.Metric{}, false},
 	}
 	for _, tc := range cases {
