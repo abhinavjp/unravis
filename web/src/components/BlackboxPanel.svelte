@@ -73,9 +73,6 @@
   // Status, Remove, Apply and Snapshot open in a pop-up over the list (BL-131), with the same shell as Place.
   let pop = $state<WizardDialog>();
   let removeBusy = $state(false);
-  // Why Apply is off, in words beside the button (RV-UI-11). Null when it is on.
-  const applyBlocked = $derived(applyWait({ working: !!working, hasSettings: !!thisPc.settings, readingSettings: loading || scanning }));
-  const applyWhy = $derived(applyBlocked === 'busy' ? T.applyWaitBusy : applyBlocked === 'loading' ? T.applyWaitLoading : applyBlocked === 'unreadable' ? T.applyUnreadable : '');
   const popView = $derived(view.kind === 'status' || view.kind === 'remove' || view.kind === 'apply' || view.kind === 'snapshot');
   const popLabels = {
     close: T.popCloseLabel,
@@ -88,6 +85,9 @@
 
   const items = $derived(list?.items ?? []);
   const thisPc = $derived<ThisPc>(list?.thisPc ?? { available: false, scanned: false, installed: false, running: false, listed: false });
+  // Why Apply is off, in words beside the button (RV-UI-11). Null when it is on.
+  const applyBlocked = $derived(applyWait({ working: !!working, hasSettings: !!thisPc.settings, readingSettings: loading || scanning }));
+  const applyWhy = $derived(applyBlocked === 'busy' ? T.applyWaitBusy : applyBlocked === 'loading' ? T.applyWaitLoading : applyBlocked === 'unreadable' ? T.applyUnreadable : '');
   const current = $derived.by(() => {
     if (view.kind === 'list' || view.kind === 'add') return null;
     const id = view.id;
