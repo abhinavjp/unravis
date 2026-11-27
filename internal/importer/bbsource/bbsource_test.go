@@ -21,7 +21,7 @@ const good = `{"v":1,"run":"r-one","seq":1,"t":"2001-09-09T01:46:40Z","cpu":12.5
 `
 
 // goodGroups is good plus a sample with the groups, the fixture of the conformance run and the fuzz seed.
-const goodGroups = good + `{"v":1,"run":"r-one","seq":4,"t":"2001-09-09T01:47:25Z","sqlHost":{"instances":[{"instance":"i","batchRequestsPerSec":5}]},"http":{"queues":[{"pool":"a","currentQueueSize":1}]},"iis":{"workers":[{"pool":"a","activeRequests":2}]},"tcp":{"retransmitsPerSec":0.5},"redis":{"state":"ok","numbers":{"used_memory":1000,"uptime_in_seconds":50,"used_cpu_user":3},"words":{"role":"master"},"slow":[{"id":1,"t":1000000100,"usec":5000,"cmd":"GET"}],"latency":[{"event":"fork","t":1000000090,"ms":12,"maxMs":30}]}}
+const goodGroups = good + `{"v":1,"run":"r-one","seq":4,"t":"2001-09-09T01:47:25Z","sqlHost":{"instances":[{"instance":"i","batchRequestsPerSec":5}]},"http":{"queues":[{"pool":"a","currentQueueSize":1}]},"iis":{"workers":[{"pool":"a","activeRequests":2}]},"tcp":{"retransmitsPerSec":0.5},"redis":{"state":"ok","numbers":{"used_memory":1000,"uptime_in_seconds":50,"used_cpu_user":3},"words":{"role":"master"},"slow":[{"id":1,"t":1000000100,"usec":5000,"cmd":"GET"}],"latency":[{"event":"fork","t":1000000090,"ms":12,"maxMs":30}]},"events":{"events":[{"channel":1,"eventId":7034,"level":2,"count":1,"t":"2001-09-09T01:47:20Z"}]},"sqlLog":{"errors":[{"instance":"i","kind":"error","number":50000,"severity":16,"count":1,"t":"2001-09-09T01:47:21Z"}]},"dumps":{"dumps":[{"name":"a.dmp","size":5,"mtime":"2001-09-09T01:47:22Z"}]}}
 `
 
 const bad = `{"v":1,"run":"r-one","seq":1,"t":"2001-09-09T01:46:40Z","cpu":12.5}
