@@ -486,7 +486,7 @@ func TestCommandsForwardToTheEngine(t *testing.T) {
 	for _, c := range cases {
 		w := newWorld(t)
 		code, _, e := w.hs(strings.Fields(c.line)...)
-		if code != ExitOK || len(w.engineCalls) != 1 || !reflect.DeepEqual(w.engineCalls[0], append([]string(nil), c.want...)) && !(len(c.want) == 0 && len(w.engineCalls[0]) == 0) {
+		if code != ExitOK || len(w.engineCalls) != 1 || (!reflect.DeepEqual(w.engineCalls[0], append([]string(nil), c.want...)) && (len(c.want) != 0 || len(w.engineCalls[0]) != 0)) {
 			t.Errorf("%q: exit %d, engine %q, want %q, err %q", c.line, code, w.engineCalls, c.want, e)
 		}
 	}

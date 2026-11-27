@@ -42,7 +42,7 @@ store of this PC is used. Value flags accept `--flag value` and `--flag=value`.
 | `policy set <o/r> --any\|--only m1,m2\|--except m1` | Set which machines may run a project | `policy.set` |
 | `hold list [--all] [--project P]` | The freeze windows | read |
 | `hold add --project P\|--all --until T --reason R` | Freeze Promote until a time | `hold.add` |
-| `hold lift <id> --reason R` | End a freeze early | `hold.lift` |
+| `hold lift <id> [--reason R]` | End a freeze early | `hold.lift` |
 | `hold check [--project P]` | Exit 5 while a freeze covers the project | read |
 | `activity [--actor A] [--limit N]` | Who did what | read |
 | `compare` | Local runs against what GitHub says | read |
