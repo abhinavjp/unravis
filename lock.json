@@ -1,24 +1,24 @@
 {
   "v": 1,
-  "state": "held",
+  "state": "free",
   "id": "d81497dd3b1940158837ec84d5d46e6c",
   "host": "9f484c6ac779",
   "pid": 71452,
   "requester": "rc-slot",
   "started": "2026-11-27T14:33:11.2628943Z",
-  "heartbeat": "2026-11-27T14:54:45.3109999Z",
+  "heartbeat": "2026-11-27T14:58:54.5627202Z",
   "channel": "rc",
   "version": "0.1.0-rc.68",
-  "stage": "Verify",
+  "stage": "idle",
   "commit": "9f2044577398a3ecb61394d82fdf83caf8554a6b",
   "holdMerges": false,
   "lease_minutes": 180,
   "reason": "",
   "last": {
+    "at": "2026-11-27T14:58:54.0675661Z",
+    "requester": "rc-slot",
     "reason": "",
     "outcome": "done",
-    "at": "2026-11-27T13:05:31.8610491Z",
-    "version": "0.1.0-rc.67",
-    "requester": "rc-slot"
+    "version": "0.1.0-rc.68"
   }
 }
