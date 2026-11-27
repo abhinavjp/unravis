@@ -496,8 +496,8 @@ func TestConfigShowListsEveryCollector(t *testing.T) {
 	if c, _, _ := r.do("config"); c != exitUsage {
 		t.Fatalf("config alone: %d", c)
 	}
-	if c, _, _ := r.do("config", "set", "host.tcp", "off"); c != exitUsage {
-		t.Fatalf("config set is not built yet and must be refused: %d", c)
+	if c, _, _ := r.do("config", "set", "host.tcp", "off"); c != exitFail { // nothing is installed here
+		t.Fatalf("config set without an installed recorder must fail: %d", c)
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) { //nolint:gosec // test file
 		t.Fatal("config show changed the settings file")

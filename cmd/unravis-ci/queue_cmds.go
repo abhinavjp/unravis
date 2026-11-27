@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -170,6 +171,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, environ []string) int {
 	pauseFile := fs.String("pause-file", "", "the pause file serve uses (default: PAUSE in the state folder)")
 	noReleasePause := fs.Bool("no-release-pause", false, "do not report a running release as a pause")
 	releaseDir := fs.String("release-dir", "", "the release script's data folder (default: where Release.ps1 keeps it)")
+	asJSON := fs.Bool("json", false, "print the same facts as one JSON object (see statusJSON)")
 	if pos, err := parseInterspersed(fs, args); err != nil || len(pos) != 0 {
 		if err == nil {
 			_, _ = fmt.Fprintln(stderr, "status: takes no arguments")
@@ -178,7 +180,6 @@ func cmdStatus(args []string, stdout, stderr io.Writer, environ []string) int {
 	}
 	dir := stateDirOf(*state, environ)
 	now := time.Now()
-	_, _ = fmt.Fprintf(stdout, "state: %s\n", dir)
 	pf := *pauseFile
 	if pf == "" {
 		pf = filepath.Join(dir, pauseFileName)
@@ -190,28 +191,13 @@ func cmdStatus(args []string, stdout, stderr io.Writer, environ []string) int {
 	if *noReleasePause {
 		rdir = ""
 	}
-	if why := pauseReason(pf, rdir, now); why != "" {
-		_, _ = fmt.Fprintf(stdout, "claiming is paused: %s\n", why)
-	}
+	why := pauseReason(pf, rdir, now)
 
 	hbs, err := localci.ReadAgents(dir)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "status:", err)
 		return exitUsage
 	}
-	_, _ = fmt.Fprintln(stdout, "agents:")
-	if len(hbs) == 0 {
-		_, _ = fmt.Fprintln(stdout, "  none (start one with: unravis-ci serve)")
-	}
-	for _, h := range hbs {
-		st := h.State
-		if !h.Fresh(now, agentStale) {
-			st = "gone"
-		}
-		_, _ = fmt.Fprintf(stdout, "  %-12s %-9s slots %d  running %d  pid %d  seen %s ago%s\n", h.Name, st, h.Slots, len(h.Jobs), h.PID, ago(now, h.LastSeen), labelText(h.Labels))
-	}
-	statusLines(stdout, hbs, now)
-
 	queue := &localci.Queue{Dir: localci.QueueDir(dir)}
 	all, err := queue.List()
 	if err != nil && !errors.Is(err, iofs.ErrNotExist) {
@@ -232,19 +218,109 @@ func cmdStatus(args []string, stdout, stderr io.Writer, environ []string) int {
 			running++
 		}
 	}
+	if *recent <= 0 {
+		finished = nil
+	} else if len(finished) > *recent {
+		finished = finished[:*recent]
+	}
+	if *asJSON {
+		return writeJSON("status", stdout, stderr, statusJSONOf(dir, why, hbs, active, finished, running, now))
+	}
+
+	_, _ = fmt.Fprintf(stdout, "state: %s\n", dir)
+	if why != "" {
+		_, _ = fmt.Fprintf(stdout, "claiming is paused: %s\n", why)
+	}
+	_, _ = fmt.Fprintln(stdout, "agents:")
+	if len(hbs) == 0 {
+		_, _ = fmt.Fprintln(stdout, "  none (start one with: unravis-ci serve)")
+	}
+	for _, h := range hbs {
+		st := agentStateOf(h, now)
+		_, _ = fmt.Fprintf(stdout, "  %-12s %-9s slots %d  running %d  pid %d  seen %s ago%s\n", h.Name, st, h.Slots, len(h.Jobs), h.PID, ago(now, h.LastSeen), labelText(h.Labels))
+	}
+	statusLines(stdout, hbs, now)
 	_, _ = fmt.Fprintf(stdout, "queue: %d waiting, %d running\n", len(active)-running, running)
 	for _, r := range active {
 		_, _ = fmt.Fprintln(stdout, requestLine(now, r))
 	}
-	if *recent > 0 && len(finished) > 0 {
-		if len(finished) > *recent {
-			finished = finished[:*recent]
-		}
+	if len(finished) > 0 {
 		_, _ = fmt.Fprintln(stdout, "finished (newest first):")
 		for _, r := range finished {
 			_, _ = fmt.Fprintln(stdout, requestLine(now, r))
 		}
 	}
+	return exitOK
+}
+
+// agentStateOf is the state shown for an agent: what it said, or "gone" when its heartbeat is stale.
+func agentStateOf(h localci.Heartbeat, now time.Time) string {
+	if !h.Fresh(now, agentStale) {
+		return "gone"
+	}
+	return h.State
+}
+
+// statusJSON is the output of `status --json`: the facts of the text output, with the same names. The field
+// names are part of the command's interface; add fields, do not rename or drop them.
+type statusJSON struct {
+	StateDir     string            `json:"stateDir"`
+	Paused       bool              `json:"paused"`
+	PausedReason string            `json:"pausedReason,omitempty"` // why claiming is paused, in words
+	Agents       []agentJSON       `json:"agents"`
+	Queue        queueJSON         `json:"queue"`
+	Finished     []localci.Request `json:"finished"` // newest first, at most --recent
+}
+
+type agentJSON struct {
+	Name     string    `json:"name"`
+	State    string    `json:"state"` // ready, paused, draining, or gone when the heartbeat is stale
+	Slots    int       `json:"slots"`
+	Running  int       `json:"running"` // requests the agent runs now
+	PID      int       `json:"pid"`
+	LastSeen time.Time `json:"lastSeen"`
+	SeenAgo  string    `json:"seenAgo"` // as the text output says it
+	Labels   []string  `json:"labels"`
+	// Statuses is how posting commit statuses goes; absent when the agent posts none.
+	Statuses *localci.StatusHealth `json:"statuses,omitempty"`
+}
+
+type queueJSON struct {
+	Waiting  int               `json:"waiting"`
+	Running  int               `json:"running"`
+	Requests []localci.Request `json:"requests"` // running first, then waiting in claim order
+}
+
+func statusJSONOf(dir, why string, hbs []localci.Heartbeat, active, finished []localci.Request, running int, now time.Time) statusJSON {
+	out := statusJSON{StateDir: dir, Paused: why != "", PausedReason: why, Agents: []agentJSON{}, Finished: nonNil(finished)}
+	for _, h := range hbs {
+		labels := h.Labels
+		if labels == nil {
+			labels = []string{}
+		}
+		out.Agents = append(out.Agents, agentJSON{Name: h.Name, State: agentStateOf(h, now), Slots: h.Slots, Running: len(h.Jobs), PID: h.PID,
+			LastSeen: h.LastSeen, SeenAgo: ago(now, h.LastSeen), Labels: labels, Statuses: h.Status})
+	}
+	out.Queue = queueJSON{Waiting: len(active) - running, Running: running, Requests: nonNil(active)}
+	return out
+}
+
+// nonNil makes an empty list print as [] and not as null.
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
+// writeJSON prints v as indented JSON and one newline.
+func writeJSON(cmd string, stdout, stderr io.Writer, v any) int {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, cmd+":", err)
+		return exitUsage
+	}
+	_, _ = fmt.Fprintf(stdout, "%s\n", b)
 	return exitOK
 }
 

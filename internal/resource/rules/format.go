@@ -43,6 +43,7 @@ var displayNames = map[string]string{
 	"linux-pidstat":      "Linux pidstat samples",
 	"linux-vmstat":       "Linux vmstat samples",
 	"sql-pdh":            "SQL Server performance counters",
+	"blackbox-source":    "Blackbox recording",
 }
 
 func displayName(source string) string {
@@ -67,6 +68,7 @@ var sampleSources = map[string]string{
 	"linux-pidstat":      "Linux pidstat",
 	"linux-vmstat":       "Linux vmstat",
 	"sql-pdh":            "SQL Server performance counter",
+	"blackbox-source":    "Blackbox recording",
 }
 
 func sampleSource(source string) string {

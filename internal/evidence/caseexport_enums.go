@@ -49,6 +49,8 @@ var exportKinds = map[string]map[string]bool{
 	"iis-freb":        set("failed-request", "slow-module"),
 	"win-counters":    set("counter"),
 	"sql-pdh":         set("counter"),
+	"blackbox-source": set("counter", "recorder-start", "recording-gap", "metric", "redis-start", "slow-command", "latency-spike",
+		"win-event", "dump-file", "error", "start", "stop", "io-stall", "non-yielding", "deadlock", "wait", "login-failed"),
 	"win-events": set("win-event", "apppool-recycle", "apppool-idle-shutdown", "task-start", "task-complete",
 		"task-fail", "task-skipped", "task-stop",
 		// W2-g
@@ -112,6 +114,17 @@ func set(v ...string) map[string]bool {
 
 // fold builds a case-insensitive lookup: lower-case spelling -> the canonical
 // spelling that is exported.
+// union joins enum maps into a new one.
+func union(ms ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range ms {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func fold(v ...string) map[string]string {
 	m := make(map[string]string, len(v))
 	for _, s := range v {
@@ -319,7 +332,9 @@ var (
 		"SQLServer:Locks", "SQLServer:Latches", "SQLServer:Access Methods", "SQLServer:Wait Statistics", "SQLServer:Databases",
 		"SQLServer:Plan Cache", "SQLServer:Transactions", "SQLServer:SQL Errors", "SQLServer:Buffer Node", "SQLServer:Memory Node",
 		"SQLServer:Exec Statistics", "SQLServer:Cursor Manager by Type", "SQLServer:Workload Group Stats",
-		"SQLServer:Resource Pool Stats", "SQLServer:Availability Replica", "SQLServer:Database Replica")
+		"SQLServer:Resource Pool Stats", "SQLServer:Availability Replica", "SQLServer:Database Replica",
+		// Figures the Blackbox derives itself, so they are never filed under a Windows counter that means something else.
+		"Blackbox TCP", "Blackbox IIS", "Blackbox Memory", "Blackbox VM", "Blackbox ASP.NET")
 	counterNames = fold("% Processor Time", "% User Time", "% Privileged Time", "% Idle Time", "% Interrupt Time", "% DPC Time",
 		"% C1 Time", "% C2 Time", "% C3 Time", "Processor Frequency", "% of Maximum Frequency", "Interrupts/sec", "DPCs Queued/sec",
 		"Processor Queue Length", "Context Switches/sec", "System Calls/sec", "Threads", "Processes",
@@ -369,7 +384,12 @@ var (
 		"Bytes Sent to Replica/sec", "Bytes Received from Replica/sec", "Log Send Queue Size", "Redo Queue Size",
 		"Transaction Delay", "Mirrored Write Transactions/sec", "Log Bytes Received/sec", "Recovery Queue", "Redone Bytes/sec",
 		// W2-f: W3SVC_W3WP and APP_POOL_WAS counters A1 reads.
-		"Process ID", "Active Requests", "Active Threads Count", "Requests Rejected", "Requests / Sec")
+		"Process ID", "Active Requests", "Active Threads Count", "Requests Rejected", "Requests / Sec",
+		// The Blackbox's own figures (objects "Blackbox TCP" and "Blackbox IIS") and the HTTP.sys queue length it reads.
+		"CurrentQueueSize", "RejectedRequests", "ArrivalRate", "Retransmits/sec", "Resets/sec", "Outbound Queue", "Connection Failures/sec", "Discarded Packets/sec",
+		"Outbound Errors/sec", "Worker Ping Latency (ms)",
+		// More host figures the Blackbox reads (memory lists, CPU utility) and two it sums or converts itself.
+		"Modified Page List Bytes", "% Processor Utility", "Standby Bytes", "Memory Ballooned")
 )
 
 var counterObjectCanon = canonicalValues(counterObjects)
@@ -515,6 +535,8 @@ var (
 		"rejected_connections", "evicted_keys", "expired_keys", "latest_fork_usec", "total_connections_received",
 		"keyspace_hits", "keyspace_misses", "used_cpu_sys", "used_cpu_user", "rdb_bgsave_in_progress",
 		"aof_rewrite_in_progress")
+	// blackboxMetrics: the Redis INFO figures and the process figures of a Blackbox recording (the names do not meet).
+	blackboxMetrics = union(redisInfoMetrics, procMetrics)
 	// redisRoles: redis.log M/S/C/X, and INFO role ("slave" is written as "replica").
 	redisRoles = fold("master", "replica", "child", "sentinel")
 	// redisLogFamilies refines a redis.log kind; W2-i writes "other" for a line

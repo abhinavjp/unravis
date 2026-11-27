@@ -5,6 +5,8 @@
 
 .DESCRIPTION
   What it does, in order. Nothing is checked out or changed on this PC: branches and the merge are made on GitHub.
+    0. Checks the holds (freeze windows): `unravis-ci hold check --project <Project>`. An active hold stops it with the hold's
+       reason, owner and end (exit 5). Holds that cannot be read stop it too: not knowing is not "free". Checked again before the merge.
     1. Reads the release lock (read only, never written here). A held lock with merges on hold stops it (or waits, -WaitMinutes).
     2. Picks the commit: the tip of develop, or -UpTo <sha> (a commit that is on develop).
     3. Refuses when master already contains that commit ("nothing to promote").
@@ -19,12 +21,16 @@
   The release manager (Release.ps1) then cuts from master as before; its "CI green on master" wait is on the push run of the merge commit.
 
 .PARAMETER UpTo       Promote develop up to this commit (full or short sha). Default: the tip of develop.
-.PARAMETER DryRun     Do steps 1 to 3 and print the plan. Creates nothing.
+.PARAMETER DryRun     Do steps 0 to 3 and print the plan. Creates nothing.
 .PARAMETER NoMerge    Open the pull request and stop (the check runs; merge it yourself or run again).
 .PARAMETER WaitMinutes  The lock is held with merges on hold: wait this long (checks every 30 s) instead of refusing. Default 0.
 .PARAMETER CiWaitMinutes  How long to wait for `build`. Default 45.
 .PARAMETER SkipNotesCheck  Do not stop when What's new notes are still waiting in docs/whatsnew/fragments (see "What's new check" below).
 .PARAMETER Repo       owner/name. Default abhinavjp/unravis.
+.PARAMETER Project    The project id the holds are checked for (a hold for "all" counts too). Default unravis.
+.PARAMETER CiStore    The CI store folder that holds holds.json. Default: the one unravis-ci uses (under LOCALAPPDATA).
+.PARAMETER CiExe      The unravis-ci.exe that runs the hold check. Default: built from this checkout (cmd/unravis-ci) into
+                      %TEMP%, else unravis-ci.exe on PATH. Without one the promotion is refused.
 
 .NOTES
   What's new check (read only, before anything is created): people-visible changes bring a small note file in docs/whatsnew/fragments/.
@@ -40,7 +46,10 @@ param(
     [switch]$SkipNotesCheck,
     [int]$WaitMinutes = 0,
     [int]$CiWaitMinutes = 45,
-    [string]$Repo = 'abhinavjp/unravis'
+    [string]$Repo = 'abhinavjp/unravis',
+    [string]$Project = 'unravis',
+    [string]$CiStore = '',
+    [string]$CiExe = ''
 )
 $ErrorActionPreference = 'Stop'
 # The Node version CI builds the web files with (ci.yml, release.yml, fast-gate.yml: node-version). tools/ci/test-promote-dist.mjs checks they agree.
@@ -48,6 +57,48 @@ $DistNodeVersion = '22.23.5'
 function Stop-Here([string]$msg) { Write-Host $msg -ForegroundColor Red; exit 1 }
 # Not named Gh: PowerShell finds commands case-insensitively, so a function Gh made "& gh" call itself (call depth overflow).
 function Invoke-Gh { $out = & gh @args 2>&1; if ($LASTEXITCODE -ne 0) { throw "gh $($args -join ' ') failed: $($out | Out-String)" }; ($out | Out-String).Trim() }
+
+# --- 0. holds (freeze windows) -----------------------------------------------------------------------------------------
+# The check is unravis-ci's own (`hold check`, exit 5 while a hold covers the project), so the script and the CLI cannot disagree
+# about what "active" means. It runs before anything on GitHub is read or made (so also in -DryRun), and again before the merge
+# (a hold may be added while CI runs). Fail closed: an exit other than 0 (free) or 5 (held), or no checker at all, refuses.
+function Resolve-HoldChecker {
+    $ErrorActionPreference = 'Continue' # go build and the check write to stderr; their exit codes decide, not the stream
+    if ($CiExe) {
+        if (-not (Test-Path -LiteralPath $CiExe -PathType Leaf)) { Stop-Here "-CiExe $CiExe does not exist, so the holds cannot be checked. Promote is refused." }
+        return (Resolve-Path -LiteralPath $CiExe).Path
+    }
+    $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $go = Get-Command go -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($go -and (Test-Path -LiteralPath (Join-Path $root 'cmd\unravis-ci\main.go'))) {
+        $outDir = Join-Path ([System.IO.Path]::GetTempPath()) 'unravis-promote-hold'
+        $null = New-Item -ItemType Directory -Force -Path $outDir
+        $exe = Join-Path $outDir 'unravis-ci.exe'
+        Push-Location $root
+        try { $buildOut = & $go.Source build -o $exe ./cmd/unravis-ci 2>&1; $buildExit = $LASTEXITCODE } finally { Pop-Location }
+        if ($buildExit -eq 0) { return $exe }
+        Write-Host "Could not build unravis-ci from this checkout for the hold check: $($buildOut | Out-String)" -ForegroundColor Yellow
+    }
+    $onPath = Get-Command unravis-ci -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($onPath) { return $onPath.Source }
+    Stop-Here 'No unravis-ci to check the holds with (no Go to build it from this checkout, none on PATH). Promote is refused until the holds can be checked; pass -CiExe <path to unravis-ci.exe>.'
+}
+$HoldChecker = Resolve-HoldChecker
+function Assert-NotHeld([string]$When) {
+    $ErrorActionPreference = 'Continue'
+    $holdArgs = @('hold', 'check', '--project', $Project)
+    if ($CiStore) { $holdArgs += @('--state-dir', $CiStore) }
+    $holdOut = (& $HoldChecker @holdArgs 2>&1 | Out-String).Trim()
+    $holdExit = $LASTEXITCODE
+    if ($holdExit -eq 0) { Write-Host "Holds: none active for $Project ($When)."; return }
+    if ($holdExit -eq 5) {
+        Write-Host $holdOut -ForegroundColor Red
+        Write-Host "Promote refused ($When): a hold is active for $Project. Wait until it ends, or have it lifted (unravis-ci hold lift <id> --reason ...)." -ForegroundColor Red
+        exit 5
+    }
+    Stop-Here "Promote refused ($When): the holds could not be checked (unravis-ci hold check exit $holdExit): $holdOut"
+}
+Assert-NotHeld 'before start'
 
 & gh auth status *> $null; if ($LASTEXITCODE -ne 0) { Stop-Here 'gh is not signed in (run: gh auth login).' }
 
@@ -278,6 +329,7 @@ Write-Host 'build is green.'
 # --- 6. lock again, then merge (a release may have started while CI ran) ---------------------------------------------
 $lock = Get-Lock
 if ($lock -and $lock.state -eq 'held' -and $lock.holdMerges) { Stop-Here "A release took the lock while CI ran (stage $($lock.stage)). Pull request #$pr stays open and green; run again after the release." }
+Assert-NotHeld "before merging pull request #$pr; it stays open"
 & gh pr merge $pr --repo $Repo --merge --match-head-commit $expectedHead 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { Stop-Here "The merge was refused (master may have moved: run again, it brings master in and waits for build once more)." }
 Write-Host "Promoted develop up to ${short} to master. The full CI run on master's new commit is the one the release manager waits for." -ForegroundColor Green

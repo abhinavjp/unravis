@@ -384,13 +384,3 @@ func (s *Store) DropUnresolved(ctx context.Context, name, folder string) error {
 	d.Files = kept
 	return s.writeUnresolved(d)
 }
-
-// sweepSkips says whether Sweep must leave a row alone whatever its age: an
-// archived case (kept or freed) and one mid-move are never swept, and a Missing
-// row has no folder to erase.
-func sweepSkips(info casestore.CaseInfo) bool {
-	if info.Missing || info.Mark == casestore.MarkArchiving || info.Mark == casestore.MarkFreeing {
-		return true
-	}
-	return info.Archive != nil && (info.Archive.Active || info.Archive.Pending != nil)
-}

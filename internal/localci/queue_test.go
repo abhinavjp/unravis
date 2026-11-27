@@ -3,7 +3,10 @@ package localci
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -378,5 +381,152 @@ func TestQueueRejectsBadRequests(t *testing.T) {
 		if _, _, err := q.Enqueue(r); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestMoveToTopTakesTheNextClaimOverPRsAndPushes(t *testing.T) {
+	q, _ := newTestQueue(t)
+	mustEnqueue(t, q, prReq(1, "a1"))
+	push := mustEnqueue(t, q, Request{Kind: KindPush, Repo: "o/r", Ref: "develop", SHA: "b1", Workflow: "ci.yml"})
+	mustEnqueue(t, q, prReq(2, "c1"))
+	got, err := q.MoveToTop(push.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Priority != PriorityPR-1 {
+		t.Fatalf("priority %d, want %d (below the lowest queued value)", got.Priority, PriorityPR-1)
+	}
+	next, err := q.Claim("a", nil)
+	if err != nil || next == nil || next.ID != push.ID {
+		t.Fatalf("the moved push was not claimed first: %+v, %v", next, err)
+	}
+	if next.Kind != KindPush || next.SHA != "b1" || next.EnqueuedAt.IsZero() {
+		t.Fatalf("a move changed more than the priority: %+v", next)
+	}
+}
+
+func TestMoveToTopTwiceKeepsTheLaterOneInFront(t *testing.T) {
+	q, _ := newTestQueue(t)
+	a := mustEnqueue(t, q, prReq(1, "a1"))
+	b := mustEnqueue(t, q, prReq(2, "b1"))
+	if _, err := q.MoveToTop(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.MoveToTop(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	rs, _ := q.List()
+	if rs[0].ID != a.ID || rs[1].ID != b.ID {
+		t.Fatalf("order after moving b then a: %s, %s", rs[0].ID, rs[1].ID)
+	}
+	again, err := q.MoveToTop(a.ID)
+	if err != nil || again.Priority != rs[0].Priority {
+		t.Fatalf("moving the first request again must change nothing: %+v %v", again, err)
+	}
+}
+
+func TestMoveToTopOfAnEqualPriorityRequestThatWasEnqueuedFirstStillGoesBelow(t *testing.T) {
+	q, _ := newTestQueue(t)
+	a := mustEnqueue(t, q, prReq(1, "a1"))
+	mustEnqueue(t, q, prReq(2, "b1"))
+	got, err := q.MoveToTop(a.ID)
+	if err != nil || got.Priority >= PriorityPR {
+		t.Fatalf("a request tied for first must be made strictly first: %+v %v", got, err)
+	}
+}
+
+func TestMoveToTopRefusesARunningOrFinishedRequestAndAnUnknownOne(t *testing.T) {
+	q, _ := newTestQueue(t)
+	run := mustEnqueue(t, q, prReq(1, "a1"))
+	done := mustEnqueue(t, q, prReq(2, "b1"))
+	waiting := mustEnqueue(t, q, prReq(3, "c1"))
+	if c, _ := q.Claim("a", nil); c == nil || c.ID != run.ID {
+		t.Fatalf("setup: %+v", c)
+	}
+	if _, err := q.Cancel(done.ID, "test"); err != nil {
+		t.Fatal(err)
+	}
+	for name, id := range map[string]string{"running": run.ID, "finished": done.ID} {
+		_, err := q.MoveToTop(id)
+		if !errors.Is(err, ErrNotQueued) {
+			t.Fatalf("a %s request: err = %v, want ErrNotQueued", name, err)
+		}
+	}
+	if _, err := q.MoveToTop("q-20260101-000000-000-000000"); !errors.Is(err, ErrNoRequest) {
+		t.Fatalf("unknown id: %v", err)
+	}
+	if _, err := q.MoveToTop("../x"); err == nil {
+		t.Fatal("a path as an id must be refused")
+	}
+	if g, _ := q.Get(waiting.ID); g.Priority != PriorityPR {
+		t.Fatalf("a refused move changed another request: %+v", g)
+	}
+}
+
+func TestMoveToTopLeavesNoMarkerOrTempFileBehind(t *testing.T) {
+	q, _ := newTestQueue(t)
+	mustEnqueue(t, q, prReq(1, "a1"))
+	b := mustEnqueue(t, q, prReq(2, "b1"))
+	if _, err := q.MoveToTop(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"queued", "running"} {
+		ents, err := os.ReadDir(filepath.Join(q.Dir, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range ents {
+			if f == "running" || strings.HasPrefix(e.Name(), ".") {
+				t.Fatalf("left behind in %s: %s", f, e.Name())
+			}
+		}
+	}
+	if _, err := q.Claim("a", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMoveToTopWhileOthersClaimLosesNoRequest(t *testing.T) {
+	q, _ := newTestQueue(t)
+	var ids []string
+	for i := 1; i <= 6; i++ {
+		ids = append(ids, mustEnqueue(t, q, prReq(i, fmt.Sprintf("s%d", i))).ID)
+	}
+	var wg sync.WaitGroup
+	claimed := make(chan string, 6)
+	for w := 0; w < 3; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				c, err := q.Claim(fmt.Sprintf("agent%d", w), nil)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if c == nil {
+					return
+				}
+				claimed <- c.ID
+			}
+		}()
+	}
+	for _, id := range ids {
+		if _, err := q.MoveToTop(id); err != nil && !errors.Is(err, ErrNotQueued) {
+			t.Error(err)
+		}
+	}
+	wg.Wait()
+	close(claimed)
+	seen := map[string]bool{}
+	for id := range claimed {
+		if seen[id] {
+			t.Fatalf("%s was claimed twice", id)
+		}
+		seen[id] = true
+	}
+	queued, running := q.Depth()
+	if len(seen)+queued != 6 || running != len(seen) {
+		t.Fatalf("lost requests: claimed %d, queued %d, running %d", len(seen), queued, running)
 	}
 }

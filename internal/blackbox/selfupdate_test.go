@@ -128,6 +128,66 @@ func TestAnApplyThatCannotStartRemovesTheMarker(t *testing.T) {
 	}
 }
 
+// RV-BB-5: a marker left by a helper that never reached the swap must not skip the version for good.
+func TestAStaleMarkerRetriesTheVersionOnceThenSkipsIt(t *testing.T) {
+	r := newSURig(t, UpdateInstall)
+	clock := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	r.u.Now = func() time.Time { return clock }
+	r.u.CheckOnce(context.Background()) // marker 1.1.0 -> 1.2.0, then the helper is killed before the swap
+	if _, ok := r.marker(t); !ok {
+		t.Fatal("no marker written")
+	}
+	clock = clock.Add(3 * time.Hour) // the server is started again much later, still on 1.1.0
+	r.u.Reconcile(context.Background())
+	if _, ok := r.marker(t); ok {
+		t.Fatal("stale marker kept")
+	}
+	if r.u.tracker().Skipped("1.2.0") {
+		t.Fatal("a marker with no result skipped the version for good")
+	}
+	r.stages, r.applies = 0, 0
+	r.u.CheckOnce(context.Background())
+	if r.stages != 1 || r.applies != 1 {
+		t.Fatalf("the version was not offered again: stages %d applies %d", r.stages, r.applies)
+	}
+	// The second try also ends without a result: now it is skipped.
+	clock = clock.Add(3 * time.Hour)
+	r.u.Reconcile(context.Background())
+	if !r.u.tracker().Skipped("1.2.0") {
+		t.Fatal("a second marker without a result must skip the version")
+	}
+}
+
+func TestAFreshMarkerOnTheOldVersionStillSkipsTheVersion(t *testing.T) {
+	r := newSURig(t, UpdateInstall)
+	clock := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	r.u.Now = func() time.Time { return clock }
+	r.u.CheckOnce(context.Background())
+	clock = clock.Add(5 * time.Minute) // rolled back and restarted within minutes: a real failed swap
+	r.u.Reconcile(context.Background())
+	if !r.u.tracker().Skipped("1.2.0") {
+		t.Fatal("a failed swap must skip the version")
+	}
+}
+
+func TestAFinishedRetryForgetsTheRetryNote(t *testing.T) {
+	r := newSURig(t, UpdateInstall)
+	clock := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	r.u.Now = func() time.Time { return clock }
+	r.u.CheckOnce(context.Background())
+	clock = clock.Add(2 * time.Hour)
+	r.u.Reconcile(context.Background()) // stale: retry noted
+	if _, err := os.Stat(r.u.retryPath()); err != nil {
+		t.Fatal("no retry note written")
+	}
+	r.u.CheckOnce(context.Background())
+	r.u.Version = "1.2.0" // the retry worked
+	r.u.Reconcile(context.Background())
+	if _, err := os.Stat(r.u.retryPath()); err == nil {
+		t.Fatal("the retry note outlived the finished update")
+	}
+}
+
 func TestReconcileSuccessAndFailure(t *testing.T) {
 	r := newSURig(t, UpdateInstall)
 	r.u.CheckOnce(context.Background()) // marker 1.1.0 -> 1.2.0

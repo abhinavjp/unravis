@@ -21,14 +21,6 @@ import (
 
 const version = "0.1.0"
 
-// Exit codes.
-const (
-	exitOK          = 0
-	exitFailed      = 1
-	exitUsage       = 2
-	exitUnsupported = 3
-)
-
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -64,8 +56,14 @@ func realMain(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return cmdCancel(args[1:], stdout, stderr, environ)
 	case "rerun":
 		return cmdRerun(ctx, args[1:], stdout, stderr, environ)
+	case "queue":
+		return cmdQueue(args[1:], stdout, stderr, environ)
 	case "drain":
 		return cmdDrain(args[1:], stdout, stderr, environ)
+	case "policy":
+		return cmdPolicy(args[1:], stdout, stderr, environ)
+	case "machines":
+		return cmdMachines(args[1:], stdout, stderr, environ)
 	case "compare":
 		return cmdCompare(ctx, args[1:], stdout, stderr, environ)
 	case "claims":
@@ -74,6 +72,10 @@ func realMain(ctx context.Context, args []string, stdout, stderr io.Writer, envi
 		return cmdExclusive(ctx, args[1:], stdout, stderr, environ)
 	case "fallback":
 		return cmdFallback(ctx, args[1:], stdout, stderr, environ)
+	case "hold":
+		return cmdHold(args[1:], stdout, stderr, environ)
+	case "activity":
+		return cmdActivity(args[1:], stdout, stderr, environ)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return exitOK
@@ -90,7 +92,7 @@ func usage(w io.Writer) {
         [--ref REF] [--sha SHA] [--base-ref B] [--head-ref H] [--input k=v]... [--var k=v]... [--job id]...
         [--slots N] [--config FILE] [--allow-env NAME]... [--dry-run]
   unravis-ci run-pr <number> --repo owner/name [--state DIR] [--workflow-for base=file.yml]... [--protect PATH]... [--trusted-base B]... [--allow-env NAME]... [--keep] [--slots N]
-  unravis-ci runs [--state DIR] [--limit N]
+  unravis-ci runs [--state DIR] [--limit N] [--json]
   unravis-ci log <runid> [job|_checkout|_trust] [--state DIR]
   unravis-ci serve [--repo owner/name] [--state DIR] [--name N] [--slots N] [--label L]... [--interval 30s] [--quiet 60s]
         [--workflow-for base=file.yml]... [--push-workflow branch=file.yml]... [--schedule file.yml]... [--in-process]
@@ -100,15 +102,28 @@ func usage(w io.Writer) {
         [--no-claims] [--claim-ttl 5m] [--compare-every 10m]
   unravis-ci exclusive <resource> [--state DIR] -- <command> [args...]
   unravis-ci run-item <id> [--state DIR] [--child] [--origin URL] [--job-slots N] [--protect PATH]... [--trusted-base B]... [--allow-env NAME]...
-  unravis-ci status [--state DIR] [--recent N]
+  unravis-ci status [--state DIR] [--recent N] [--json]
   unravis-ci cancel <id|pr> [--state DIR] [--reason TEXT]
   unravis-ci rerun <runid|pr> [--state DIR] [--repo owner/name]
   unravis-ci drain [--state DIR] [--name N]
+  unravis-ci queue list [--state-dir DIR] [--state queued|running|active|done|cancelled|superseded] [--json]
+  unravis-ci queue top <id|pr> [--state-dir DIR]
+  unravis-ci queue pause|resume [--state-dir DIR]
+  unravis-ci policy set <owner/name> --any|--only m1,m2|--except m1 [--force] [--dry-run] [--state-dir DIR] [--json]
+  unravis-ci policy show <owner/name> [--state-dir DIR] [--json]
+  unravis-ci machines [list] [--state-dir DIR] [--json]
+  unravis-ci machines allow|deny <name> --project owner/name [--force] [--dry-run] [--state-dir DIR] [--json]
+  unravis-ci machines resume <name> [--state-dir DIR] [--json]
   unravis-ci compare [--repo owner/name] [--state DIR] [--limit N] [--json] [--workflow-for base=file.yml]... [--context file.yml=name]...
   unravis-ci claims [--repo owner/name] [--clean]
   unravis-ci fallback <pr> [--repo owner/name] [--dry-run] [--workflow-for base=file.yml]...
+  unravis-ci hold add --project P|--all --until T --reason R [--from T] [--owner O] [--actor A] [--state-dir DIR] [--json]
+  unravis-ci hold lift <id> [--reason R] [--by NAME] [--actor A] [--state-dir DIR] [--json]
+  unravis-ci hold list [--all] [--project P] [--state-dir DIR] [--json]
+  unravis-ci hold check [--project P] [--state-dir DIR] [--json]   (exit 5 while a hold is active)
+  unravis-ci activity [--actor ui|cli|claude] [--limit N] [--state-dir DIR] [--json]
   unravis-ci version
-exit codes: 0 pass, 1 workflow failed, 2 usage or I/O error, 3 unsupported
+exit codes: 0 pass, 1 workflow failed, 2 usage or I/O error, 3 unsupported, 5 held by a hold (4 stopped is reserved)
 `)
 }
 

@@ -46,6 +46,7 @@ const (
 	maxProgramSize = 200 << 20
 	programName    = "unravis-blackbox.exe"
 	pendingName    = "pending.json"
+	retryName      = "retried.json"
 
 	// ManagedMarkerName is a file Unravis (its installer, or its install button) leaves in the program folder. It says Unravis updates
 	// this Blackbox together with itself: Unravis pins the exact recorder program it ships, so a Blackbox that updated itself
@@ -248,8 +249,9 @@ func (u *SelfUpdater) Status() *UpdateStatus {
 }
 
 // Reconcile is called once when the service starts. A pending marker means the last run asked for an update: if this program is
-// the version it asked for, the update worked; if not, it failed (and was rolled back), so that version is skipped and not tried
-// again until a newer one appears.
+// the version it asked for, the update worked; if not and the marker is recent, it failed (and was rolled back), so that version is
+// skipped and not tried again until a newer one appears. A marker older than staleAfter says the helper never reached a result (it died
+// or was stopped before the swap): that version is tried once more, and skipped only if that try also ends without a result.
 func (u *SelfUpdater) Reconcile(ctx context.Context) {
 	path := filepath.Join(u.Dir, pendingName)
 	var p pending
@@ -272,6 +274,12 @@ func (u *SelfUpdater) Reconcile(ctx context.Context) {
 			}
 		}
 		u.logf("update to %s finished", p.To)
+		u.forgetRetry()
+	} else if u.staleMarker(p) && !u.retriedBefore(p.To) {
+		// The marker is old: the helper was most likely stopped before it swapped the program, so the update never ran to a result.
+		// That is not a failed update, so the version is offered again, once. If that try also ends without a result it is skipped.
+		u.logf("an earlier update to %s never finished; staying on %s and trying %s once more", p.To, u.Version, p.To)
+		u.noteRetry(p.To)
 	} else {
 		u.logf("update to %s did not take; staying on %s and not trying %s again", p.To, u.Version, p.To)
 		u.tracker().Skip(p.To)
@@ -279,6 +287,35 @@ func (u *SelfUpdater) Reconcile(ctx context.Context) {
 	_ = os.Remove(path)
 	u.cleanStage()
 }
+
+// staleAfter is how old a pending marker must be before a restart on the old version is read as "the update never ran", not "the
+// new program failed". A program that fails is put back by the helper within a couple of minutes, so a marker older than this was
+// left by a helper that died or never got as far as the swap.
+const staleAfter = 30 * time.Minute
+
+func (u *SelfUpdater) staleMarker(p pending) bool {
+	return u.now().Sub(p.At) > staleAfter
+}
+
+type retryNote struct {
+	To string `json:"to"`
+}
+
+func (u *SelfUpdater) retryPath() string { return filepath.Join(u.Dir, retryName) }
+
+// retriedBefore says whether version already had its one extra try after a marker that was left without a result.
+func (u *SelfUpdater) retriedBefore(version string) bool {
+	var n retryNote
+	data, err := os.ReadFile(u.retryPath())
+	return err == nil && len(data) <= 1024 && json.Unmarshal(data, &n) == nil && n.To == version
+}
+
+func (u *SelfUpdater) noteRetry(version string) {
+	b, _ := json.Marshal(retryNote{To: version})
+	_ = os.WriteFile(u.retryPath(), b, 0o600)
+}
+
+func (u *SelfUpdater) forgetRetry() { _ = os.Remove(u.retryPath()) }
 
 // cleanStage removes staged programs and downloaded zips. It touches only names this updater makes.
 func (u *SelfUpdater) cleanStage() {

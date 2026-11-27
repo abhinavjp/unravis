@@ -476,6 +476,28 @@ func TestModeMustMatchWhatWasParsed(t *testing.T) {
 	}
 }
 
+// RV-SUP-4: the word after a flag that takes a value is that value, so "--request --demo" is not the app's --demo option.
+func TestLegacyOptionNamedAsAFlagValueIsNotALegacyOption(t *testing.T) {
+	for _, args := range [][]string{
+		{"version", "--request", "--demo", "--json"},
+		{"version", "--request=--demo", "--json"},
+		{"--request", "--mcp", "version", "--json"},
+		{"version", "--timeout", "--port", "--json"},
+		{"version", "-o", "--demo"},
+	} {
+		r := run(t, nil, args...)
+		if strings.Contains(r.err, "LEGACY_OPTION") || strings.Contains(r.out, "LEGACY_OPTION") {
+			t.Errorf("%v: a flag value was read as a legacy option: %+v", args, r)
+		}
+	}
+	// a switch takes no value, so the option after it is still caught
+	for _, args := range [][]string{{"version", "--json", "--demo"}, {"version", "--quiet", "--mcp"}, {"version", "-q", "--port=1"}} {
+		if r := run(t, nil, args...); r.code != 2 || !strings.Contains(r.err, "LEGACY_OPTION") {
+			t.Errorf("%v: %+v", args, r)
+		}
+	}
+}
+
 func TestLegacyOptionsAnywhere(t *testing.T) {
 	for _, args := range [][]string{
 		{"-o", "json", "--mcp"}, {"--json", "--mcp"}, {"version", "--mcp", "-o", "json"}, {"--quit", "--json"}, {"--check-update", "--json"},
