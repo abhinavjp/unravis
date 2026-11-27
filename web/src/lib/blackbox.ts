@@ -220,6 +220,8 @@ export interface Settings {
   probe: { enabled: boolean };
   /** Which SQL checks the SQL service runs. Missing means the standard set. Settings only: no server, login or password lives here. */
   sql?: { profile?: string; extras?: string[]; queryText?: boolean; queryTextMaxChars?: number };
+  /** What the Redis collector reads on this PC. Settings only: the password is never here (it is typed on the PC that runs Redis). */
+  redis?: { profile?: string; port?: number; slowlog?: boolean; latency?: boolean; clients?: boolean; slowArgs?: boolean };
   /** The app pools and services the owner picked for per-process detail. Empty means machine-wide only. */
   targets: TargetRef[];
 }
@@ -280,7 +282,7 @@ export function refusedField(error: unknown): SettingsProblem | null {
 }
 
 /** The step of the Place wizard that owns a setting, so a refusal can send the person there. */
-export function stepOfSetting(field: SettingsProblem): 'name' | 'record' | 'watch' | 'keep' | 'folder' {
+export function stepOfSetting(field: SettingsProblem): 'name' | 'record' | 'watch' | 'keep' | 'folder' | 'redis' {
   switch (field) {
     case 'name': return 'name';
     case 'interval': case 'logs': return 'record';

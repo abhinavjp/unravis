@@ -4,7 +4,7 @@
   import { ledger } from '../lib/ledgerStore.svelte';
   import { formatTime } from '../lib/time';
   import {
-    EXPORT_TEXT, RECORD_FIELDS, canSave, contentMatches, describeCount, downloadName, errorText, exportInput, exportSummary, listsAsked, qualityRows, savedLine, stateLabel,
+    EXPORT_TEXT, RECORD_FIELDS, canSave, contentMatches, describeCount, downloadName, errorText, exportInput, exportSummary, failedSaveOutcome, listsAsked, qualityRows, stateLabel,
     type ExportPhase
   } from '../lib/export';
   import type { Query } from '../lib/types';
@@ -80,8 +80,8 @@
       setTimeout(() => URL.revokeObjectURL(url), 0);
       phase = { kind: 'saved', preview: shown, filename, sha256: file.sha256 };
     } catch (cause) {
-      problem = errorText(cause, 'save');
-      phase = { kind: 'preview', preview: shown };
+      // The confirm call may have used the preview up, so Save would fail again: go back to Preview and say why.
+      ({ phase, problem } = failedSaveOutcome(cause));
     }
   }
 </script>
@@ -237,8 +237,11 @@
 
       <div class="export-save">
         {#if phase.kind === 'saved'}
-          <p class="export-saved" role="status">{savedLine(phase.sha256)}</p>
-          <p class="export-note">{phase.filename}</p>
+          <p class="export-saved" role="status">{EXPORT_TEXT.downloadStarted}</p>
+          <dl class="record-facts">
+            <div><dt>{EXPORT_TEXT.fileNameLabel}</dt><dd><code>{phase.filename}</code></dd></div>
+            <div><dt>{EXPORT_TEXT.savedHashLabel}</dt><dd><code>{phase.sha256}</code></dd></div>
+          </dl>
         {:else if !summary.empty}
           <button type="button" class="primary-button" disabled={!canSave(phase)} onclick={save}>{phase.kind === 'saving' ? EXPORT_TEXT.saving : EXPORT_TEXT.save}</button>
           <p class="export-note">{EXPORT_TEXT.saveNote}</p>
