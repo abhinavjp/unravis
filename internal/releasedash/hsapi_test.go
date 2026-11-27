@@ -127,6 +127,32 @@ func TestHSQueueShowsWaitingReasonPriorityAndSuperseded(t *testing.T) {
 	}
 }
 
+func TestHSQueueExposesRunIDAndNeededLabelsForTheButtons(t *testing.T) {
+	f := newCIFixture(t)
+	q := hsQueueOf(t, f)
+	// What a machine must have shows in the "Needs" column.
+	a, _, err := q.Enqueue(localci.Request{Kind: localci.KindPush, Repo: "o/r", Ref: "develop", SHA: "abcdef1111111111111111111111111111111111", Workflow: "fast-gate.yml", Labels: []string{"windows", "gpu"}})
+	must(t, err)
+	// A finished request carries the run it made, so Retry knows what to run again.
+	_, err = q.Complete(f.liveReq, "20260101-000000-abc", "success", "")
+	must(t, err)
+	out := decode[HSQueue](t, f.get(t, "/api/queue"))
+	var gotLabels, gotRun bool
+	for _, r := range out.Queued {
+		if r.ID == a.ID && len(r.Labels) == 2 && r.Labels[0] == "windows" && r.Labels[1] == "gpu" {
+			gotLabels = true
+		}
+	}
+	for _, r := range out.Done {
+		if r.ID == f.liveReq && r.RunID == "20260101-000000-abc" && r.Conclusion == "success" {
+			gotRun = true
+		}
+	}
+	if !gotLabels || !gotRun {
+		t.Fatalf("labels %v run %v: %+v", gotLabels, gotRun, out)
+	}
+}
+
 func TestHSQueueLimitAndBadValues(t *testing.T) {
 	f := newCIFixture(t)
 	q := hsQueueOf(t, f)
