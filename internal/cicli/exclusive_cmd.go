@@ -1,4 +1,4 @@
-package main
+package cicli
 
 import (
 	"context"
@@ -25,7 +25,7 @@ func cmdExclusive(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		}
 	}
 	if split == len(args) || split+1 == len(args) {
-		_, _ = fmt.Fprintln(stderr, "exclusive: usage: unravis-ci exclusive <resource> [--state DIR] -- <command> [args...]")
+		_, _ = fmt.Fprintln(stderr, "exclusive: usage: "+EngineProg+" exclusive <resource> [--state DIR] -- <command> [args...]")
 		return exitUsage
 	}
 	fs := flag.NewFlagSet("exclusive", flag.ContinueOnError)

@@ -1,4 +1,4 @@
-package main
+package cicli
 
 import (
 	"flag"
@@ -153,7 +153,7 @@ func cmdHoldLift(args []string, stdout, stderr io.Writer, environ []string) int 
 		return exitUsage
 	}
 	if len(pos) != 1 {
-		_, _ = fmt.Fprintln(stderr, "hold lift: give one hold id (see: unravis-ci hold list)")
+		_, _ = fmt.Fprintln(stderr, "hold lift: give one hold id (see: "+Prog+" hold list)")
 		return exitUsage
 	}
 	act, err := actorOf(*actor, environ)
@@ -309,8 +309,8 @@ func cmdHoldCheck(args []string, stdout, stderr io.Writer, environ []string) int
 	} else {
 		_, _ = fmt.Fprintf(stdout, "Promote is held for %s.\n", what)
 		for _, h := range active {
-			_, _ = fmt.Fprintf(stdout, "  hold %s (%s): %s\n    owner %s, until %s\n    lift it early with: unravis-ci hold lift %s --reason \"...\"\n",
-				h.ID, projectText(h.Project), h.Reason, h.Owner, whenText(h.End), h.ID)
+			_, _ = fmt.Fprintf(stdout, "  hold %s (%s): %s\n    owner %s, until %s\n    lift it early with: %s hold lift %s --reason \"...\"\n",
+				h.ID, projectText(h.Project), h.Reason, h.Owner, whenText(h.End), Prog, h.ID)
 		}
 	}
 	if len(active) > 0 {
