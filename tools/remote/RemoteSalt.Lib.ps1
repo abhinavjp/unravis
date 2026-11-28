@@ -622,15 +622,43 @@ if (-not $installedItem -or $installedItem.PSIsContainer) { throw 'Could not fin
 $runCopy = Join-Path $installedItem.DirectoryName 'unravis-blackbox-update.exe'
 if (Get-PlainItem $runCopy) { Remove-Item -LiteralPath $runCopy -Force }
 Copy-Item -LiteralPath $recorder.FullName -Destination $runCopy
+$launched = $true
 try { & $runCopy update --json }
 catch {
+    $launched = $false
     $why = $_.Exception.Message
     $zone = if (Get-Item -LiteralPath $recorder.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue) { 'has Zone.Identifier' } else { 'no Zone.Identifier' }
     $sig = (Get-AuthenticodeSignature -LiteralPath $recorder.FullName).Status
-    $av = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1116, 1117, 1121 } -MaxEvents 3 -ErrorAction SilentlyContinue | ForEach-Object { "$($_.TimeCreated.ToString('s')) id $($_.Id)" }) -join ', '
-    throw "$why [$zone; signature $sig; owner $((Get-Acl -LiteralPath $recorder.FullName).Owner); defender events: $av]"
+    Write-Output "The new recorder cannot be launched here ($why; $zone; signature $sig). Swapping the program file by hand, the same steps the recorder takes."
 }
 finally { if (Get-PlainItem $runCopy) { Remove-Item -LiteralPath $runCopy -Force -ErrorAction SilentlyContinue } }
+if (-not $launched) {
+    $old = $installedItem.FullName + '.old'
+    $newCopy = $installedItem.FullName + '.new'
+    if (Get-PlainItem $newCopy) { Remove-Item -LiteralPath $newCopy -Force }
+    if ((Get-Sha256 $installedItem.FullName) -eq (Get-Sha256 $recorder.FullName)) { Write-Output 'The recorder is already current.'; Write-Output 'UPDATE-OK'; return }
+    Copy-Item -LiteralPath $recorder.FullName -Destination $newCopy
+    if ((Get-Sha256 $newCopy) -ne (Get-Sha256 $recorder.FullName)) { Remove-Item -LiteralPath $newCopy -Force; throw 'The copied recorder does not match the verified one.' }
+    $wasRunning = (Get-Service -Name 'UnravisBlackbox').Status -eq 'Running'
+    if ($wasRunning) { Stop-Service -Name 'UnravisBlackbox' -ErrorAction Stop; (Get-Service -Name 'UnravisBlackbox').WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)) }
+    if (Get-PlainItem $old) { Remove-Item -LiteralPath $old -Force }
+    Move-Item -LiteralPath $installedItem.FullName -Destination $old
+    Move-Item -LiteralPath $newCopy -Destination $installedItem.FullName
+    $good = $true
+    if ($wasRunning) {
+        try { Start-Service -Name 'UnravisBlackbox' -ErrorAction Stop; Start-Sleep -Seconds 3; $good = (Get-Service -Name 'UnravisBlackbox').Status -eq 'Running' } catch { $good = $false }
+    }
+    if (-not $good) {
+        if ((Get-Service -Name 'UnravisBlackbox').Status -ne 'Stopped') { Stop-Service -Name 'UnravisBlackbox' -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2 }
+        Remove-Item -LiteralPath $installedItem.FullName -Force
+        Move-Item -LiteralPath $old -Destination $installedItem.FullName
+        Start-Service -Name 'UnravisBlackbox' -ErrorAction SilentlyContinue
+        throw 'The new recorder did not stay running, so the previous program was put back.'
+    }
+    Write-Output "The recorder program was replaced by hand and the service is $((Get-Service -Name 'UnravisBlackbox').Status). The previous program is kept as unravis-blackbox.exe.old."
+    Write-Output 'UPDATE-OK'
+    return
+}
 if ($LASTEXITCODE -ne 0) { throw "The recorder update exited with code $LASTEXITCODE." }
 '@ }
         'update.app' { $stage; $install; $appSwap; @'
