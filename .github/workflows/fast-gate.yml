@@ -17,16 +17,15 @@ name: Fast gate
 #   fast-build  the gate: passes only when go and web passed.
 # Not in this gate (it is in the full run on develop and on promotion): Windows tests, the race run, the exe build,
 # screenshots, the docs check, govulncheck, osv, the desktop shell. See "What the fast gate does not check" in the spec.
-# A push to develop runs the same job once to compile everything and save the Go cache, so pull requests start warm.
+# A push to develop runs the same job once to compile everything and save the Go cache, so pull requests start warm
+# (only the local pipeline does that now; GitHub no longer starts this workflow on a push).
 on:
-  pull_request:
-    branches: [develop]
-  push:
-    branches: [develop]
-  # Cutover (docs/ci/CUTOVER.md), step 1 of 2: "Run workflow" (or `unravis-ci fallback <pr>`) runs the same gate by hand, on the branch of
-  # a pull request, for the day the local pipeline's PC is away. A manual run checks the branch merged into develop, the same shape as the
-  # merge commit of a pull request (see the "Merge develop into the checkout" step), so the gate is as strict as for a pull request.
-  # Nothing else changes in this step: GitHub still starts the gate by itself. Step 2 removes the two triggers above.
+  # Cutover (docs/ci/CUTOVER.md): GitHub no longer runs this workflow by itself. The local pipeline (unravis-ci, on the owner's PC)
+  # runs it for every pull request into develop and every push to develop and posts the required status `fast-build`.
+  # "Run workflow" (or `unravis-ci fallback <pr>`) is the way back to GitHub when that PC is away: run it on the branch of the pull
+  # request. A manual run checks the branch merged into develop, the same shape as the merge commit of a pull request (see the
+  # "Merge develop into the checkout" step), so the gate is as strict as it is for a pull request. The job keeps the name
+  # `fast-build`: only a job with that name satisfies the required check.
   workflow_dispatch:
 
 permissions:
