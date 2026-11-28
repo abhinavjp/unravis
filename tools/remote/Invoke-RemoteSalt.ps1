@@ -14,7 +14,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Check', 'ShowHostKey', 'TrustHost', 'Keys', 'SaltRun', 'Salt', 'Run', 'LogTail', 'LogGrep', 'LogList', 'EventLog', 'Service', 'MasterTail', 'WriteRequest', 'WriteApprove', 'BlackboxShow', 'BlackboxHistory', 'BlackboxStatus', 'LogPull', 'Audit')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Check', 'ShowHostKey', 'TrustHost', 'Keys', 'SaltRun', 'Salt', 'Run', 'LogTail', 'LogGrep', 'LogList', 'EventLog', 'Service', 'MasterTail', 'WriteRequest', 'WriteApprove', 'BlackboxShow', 'BlackboxHistory', 'BlackboxStatus', 'UpdateStatus', 'LogPull', 'Audit')][string]$Action,
     [string]$Target,
     [string]$Fn,
     [string[]]$FnArgs = @(),
@@ -135,6 +135,9 @@ function Get-MinionOs {
 }
 
 function Assert-Target { $e = Test-SaltTarget $Target $script:Cfg; if ($e) { Deny $e } }
+function Assert-UpdateTarget {
+    if ($Target -ne $script:UpdateTarget) { Deny "Unravis update actions are only available for $script:UpdateTarget" }
+}
 
 function Invoke-ReadRecipe([string]$Recipe) {
     Assert-Target
@@ -245,6 +248,14 @@ switch ($Action) {
     'BlackboxShow' { Invoke-BlackboxRead 'blackbox.show' }
     'BlackboxHistory' { Invoke-BlackboxRead 'blackbox.history' }
     'BlackboxStatus' { Invoke-BlackboxRead 'blackbox.status' }
+    'UpdateStatus' {
+        Assert-Target
+        Assert-UpdateTarget
+        try { $rec = New-UpdateStatusCommand $script:Cfg } catch { Deny $_.Exception.Message }
+        $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg (Get-SaltWait)
+        $r = Invoke-Planned "Read Unravis update status on $Target" $remote
+        if ($r) { Show-SaltJson $r.Out }
+    }
     'LogTail' { Invoke-ReadRecipe 'LogTail' }
     'LogGrep' { Invoke-ReadRecipe 'LogGrep' }
     'LogList' { Invoke-ReadRecipe 'LogList' }
@@ -271,6 +282,10 @@ switch ($Action) {
         if ($isBb) { $wargs = @($FnArgs | ForEach-Object { $_ -split ',' } | Where-Object { $_ -ne '' }) }
         $e = if ($isBb) { Test-BlackboxWrite $Fn $Name $wargs $script:Cfg } else { Test-WriteCall $Fn $Name $script:Cfg }
         if ($e) { Deny $e }
+        if ($Fn -in $script:UpdateFns) {
+            Assert-UpdateTarget
+            if ($FnArgs.Count) { Deny 'Update actions take a release tag in -Name and no -FnArgs' }
+        }
         $shown = if ($isBb) { (New-BlackboxCommand -Fn $Fn -Name $Name -WriteArgs $wargs).Text } else { "$Fn $Name" }
         if ($DryRun) { Write-Host "(dry run: would record a change request for $shown on $Target; nothing saved, nothing sent)"; return }
         $created = (Get-Date).ToUniversalTime().ToString('o')
@@ -300,6 +315,7 @@ switch ($Action) {
         $Target = $p.target; $Fn = $p.fn; $Name = $p.name
         Assert-Target
         $isBb = $Fn -like 'blackbox.*'
+        $isUpdate = $Fn -in $script:UpdateFns
         if ($isBb) {
             $e = Test-BlackboxWrite $Fn $Name $pargs $script:Cfg; if ($e) { Deny $e }
             $rec = New-BlackboxCommand -Fn $Fn -Name $Name -WriteArgs $pargs
@@ -308,23 +324,41 @@ switch ($Action) {
             $shown = $rec.Text; $approveSec = [Math]::Max($TimeoutSec, 200)
         } else {
             $e = Test-WriteCall $Fn $Name $script:Cfg; if ($e) { Deny $e }
-            $remote = New-SaltRemoteCommand 'salt' @($Target, $Fn, $Name) $script:Cfg 60
-            $shown = "$Fn '$Name'"; $approveSec = [Math]::Max($TimeoutSec, 90)
+            $shown = "$Fn '$Name'"
+            if ($isUpdate) {
+                Assert-UpdateTarget
+                if ($pargs.Count) { Deny 'Update actions take a release tag in -Name and no extra arguments' }
+                $rec = New-UpdateCommand $Fn $Name
+                $wait = if ($Fn -eq 'update.fetch') { [Math]::Max($TimeoutSec - 30, 600) } else { [Math]::Max($TimeoutSec - 30, 170) }
+                $approveSec = $wait + 30
+                $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg $wait
+            } else {
+                $remote = New-SaltRemoteCommand 'salt' @($Target, $Fn, $Name) $script:Cfg 60
+                $approveSec = [Math]::Max($TimeoutSec, 90)
+            }
         }
-        Write-Host ("[WriteApprove] CHANGING THE SERVER: {0} on {1}. Approval: {2}" -f $shown, $Target, $ApprovalNote)
+        Write-Host ("[WriteApprove] CHANGING THE SERVER: {0} on {1}. Approval: {2}" -f $shown, $Target, (Protect-Text $ApprovalNote $script:Secrets))
         if ($DryRun) { Write-Host ("  ssh " + ((New-SshArgs $script:Cfg $remote) -join ' ')); Write-Host '  (dry run: nothing was sent)'; return }
         Assert-KnownHost
         # Consume the request first (rename is atomic), so two approvals cannot both run, and log the attempt before it starts.
         try { Rename-Item -LiteralPath $f -NewName "$Hash.running" -ErrorAction Stop } catch { Deny 'that request was already used' }
-        Write-Audit -Action 'WriteApprove' -Decision 'starting' -Target $Target -Command $remote -Note "approved: $ApprovalNote" -Secrets $script:Secrets
-        $r = Invoke-RemoteSsh -Config $script:Cfg -RemoteCommand $remote -TimeoutSec $approveSec
-        Remove-Item -LiteralPath (Join-Path (Split-Path -Parent $f) "$Hash.running") -Force -ErrorAction SilentlyContinue
-        Write-Audit -Action 'WriteApprove' -Decision 'ran' -Target $Target -Command $remote -Note $(if ($r.TimedOut) { 'timed out; state unknown' } else { "approved: $ApprovalNote" }) -ExitCode $r.Exit -Bytes $r.Out.Length -Secrets $script:Secrets
-        if ($r.TimedOut) { throw $(if ($isBb) { 'Timed out. The change may or may not have happened; run -Action BlackboxShow and -Action BlackboxHistory before asking again.' } else { 'Timed out. The service change may or may not have happened; check with -Action Service before asking again.' }) }
+        $auditCommand = if ($isUpdate) { $shown } else { $remote }
+        Write-Audit -Action 'WriteApprove' -Decision 'starting' -Target $Target -Command $auditCommand -Note "approved: $ApprovalNote" -Secrets $script:Secrets
+        try {
+            $r = Invoke-RemoteSsh -Config $script:Cfg -RemoteCommand $remote -TimeoutSec $approveSec
+        } catch {
+            Write-Audit -Action 'WriteApprove' -Decision 'failed' -Target $Target -Command $auditCommand -Note 'SSH invocation failed; state unknown' -Secrets $script:Secrets
+            throw (Protect-Text $_.Exception.Message $script:Secrets)
+        } finally {
+            Remove-Item -LiteralPath (Join-Path (Split-Path -Parent $f) "$Hash.running") -Force -ErrorAction SilentlyContinue
+        }
+        Write-Audit -Action 'WriteApprove' -Decision 'ran' -Target $Target -Command $auditCommand -Note $(if ($r.TimedOut) { 'timed out; state unknown' } else { "approved: $ApprovalNote" }) -ExitCode $r.Exit -Bytes $r.Out.Length -Secrets $script:Secrets
+        if ($r.TimedOut) { throw $(if ($isUpdate) { 'Timed out. The update state is unknown. Check with -Action UpdateStatus before asking again.' } elseif ($isBb) { 'Timed out. The change may or may not have happened; run -Action BlackboxShow and -Action BlackboxHistory before asking again.' } else { 'Timed out. The service change may or may not have happened; check with -Action Service before asking again.' }) }
         if ($r.Exit -ne 0) {
             $hint = if ($isBb) { " The change may be refused, rolled back by the recorder, or half done: run -Action BlackboxShow and -Action BlackboxHistory before asking again." } else { '' }
             throw ("Remote command failed (exit {0}): {1} {2}{3}" -f $r.Exit, $r.Err.Trim(), (Protect-Text $r.Out $script:Secrets).Trim(), $hint)
         }
+        if ($isUpdate -and (Protect-Text $r.Out $script:Secrets) -notmatch 'UPDATE-OK') { throw ('The update step did not report success. Check with -Action UpdateStatus before asking again. Output: ' + (Protect-Text $r.Out $script:Secrets).Trim()) }
         Show-SaltJson $r.Out
     }
     'LogPull' {
