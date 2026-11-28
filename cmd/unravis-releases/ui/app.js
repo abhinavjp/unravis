@@ -77,6 +77,10 @@ function setQuery(upd) {
   const s = q.toString(); history.replaceState(null, '', '#/' + base + (s ? '?' + s : ''));
 }
 let lastPath = '';
+let landedOn = '';
+// Which page the person is on: the route and the query that picks a section. Pinning a line or choosing a step rewrites
+// other query parts without a hashchange, and a live refresh must not treat that as a new page.
+const pageKey = (R = route()) => `${R.name}/${R.id || ''}?${['changes', 'controls'].map((k) => (R.q.has(k) ? k + '=' + R.q.get(k) : '')).join('&')}`;
 
 // ---------- header ----------
 function worst() {
@@ -128,6 +132,18 @@ function noStore(what) {
   return `<div class="empty empty-top"><b>${esc(what || 'No check records found for this project.')}</b> ${D.err ? esc(D.err) : 'Homestretch reads the runs saved by <span class="mono">unravis-ci</span> on this PC. Start the agent once, and they show up here.'}</div>`;
 }
 
+function runLocation(r, request = queueRequest(r)) {
+  if (norm(r.status) === 'waiting') return Ops.waitForRun(r);
+  const placement = runPlacement(r, request);
+  const offline = norm(r.status) === 'running' ? Ops.stoppedReporting(r.agent || request?.claimedBy) : '';
+  return `${placement ? `<span class="why">${placement}</span>` : ''}${offline}${request ? Ops.replacement(request) : ''}`;
+}
+function coverChip(r, request) {
+  const n = changeCount(request);
+  if (n <= 1 || request.state === 'superseded') return '';
+  return ` <a class="chip" href="#/run/${encodeURIComponent(r.id)}?changes=1" title="${esc(CHANGE_TITLE)}">${esc(coverVerb(request, r))} ${esc(n)} changes</a>`;
+}
+
 // ---------- Overview ----------
 function viewOverview() {
   const o = D.overview;
@@ -148,8 +164,16 @@ function viewOverview() {
   } else sub = failing.length ? 'Open the failed run to see where it stopped.' : 'The last full check on every main branch passed.';
   const snap = D.snapshot; const rl = snap && snap.releases && snap.releases[0];
   const feeds = (snap && snap.feeds) || []; const rc = feeds.find((f) => f.channel === 'rc'); const stb = feeds.find((f) => f.channel === 'stable');
-  const ag = o.agents || []; const online = ag.filter((a) => a.fresh).length;
-  const free = ag.reduce((n, a) => n + Math.max(0, (a.slots || 0) - (a.jobs || []).length), 0);
+  const ag = reportedMachines(); const online = ag.filter((a) => a.state !== 'gone').length;
+  const free = ag.filter((a) => a.state === 'ready').reduce((n, a) => n + Math.max(0, (a.slots || 0) - (a.running || 0)), 0);
+  const claims = runningClaims();
+  const problems = ag.map(Ops.machineProblem).filter(Boolean);
+  const active = [...(o.running || []), ...(o.waiting || [])];
+  const activeLine = (r) => {
+    const request = queueRequest(r);
+    return `<li>${st(r.status)} <a href="#/run/${encodeURIComponent(r.id)}">${esc(wfName(r.workflow))} · ${esc(subject(r))}</a>
+      ${coverChip(r, request)}${runLocation(r, request)}</li>`;
+  };
   const pulls = (o.pulls || []).slice().sort((a, b) => (norm(b.status) === 'failed') - (norm(a.status) === 'failed'));
   const sh = o.shadow || {};
   const lane = (f, name) => {
@@ -162,20 +186,22 @@ function viewOverview() {
     if (!r) return `<tr><td colspan="6" class="muted">${esc(b.branch)} has no recorded run yet.</td></tr>`;
     const red = norm(r.status) === 'failed' ? redSince(b.branch, r.workflow) : null;
     return `<tr class="row" tabindex="0" data-href="#/run/${encodeURIComponent(r.id)}"><td class="w-st">${st(r.status)}</td>
-      <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">${esc(b.branch)}</a> <span class="mono muted">${esc(short(r.headSha || r.sha))}</span>${r.release ? ` <span class="chip mono">${ico('tag')}${esc(r.release)}</span>` : ''}<small>${esc(wfName(r.workflow))} · took ${esc(dur(r.ms))}</small></td>
+      <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">${esc(b.branch)}</a> <span class="mono muted">${esc(short(r.headSha || r.sha))}</span>${r.release ? ` <span class="chip mono">${ico('tag')}${esc(r.release)}</span>` : ''}${coverChip(r, queueRequest(r))}<small>${esc(wfName(r.workflow))} · took ${esc(dur(r.ms))}</small>${runLocation(r)}</td>
       <td class="clip"><div>${whereHtml(r)}</div></td>
       <td class="hide-s since">${red ? `<b>${red.sure ? '' : '≥ '}${esc(dur(Date.now() - Date.parse(red.since)))}</b>` : '<span class="muted">–</span>'}</td>
       <td class="hide-s">${branchHist(b.branch)}</td><td class="num">${when(r.start)}</td></tr>`;
   };
   const pullRow = (r) => { const d = disFor(r); return `<tr class="row" tabindex="0" data-href="#/run/${encodeURIComponent(r.id)}"><td class="w-st">${st(r.status)}</td>
-      <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">PR ${esc(r.pr)}</a><small class="mono" title="${esc(r.branch)}">${esc(r.branch)}</small></td><td class="clip"><div>${whereHtml(r)}</div></td>
+      <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">PR ${esc(r.pr)}</a><small class="mono" title="${esc(r.branch)}">${esc(r.branch)}</small>${runLocation(r)}</td><td class="clip"><div>${whereHtml(r)}</div></td>
       <td class="hide-s">${d ? '<span class="chip warn">No: GitHub passed</span>' : '<span class="muted" title="The run on GitHub is compared about every 10 minutes. Only differences are listed.">No difference found</span>'}</td><td class="num">${when(r.start)}</td></tr>`; };
   return `<div class="lead">${sic(hs, 'lg')}<div><h1>${esc(head)}</h1><p>${esc(sub)}</p></div></div>
+  ${problems.length ? `<div class="nowline"><p class="note"><b>Machine problem:</b> ${problems.join(' ')} <a href="#/machines">See machine</a></p></div>` : ''}
   ${Ops.holdLine()}
   <div class="nowline"><span>${sic('waiting')}<b>${(o.waiting || []).length} waiting</b></span>
     <span>${ico('pc')} <b>${online} of ${ag.length}</b> machine${ag.length === 1 ? '' : 's'} online, ${free} free slot${free === 1 ? '' : 's'}</span>
     ${rl ? `<span>${ico('tag')} Latest release <b class="mono">${esc(rl.version)}</b> ${rl.verify === 'passed' ? 'verified' : rl.verify === 'failed' ? 'failed verify' : 'not verified yet'} ${when(rl.published)}</span>` : ''}</div>
   <div class="grid2"><div>
+    ${active.length ? `<section class="sec"><div class="sh"><h2>Running and waiting</h2></div><ul class="cover-list">${active.map(activeLine).join('')}</ul></section>` : ''}
     <section class="sec"><div class="sh"><h2>Main branches</h2><span class="muted">last full check on each</span></div>
       <table class="tbl"><thead><tr><th class="w-st">Result</th><th>Branch</th><th>Where it failed</th><th class="hide-s">Red for</th><th class="hide-s">Last 16 pushes</th><th class="num">Started</th></tr></thead><tbody>${bs.map(branchRow).join('') || '<tr><td colspan="6" class="muted">This project lists no main branches.</td></tr>'}</tbody></table></section>
     <section class="sec"><div class="sh"><h2>Pull requests</h2><span class="muted">latest run for each, failing first</span><a href="#/runs?ev=pr">All pull request runs</a></div>
@@ -191,7 +217,9 @@ function viewOverview() {
       <dl class="kv"><dt>Agree</dt><dd>${sh.agree || 0}</dd><dt>Disagree</dt><dd class="${sh.disagree ? 'c-failed' : ''}">${sh.disagree || 0}</dd><dt>Only on GitHub</dt><dd>${sh.githubOnly || 0}</dd><dt>Only on this PC</dt><dd>${sh.localOnly || 0}</dd></dl>`}
       <p class="muted">GitHub still decides merges. After ${sh.gate || 20} agreeing pull requests in a row, the local result can take over.</p></div>
     <div class="card"><h3>Machines</h3><a href="#/machines">All machines</a>
-      ${ag.length ? ag.map((a) => `<div class="mrow">${ico('pc')}<b>${esc(a.name)}</b>${a.fresh ? '<span class="chip ok">Online</span>' : '<span class="chip warn">Not heard from</span>'}<span class="muted">${(a.jobs || []).length ? (a.jobs || []).length + ' busy' : 'idle'} · ${a.slots || 0} slot${a.slots === 1 ? '' : 's'}</span></div><p class="muted">Heard from ${when(a.lastSeen)}. ${a.posted || 0} result${a.posted === 1 ? '' : 's'} sent to GitHub, ${a.postFailed || 0} failed.</p>`).join('') : '<p class="muted">No machine has reported yet.</p>'}</div>
+      ${ag.length ? ag.map((a) => `<div class="mrow">${ico('pc')}${machineLink(a.name)}${machineChips(a)} ${a.slots && Number.isInteger(a.running) && a.state !== 'gone' ? `<span class="muted">${esc(slotsBusy(a))}</span>` : ''}</div>
+        ${a.state === 'gone' ? `<p class="note">Offline (${lastSeen(a)}).</p>` : ''}${machineJobs(a, claims)}
+        ${Number.isInteger(a.posted) ? `<p class="muted">${esc(a.posted)} result${a.posted === 1 ? '' : 's'} sent to GitHub, ${esc(a.postFailed || 0)} failed.</p>` : ''}`).join('') : '<p class="muted">No machine has reported yet.</p>'}</div>
     ${Ops.queueCard()}
   </aside></div>`;
 }
@@ -233,8 +261,8 @@ function viewRuns() {
   if (text) list = list.filter((r) => [r.pr ? 'pr ' + r.pr : '', r.branch, r.author, wfName(r.workflow), r.reason, short(r.headSha || r.sha)].join(' ').toLowerCase().includes(text));
   const waits = list.map(waitMs).filter((x) => x != null).sort((a, b) => a - b);
   const med = waits.length ? dur(waits[Math.floor(waits.length / 2)]) : '';
-  const row = (r) => { const d = disFor(r); const w = waitMs(r); return `<tr class="row" tabindex="0" data-href="#/run/${encodeURIComponent(r.id)}"><td class="w-st">${st(r.status)}</td>
-    <td><a class="rl" href="#/run/${encodeURIComponent(r.id)}"><span class="title">${esc(wfName(r.workflow))}</span> <span class="muted">·</span> ${esc(subject(r))}</a>${d ? ' <span class="chip warn" title="GitHub’s own run passed">GitHub disagrees</span>' : ''}<small class="mono">${esc([r.event === 'pull_request' ? r.branch : '', r.author].filter(Boolean).join(' · ')) || '&nbsp;'}</small></td>
+  const row = (r) => { const d = disFor(r); const w = waitMs(r); const request = queueRequest(r); return `<tr class="row" tabindex="0" data-href="#/run/${encodeURIComponent(r.id)}"><td class="w-st">${st(r.status)}</td>
+    <td><a class="rl" href="#/run/${encodeURIComponent(r.id)}"><span class="title">${esc(wfName(r.workflow))}</span> <span class="muted">·</span> ${esc(subject(r))}</a>${d ? ' <span class="chip warn" title="GitHub’s own run passed">GitHub disagrees</span>' : ''}${coverChip(r, request)}<small class="mono">${esc([r.event === 'pull_request' ? r.branch : '', r.author].filter(Boolean).join(' · ')) || '&nbsp;'}</small>${runLocation(r, request)}</td>
     <td class="clip"><div>${whereHtml(r)}</div></td><td class="hide-s mono muted">${esc(short(r.headSha || r.sha))}</td>
     <td class="num hide-s ${w != null && w > 3e5 ? 'c-waiting' : 'muted'}">${w == null ? '–' : esc(dur(w))}</td><td class="num">${norm(r.status) === 'running' ? 'running' : esc(dur(r.ms))}</td><td class="num">${when(r.start)}</td><td>${rowMenu(r)}</td></tr>`; };
   return `<div class="ph"><h1>Runs</h1><p>Every check this project ran. Each failed row shows where it failed.</p></div>
@@ -382,6 +410,12 @@ function viewRun(R) {
   if (!det) return `<div class="crumb">${crumb}</div>${S.runErr ? `<div class="empty"><b>The run could not be read.</b> ${esc(S.runErr)}</div>` : loadingHtml}`;
   const r = det.run;
   const state = runState(r), jobs = jobsOf(R);
+  const request = gh ? null : queueRequest(r);
+  const placement = gh ? (r.agent ? machineLink(r.agent) : '') : runPlacement(r, request);
+  const n = changeCount(request);
+  const changes = n > 1 && request.state !== 'superseded';
+  const runAgent = changes ? reportedMachines().find((m) => m.name === (r.agent || request.claimedBy)) : null;
+  const posts = runAgent ? !!runAgent.statusMode : null;
   const byKey = new Map(jobs.map((j) => [j.key, j]));
   const failed = [], counts = Object.fromEntries(Object.keys(runStates).map((s) => [s, 0]));
   let running;
@@ -427,7 +461,8 @@ function viewRun(R) {
     r.branch && `<span class="run-pill">${ico('branch')}${esc(r.branch)}</span>`,
     sha && `<span class="run-pill mono" title="${esc(sha)}">${ico('commit')}${esc(short(sha))}</span>`,
     r.start && `<span class="run-pill">${ico('clock')}<time datetime="${esc(r.start)}">${esc(exact(r.start))}</time></span>`,
-    r.agent && `<span class="run-pill">${ico('pc')}${esc(r.agent)}</span>`,
+    placement && `<span class="run-pill">${ico('pc')}<span>${placement}</span></span>`,
+    changes && `<span class="run-pill" title="${esc(CHANGE_TITLE)}">${esc(n)} changes</span>`,
     r.author && `<span class="run-pill">${ico('user')}${esc(r.author)}</span>`,
   ].filter(Boolean).join('');
   const primary = ['failed', 'running', 'waiting', 'passed'];
@@ -472,6 +507,15 @@ function viewRun(R) {
       ${extra.length ? `<p class="run-other-counts">${esc(totals.slice(primary.length).join(' · '))}</p>` : ''}
       ${actions.trim() ? `<div class="run-actions">${actions}</div>` : ''}</section>
     ${cards ? `<section class="run-causes" aria-label="What failed">${cards}</section>` : ''}
+    ${!gh && state === 'waiting' ? `<p class="note mt">${Ops.waitForRun(r)}</p>` : ''}
+    ${!gh && state === 'running' ? Ops.stoppedReporting(r.agent || request?.claimedBy) : ''}
+    ${request ? Ops.replacement(request) : ''}
+    ${changes ? `<section class="sec panel card" id="run-changes" tabindex="-1" aria-labelledby="run-changes-title">
+      <div class="sh"><h2 id="run-changes-title" title="${esc(CHANGE_TITLE)}">Changes this run checks</h2></div>
+      <p class="note">One run checks all of these changes together, so its result counts for each of them.${posts ? ' When the run ends, this agent sends the result to GitHub as a shadow <span class="mono">local/*</span> status. It does not block merging.' : posts === false ? ' This agent does not send results to GitHub, so they stay on this page.' : ''}</p>
+      ${state === 'failed' ? '<p class="note">This run failed, so we cannot tell which of these changes broke it. The failing job is under “The run, in order” on this page. Open it to see the error.</p>' : ''}
+      ${coverList(request, Ops.statusResult(state), posts ? 'Result on GitHub' : 'Result')}
+    </section>` : ''}
     ${rate?.of > 1 ? `<p class="run-rate">This step failed in ${rate.same} of the last ${rate.of} finished runs of this workflow on this PC.</p>` : ''}
     <section class="run-flow panel" aria-labelledby="run-order"><div class="run-flow-head"><h2 id="run-order">The run, in order</h2>${filters}</div>${board}</section>
     <details class="run-detail panel" id="run-detail"${S.detailOpen ? ' open' : ''}>
@@ -828,28 +872,87 @@ function dialog(kind, v) {
 }
 
 // ---------- Machines ----------
+function machineChips(m) {
+  const offline = m.state === 'gone' || m.state === 'stopped';
+  const online = m.state && !offline;
+  const accepting = m.state === 'ready';
+  return `${m.state ? `<span class="chip ${online ? 'ok' : 'warn'}" title="Whether the machine is reporting to Homestretch">${online ? 'Online' : 'Offline'}</span>` : ''}
+    ${m.state && m.state !== 'reported' ? `<span class="chip ${accepting ? 'ok' : 'warn'}" title="Whether the machine accepts new jobs">${accepting ? 'Accepting runs' : 'Not accepting'}</span>` : ''}
+    ${!offline && m.running > 0 ? `<span class="chip run" title="Jobs running on this machine">Busy ${esc(m.running)}${m.slots > 0 ? ` of ${esc(m.slots)}` : ''}</span>` : ''}`;
+}
+
+function machineJobs(m, claims, allSlots = false) {
+  const jobs = claims.filter((r) => r.claimedBy === m.name);
+  const slots = slotCount(m.slots);
+  const bySlot = new Map();
+  const orderKnown = !m.fleet || new Set(jobs.map((j) => Date.parse(j.claimedAt))).size === jobs.length;
+  const entry = (job, slot) => {
+    const run = !m.fleet && runIdForRequest(job);
+    const label = job.label || 'a job';
+    const item = run ? `<a href="#/run/${encodeURIComponent(run)}">${esc(label)}</a>` : esc(label);
+    const location = machineLink(m.name) + (slot ? `, ${slotLabel(slot, slots)}` : '');
+    return `<li>${item} · ${location}${job.claimedAt ? ` · started ${when(job.claimedAt)}` : ''}</li>`;
+  };
+  const unplaced = [];
+  for (const job of jobs) {
+    const slot = orderKnown ? slotOf(job, claims) : null;
+    if (slot && slot <= slots) bySlot.set(slot, job);
+    else unplaced.push(entry(job));
+  }
+  const runningKnown = Number.isInteger(m.running) && m.running >= 0;
+  const busy = runningKnown ? Math.max(m.running, jobs.length) : jobs.length;
+  const rows = Array.from({ length: allSlots ? slots : Math.min(busy, slots) }, (_, i) => {
+    const slot = i + 1, job = bySlot.get(slot);
+    if (job) return entry(job, slot);
+    const state = slot <= busy ? 'Busy · run placement not recorded' : m.state === 'gone' || m.state === 'stopped' ? 'Unavailable' : runningKnown ? 'Free' : 'Occupancy not recorded';
+    return `<li>${slotLabel(slot, slots)} · ${state}</li>`;
+  });
+  const list = rows.join('') + unplaced.join('');
+  return list ? `<ul class="cover-list why">${list}</ul>` : '';
+}
+
 function viewMachines() {
   const m = D.machines; const o = D.overview;
   if (!o && !m) return D.err ? noStore('Machines could not be read.') : loadingHtml;
-  if (!m || (m.show === false && !(m.machines || []).length)) return `<div class="ph"><h1>Machines</h1></div><div class="empty"><b>This project has no machine records.</b> Start <span class="mono">unravis-ci serve</span> on a PC and it shows up here.</div>`;
-  const ms = m.machines || []; const ag = (o && o.agents) || [];
+  const ag = reportedMachines(), claims = runningClaims();
+  const fleet = m?.machines || [];
+  const ms = fleet.map((x) => {
+    // The fleet id is opaque, and an agent may be started with any --name, so match by the id its heartbeat carries.
+    // The page's own agent is the single one when only one is reported.
+    const a = ag.find((agent) => agent.fleetId && agent.fleetId === x.id) || ag.find((agent) => agent.name === x.id) ||
+      (x.self ? (ag.find((agent) => agent.name === 'local') || (ag.length === 1 ? ag[0] : null)) : null);
+    if (a) return { ...x, ...a, agent: a };
+    return { ...x, name: x.id, fleet: true, state: ({ Quiet: 'gone', Stopped: 'stopped', Idle: 'reported', Running: 'reported' })[x.state], lastSeen: x.lastHeard, running: x.jobs?.length };
+  });
+  for (const a of ag) {
+    if (!ms.some((x) => x.name === a.name)) ms.push({ ...a, id: a.name, agent: a });
+  }
   const now = Date.now(); const hourAgo = now - 3600e3;
-  const mine = D.runs.filter((r) => r.agent === 'local' && ts(r.start) > hourAgo);
   const waits = D.runs.map(waitMs).filter((x) => x != null).sort((a, b) => a - b);
   const pc = (k) => (waits.length ? dur(waits[Math.min(waits.length - 1, Math.floor(waits.length * k))]) : '–');
   const card = (x) => {
-    const busy = (x.jobs || []).length; const slots = x.slots || 0; const lh = x.lastHeard ? ts(x.lastHeard) : 0; const fresh = lh && now - lh < 120e3;
-    const a = x.self ? ag[0] : null;
-    return `<div class="mach"><div><div class="mach-top">${ico('pc')}<b class="mono">${esc(x.id)}</b>${x.self ? '<span class="chip">This PC</span>' : ''}</div>
-      <div class="mt6">${!fresh ? '<span class="chip warn">Quiet</span>' : busy ? '<span class="chip run">Running</span>' : '<span class="chip ok">Idle</span>'} <span class="muted">${busy ? busy + ' job' + (busy === 1 ? '' : 's') + ' running' : 'no jobs'} · heard from ${when(x.lastHeard)}</span></div></div>
-      <div><div class="lbl">Slots</div><div class="val"><span class="slots">${Array.from({ length: slots }, (_, i) => `<i class="${i < busy ? 'busy' : ''}"></i>`).join('')}</span> ${Math.max(0, slots - busy)} of ${slots} free</div></div>
-      <div><div class="lbl">Last hour</div><div class="val">${x.self ? `${mine.length} run${mine.length === 1 ? '' : 's'}, ${mine.filter((r) => norm(r.status) === 'failed').length} failed` : '<span class="muted">Not reported by other PCs</span>'}</div></div>
+    const slots = slotCount(x.slots), a = x.agent;
+    const mine = D.runs.filter((r) => r.agent === x.name && ts(r.start) > hourAgo);
+    const waiting = (D.ops?.queue?.queued || []).filter((r) => r.why?.code !== 'ready' && r.why?.machines?.includes(x.name) &&
+      ['busy', 'offline', 'draining'].includes(r.why.code));
+    // The fleet API returns labels and start times only. Tied or missing times cannot identify a slot there.
+    const fleetJobs = (x.jobs || []).map((j, i) => ({ id: String(i), label: j.label, claimedAt: j.since, claimedBy: x.name }));
+    return `<div class="mach"><div><div class="mach-top">${ico('pc')}<b>${machineLink(x.name)}</b>${x.self ? '<span class="chip">This PC</span>' : ''}</div>
+      <div class="mrow mt6">${machineChips(x)}</div>
+      <p class="note">${lastSeen(x)} · Disk: ${x.state === 'ready' ? 'ok' : x.state === 'low-disk' ? 'low' : 'unknown'}</p>
+      ${['low-disk', 'paused', 'draining'].includes(x.state) ? Ops.machineProblem(x) : ''}
+      ${x.state === 'stopped' ? '<span class="why">Stopped. It takes no new jobs.</span>' : ''}</div>
+      <div><div class="lbl">Slots</div><div class="val">${slots && Number.isInteger(x.running) ? `${slotSquares(slots, x.running)}${esc(slotsBusy(x))}` : '<span class="muted">Capacity not recorded</span>'}</div>
+        ${Ops.nextFree(x)}${machineJobs(x, x.fleet ? fleetJobs : claims, true)}</div>
+      <div><div class="lbl">Last hour</div><div class="val">${a ? `${esc(mine.length)} run${mine.length === 1 ? '' : 's'}, ${esc(mine.filter((r) => norm(r.status) === 'failed').length)} failed` : '<span class="muted">Not reported by other PCs</span>'}</div></div>
       <div><div class="lbl">Wait for a slot</div><div class="val">${pc(0.5)} median</div><div class="muted fs-xs">slowest 1 in 20 waited ${pc(0.95)} or more, over the runs loaded</div></div>
       <div><div class="lbl">Results to GitHub</div><div class="val">${a ? `${a.posted || 0} sent${a.postFailed ? ', ' + a.postFailed + ' failed' : ', none failed'}${a.postWaiting ? ', ' + a.postWaiting + ' waiting' : ''}` : '<span class="muted">Not reported</span>'}</div><div class="muted fs-xs">Shadow mode: reported as <span class="mono">local/*</span>, does not gate merges</div></div>
-      <div>${Ops.machineCell(x)}</div></div>`;
+      <div>${Ops.machineCell(x)}</div>
+      ${waiting.length ? `<div class="machine-waiting"><div class="lbl">Waiting for this machine</div><ul class="cover-list">${waiting.map((r) =>
+        `<li><a href="#/run/${encodeURIComponent(r.id)}">${esc(r.label)}</a>${Ops.waitReason(r, 'machines')}</li>`).join('')}</ul></div>` : ''}</div>`;
   };
   const cmd = `unravis-ci serve --repo ${REPO()}`;
-  return `<div class="ph"><h1>Machines</h1><p>A machine is a PC that runs checks. Each slot runs one job at a time. A machine that has not reported for about 3 minutes shows as Quiet.</p></div>
+  return `<div class="ph"><h1>Machines</h1><p>A machine is a PC that runs checks. Each slot runs one job at a time. ${SLOT_TITLE}</p></div>
   ${ms.length ? `<div class="panel">${ms.map(card).join('')}</div>` : '<div class="empty"><b>No machine has reported yet.</b></div>'}
   <section class="sec"><div class="sh"><h2>Add a machine</h2></div><p class="muted lede">A second machine lets two pull requests check at the same time, and keeps checks going when this PC is off. On that machine, run the agent for this project:</p>
     <div class="cmd"><code>${esc(cmd)}</code><button type="button" class="btn sm" data-copy="${esc(cmd)}">${ico('copy')} Copy</button></div>
@@ -871,7 +974,13 @@ function render() {
   const R = route(); const main = $('#main'); const w = worst();
   const run = isRun(R);
   const active = document.activeElement;
-  const focused = run && main.contains(active) ? active.id : '';
+  const samePage = main.dataset.route === pageKey(R);
+  const focused = samePage && main.contains(active) ? active.id : '';
+  const summary = samePage && active?.matches('details[data-cover] > summary') ? active.parentElement.id : '';
+  const openCovers = samePage ? $$('details[data-cover][open]', main).map((d) => d.id) : [];
+  const href = samePage && main.contains(active) ? active.getAttribute('href') : null;
+  const links = () => $$('a[href]', main).filter((a) => a.getAttribute('href') === href);
+  const linkIndex = href ? links().indexOf(active) : -1;
   const caret = focused === 'lq' ? [active.selectionStart, active.selectionEnd] : null;
   const boardScroll = run ? $('#run-board')?.scrollLeft : null;
   const stepScroll = run ? $('.run-steps')?.scrollTop : null;
@@ -892,6 +1001,11 @@ function render() {
   // Older data is named at the top of the page; the Releases page puts its own note under its heading (viewReleases).
   const banner = (R.name === 'releases' ? '' : Fresh.noteHtml(R.name, Date.now())) || (D.err && D.loaded && !D.at ?`<div class="empty"><b>The last refresh failed.</b> ${esc(D.err)}</div>` : '');
   main.innerHTML = banner + html;
+  main.dataset.route = pageKey(R);
+  for (const id of openCovers) {
+    const details = document.getElementById(id);
+    if (details) details.open = true;
+  }
   $$('[data-check]', main).forEach((b) => { b.onclick = () => { toast('Checking again…'); Data.tick(true); }; });
   $$('table.tbl th', main).forEach((th) => th.setAttribute('scope', 'col'));
   $$('table.tbl', main).forEach((t) => { if (t.parentElement.className !== 'tw') { const d = document.createElement('div'); d.className = 'tw'; t.replaceWith(d); d.appendChild(t); } });
@@ -911,7 +1025,26 @@ function render() {
     replacement?.focus({ preventScroll: true });
     if (replacement && caret) replacement.setSelectionRange(...caret);
   }
+  if (summary) document.getElementById(summary)?.querySelector('summary')?.focus({ preventScroll: true });
+  if (!focused && linkIndex >= 0) links()[linkIndex]?.focus({ preventScroll: true });
+  if (landedOn !== pageKey(R)) landOnSection(R);
   document.title = ({ failed: 'Failing · ', running: 'Running · ', passed: 'Passing · ' }[w]) + (TITLES[R.name] || 'Homestretch') + ' · ' + (P().name || 'Homestretch') + ' · Homestretch';
+}
+
+function landOnSection(R) {
+  let target;
+  if (R.name === 'queue' && R.q.has('controls')) target = $('#queue-controls');
+  else if (R.name === 'queue' && R.q.has('changes')) {
+    const details = document.getElementById('queue-covers-' + R.q.get('changes'));
+    if (details) {
+      details.open = true;
+      target = details.querySelector('summary');
+    }
+  } else if (R.name === 'run' && R.q.has('changes')) target = $('#run-changes');
+  if (!target) return;
+  landedOn = pageKey(R);
+  target.scrollIntoView({ block: 'start' });
+  target.focus({ preventScroll: true });
 }
 
 // A run that is open keeps refreshing its jobs and the log of the step on screen while it is live.
@@ -957,6 +1090,7 @@ function start() {
   lastPath = location.hash.split('?')[0];
   addEventListener('hashchange', () => {
     $('#layer').innerHTML = ''; S.menu = null;
+    landedOn = '';
     const p = location.hash.split('?')[0];
     if (p !== lastPath) {
       Object.assign(S, { job: null, step: null, detailOpen: false, jobFilter: 'all', showPassed: false, revealRunDetail: false, causeLogs: null,
@@ -970,6 +1104,8 @@ function start() {
     if (isRun(route())) refreshRun(true).then((c) => { if (c) render(); });
   });
   document.addEventListener('click', (e) => {
+    const link = e.target.closest('a[href]');
+    if (link && link.getAttribute('href') === location.hash && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) landOnSection(route());
     if (S.menu && !e.target.closest('.sw') && !e.target.closest('.rowmenu')) { S.menu = null; paintChrome(); $$('.rowmenu .menu').forEach((x) => { x.hidden = true; }); $$('.kebab').forEach((x) => x.setAttribute('aria-expanded', 'false')); }
   });
   $('#keysb').onclick = keysDialog;
