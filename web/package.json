@@ -6,8 +6,8 @@
   "scripts": { "dev": "vite", "build": "vite build && vite build -c vite.setup.config.ts && vite build -c vite.lite.config.ts", "build:lite": "vite build -c vite.lite.config.ts", "build:setup": "vite build -c vite.setup.config.ts", "check": "svelte-check --tsconfig ./tsconfig.json", "test": "node --test tests/*.test.cjs" },
   "dependencies": { "echarts": "6.1.0" },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "7.3.1",
-    "svelte": "5.58.0",
+    "@sveltejs/vite-plugin-svelte": "7.3.2",
+    "svelte": "5.59.1",
     "svelte-check": "4.7.8",
     "typescript": "5.9.3",
     "vite": "8.3.8"
