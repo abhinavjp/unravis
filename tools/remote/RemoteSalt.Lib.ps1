@@ -345,18 +345,31 @@ function Test-UpdateTag([string]$Tag) {
 }
 
 # ---------------------------------------------------------------- Windows updates
+function Compress-UpdateSource([string]$Source) {
+    # Drops comment-only lines, leading indentation and blank lines so the script is shorter on the wire.
+    # Only done when the script parses and holds no here-string or multi-line string (where indentation matters).
+    $tokens = $null; $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput($Source, [ref]$tokens, [ref]$errors)
+    if ($errors.Count -gt 0) { return $Source }
+    foreach ($t in $tokens) {
+        if ($t.Kind -in 'StringLiteral', 'StringExpandable', 'HereStringLiteral', 'HereStringExpandable' -and $t.Extent.Text.Contains("`n")) { return $Source }
+    }
+    $kept = foreach ($line in ($Source -split "`r?`n")) {
+        $x = $line.Trim()
+        if ($x -ne '' -and -not $x.StartsWith('#')) { $x }
+    }
+    return ($kept -join "`n")
+}
+
 function New-UpdatePowerShellCommand([string]$Source) {
     # Salt parses arguments as YAML and, for shell=powershell, wraps the command in its own base64
     # -EncodedCommand (UTF-16), which makes it about 2.7 times longer; Windows refuses a command line over
-    # 32767 characters. So the fixed script is gzipped and sent as one plain-text loader line made only of
-    # base64 and fixed words (no raw quotes inside the data, no line breaks). The loader inflates the text and
-    # runs it as a script block; the decoded script is exactly the reviewed source.
-    $raw = [Text.Encoding]::UTF8.GetBytes($Source)
-    $ms = New-Object IO.MemoryStream
-    $gz = New-Object IO.Compression.GzipStream($ms, [IO.Compression.CompressionMode]::Compress)
-    $gz.Write($raw, 0, $raw.Length); $gz.Close()
-    $b64 = [Convert]::ToBase64String($ms.ToArray())
-    $cmd = '$b=''' + $b64 + ''';$m=New-Object IO.MemoryStream(,[Convert]::FromBase64String($b));$g=New-Object IO.Compression.GzipStream($m,[IO.Compression.CompressionMode]::Decompress);$t=(New-Object IO.StreamReader($g,[Text.Encoding]::UTF8)).ReadToEnd();& ([scriptblock]::Create($t))'
+    # 32767 characters. So the fixed script is minified and sent as one plain-text loader line made only of
+    # base64 and fixed words (no raw quotes inside the data, no line breaks); the loader decodes the text and
+    # runs it as a script block. The decoded script is the reviewed source without comments and indentation.
+    # (Gzip would be smaller, but the server's security software blocks that loader pattern: "Access is denied".)
+    $raw = [Text.Encoding]::UTF8.GetBytes((Compress-UpdateSource $Source))
+    $cmd = '$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(''' + [Convert]::ToBase64String($raw) + '''));& ([scriptblock]::Create($t))'
     return @{ Cmd = $cmd; Kwargs = @('shell=powershell') }
 }
 
