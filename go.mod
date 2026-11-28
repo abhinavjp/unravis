@@ -4,18 +4,18 @@ go 1.27.4
 
 require (
 	github.com/evanw/esbuild v0.28.2
-	github.com/klauspost/compress v1.20.3
+	github.com/klauspost/compress v1.20.5
 	github.com/microsoft/go-mssqldb v1.12.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/ncruces/go-sqlite3 v0.38.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/segmentio/encoding v0.5.4
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.9
+	github.com/spf13/pflag v1.1.0
 	github.com/tetratelabs/wazero v1.12.0
 	go.mongodb.org/mongo-driver v1.17.10
 	go.mongodb.org/mongo-driver/v2 v2.10.1
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/crypto v0.59.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/text v0.44.0
