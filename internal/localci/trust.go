@@ -160,6 +160,15 @@ func TrustedBase(base string, trusted []string) bool {
 	return false
 }
 
+// IsTrustRefusal reports whether reason is one of the refusals of Trusted, or of the base-branch check that
+// follows it: the pull request was kept off this PC on purpose, so it has no verdict to compare with GitHub's.
+func IsTrustRefusal(reason string) bool {
+	return strings.HasPrefix(reason, "fork pull request:") ||
+		strings.HasSuffix(reason, "is not in the allow-list of authors who may run code on this PC") ||
+		strings.HasPrefix(reason, "the code is not all the owner's and ") ||
+		strings.HasPrefix(reason, "the author of the pull request is unknown")
+}
+
 // Trusted decides whether the code of a pull request may run on this PC. It is a pure function.
 //
 //   - A pull request whose head branch lives outside the base repository (a fork, or an unknown head owner)
