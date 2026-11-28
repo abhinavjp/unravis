@@ -1,0 +1,14 @@
+9888212cd29fd3c0c880e530084607fe394b2332|9888212c|2026-11-27T19:46:15+04:00|Backlog: follow-ups from the O-1/O-2/O-5 builds and reviews (#478)
+3e34a06bd4ca67ecb5f2db8cec18b5e394972baa|3e34a06b|2026-11-27T19:43:56+04:00|Keeper: hand the Blackbox SQL login over the pipe, not a temp file (RV-SEC-2) (#473)
+6bb0f4504145dd9414af85843ff1664ae39d0a1e|6bb0f450|2026-11-27T19:29:31+04:00|Merge pull request #477 from abhinavjp/claude/hs-run-page
+1fda2e8ba6942e51040e6bf13adf54a0489aef14|1fda2e8b|2026-11-27T19:28:39+04:00|Release: check every gh exit code and bound the run wait (RV-SUP-6, O-5) (#472)
+d9984502f94c297cd4b6e268610b6860ebb2ca96|d9984502|2026-11-27T19:21:48+04:00|Blackbox lanes card: fix clipped card, hatched gaps, event marks (#475)
+c3de1587f67bf7f7002a1f2a4bafb2db56c8d10f|c3de1587|2026-11-27T19:05:57+04:00|Local CI: test that a web-flow committer keeps owner trust only when the owner pushed (RV-SEC-3, W-10, O-4) (#476)
+2f1137213ea7e4549dc3b70fb19349001c65924b|2f113721|2026-11-27T19:01:09+04:00|Merge pull request #474 from abhinavjp/claude/ci-second-machine
+3b410c696edfd947b37527984f3392004a1ee94e|3b410c69|2026-11-27T18:58:53+04:00|Merge pull request #468 from abhinavjp/claude/bb-page-tabs
+f2df3c65b43677aceb2ff6c4b8a1f2e92382477b|f2df3c65|2026-11-27T18:48:25+04:00|Merge pull request #471 from abhinavjp/claude/bb-wizard-match-proto
+d92a4d8296e721fcef3d0c47cb8bcdc855debdb3|d92a4d82|2026-11-27T18:34:33+04:00|Merge pull request #469 from abhinavjp/claude/hs-queue-never-cancel
+90d46bfdb2c3f952d84dd11328939a17e7f82da1|90d46bfd|2026-11-27T18:20:55+04:00|Blackbox: free-space rule keeps the newest 24 hours (RV-BB-2, O-1) (#466)
+a6dc8c77ba0807eae22fed4de3484fdb7019716e|a6dc8c77|2026-11-27T18:13:38+04:00|Backlog: BL-745 required checks on master (W-25), BL-641 note (#467)
+921300a1ff5246838af11614db543fb30748b908|921300a1|2026-11-27T17:46:46+04:00|CI: pushes to develop queue instead of cancelling (BL-719) (#465)
+a303979b76a778934e74667eaa65e415414195a1|a303979b|2026-11-27T17:44:53+04:00|Docs: prototype pipeline text budget and ADHD-friendly default style (#463)

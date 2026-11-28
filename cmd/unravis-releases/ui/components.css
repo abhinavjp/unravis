@@ -470,6 +470,12 @@ select.in:focus-visible,input.in:focus-visible{outline:2px solid var(--focus);ou
 .whyc{min-width:0}
 .why{display:block;color:var(--text-2);font-size:var(--fs-sm);line-height:1.45;max-width:60ch}
 .why.ok{color:var(--ok)}
+.cover-list{margin:4px 0;padding-inline-start:1.3em;overflow-wrap:anywhere}
+.cover-list li+li{margin-top:4px}
+.cover-more{margin-top:6px}
+.cover-more>summary{cursor:pointer;width:fit-content;color:var(--text)}
+.cover-more:not([open])>summary>span:nth-child(2),.cover-more[open]>summary>span:first-child{display:none}
+.machine-waiting{grid-column:1/-1}
 .fixes{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .nowline .fork{color:var(--text-2);font-size:var(--fs-xs)}
 .qf{margin:0 0 12px}

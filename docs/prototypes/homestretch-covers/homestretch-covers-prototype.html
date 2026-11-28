@@ -1,0 +1,1484 @@
+<!doctype html>
+<html lang="en" data-mode="system" data-style="dense" data-palette="safe" data-font="system" data-density="compact">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Homestretch covers prototype</title>
+  <style>
+/* Dashboard tokens and base components, from tokens.css and components.css. */
+:root{color-scheme:light dark;--bar:48px;
+  --font-body:var(--font-ui);--fs:calc(var(--fs-base) + var(--fs-adj));
+  --fs-xs:max(12px,calc(var(--fs) - 2px));--fs-sm:max(12px,calc(var(--fs) - 1px));--fs-md:var(--fs);--fs-lg:calc(var(--fs) + 2px);--fs-xxl:calc(var(--fs) + 6px);
+  --row-py:calc(var(--py) * var(--py-scale));--row-py-lg:calc(var(--py-lg) * var(--py-scale));--row-py-sm:calc(var(--py-sm) * var(--py-scale));
+  --ctl:color-mix(in srgb,var(--text-2) 72%,var(--bg));
+  --focus:var(--run)}
+[data-style=dense]{--bg:light-dark(#FFFFFF,#0F1318);--surface:light-dark(#F6F8FA,#161B22);--surface-2:light-dark(#F3F5F7,#1C222B);--text:light-dark(#1F2328,#E6EDF3);--text-2:light-dark(#59636E,#9AA4AF);--line:light-dark(#D8DEE4,#2A313A);--log-bg:light-dark(#F6F8FA,#0B0F14);--log-mu:light-dark(#666F79,#8B949E);--log-err:light-dark(#B3261E,#FF7B72);--log-warn:light-dark(#8A5F00,#D29922);--log-ok:light-dark(#1E7B34,#3FB950);--log-err-bg:light-dark(#FDEDED,#2A1517);--accent:light-dark(#1F2328,#E6EDF3);--accent-ink:light-dark(#FFFFFF,#0F1318);--log-tx:light-dark(#1F2328,#E6EDF3);--sunk:light-dark(#F3F5F7,#0B0F14);--scrim:light-dark(rgb(0 0 0 / .42),rgb(0 0 0 / .62));--fs-base:14px;--r-box:6px;--r-chip:4px;--th-case:none;--th-ls:0em;--row-line:solid;--py-scale:1;--r-ctl:4px}
+[data-palette=safe]{--ok:light-dark(#00785A,#2BC49A);--ok-bg:light-dark(#E4F4EE,#0F2A23);--bad:light-dark(#B84A00,#F28B3C);--bad-bg:light-dark(#FCF1E8,#33200F);--run:light-dark(#0072B2,#56B4E9);--run-bg:light-dark(#E8F3FA,#102839);--warn:light-dark(#8A5F00,#E69F00);--warn-bg:light-dark(#F9F0DA,#2E230A);--pending:light-dark(#5B6470,#9BA3AE);--pending-bg:light-dark(#ECEEF0,#23282E)}
+[data-font=system]{--font-ui:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;--font-mono:"Cascadia Mono",ui-monospace,Menlo,Consolas,monospace;--font-head:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif}
+[data-density=compact]{--fs-adj:0px;--py:7px;--py-lg:14px;--py-sm:4px;--ctl-h:32px}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:var(--fs-md)/1.45 var(--font-body);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+button,select,input{font:inherit;color:inherit}
+h1,h2,h3{margin:0;font-family:var(--font-head);font-weight:600;letter-spacing:-.005em}
+.mono{font-family:var(--font-mono);font-size:.92em}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:var(--fs-md);white-space:nowrap;margin-right:6px;text-decoration:none}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--pending)}
+.dot.passed{background:var(--ok)}.dot.failed{background:var(--bad)}.dot.running{background:var(--run)}.dot.waiting{background:var(--warn)}
+.tabs{display:flex;gap:2px;height:100%;margin-left:6px}
+.tab{display:flex;align-items:center;gap:7px;padding:0 11px;color:var(--text-2);text-decoration:none;font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab:hover{color:var(--text)}
+.st{display:inline-flex;align-items:center;gap:6px;font-weight:500;white-space:nowrap}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-box)}
+
+body { overflow-wrap: anywhere; }
+[hidden] { display: none !important; }
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--bar);
+  padding-inline: max(16px, calc((100% - 1000px) / 2));
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.brand { padding-block: 8px; }
+.tabs { height: auto; align-self: stretch; }
+.tab { background: none; border: 0; border-bottom: 2px solid transparent; cursor: pointer; min-height: var(--bar); }
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--text); }
+.tab:focus-visible { outline-offset: -4px; }
+main { max-width: 1032px; margin: auto; padding: 26px 16px 0; }
+h1 { font-size: var(--fs-xxl); line-height: 1.3; }
+h2 { font-size: var(--fs-lg); }
+p { margin: 0; }
+.switcher {
+  display: flex;
+  flex-wrap: wrap;
+  width: fit-content;
+  gap: 4px 8px;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 4px 8px;
+  border: 1px dashed var(--ctl);
+  border-radius: var(--r-ctl);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.switcher label { font-weight: 500; }
+.switcher select {
+  min-height: 24px;
+  max-width: 100%;
+  padding: 0 8px;
+  border: 1px solid var(--ctl);
+  border-radius: var(--r-ctl);
+  background: var(--surface);
+  color: var(--text);
+}
+.view-heading { margin-bottom: 10px; }
+.queue-list, .merge-list, .results { list-style: none; margin: 0; padding: 0; }
+.queue-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1.15fr) max-content;
+  align-items: start;
+  gap: 4px 14px;
+  padding: var(--row-py-lg) 14px;
+  border-bottom: 1px solid var(--line);
+}
+.queue-list > li:last-child { border-bottom: 0; }
+.queue-row.featured {
+  background: var(--run-bg);
+  box-shadow: inset 3px 0 var(--run);
+}
+.queue-list > li:first-child { border-start-start-radius: var(--r-box); border-start-end-radius: var(--r-box); }
+.queue-list > li:last-child { border-end-start-radius: var(--r-box); border-end-end-radius: var(--r-box); }
+.job { font-weight: 600; }
+.meta, .detail, .row-time, footer { color: var(--text-2); font-size: var(--fs-sm); }
+.meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.row-time { text-align: right; }
+.row-covers { grid-column: 2 / -1; min-width: 0; margin-top: 6px; }
+.cover-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.chip {
+  width: fit-content;
+  border-radius: var(--r-chip);
+  padding: 2px 7px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.bar .chip { margin-left: auto; }
+.history { margin-top: 24px; }
+.queue-history h2 { margin-bottom: 8px; }
+.disclosure {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+.disclosure::before {
+  content: "";
+  width: .45em;
+  height: .45em;
+  align-self: center;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  transform: rotate(-45deg);
+}
+.disclosure[aria-expanded="true"]::before { transform: rotate(45deg); }
+.disclosure-action, .run-back { text-decoration: underline; text-underline-offset: 3px; }
+.run-back { display: inline-block; margin-bottom: 8px; color: var(--text-2); font-size: var(--fs-sm); }
+.failure-next, .run-note { margin-top: 6px; }
+.inert-action {
+  margin-top: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--ctl);
+  border-radius: var(--r-ctl);
+  background: var(--surface);
+}
+.history .disclosure { margin-top: 8px; }
+.history .queue-list + .queue-list { border-top: 1px solid var(--line); }
+.merge-list { margin-top: 6px; }
+.merge-list li {
+  display: grid;
+  grid-template-columns: minmax(5ch, max-content) minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  padding: var(--row-py-sm) 0;
+}
+.merge-list code { color: var(--text-2); }
+.pr-number { min-width: 5ch; white-space: nowrap; }
+.run-head { padding: var(--row-py-lg) 14px; }
+.run-head .meta { margin-top: 4px; }
+.run-cover { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line); }
+.run-cover p { margin-top: 8px; }
+.result-panel { margin-top: 16px; padding: var(--row-py-lg) 14px; }
+.results { margin-top: 6px; }
+.results li {
+  display: grid;
+  grid-template-columns: minmax(5ch, max-content) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: var(--row-py-sm) 0;
+}
+.results li + li { border-top: 1px solid var(--line); }
+.results .message { display: flex; align-items: baseline; gap: 7px; }
+.message .dot { align-self: start; margin-top: .48em; }
+footer { margin: 24px 0; padding: 12px 0 0; border-top: 1px solid var(--line); }
+
+@media (max-width: 640px) {
+  main { padding-top: 18px; }
+  .queue-row { grid-template-columns: 76px minmax(0, 1fr); gap: 4px 8px; padding: var(--row-py) 10px; }
+  .queue-row .detail, .row-time, .row-covers { grid-column: 2; }
+  .row-time { text-align: left; }
+  .merge-list li { grid-template-columns: minmax(5ch, max-content) minmax(0, 1fr); }
+  .merge-list code { grid-column: 2; }
+}
+@media (max-width: 420px) {
+  .bar { flex-wrap: wrap; }
+  .tabs { margin-left: 0; order: 1; width: 100%; }
+  .tab { min-height: 40px; }
+  .row-covers { grid-column: 1 / -1; padding-left: 3px; }
+}
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <span class="brand">Homestretch</span>
+    <div class="tabs" role="tablist" aria-label="Homestretch views">
+      <button type="button" class="tab" role="tab" id="queue-tab" aria-selected="true" aria-controls="queue-view">Queue</button>
+      <button type="button" class="tab" role="tab" id="run-tab" aria-selected="false" aria-controls="run-view" tabindex="-1">Run</button>
+    </div>
+    <span class="chip">Prototype</span>
+  </header>
+  <main>
+    <div class="switcher">
+      <label for="state">Prototype: show state</label>
+      <select id="state">
+        <option value="waiting">Waiting</option>
+        <option value="running">Running</option>
+        <option value="passed">Done passed</option>
+        <option value="failed">Done failed</option>
+        <option value="single">One merge only</option>
+        <option value="overflow">More than 6</option>
+      </select>
+    </div>
+    <section id="queue-view" role="tabpanel" aria-labelledby="queue-tab" tabindex="0"></section>
+    <section id="run-view" role="tabpanel" aria-labelledby="run-tab" tabindex="0" hidden></section>
+    <footer>Prototype note: the covers list is built from the real recent merges. The live list arrives with the next dashboard update.</footer>
+  </main>
+
+  <script type="application/json" id="snapshot-queue">
+{
+  "ciFound": true,
+  "now": "2026-11-27T18:12:40Z",
+  "paused": false,
+  "counts": {
+    "queued": 0,
+    "running": 1,
+    "waiting": 0,
+    "done": 630
+  },
+  "queued": [],
+  "running": [
+    {
+      "id": "q-20261127-181031-922-002339",
+      "kind": "pr",
+      "repo": "abhinavjp/unravis",
+      "label": "pr 479 into develop",
+      "ref": "claude/hs-queue-coalesce",
+      "base": "develop",
+      "number": 479,
+      "sha": "6be1cf383a9999f2cb0482d56e4658abd878f850",
+      "workflow": "fast-gate.yml",
+      "state": "running",
+      "priority": 1,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T18:10:31Z",
+      "claimedBy": "local",
+      "claimedAt": "2026-11-27T18:10:32Z",
+      "attempts": 1
+    }
+  ],
+  "done": [
+    {
+      "id": "q-20261127-154726-314-00223e",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push develop",
+      "ref": "develop",
+      "sha": "9888212cd29fd3c0c880e530084607fe394b2332",
+      "workflow": "ci.yml",
+      "state": "done",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:47:26Z",
+      "claimedBy": "local",
+      "claimedAt": "2026-11-27T16:21:53Z",
+      "finishedAt": "2026-11-27T17:02:06Z",
+      "attempts": 1,
+      "conclusion": "failure",
+      "reason": "job go-tests-matrix.shard-3-2, step 5 Go - tests (shard 2 of 3)",
+      "runId": "20261127-162155-push-develop-ci"
+    },
+    {
+      "id": "q-20261127-145312-177-000893",
+      "kind": "pr",
+      "repo": "abhinavjp/unravis",
+      "label": "pr 358 into develop",
+      "ref": "claude/project-thread-tm0bv5",
+      "base": "develop",
+      "number": 358,
+      "sha": "dac3c79553b2fdb417b58c7e7990ddfc3504bb73",
+      "workflow": "fast-gate.yml",
+      "state": "done",
+      "priority": 1,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T14:53:12Z",
+      "claimedBy": "local",
+      "claimedAt": "2026-11-27T15:02:53Z",
+      "finishedAt": "2026-11-27T16:22:48Z",
+      "attempts": 1,
+      "conclusion": "success",
+      "runId": "20261127-150257-pr358-fast-gate"
+    },
+    {
+      "id": "q-20261127-154723-956-002182",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push develop",
+      "ref": "develop",
+      "sha": "9888212cd29fd3c0c880e530084607fe394b2332",
+      "workflow": "fast-gate.yml",
+      "state": "done",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:47:23Z",
+      "claimedBy": "local",
+      "claimedAt": "2026-11-27T16:19:08Z",
+      "finishedAt": "2026-11-27T16:21:51Z",
+      "attempts": 1,
+      "conclusion": "success",
+      "runId": "20261127-161911-push-develop-fast-gate"
+    },
+    {
+      "id": "q-20261127-143429-552-002c56",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push master",
+      "ref": "master",
+      "sha": "9f2044577398a3ecb61394d82fdf83caf8554a6b",
+      "workflow": "ci.yml",
+      "state": "done",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T14:34:29Z",
+      "claimedBy": "local",
+      "claimedAt": "2026-11-27T15:47:31Z",
+      "finishedAt": "2026-11-27T16:19:06Z",
+      "attempts": 1,
+      "conclusion": "failure",
+      "reason": "job go-tests-matrix.shard-3-2, step 5 Go - tests (shard 2 of 3)",
+      "runId": "20261127-154733-push-master-ci"
+    },
+    {
+      "id": "q-20261127-152114-434-001509",
+      "kind": "pr",
+      "repo": "abhinavjp/unravis",
+      "label": "pr 477 into develop",
+      "ref": "claude/hs-run-page",
+      "base": "develop",
+      "number": 477,
+      "sha": "ac9fed2a075efd7d81821a8b45daa15cbf89adec",
+      "workflow": "fast-gate.yml",
+      "state": "done",
+      "priority": 1,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:21:14Z",
+      "claimedBy": "local",
+      "claimedAt": "2026-11-27T15:27:24Z",
+      "finishedAt": "2026-11-27T15:47:28Z",
+      "attempts": 1,
+      "conclusion": "success",
+      "runId": "20261127-152728-pr477-fast-gate"
+    },
+    {
+      "id": "q-20261127-154514-160-002056",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push develop",
+      "ref": "develop",
+      "sha": "3e34a06bd4ca67ecb5f2db8cec18b5e394972baa",
+      "workflow": "ci.yml",
+      "state": "superseded",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:45:14Z",
+      "finishedAt": "2026-11-27T15:47:26Z",
+      "conclusion": "superseded",
+      "reason": "a newer head 9888212cd2 arrived",
+      "supersededBy": "q-20261127-154726-314-00223e",
+      "display": "Replaced by a newer request (q-20261127-154726-314-00223e)"
+    },
+    {
+      "id": "q-20261127-154513-640-001fb3",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push develop",
+      "ref": "develop",
+      "sha": "3e34a06bd4ca67ecb5f2db8cec18b5e394972baa",
+      "workflow": "fast-gate.yml",
+      "state": "superseded",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:45:13Z",
+      "finishedAt": "2026-11-27T15:47:24Z",
+      "conclusion": "superseded",
+      "reason": "a newer head 9888212cd2 arrived",
+      "supersededBy": "q-20261127-154723-956-002182",
+      "display": "Replaced by a newer request (q-20261127-154723-956-002182)"
+    },
+    {
+      "id": "q-20261127-154440-910-001e36",
+      "kind": "pr",
+      "repo": "abhinavjp/unravis",
+      "label": "pr 478 into develop",
+      "ref": "claude/backlog-o2-o5-followups",
+      "base": "develop",
+      "number": 478,
+      "sha": "087eec2be807392c94331eb574a4d6046f4ee78b",
+      "workflow": "fast-gate.yml",
+      "state": "cancelled",
+      "priority": 1,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:44:40Z",
+      "finishedAt": "2026-11-27T15:46:17Z",
+      "conclusion": "cancelled",
+      "reason": "the pull request is no longer open"
+    },
+    {
+      "id": "q-20261127-153043-532-001c74",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push develop",
+      "ref": "develop",
+      "sha": "6bb0f4504145dd9414af85843ff1664ae39d0a1e",
+      "workflow": "ci.yml",
+      "state": "superseded",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:30:43Z",
+      "finishedAt": "2026-11-27T15:45:14Z",
+      "conclusion": "superseded",
+      "reason": "a newer head 3e34a06bd4 arrived",
+      "supersededBy": "q-20261127-154514-160-002056",
+      "display": "Replaced by a newer request (q-20261127-154514-160-002056)"
+    },
+    {
+      "id": "q-20261127-153042-823-001bf0",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push develop",
+      "ref": "develop",
+      "sha": "6bb0f4504145dd9414af85843ff1664ae39d0a1e",
+      "workflow": "fast-gate.yml",
+      "state": "superseded",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:30:42Z",
+      "finishedAt": "2026-11-27T15:45:13Z",
+      "conclusion": "superseded",
+      "reason": "a newer head 3e34a06bd4 arrived",
+      "supersededBy": "q-20261127-154513-640-001fb3",
+      "display": "Replaced by a newer request (q-20261127-154513-640-001fb3)"
+    },
+    {
+      "id": "q-20261127-153252-929-001d5b",
+      "kind": "pr",
+      "repo": "abhinavjp/unravis",
+      "label": "pr 473 into develop",
+      "ref": "claude/o2-keeper-pipe-handover",
+      "base": "develop",
+      "number": 473,
+      "sha": "14284155d79f76161c2379a639efd3044c8ea317",
+      "workflow": "fast-gate.yml",
+      "state": "cancelled",
+      "priority": 1,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:32:52Z",
+      "finishedAt": "2026-11-27T15:44:08Z",
+      "conclusion": "cancelled",
+      "reason": "the pull request is no longer open"
+    },
+    {
+      "id": "q-20261127-152323-317-001631",
+      "kind": "pr",
+      "repo": "abhinavjp/unravis",
+      "label": "pr 473 into develop",
+      "ref": "claude/o2-keeper-pipe-handover",
+      "base": "develop",
+      "number": 473,
+      "sha": "8219b13f42a4be8321bbb4f27a46e3b508ef1a34",
+      "workflow": "fast-gate.yml",
+      "state": "superseded",
+      "priority": 1,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:23:23Z",
+      "finishedAt": "2026-11-27T15:32:52Z",
+      "conclusion": "superseded",
+      "reason": "a newer head 14284155d7 arrived",
+      "supersededBy": "q-20261127-153252-929-001d5b",
+      "display": "Replaced by a newer request (q-20261127-153252-929-001d5b)"
+    },
+    {
+      "id": "q-20261127-152326-886-001948",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push develop",
+      "ref": "develop",
+      "sha": "d9984502f94c297cd4b6e268610b6860ebb2ca96",
+      "workflow": "ci.yml",
+      "state": "superseded",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:23:26Z",
+      "finishedAt": "2026-11-27T15:30:43Z",
+      "conclusion": "superseded",
+      "reason": "a newer head 6bb0f45041 arrived",
+      "supersededBy": "q-20261127-153043-532-001c74",
+      "display": "Replaced by a newer request (q-20261127-153043-532-001c74)"
+    },
+    {
+      "id": "q-20261127-152325-982-00182a",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push develop",
+      "ref": "develop",
+      "sha": "d9984502f94c297cd4b6e268610b6860ebb2ca96",
+      "workflow": "fast-gate.yml",
+      "state": "superseded",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:23:25Z",
+      "finishedAt": "2026-11-27T15:30:42Z",
+      "conclusion": "superseded",
+      "reason": "a newer head 6bb0f45041 arrived",
+      "supersededBy": "q-20261127-153042-823-001bf0",
+      "display": "Replaced by a newer request (q-20261127-153042-823-001bf0)"
+    },
+    {
+      "id": "q-20261127-152641-203-001aba",
+      "kind": "pr",
+      "repo": "abhinavjp/unravis",
+      "label": "pr 472 into develop",
+      "ref": "claude/o5-release-exit-codes",
+      "base": "develop",
+      "number": 472,
+      "sha": "6258e073abfab5af4cf2469d93664398fd4fb0cf",
+      "workflow": "fast-gate.yml",
+      "state": "cancelled",
+      "priority": 1,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:26:41Z",
+      "finishedAt": "2026-11-27T15:29:00Z",
+      "conclusion": "cancelled",
+      "reason": "the pull request is no longer open"
+    },
+    {
+      "id": "q-20261127-144027-345-0031e9",
+      "kind": "pr",
+      "repo": "abhinavjp/unravis",
+      "label": "pr 473 into develop",
+      "ref": "claude/o2-keeper-pipe-handover",
+      "base": "develop",
+      "number": 473,
+      "sha": "17ee9d5cb9d30931383f1e8a3387f112b5f2d432",
+      "workflow": "fast-gate.yml",
+      "state": "done",
+      "priority": 1,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T14:40:27Z",
+      "claimedBy": "local",
+      "claimedAt": "2026-11-27T14:59:03Z",
+      "finishedAt": "2026-11-27T15:27:22Z",
+      "attempts": 1,
+      "conclusion": "failure",
+      "reason": "job go, step 12 Go - tests of the affected packages (Linux, compared with the baseline)",
+      "runId": "20261127-145907-pr473-fast-gate"
+    },
+    {
+      "id": "q-20261127-152323-362-001719",
+      "kind": "pr",
+      "repo": "abhinavjp/unravis",
+      "label": "pr 472 into develop",
+      "ref": "claude/o5-release-exit-codes",
+      "base": "develop",
+      "number": 472,
+      "sha": "863109e0d8d048fbd1a5a899e1a95a0d3610d921",
+      "workflow": "fast-gate.yml",
+      "state": "superseded",
+      "priority": 1,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:23:23Z",
+      "finishedAt": "2026-11-27T15:26:41Z",
+      "conclusion": "superseded",
+      "reason": "a newer head 6258e073ab arrived",
+      "supersededBy": "q-20261127-152641-203-001aba",
+      "display": "Replaced by a newer request (q-20261127-152641-203-001aba)"
+    },
+    {
+      "id": "q-20261127-150707-199-0013e0",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push develop",
+      "ref": "develop",
+      "sha": "c3de1587f67bf7f7002a1f2a4bafb2db56c8d10f",
+      "workflow": "ci.yml",
+      "state": "superseded",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:07:07Z",
+      "finishedAt": "2026-11-27T15:23:26Z",
+      "conclusion": "superseded",
+      "reason": "a newer head d9984502f9 arrived",
+      "supersededBy": "q-20261127-152326-886-001948",
+      "display": "Replaced by a newer request (q-20261127-152326-886-001948)"
+    },
+    {
+      "id": "q-20261127-150706-416-001233",
+      "kind": "push",
+      "repo": "abhinavjp/unravis",
+      "label": "push develop",
+      "ref": "develop",
+      "sha": "c3de1587f67bf7f7002a1f2a4bafb2db56c8d10f",
+      "workflow": "fast-gate.yml",
+      "state": "superseded",
+      "priority": 2,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:07:06Z",
+      "finishedAt": "2026-11-27T15:23:26Z",
+      "conclusion": "superseded",
+      "reason": "a newer head d9984502f9 arrived",
+      "supersededBy": "q-20261127-152325-982-00182a",
+      "display": "Replaced by a newer request (q-20261127-152325-982-00182a)"
+    },
+    {
+      "id": "q-20261127-150200-329-000c00",
+      "kind": "pr",
+      "repo": "abhinavjp/unravis",
+      "label": "pr 472 into develop",
+      "ref": "claude/o5-release-exit-codes",
+      "base": "develop",
+      "number": 472,
+      "sha": "72de2d70b660350d3537737f162e77b424e32a65",
+      "workflow": "fast-gate.yml",
+      "state": "superseded",
+      "priority": 1,
+      "priorityLabel": "Normal",
+      "enqueuedAt": "2026-11-27T15:02:00Z",
+      "finishedAt": "2026-11-27T15:23:23Z",
+      "conclusion": "superseded",
+      "reason": "a newer head 863109e0d8 arrived",
+      "supersededBy": "q-20261127-152323-362-001719",
+      "display": "Replaced by a newer request (q-20261127-152323-362-001719)"
+    }
+  ]
+}
+  </script>
+  <script type="application/json" id="snapshot-runs">
+{
+  "ciFound": true,
+  "runs": [
+    {
+      "id": "20261127-181035-pr479-fast-gate",
+      "kind": "run",
+      "status": "running",
+      "word": "Running",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 479,
+      "base": "develop",
+      "branch": "claude/hs-queue-coalesce",
+      "sha": "6be1cf383a9999f2cb0482d56e4658abd878f850",
+      "headSha": "6be1cf383a9999f2cb0482d56e4658abd878f850",
+      "start": "2026-11-27T18:10:32Z",
+      "ms": 127546,
+      "agent": "local",
+      "request": "q-20261127-181031-922-002339"
+    },
+    {
+      "id": "20261127-162155-push-develop-ci",
+      "kind": "run",
+      "status": "failed",
+      "word": "Failed",
+      "workflow": "ci.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "9888212cd29fd3c0c880e530084607fe394b2332",
+      "headSha": "9888212cd29fd3c0c880e530084607fe394b2332",
+      "reason": "job go-tests-matrix.shard-3-2, step 5 Go - tests (shard 2 of 3)",
+      "start": "2026-11-27T16:21:55Z",
+      "end": "2026-11-27T17:02:04Z",
+      "ms": 2408773,
+      "agent": "local",
+      "request": "q-20261127-154726-314-00223e"
+    },
+    {
+      "id": "20261127-161911-push-develop-fast-gate",
+      "kind": "run",
+      "status": "passed",
+      "word": "Passed",
+      "workflow": "fast-gate.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "9888212cd29fd3c0c880e530084607fe394b2332",
+      "headSha": "9888212cd29fd3c0c880e530084607fe394b2332",
+      "start": "2026-11-27T16:19:11Z",
+      "end": "2026-11-27T16:21:49Z",
+      "ms": 158649,
+      "agent": "local",
+      "request": "q-20261127-154723-956-002182"
+    },
+    {
+      "id": "20261127-154733-push-master-ci",
+      "kind": "run",
+      "status": "failed",
+      "word": "Failed",
+      "workflow": "ci.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "master",
+      "sha": "9f2044577398a3ecb61394d82fdf83caf8554a6b",
+      "headSha": "9f2044577398a3ecb61394d82fdf83caf8554a6b",
+      "reason": "job go-tests-matrix.shard-3-2, step 5 Go - tests (shard 2 of 3)",
+      "start": "2026-11-27T15:47:33Z",
+      "end": "2026-11-27T16:19:05Z",
+      "ms": 1891820,
+      "agent": "local",
+      "request": "q-20261127-143429-552-002c56",
+      "release": "0.1.0-rc.68"
+    },
+    {
+      "id": "q-20261127-154514-160-002056",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "ci.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "3e34a06bd4ca67ecb5f2db8cec18b5e394972baa",
+      "headSha": "3e34a06bd4ca67ecb5f2db8cec18b5e394972baa",
+      "reason": "a newer head 9888212cd2 arrived",
+      "start": "2026-11-27T15:45:14Z",
+      "end": "2026-11-27T15:47:26Z",
+      "request": "q-20261127-154514-160-002056"
+    },
+    {
+      "id": "q-20261127-154513-640-001fb3",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "3e34a06bd4ca67ecb5f2db8cec18b5e394972baa",
+      "headSha": "3e34a06bd4ca67ecb5f2db8cec18b5e394972baa",
+      "reason": "a newer head 9888212cd2 arrived",
+      "start": "2026-11-27T15:45:13Z",
+      "end": "2026-11-27T15:47:24Z",
+      "request": "q-20261127-154513-640-001fb3"
+    },
+    {
+      "id": "q-20261127-154440-910-001e36",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 478,
+      "base": "develop",
+      "branch": "claude/backlog-o2-o5-followups",
+      "sha": "087eec2be807392c94331eb574a4d6046f4ee78b",
+      "headSha": "087eec2be807392c94331eb574a4d6046f4ee78b",
+      "reason": "the pull request is no longer open",
+      "start": "2026-11-27T15:44:40Z",
+      "end": "2026-11-27T15:46:17Z",
+      "request": "q-20261127-154440-910-001e36"
+    },
+    {
+      "id": "q-20261127-153043-532-001c74",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "ci.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "6bb0f4504145dd9414af85843ff1664ae39d0a1e",
+      "headSha": "6bb0f4504145dd9414af85843ff1664ae39d0a1e",
+      "reason": "a newer head 3e34a06bd4 arrived",
+      "start": "2026-11-27T15:30:43Z",
+      "end": "2026-11-27T15:45:14Z",
+      "request": "q-20261127-153043-532-001c74"
+    },
+    {
+      "id": "q-20261127-153042-823-001bf0",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "6bb0f4504145dd9414af85843ff1664ae39d0a1e",
+      "headSha": "6bb0f4504145dd9414af85843ff1664ae39d0a1e",
+      "reason": "a newer head 3e34a06bd4 arrived",
+      "start": "2026-11-27T15:30:42Z",
+      "end": "2026-11-27T15:45:13Z",
+      "request": "q-20261127-153042-823-001bf0"
+    },
+    {
+      "id": "q-20261127-153252-929-001d5b",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 473,
+      "base": "develop",
+      "branch": "claude/o2-keeper-pipe-handover",
+      "sha": "14284155d79f76161c2379a639efd3044c8ea317",
+      "headSha": "14284155d79f76161c2379a639efd3044c8ea317",
+      "reason": "the pull request is no longer open",
+      "start": "2026-11-27T15:32:52Z",
+      "end": "2026-11-27T15:44:08Z",
+      "request": "q-20261127-153252-929-001d5b"
+    },
+    {
+      "id": "q-20261127-152323-317-001631",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 473,
+      "base": "develop",
+      "branch": "claude/o2-keeper-pipe-handover",
+      "sha": "8219b13f42a4be8321bbb4f27a46e3b508ef1a34",
+      "headSha": "8219b13f42a4be8321bbb4f27a46e3b508ef1a34",
+      "reason": "a newer head 14284155d7 arrived",
+      "start": "2026-11-27T15:23:23Z",
+      "end": "2026-11-27T15:32:52Z",
+      "request": "q-20261127-152323-317-001631"
+    },
+    {
+      "id": "q-20261127-152326-886-001948",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "ci.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "d9984502f94c297cd4b6e268610b6860ebb2ca96",
+      "headSha": "d9984502f94c297cd4b6e268610b6860ebb2ca96",
+      "reason": "a newer head 6bb0f45041 arrived",
+      "start": "2026-11-27T15:23:26Z",
+      "end": "2026-11-27T15:30:43Z",
+      "request": "q-20261127-152326-886-001948"
+    },
+    {
+      "id": "q-20261127-152325-982-00182a",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "d9984502f94c297cd4b6e268610b6860ebb2ca96",
+      "headSha": "d9984502f94c297cd4b6e268610b6860ebb2ca96",
+      "reason": "a newer head 6bb0f45041 arrived",
+      "start": "2026-11-27T15:23:25Z",
+      "end": "2026-11-27T15:30:42Z",
+      "request": "q-20261127-152325-982-00182a"
+    },
+    {
+      "id": "q-20261127-152641-203-001aba",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 472,
+      "base": "develop",
+      "branch": "claude/o5-release-exit-codes",
+      "sha": "6258e073abfab5af4cf2469d93664398fd4fb0cf",
+      "headSha": "6258e073abfab5af4cf2469d93664398fd4fb0cf",
+      "reason": "the pull request is no longer open",
+      "start": "2026-11-27T15:26:41Z",
+      "end": "2026-11-27T15:29:00Z",
+      "request": "q-20261127-152641-203-001aba"
+    },
+    {
+      "id": "20261127-152728-pr477-fast-gate",
+      "kind": "run",
+      "status": "passed",
+      "word": "Passed",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 477,
+      "author": "abhinavjp",
+      "base": "develop",
+      "branch": "claude/hs-run-page",
+      "sha": "0a60af0df0323b183cceff992e80a329edf15f95",
+      "headSha": "ac9fed2a075efd7d81821a8b45daa15cbf89adec",
+      "start": "2026-11-27T15:27:28Z",
+      "end": "2026-11-27T15:47:14Z",
+      "ms": 1186377,
+      "agent": "local",
+      "request": "q-20261127-152114-434-001509"
+    },
+    {
+      "id": "q-20261127-152323-362-001719",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 472,
+      "base": "develop",
+      "branch": "claude/o5-release-exit-codes",
+      "sha": "863109e0d8d048fbd1a5a899e1a95a0d3610d921",
+      "headSha": "863109e0d8d048fbd1a5a899e1a95a0d3610d921",
+      "reason": "a newer head 6258e073ab arrived",
+      "start": "2026-11-27T15:23:23Z",
+      "end": "2026-11-27T15:26:41Z",
+      "request": "q-20261127-152323-362-001719"
+    },
+    {
+      "id": "q-20261127-150707-199-0013e0",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "ci.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "c3de1587f67bf7f7002a1f2a4bafb2db56c8d10f",
+      "headSha": "c3de1587f67bf7f7002a1f2a4bafb2db56c8d10f",
+      "reason": "a newer head d9984502f9 arrived",
+      "start": "2026-11-27T15:07:07Z",
+      "end": "2026-11-27T15:23:26Z",
+      "request": "q-20261127-150707-199-0013e0"
+    },
+    {
+      "id": "q-20261127-150706-416-001233",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "c3de1587f67bf7f7002a1f2a4bafb2db56c8d10f",
+      "headSha": "c3de1587f67bf7f7002a1f2a4bafb2db56c8d10f",
+      "reason": "a newer head d9984502f9 arrived",
+      "start": "2026-11-27T15:07:06Z",
+      "end": "2026-11-27T15:23:26Z",
+      "request": "q-20261127-150706-416-001233"
+    },
+    {
+      "id": "q-20261127-150200-329-000c00",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 472,
+      "base": "develop",
+      "branch": "claude/o5-release-exit-codes",
+      "sha": "72de2d70b660350d3537737f162e77b424e32a65",
+      "headSha": "72de2d70b660350d3537737f162e77b424e32a65",
+      "reason": "a newer head 863109e0d8 arrived",
+      "start": "2026-11-27T15:02:00Z",
+      "end": "2026-11-27T15:23:23Z",
+      "request": "q-20261127-150200-329-000c00"
+    },
+    {
+      "id": "q-20261127-151556-517-00146c",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 475,
+      "base": "develop",
+      "branch": "claude/bb-lanes-match-proto",
+      "sha": "b09b15055d09aa6781bbcc3f4e4e97440bdd60e8",
+      "headSha": "b09b15055d09aa6781bbcc3f4e4e97440bdd60e8",
+      "reason": "the pull request is no longer open",
+      "start": "2026-11-27T15:15:56Z",
+      "end": "2026-11-27T15:22:18Z",
+      "request": "q-20261127-151556-517-00146c"
+    },
+    {
+      "id": "q-20261127-150448-084-001105",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 475,
+      "base": "develop",
+      "branch": "claude/bb-lanes-match-proto",
+      "sha": "dbfe1e51edf09e512c2798c5ec5bc2fe2f34270b",
+      "headSha": "dbfe1e51edf09e512c2798c5ec5bc2fe2f34270b",
+      "reason": "a newer head b09b15055d arrived",
+      "start": "2026-11-27T15:04:48Z",
+      "end": "2026-11-27T15:15:56Z",
+      "request": "q-20261127-150448-084-001105"
+    },
+    {
+      "id": "q-20261127-150235-401-000e6b",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "ci.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "2f1137213ea7e4549dc3b70fb19349001c65924b",
+      "headSha": "2f1137213ea7e4549dc3b70fb19349001c65924b",
+      "reason": "a newer head c3de1587f6 arrived",
+      "start": "2026-11-27T15:02:35Z",
+      "end": "2026-11-27T15:07:07Z",
+      "request": "q-20261127-150235-401-000e6b"
+    },
+    {
+      "id": "q-20261127-150234-452-000d1e",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "2f1137213ea7e4549dc3b70fb19349001c65924b",
+      "headSha": "2f1137213ea7e4549dc3b70fb19349001c65924b",
+      "reason": "a newer head c3de1587f6 arrived",
+      "start": "2026-11-27T15:02:34Z",
+      "end": "2026-11-27T15:07:06Z",
+      "request": "q-20261127-150234-452-000d1e"
+    },
+    {
+      "id": "q-20261127-150338-564-001063",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 476,
+      "base": "develop",
+      "branch": "claude/o4-localci-pusher-trust",
+      "sha": "cfc071d8bb48d22223880d9f76037376c587f61d",
+      "headSha": "cfc071d8bb48d22223880d9f76037376c587f61d",
+      "reason": "the pull request is no longer open",
+      "start": "2026-11-27T15:03:38Z",
+      "end": "2026-11-27T15:06:01Z",
+      "request": "q-20261127-150338-564-001063"
+    },
+    {
+      "id": "q-20261127-150306-583-000f8c",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 475,
+      "base": "develop",
+      "branch": "claude/bb-lanes-match-proto",
+      "sha": "04e6f7c7d170694b41b18fe2fe387be795a006b6",
+      "headSha": "04e6f7c7d170694b41b18fe2fe387be795a006b6",
+      "reason": "a newer head dbfe1e51ed arrived",
+      "start": "2026-11-27T15:03:06Z",
+      "end": "2026-11-27T15:04:48Z",
+      "request": "q-20261127-150306-583-000f8c"
+    },
+    {
+      "id": "20261127-150257-pr358-fast-gate",
+      "kind": "run",
+      "status": "passed",
+      "word": "Passed",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 358,
+      "author": "abhinavjp",
+      "base": "develop",
+      "branch": "claude/project-thread-tm0bv5",
+      "sha": "bbfbca627e26738e554fb3c01441877135f2393c",
+      "headSha": "dac3c79553b2fdb417b58c7e7990ddfc3504bb73",
+      "start": "2026-11-27T15:02:57Z",
+      "end": "2026-11-27T16:22:24Z",
+      "ms": 4767552,
+      "agent": "local",
+      "request": "q-20261127-145312-177-000893"
+    },
+    {
+      "id": "q-20261127-150024-028-000b34",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "ci.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "3b410c696edfd947b37527984f3392004a1ee94e",
+      "headSha": "3b410c696edfd947b37527984f3392004a1ee94e",
+      "reason": "a newer head 2f1137213e arrived",
+      "start": "2026-11-27T15:00:24Z",
+      "end": "2026-11-27T15:02:35Z",
+      "request": "q-20261127-150024-028-000b34"
+    },
+    {
+      "id": "q-20261127-150021-896-000aad",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "3b410c696edfd947b37527984f3392004a1ee94e",
+      "headSha": "3b410c696edfd947b37527984f3392004a1ee94e",
+      "reason": "a newer head 2f1137213e arrived",
+      "start": "2026-11-27T15:00:21Z",
+      "end": "2026-11-27T15:02:34Z",
+      "request": "q-20261127-150021-896-000aad"
+    },
+    {
+      "id": "q-20261127-145344-276-0009e1",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "fast-gate.yml",
+      "event": "pull_request",
+      "repo": "abhinavjp/unravis",
+      "pr": 474,
+      "base": "develop",
+      "branch": "claude/ci-second-machine",
+      "sha": "d05edbcf0cf26ef8a8addafeff019bdc28b876c3",
+      "headSha": "d05edbcf0cf26ef8a8addafeff019bdc28b876c3",
+      "reason": "the pull request is no longer open",
+      "start": "2026-11-27T14:53:44Z",
+      "end": "2026-11-27T15:01:28Z",
+      "request": "q-20261127-145344-276-0009e1"
+    },
+    {
+      "id": "q-20261127-144945-156-0006dc",
+      "kind": "request",
+      "status": "stopped",
+      "word": "Stopped",
+      "workflow": "ci.yml",
+      "event": "push",
+      "repo": "abhinavjp/unravis",
+      "branch": "develop",
+      "sha": "f2df3c65b43677aceb2ff6c4b8a1f2e92382477b",
+      "headSha": "f2df3c65b43677aceb2ff6c4b8a1f2e92382477b",
+      "reason": "a newer head 3b410c696e arrived",
+      "start": "2026-11-27T14:49:45Z",
+      "end": "2026-11-27T15:00:24Z",
+      "request": "q-20261127-144945-156-0006dc"
+    }
+  ],
+  "total": 633,
+  "next": "1795791624055682000~q-20261127-144945-156-0006dc"
+}
+  </script>
+  <script type="application/json" id="snapshot-merges">
+[
+  {
+    "sha": "9888212cd29fd3c0c880e530084607fe394b2332",
+    "shortSha": "9888212c",
+    "time": "2026-11-27T19:46:15+04:00",
+    "subject": "Backlog: follow-ups from the O-1/O-2/O-5 builds and reviews (#478)"
+  },
+  {
+    "sha": "3e34a06bd4ca67ecb5f2db8cec18b5e394972baa",
+    "shortSha": "3e34a06b",
+    "time": "2026-11-27T19:43:56+04:00",
+    "subject": "Keeper: hand the Blackbox SQL login over the pipe, not a temp file (RV-SEC-2) (#473)"
+  },
+  {
+    "sha": "6bb0f4504145dd9414af85843ff1664ae39d0a1e",
+    "shortSha": "6bb0f450",
+    "time": "2026-11-27T19:29:31+04:00",
+    "subject": "Merge pull request #477 from abhinavjp/claude/hs-run-page"
+  },
+  {
+    "sha": "1fda2e8ba6942e51040e6bf13adf54a0489aef14",
+    "shortSha": "1fda2e8b",
+    "time": "2026-11-27T19:28:39+04:00",
+    "subject": "Release: check every gh exit code and bound the run wait (RV-SUP-6, O-5) (#472)"
+  },
+  {
+    "sha": "d9984502f94c297cd4b6e268610b6860ebb2ca96",
+    "shortSha": "d9984502",
+    "time": "2026-11-27T19:21:48+04:00",
+    "subject": "Blackbox lanes card: fix clipped card, hatched gaps, event marks (#475)"
+  },
+  {
+    "sha": "c3de1587f67bf7f7002a1f2a4bafb2db56c8d10f",
+    "shortSha": "c3de1587",
+    "time": "2026-11-27T19:05:57+04:00",
+    "subject": "Local CI: test that a web-flow committer keeps owner trust only when the owner pushed (RV-SEC-3, W-10, O-4) (#476)"
+  },
+  {
+    "sha": "2f1137213ea7e4549dc3b70fb19349001c65924b",
+    "shortSha": "2f113721",
+    "time": "2026-11-27T19:01:09+04:00",
+    "subject": "Merge pull request #474 from abhinavjp/claude/ci-second-machine"
+  },
+  {
+    "sha": "3b410c696edfd947b37527984f3392004a1ee94e",
+    "shortSha": "3b410c69",
+    "time": "2026-11-27T18:58:53+04:00",
+    "subject": "Merge pull request #468 from abhinavjp/claude/bb-page-tabs"
+  },
+  {
+    "sha": "f2df3c65b43677aceb2ff6c4b8a1f2e92382477b",
+    "shortSha": "f2df3c65",
+    "time": "2026-11-27T18:48:25+04:00",
+    "subject": "Merge pull request #471 from abhinavjp/claude/bb-wizard-match-proto"
+  },
+  {
+    "sha": "d92a4d8296e721fcef3d0c47cb8bcdc855debdb3",
+    "shortSha": "d92a4d82",
+    "time": "2026-11-27T18:34:33+04:00",
+    "subject": "Merge pull request #469 from abhinavjp/claude/hs-queue-never-cancel"
+  },
+  {
+    "sha": "90d46bfdb2c3f952d84dd11328939a17e7f82da1",
+    "shortSha": "90d46bfd",
+    "time": "2026-11-27T18:20:55+04:00",
+    "subject": "Blackbox: free-space rule keeps the newest 24 hours (RV-BB-2, O-1) (#466)"
+  },
+  {
+    "sha": "a6dc8c77ba0807eae22fed4de3484fdb7019716e",
+    "shortSha": "a6dc8c77",
+    "time": "2026-11-27T18:13:38+04:00",
+    "subject": "Backlog: BL-745 required checks on master (W-25), BL-641 note (#467)"
+  },
+  {
+    "sha": "921300a1ff5246838af11614db543fb30748b908",
+    "shortSha": "921300a1",
+    "time": "2026-11-27T17:46:46+04:00",
+    "subject": "CI: pushes to develop queue instead of cancelling (BL-719) (#465)"
+  },
+  {
+    "sha": "a303979b76a778934e74667eaa65e415414195a1",
+    "shortSha": "a303979b",
+    "time": "2026-11-27T17:44:53+04:00",
+    "subject": "Docs: prototype pipeline text budget and ADHD-friendly default style (#463)"
+  }
+]
+  </script>
+  <script>
+    'use strict';
+
+    const byId = (id) => document.getElementById(id);
+    const readSnapshot = (name) => JSON.parse(byId('snapshot-' + name).textContent);
+    const queue = readSnapshot('queue');
+    const { runs } = readSnapshot('runs');
+    const merges = readSnapshot('merges').map((merge) => ({
+      ...merge,
+      pr: Number(merge.subject.match(/#(\d+)/)[1]),
+      title: merge.subject
+        .replace(/^Merge pull request #\d+ from [^/]+\//, '')
+        .replace(/ \(#\d+\)$/, '')
+    }));
+    const burst = [471, 468, 474, 477, 478].map((pr) => merges.find((merge) => merge.pr === pr));
+    const head = burst.at(-1);
+    const largerBurst = merges.filter((merge) => Date.parse(merge.time) >= Date.parse(burst[0].time)).reverse();
+    const headRuns = runs.filter((run) => run.kind === 'run' && run.event === 'push' &&
+      run.branch === 'develop' && run.headSha === head.sha);
+    const passedRun = headRuns.find((run) => run.status === 'passed');
+    const failedRun = headRuns.find((run) => run.status === 'failed');
+    const resultWords = {
+      success: ['passed', 'Passed'],
+      failure: ['failed', 'Failed'],
+      error: ['failed', 'Error'],
+      cancelled: ['stopped', 'Cancelled'],
+      superseded: ['stopped', 'Replaced']
+    };
+    const state = byId('state');
+    const tabs = [byId('queue-tab'), byId('run-tab')];
+
+    const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+    const status = (kind, word) =>
+      `<span class="st"><span class="dot ${kind}" aria-hidden="true"></span>${word}</span>`;
+    const code = (value) => `<code class="mono">${escapeHtml(value)}</code>`;
+    const time = (label, value) => value
+      ? `${label} <time datetime="${escapeHtml(value)}">${escapeHtml(value.slice(11, 16))} UTC</time>`
+      : '';
+    const metadata = (row) => `<div class="meta"><span>${escapeHtml(row.workflow)}</span>${code(row.sha.slice(0, 8))}</div>`;
+    const failureNext = '<p class="failure-next">Open the failing step on GitHub, fix it, merge again.</p>'
+      + '<p><button type="button" class="inert-action" data-open-step>Open failing step</button> <span class="step-note detail" role="status" hidden>Prototype: the real app opens the failing step on GitHub here.</span></p>';
+    const failureDetail = (row) => escapeHtml(row.reason.replace(/^job /, '').replace(/(, step \d+) /, '$1: '));
+
+    function expandButton(id, more, label = '') {
+      return `<button type="button" class="disclosure" aria-expanded="false" aria-controls="${id}" data-more="${escapeHtml(more)}">
+        ${label ? `<span>${escapeHtml(label)}</span>` : ''}<span class="disclosure-action">${escapeHtml(more)}</span>
+      </button>`;
+    }
+
+    function mergeList(items, attributes = '') {
+      return `<ul class="merge-list"${attributes}>${items.map((merge) => `
+        <li data-proto-inert><strong class="pr-number">#${merge.pr}</strong><span>${escapeHtml(merge.title)}</span>${code(merge.shortSha)}</li>`
+      ).join('')}</ul>`;
+    }
+
+    function queueCovers(items, waiting, hasRunAbove) {
+      if (items.length < 2) return '';
+      const previewSize = Math.min(items.length - 1, items.length > 6 ? 6 : 3);
+      const numbers = items.slice(0, previewSize).map((merge) => '#' + merge.pr).join(', ');
+      const remaining = items.length - previewSize;
+      const label = `Covers ${numbers} and ${remaining} more`;
+      const start = hasRunAbove ? 'Starts when the run above ends' : 'Starts next';
+      return `<div class="row-covers">
+        <div class="cover-line">
+          <span class="cover-label">${escapeHtml(label)}</span>${expandButton('queue-merges', `Show ${remaining} more`)}
+          <span class="chip">${items.length} merges, 1 run</span>
+          ${waiting ? `<p class="detail">${start}, then checks all ${items.length} together.</p>` : ''}
+        </div>
+        ${mergeList(items, ' id="queue-merges" aria-label="Covered merges" hidden')}
+      </div>`;
+    }
+
+    function queueRow(row, [kind, word], detail, timeMarkup, extra = '', featured = false) {
+      return `<li class="queue-row${featured ? ' featured' : ''}" data-proto-inert>
+        <div>${status(kind, word)}</div>
+        <div><div class="job">${escapeHtml(row.label)}</div>${metadata(row)}</div>
+        <div class="detail">${detail}</div>
+        <div class="row-time">${timeMarkup}</div>
+        ${extra}
+      </li>`;
+    }
+
+    function completedRow(row, extra = '', featured = false) {
+      let detail = row.state === 'superseded' ? 'A newer run took its place.' :
+        escapeHtml((row.reason || '').replace(/\bpull request\b/gi, 'PR').replace(/\brequest\b/gi, 'run'));
+      if (featured && row.conclusion === 'failure') {
+        detail = failureDetail(row) + failureNext;
+      }
+      return queueRow(row, resultWords[row.conclusion] || ['stopped', 'Done'],
+        detail, time('finished', row.finishedAt), extra, featured);
+    }
+
+    function renderQueue(items, waiting, finished, run, queueEntry) {
+      const covers = queueCovers(items, waiting, queue.running.length > 0);
+      const current = waiting ? queue.running.map((row) => queueRow(row, ['running', 'Running'],
+        `Running on ${code(row.claimedBy)}.`, time('started', row.claimedAt))).join('') : '';
+      const active = finished ? '' : queueRow(queueEntry,
+        waiting ? ['queued', 'Queued'] : ['running', 'Running'],
+        waiting ? '' : `Running on ${code(run.agent)}.`,
+        waiting ? time('queued', queueEntry.enqueuedAt) : time('started', run.start), covers, items.length > 1);
+      const completed = finished ? completedRow(queueEntry, covers, true) : '';
+      const history = queue.done.filter((row) => row.id !== queueEntry.id &&
+        (run !== passedRun || row.conclusion === 'success'));
+      const preview = history.slice(0, 2).map((row) => completedRow(row)).join('');
+      const rest = history.slice(2).map((row) => completedRow(row)).join('');
+      byId('queue-view').innerHTML = `
+        <h1 class="view-heading">Queue</h1>
+        ${current || active ? `<ul class="queue-list panel" aria-label="Now and next">${current}${active}</ul>` : ''}
+        <section class="${finished ? '' : 'history '}queue-history" aria-labelledby="history-title">
+          <h2 id="history-title">Recently finished</h2>
+          <div class="panel">
+            <ul class="queue-list">${completed}${preview}</ul>
+            ${rest ? `<ul class="queue-list" id="older-runs" hidden>${rest}</ul>` : ''}
+          </div>
+          ${rest ? expandButton('older-runs', `Show ${history.length - 2} more`) : ''}
+        </section>`;
+    }
+
+    function renderRun(items, waiting, finished, run, queueEntry) {
+      const hasCovers = items.length > 1;
+      const failed = finished && run.status === 'failed';
+      const remaining = items.length - 3;
+      const title = hasCovers ? `Push develop, checks ${items.length} merges` : 'Push develop';
+      const runStatus = waiting ? status('queued', 'Queued') :
+        finished ? status(run.status, escapeHtml(run.word)) : status('running', 'Running');
+      const runTime = waiting ? time('queued', queueEntry.enqueuedAt) :
+        finished ? time('finished', queueEntry.finishedAt) : time('started', run.start);
+      const coverage = hasCovers ? `<div class="run-cover">
+        ${mergeList(items.slice(0, 3), ' aria-label="Covered merges"')}
+        ${remaining > 0 ? mergeList(items.slice(3), ' id="run-merges" aria-label="More covered merges" hidden') : ''}
+        ${remaining > 0 ? expandButton('run-merges', `Show ${remaining} more`) : ''}
+        ${finished ? '' : '<p class="detail">Covered merges get this result on GitHub when the run ends.</p>'}
+      </div>` : '';
+      const results = finished && hasCovers ? `<section class="panel result-panel" aria-labelledby="results-title">
+        <h2 id="results-title">GitHub results</h2>
+        ${failed ? '<p class="detail">This run failed. We cannot tell which merge broke it.</p>' : ''}
+        <ul class="results">${items.map((merge) => `<li data-proto-inert>
+          <strong class="pr-number">#${merge.pr}</strong>
+          <span class="message"><span class="dot ${run.status}" aria-hidden="true"></span>
+          <span><strong>${failed ? 'Run failed' : 'Run passed'}</strong> on ${code(head.shortSha)}</span></span>
+        </li>`).join('')}</ul>
+        ${failed ? failureNext : ''}
+      </section>` : '';
+      byId('run-view').innerHTML = `
+        <a class="run-back" href="#queue-view">From the Queue: ${escapeHtml(queueEntry.label)} ${code(head.shortSha)}</a>
+        <header class="panel run-head">
+          <h1>${title}</h1>
+          <div class="meta">${runStatus}<span>${escapeHtml(run.workflow)}</span>${code(head.shortSha)}<span>${runTime}</span></div>
+          ${failed ? `<p class="detail run-note">${failureDetail(queueEntry)}</p>` : ''}
+          ${waiting && queue.running.length ? '<p class="detail run-note">Waiting for the run on the Queue tab to end.</p>' : ''}
+          ${hasCovers ? '' : '<p class="detail run-note">Checks this one merge on its own.</p>'}
+          ${coverage}
+        </header>
+        ${results}`;
+    }
+
+    function render() {
+      const mode = state.value;
+      const items = mode === 'single' ? [head] : mode === 'overflow' ? largerBurst : burst;
+      const waiting = ['waiting', 'single', 'overflow'].includes(mode);
+      const finished = mode === 'passed' || mode === 'failed';
+      const run = mode === 'passed' ? passedRun : failedRun;
+      const queueEntry = queue.done.find((row) => row.id === run.request);
+      renderQueue(items, waiting, finished, run, queueEntry);
+      renderRun(items, waiting, finished, run, queueEntry);
+    }
+
+    function selectTab(next, moveFocus = false) {
+      for (const tab of tabs) {
+        const selected = tab === next;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        byId(tab.getAttribute('aria-controls')).hidden = !selected;
+      }
+      if (moveFocus) next.focus();
+    }
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => selectTab(tab));
+      tab.addEventListener('keydown', (event) => {
+        const next = { ArrowLeft: 1 - index, ArrowRight: 1 - index, Home: 0, End: 1 }[event.key];
+        if (next === undefined) return;
+        event.preventDefault();
+        selectTab(tabs[next], true);
+      });
+    });
+
+    document.querySelector('main').addEventListener('click', (event) => {
+      if (event.target.closest('.run-back')) {
+        event.preventDefault();
+        selectTab(tabs[0], true);
+        return;
+      }
+      const stepButton = event.target.closest('[data-open-step]');
+      if (stepButton) {
+        stepButton.parentElement.querySelector('.step-note').hidden = false;
+        return;
+      }
+      const button = event.target.closest('.disclosure');
+      if (!button) return;
+      const expanded = button.getAttribute('aria-expanded') === 'true';
+      byId(button.getAttribute('aria-controls')).hidden = expanded;
+      button.setAttribute('aria-expanded', String(!expanded));
+      button.querySelector('.disclosure-action').textContent = expanded ? button.dataset.more : 'Show fewer';
+    });
+    state.addEventListener('change', render);
+    render();
+  </script>
+</body>
+<!--
+Round 1 answer
+1. Done failed identifies the run-level failure, explains that the culprit merge is unknown,
+   and shares the recorded job and step between Queue and Run. Both show the next step.
+   Run also shows an inert, labelled Open failing step button.
+2. Done passed shows the real passing workflow and filters Queue history to successful rows.
+   The failed ci.yml row for 9888212c appears as a finished row only in Done failed.
+3. Queue explains when the waiting run starts, including when nothing is running above.
+   Run identifies the wait on the Queue tab.
+4. Run links back to the Queue tab and moves focus there. The state control is smaller
+   and uses a dashed border and the label Prototype: show state.
+5. Visible replacement copy says run. The embedded JSON is byte-for-byte unchanged.
+6. PR numbers have a minimum width and stay on one line in merge and result rows.
+7. Merge titles show the branch name for merge commits and omit PR suffixes for squash commits.
+8. Disclosures use a rotating chevron, aria-expanded, and Show N more / Show fewer.
+   The Queue disclosure retains its Covers summary.
+9. The footer explains where the covers list comes from and when the live list arrives.
+10. Timestamps are labelled started, queued, or finished.
+11. One merge only says Checks this one merge on its own.
+
+Verification and uncertainty
+The default collapsed Queue has about 91 words including the footer. Static and Node checks
+covered balanced markup, JSON integrity, JavaScript, all six states, and control behavior.
+Browser-level layout and keyboard behavior were not verified. This answer is embedded here
+to keep the one-file edit.
+-->
+</html>

@@ -1,0 +1,42 @@
+Homestretch
+Queue
+Run
+Prototype
+Prototype: show state
+Waiting
+Running
+Done passed
+Done failed
+One merge only
+More than 6
+Queue
+Running
+pr 479 into develop
+fast-gate.yml
+6be1cf38
+Running on local.
+started 18:10 UTC
+Queued
+push develop
+ci.yml
+9888212c
+queued 15:47 UTC
+Covers #471, #468, #474 and 2 more
+Show 2 more
+5 merges, 1 run
+
+Starts when the run above ends, then checks all 5 together.
+
+Recently finished
+Passed
+pr 358 into develop
+fast-gate.yml
+dac3c795
+finished 16:22 UTC
+Passed
+push develop
+fast-gate.yml
+9888212c
+finished 16:21 UTC
+Show 17 more
+Prototype note: the covers list is built from the real recent merges. The live list arrives with the next dashboard update.
