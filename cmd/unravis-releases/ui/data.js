@@ -106,7 +106,8 @@ const Data = (() => {
     if (my !== epoch) return false; // the project was switched while this was loading
     D.at = Date.now(); D.err = '';
     // "now" moves every second on the server, so it must not count as a change.
-    const ovs = { ...ov, now: 0 }; const mas = ma && { ...ma, now: 0 };
+    const ovs = { ...ov, now: 0, seenAges: (ov.agents || []).map((a) => minutesSince(a.lastSeen)) };
+    const mas = ma && { ...ma, now: 0, seenAges: (ma.machines || []).map((m) => minutesSince(m.lastHeard)) };
     const c1 = !same('overview', ovs); const c2 = !same('runs', rs); const c3 = !same('machines', mas);
     D.overview = ov; D.runs = rs.runs || []; D.runsTotal = rs.total || 0; D.machines = ma;
     return c1 || c2 || c3;
@@ -123,7 +124,9 @@ const Data = (() => {
         const v = await api(path, { ...P(), ...extra });
         if (my !== epoch) return;
         o.err[key] = '';
-        if (!same('ops-' + key, { ...v, now: '' })) changed = true;
+        const waitAges = key === 'queue' ? (v.queued || []).map((r) => [waitMinutes(r), longWait(r)]) : null;
+        const seenAges = key === 'policy' ? (v.machines || []).map((m) => minutesSince(m.lastSeen)) : null;
+        if (!same('ops-' + key, { ...v, now: '', waitAges, seenAges })) changed = true;
         o[key] = v;
       } catch (e) {
         if (my !== epoch) return;

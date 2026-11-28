@@ -99,7 +99,8 @@ const Ops = (() => {
     const l = prLink(r);
     const name = l ? `<a class="rl title" href="${esc(l)}" target="_blank" rel="noopener noreferrer" title="Open on GitHub">${esc(r.label)}</a>` : `<span class="title">${esc(r.label)}</span>`;
     const bits = [wfName(r.workflow), r.repo, r.sha ? short(r.sha) : ''].filter(Boolean).map(esc).join(' · ');
-    return `${name}<small class="mono">${bits}</small>`;
+    const run = runIdForRequest(r);
+    return `${name}<small class="mono">${bits}</small>${run ? `<a class="why" href="#/run/${encodeURIComponent(run)}" title="Open the run in Homestretch">Open run</a>` : ''}`;
   }
   const FIX = {
     'no-machine': ['Add a machine', 'machines'], 'no-labels': ['Add a machine', 'machines'], denied: ['Change the rule', 'rule'], deferred: ['Open holds', 'holds'], paused: ['Resume the queue', 'resume'],
@@ -115,8 +116,9 @@ const Ops = (() => {
     const c = r.why && r.why.code;
     if (paused || c === 'paused') return stw('pause', 'Paused', 'waiting', 'The whole queue is paused. Nothing new starts.');
     if (c === 'deferred') return stw('lock', 'On hold', 'waiting', 'A hold is active for this project.');
-    if (r.waiting) return stw('waiting', 'Waiting', 'waiting', 'No machine can take this job yet. The next column says why.');
-    if (first) return stw('play', 'Starts next', 'running', 'A machine is free and will take this job next.');
+    if (r.waiting || ['busy', 'offline', 'draining', 'no-machine', 'no-labels', 'denied'].includes(c)) return stw('waiting', 'Waiting', 'waiting', 'No machine can take this job yet. The next column says why.');
+    if (c === 'ready' && r.why.machines?.length && longWait(r)) return stw('waiting', 'Waiting', 'waiting', 'A slot is free but this job is still waiting.');
+    if (first && c === 'ready') return stw('play', 'Starts next', 'running', 'A machine has a free slot for this job.');
     return stw('waiting', 'Queued', 'unknown', 'In line behind the jobs above it.');
   }
   function confirmCell(kind, id, text, yes, extra) {
@@ -130,16 +132,94 @@ const Ops = (() => {
     return `<div class="row-actions">${top}<button type="button" class="btn sm" data-ops="cancel" data-id="${esc(r.id)}" title="${running ? 'Stop this job on its machine' : 'Remove this job from the queue'}">${ico('stop')}Cancel</button></div>`;
   }
   const prio = (r) => (r.priorityLabel === 'First' ? `<span class="chip prio first" title="Starts before the Normal jobs">${ico('up')}First</span>` : '<span class="chip prio" title="Starts in the usual order">Normal</span>');
-  function runningRow(r) {
-    const where = `<span class="why">Running on <b class="mono">${esc(r.claimedBy || 'a machine')}</b>${r.claimedAt ? `, started ${when(r.claimedAt)}` : ''}${r.attempts > 1 ? `, attempt ${r.attempts}` : ''}.</span>`;
-    return `<tr><td class="w-st">${st('running', 'Running')}</td><td>${jobCell(r)}</td><td class="whyc">${where}</td><td class="hide-s" data-l="Priority">${prio(r)}</td><td class="num hide-s" data-l="Queued">${when(r.enqueuedAt)}</td><td>${queueActions(r, true)}</td></tr>`;
+  const queueControls = '<a href="#/queue?controls=1" title="Go to the Pause or Resume button">Queue controls</a>';
+  const seeMachine = '<a href="#/machines">See machine</a>';
+
+  function machineProblem(m) {
+    const link = machineLink(m.name);
+    if (m.state === 'gone') return `${link} is offline (${lastSeen(m)}). Start the Unravis agent on it.`;
+    if (m.state === 'low-disk') return `${link} is not starting runs: disk is low. Free some disk space on it.`;
+    if (m.state === 'draining') return `${link} is draining. It finishes its current jobs before it stops.`;
+    if (m.state === 'paused') return `${link} is paused. Resume it to start new jobs.`;
+    if (m.state === 'ready' && m.slots > 0 && m.running >= m.slots) return `${link} is full: ${esc(slotsBusy(m))}.`;
+    return '';
+  }
+  function stoppedReporting(name, machines = reportedMachines()) {
+    const m = machines.find((m) => m.name === name);
+    return m?.state === 'gone' ? `<span class="why">Running on ${machineLink(name)}, but it stopped reporting (${lastSeen(m)}).</span>` : '';
+  }
+  function nextFree(m) {
+    if (m?.state !== 'ready' || !Number.isInteger(m.running) || m.running < 0 || m.running >= m.slots) return '';
+    return `<span class="why">Next free: ${slotLabel(m.running + 1, m.slots)}</span>`;
+  }
+  function nextFreeEstimate(machines) {
+    const active = (ops().queue?.running || []).filter((r) => machines.some((m) => m.name === r.claimedBy));
+    if (!active.length || machines.some((m) => !m.slots || active.filter((r) => r.claimedBy === m.name).length !== m.running)) return '';
+    const estimates = active.map((r) => {
+      const samples = (D.runs || []).filter((run) => run.kind === 'run' && run.agent === r.claimedBy && run.workflow === r.workflow &&
+        ['passed', 'failed'].includes(run.status) && Number.isFinite(run.ms) && run.ms > 0).map((run) => run.ms).sort((a, b) => a - b);
+      if (samples.length < 3) return NaN;
+      const middle = Math.floor(samples.length / 2);
+      const median = (samples[middle] + samples[Math.floor((samples.length - 1) / 2)]) / 2;
+      return Date.parse(r.claimedAt) + median;
+    });
+    const eta = Math.min(...estimates);
+    if (!Number.isFinite(eta) || eta <= Date.now()) return '';
+    const time = new Date(eta);
+    return ` <span title="Estimate from the median recorded duration of this workflow on this machine">Estimated next free slot ${at(time.toISOString())}.</span>`;
+  }
+  function waitReason(r, page) {
+    const why = r.why;
+    const names = why?.machines || [];
+    const matches = reportedMachines().filter((m) => names.includes(m.name));
+    const m = matches[0];
+    let text = esc(why?.text ? cap(why.text) : r.deferNote || r.reason || (r.waiting ? 'No machine can take this yet.' : 'The queue has not reported why this run is waiting.'));
+    if (ops().queue?.paused || why?.code === 'paused') {
+      text = `The queue is paused. Nothing new starts. ${queueControls}`;
+    } else if (why?.code === 'ready' && names.length) {
+      const link = machineLink(names[0]);
+      text = longWait(r) ? `Not starting though a slot is free on ${link}. This is longer than usual. Is the queue paused? ${queueControls}` : `Slot free on ${link}. Starts soon.`;
+    } else if (why?.code === 'busy' && names.length) {
+      text = `Waiting for a free slot on ${names.map((name) => {
+        const machine = matches.find((m) => m.name === name);
+        return machineLink(name) + (machine && Number.isInteger(machine.running) && machine.slots > 0 ? ` (${esc(slotsBusy(machine))})` : '');
+      }).join(', ')}.${matches.length === names.length ? nextFreeEstimate(matches) : ''}`;
+    } else if (why?.code === 'offline' && names.length) {
+      text = `${names.map((name) => {
+        const machine = matches.find((m) => m.name === name);
+        return `${machineLink(name)} is offline${machine ? ` (${lastSeen(machine)})` : ''}. Nothing can start. Start the Unravis agent on it.`;
+      }).join(' ')}${page === 'machines' ? '' : ` ${seeMachine}`}`;
+    } else if (why?.code === 'draining' && matches.length === names.length && matches.length &&
+        matches.every((m) => ['low-disk', 'draining', 'paused'].includes(m.state))) {
+      text = `${matches.map(machineProblem).join(' ')}${page === 'machines' ? '' : ` ${seeMachine}`}`;
+    }
+    const minutes = waitMinutes(r);
+    const age = Number.isFinite(minutes) ? ` · waiting ${minutes >= 60 ? `${Math.floor(minutes / 60)} h ` : ''}${minutes % 60} min` : '';
+    return `<span class="why${why?.code === 'ready' && !longWait(r) ? ' ok' : ''}">${text}${esc(age)}</span>${page === 'queue' && why?.code === 'ready' && !ops().queue?.paused ? nextFree(m) : ''}`;
+  }
+  const waitForRun = (run) => waitReason(queueRequest(run) || { enqueuedAt: run.start, reason: run.reason });
+  const statusResult = (status) => ['waiting', 'running'].includes(status) ? st('waiting', 'after run') : st(status, status);
+  function queueCovers(r, verb) {
+    const n = changeCount(r);
+    if (n <= 1) return '';
+    return `<details id="queue-covers-${esc(r.id)}" class="cover-more" data-cover><summary title="${esc(CHANGE_TITLE)}">${esc(verb)} ${esc(n)} changes${verb === 'Will check' ? ' together' : ''}</summary>${coverList(r)}</details>`;
+  }
+  function coverSummary(r, verb, from) {
+    const n = changeCount(r);
+    if (n <= 1) return '';
+    const run = runIdForRequest(r);
+    const href = from === 'queue' ? `#/queue?changes=${encodeURIComponent(r.id)}` : `#/run/${encodeURIComponent(run)}?changes=1`;
+    return `<span title="${esc(CHANGE_TITLE)}">${esc(verb)} ${esc(n)} changes</span> · <a href="${esc(href)}">See which changes</a>`;
+  }
+  function runningRow(r, claims, machines) {
+    const offline = machines.find((m) => m.name === r.claimedBy && m.state === 'gone');
+    const where = `<span class="why">Running on ${placementHtml(machinePlacement(r.claimedBy, r, claims, machines)) || 'a machine'}${offline ? `, but it stopped reporting (${lastSeen(offline)})` : r.claimedAt ? `, started ${when(r.claimedAt)}` : ''}${r.attempts > 1 ? `, attempt ${esc(r.attempts)}` : ''}.</span>`;
+    return `<tr><td class="w-st">${st('running', 'Running')}</td><td>${jobCell(r)}</td><td class="whyc">${where}${queueCovers(r, 'Checking')}</td><td class="hide-s" data-l="Priority">${prio(r)}</td><td class="num hide-s" data-l="Queued">${when(r.enqueuedAt)}</td><td>${queueActions(r, true)}</td></tr>`;
   }
   function queuedRow(r, first, paused) {
     const need = (r.labels || []).length ? `<span class="why">Needs a machine with: ${r.labels.map((x) => `<span class="mono">${esc(x)}</span>`).join(', ')}.</span>` : '';
-    const text = r.why ? cap(r.why.text) : r.waiting ? 'No machine can take this yet.' : 'Waiting for a free machine.';
-    const cls = r.why && r.why.code === 'ready' ? 'why ok' : 'why';
     const fix = fixBtn(r);
-    return `<tr><td class="w-st">${queuedState(r, first, paused)}</td><td>${jobCell(r)}</td><td class="whyc"><span class="${cls}">${esc(text)}</span>${need}${fix ? `<div class="fixes">${fix}</div>` : ''}</td><td class="hide-s" data-l="Priority">${prio(r)}</td><td class="num hide-s" data-l="Queued">${when(r.enqueuedAt)}</td><td>${queueActions(r, false)}</td></tr>`;
+    return `<tr><td class="w-st">${queuedState(r, first, paused)}</td><td>${jobCell(r)}</td><td class="whyc">${waitReason(r, 'queue')}${need}${queueCovers(r, 'Will check')}${fix ? `<div class="fixes">${fix}</div>` : ''}</td><td class="hide-s" data-l="Priority">${prio(r)}</td><td class="num hide-s" data-l="Queued">${when(r.enqueuedAt)}</td><td>${queueActions(r, false)}</td></tr>`;
   }
   const RESULT = { success: ['passed', 'Passed'], failure: ['failed', 'Failed'], error: ['failed', 'Error'], cancelled: ['stopped', 'Cancelled'], superseded: ['skipped', 'Replaced'] };
   function doneRow(r) {
@@ -149,7 +229,17 @@ const Ops = (() => {
     const retry = r.runId ? (c && c.kind === 'retry' && c.id === r.runId
       ? confirmCell('retry', r.runId, 'Run this job again?', 'Yes, run it again')
       : `<button type="button" class="btn sm" data-ops="retry" data-id="${esc(r.runId)}" ${O.busy['retry:' + r.runId] ? 'disabled' : ''} title="Put this job back in the queue as a new run">${ico('rerun')}Retry</button>`) : '<span class="muted fs-xs" title="Only a job that made a run can be run again.">No run to repeat</span>';
-    return `<tr><td class="w-st">${st(s, w)}</td><td>${jobCell(r)}</td><td class="whyc"><span class="why">${esc(why) || '<span class="dim">nothing more recorded</span>'}</span></td><td class="num hide-s" data-l="Finished">${when(r.finishedAt)}</td><td>${retry}</td></tr>`;
+    const covering = r.state === 'superseded' || r.conclusion === 'superseded' ? replacement(r) : '';
+    return `<tr><td class="w-st">${st(s, w)}</td><td>${jobCell(r)}</td><td class="whyc">${why || !r.claimedBy ? `<span class="why">${esc(why) || '<span class="dim">nothing more recorded</span>'}</span>` : ''}${r.claimedBy ? `<span class="why">ran on ${machineLink(r.claimedBy)}</span>` : ''}${covering}${!covering && s !== 'skipped' ? queueCovers(r, 'Checked') : ''}</td><td class="num hide-s" data-l="Finished">${when(r.finishedAt)}</td><td>${retry}</td></tr>`;
+  }
+  function replacement(r) {
+    if (r.state !== 'superseded' && r.conclusion !== 'superseded') return '';
+    const q = ops().queue;
+    const id = /^Replaced by a newer request \(([^()]+)\)$/.exec(r.display || '')?.[1] || r.supersededBy;
+    const next = [...(q?.queued || []), ...(q?.running || []), ...(q?.done || [])].find((req) => req.id === id);
+    if (!next?.sha || !r.sha || !next.covers?.some((c) => c.sha && short(c.sha) === short(r.sha) && (!r.number || c.number === r.number))) return '';
+    const run = runIdForRequest(next);
+    return `<span class="why">covered by run on <a class="mono" href="#/run/${encodeURIComponent(run)}?changes=1" title="Open the run that checks this commit">${esc(short(next.sha))}</a></span>`;
   }
   function viewQueue() {
     const lead = 'The jobs waiting for a machine, the ones running now, and the ones that just finished.';
@@ -160,14 +250,18 @@ const Ops = (() => {
     const f = (a) => (repo ? (a || []).filter((r) => r.repo === repo) : a || []);
     const run = f(q.running); const que = f(q.queued); const done = f(q.done);
     const right = q.paused
-      ? `<button type="button" class="btn primary" data-ops="resume" ${O.busy['resume'] ? 'disabled' : ''} title="Let machines start jobs again">${ico('play')}Resume the queue</button>`
-      : `<button type="button" class="btn" data-ops="pause" ${O.busy['pause'] ? 'disabled' : ''} title="Stop machines from starting new jobs. Jobs already running finish.">${ico('pause')}Pause the queue</button>`;
-    const firstReady = que.findIndex((r) => !r.waiting);
-    const rows = run.map(runningRow).join('') + que.map((r, i) => queuedRow(r, i === firstReady, q.paused)).join('');
+      ? `<button type="button" class="btn primary" id="queue-controls" data-ops="resume" ${O.busy['resume'] ? 'disabled' : ''} title="Let machines start jobs again">${ico('play')}Resume the queue</button>`
+      : `<button type="button" class="btn" id="queue-controls" data-ops="pause" ${O.busy['pause'] ? 'disabled' : ''} title="Stop machines from starting new jobs. Jobs already running finish.">${ico('pause')}Pause the queue</button><span class="chip" title="Machines may start new jobs">Queue running</span>`;
+    const firstReady = que.findIndex((r) => r.why?.code === 'ready');
+    const claims = runningClaims(), machines = reportedMachines();
+    const rows = run.map((r) => runningRow(r, claims, machines)).join('') + que.map((r, i) => queuedRow(r, i === firstReady, q.paused)).join('');
+    const next = [...run, ...que, ...done].find((r) => changeCount(r) > 1 && r.state !== 'superseded' && r.conclusion !== 'superseded');
+    const summary = next ? coverSummary(next, next.state === 'queued' ? 'The next run will check' : next.state === 'running' ? 'This run is checking' : 'This run checked', 'queue') : '';
     const none = '<div class="empty-big"><h2>Nothing is waiting or running.</h2><p>When a pull request or a push needs checking, it appears here, with the reason if it has to wait.</p></div>';
     return `${head('Queue', lead, right)}${noteHtml()}${staleNote('queue')}
     <div class="nowline"><span>${stw('running', plural(c.running || 0, 'running', 'running'), 'running')}</span><span>${stw('waiting', (c.queued || 0) + ' queued', 'waiting')}</span><span><b>${c.waiting || 0} waiting</b> for a machine</span><span class="fork">${esc(FORK)}</span></div>
     ${q.paused ? `<div class="warnbox" role="status">${ico('pause')}<div class="wb"><b>The queue is paused.</b> No machine starts a new job until it is resumed.<p>It was paused with a pause file on this PC. Resuming removes that file.</p>${q.pausedReason ? `<p class="ev mono">${esc(q.pausedReason)}</p>` : ''}</div></div>` : ''}
+    ${summary ? `<p class="note">${summary}</p>` : ''}
     ${repos.length > 1 ? `<div class="chips qf" role="group" aria-label="Show jobs for">${[''].concat(repos).map((x) => `<button type="button" class="chipbtn" data-ops="repo" data-repo="${esc(x)}" aria-pressed="${x === repo}">${x ? esc(x) : 'All projects'}</button>`).join('')}</div>` : ''}
     <section class="sec"><div class="sh"><h2>Now and next</h2><span class="muted">running first, then in the order they will start</span></div>
     ${rows ? `<table class="tbl qt"><thead><tr><th class="w-st">State</th><th>Job</th><th>Where it is, or why it waits</th><th class="hide-s">Priority</th><th class="num hide-s">Queued</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>` : none}</section>
@@ -334,7 +428,16 @@ const Ops = (() => {
     const o = ops(); const q = o.queue;
     if (o.old || !q || !q.ciFound) return '';
     const c = q.counts || {};
-    return `<div class="card"><h3>Queue</h3><a href="#/queue">Open the queue</a>${q.paused ? `<p><span class="chip warn">${ico('pause')}Paused</span></p>` : ''}<p><b>${c.running || 0}</b> running, <b>${c.queued || 0}</b> queued${c.waiting ? `, <b>${c.waiting}</b> waiting for a machine` : ''}.</p></div>`;
+    const claims = runningClaims(), machines = reportedMachines();
+    const next = q.queued?.[0];
+    const covered = [...(q.running || []), ...(q.queued || []), ...(q.done || [])]
+      .find((r) => changeCount(r) > 1 && r.state !== 'superseded' && r.conclusion !== 'superseded');
+    const active = (q.running || []).map((r) => placementHtml(machinePlacement(r.claimedBy, r, claims, machines))).filter(Boolean);
+    const capacity = machines.map((m) => machineProblem(m) || (Number.isInteger(m.running) && m.slots > 0
+      ? `${machineLink(m.name)}: ${esc(slotsBusy(m))}` : '')).filter(Boolean);
+    return `<div class="card"><h3>Queue <a href="#/queue">Open the queue</a></h3><p><b>${esc(c.running || 0)}</b> running, <b>${esc(c.queued || 0)}</b> queued${c.waiting ? `, <b>${esc(c.waiting)}</b> waiting for a machine` : ''}.${q.paused && !next ? ' The queue is paused. Nothing new starts.' : ''}</p>
+      ${active.length || capacity.length ? `<p title="A machine is a PC that runs checks. Each slot runs one job at a time. ${SLOT_TITLE}">${[...active, ...capacity].join(' · ')}</p>` : ''}
+      ${next || covered ? `<p>${next ? waitReason(next) : ''}${covered ? coverSummary(covered, covered.state === 'queued' ? 'Next run checks' : covered.state === 'running' ? 'Checking' : 'Checked') : ''}</p>` : ''}</div>`;
   }
   // The numbers on the tabs. '' while there is nothing to say.
   function counts() {
@@ -423,5 +526,6 @@ const Ops = (() => {
   // A new page: forget what was half done there.
   function reset() { O.confirm = null; O.note = null; O.edit = null; O.drawer = null; O.reason = ''; }
 
-  return { viewQueue, viewHolds, viewActivity, machineCell, machinesExtra, holdLine, queueCard, counts, bind, escape, reset, state: O, allowed, actionWord, plainFail };
+  return { viewQueue, viewHolds, viewActivity, machineCell, machinesExtra, holdLine, queueCard, counts, bind, escape, reset, state: O, allowed, actionWord, plainFail,
+    waitReason, waitForRun, machineProblem, stoppedReporting, nextFree, statusResult, replacement };
 })();

@@ -37,6 +37,111 @@ const dur = (ms) => {
 };
 const subject = (r) => (r.pr ? `PR ${r.pr}` : `Push to ${r.branch || 'a branch'}`);
 
+const SLOT_TITLE = 'Slots are numbered in the order jobs started.';
+const CHANGE_TITLE = 'A change is a pull request that was merged into the branch. One run can check several changes together.';
+const machineLink = (name) => `<a class="mono" href="#/machines" title="See the machines that run checks">${esc(name)}</a>`;
+const slotLabel = (slot, slots) => `<span title="${SLOT_TITLE}">slot ${esc(slot)} of ${esc(slots)}</span>`;
+const slotSquares = (slots, busy) => `<span class="slots" aria-hidden="true">${Array.from({ length: slots }, (_, i) => `<i${i < busy ? ' class="busy"' : ''}></i>`).join('')}</span>`;
+const slotsBusy = (m) => `${m.running} of ${m.slots} slots busy`;
+const slotCount = (n) => Number.isInteger(n) && n > 0 ? n : 0;
+const minutesSince = (time) => Math.max(0, Math.floor((Date.now() - Date.parse(time)) / 60_000));
+const waitMinutes = (r) => minutesSince(r.enqueuedAt);
+const longWait = (r) => Date.now() - Date.parse(r.enqueuedAt) > 30 * 60_000;
+
+function slotOf(request, allRunning) {
+  if (!request.id || !request.claimedBy) return null;
+  const jobs = allRunning.filter((job) => job.claimedBy === request.claimedBy);
+  if (jobs.some((job) => !Number.isFinite(Date.parse(job.claimedAt)))) return null;
+  jobs.sort((a, b) => Date.parse(a.claimedAt) - Date.parse(b.claimedAt) || (a.id < b.id ? -1 : Number(a.id > b.id)));
+  const index = jobs.findIndex((job) => job.id === request.id);
+  return index < 0 ? null : index + 1;
+}
+
+// Heartbeats name jobs by request ID. Use their start time when the queue read has no claim for that job yet.
+function runningClaims() {
+  const byId = new Map();
+  for (const a of D.overview?.agents || []) {
+    for (const j of a.jobs || []) {
+      if (j.id) byId.set(j.id, { id: j.id, claimedBy: a.name, claimedAt: j.since, label: j.label });
+    }
+  }
+  const q = D.ops?.queue;
+  for (const r of [...(q?.queued || []), ...(q?.done || [])]) byId.delete(r.id);
+  for (const r of q?.running || []) {
+    const j = byId.get(r.id);
+    byId.set(r.id, { ...r, claimedAt: r.claimedAt || (j?.claimedBy === r.claimedBy ? j.claimedAt : '') });
+  }
+  return [...byId.values()];
+}
+
+function queueRequest(run) {
+  const q = D.ops?.queue;
+  const id = run.request || run.id;
+  return [...(q?.running || []), ...(q?.queued || []), ...(q?.done || [])]
+    .find((r) => r.id === id || r.runId === run.id);
+}
+
+const runIdForRequest = (r) => r.runId || (D.overview?.running || []).find((run) => run.request === r.id)?.id || r.id;
+
+function reportedMachines() {
+  const machines = new Map();
+  for (const a of D.overview?.agents || []) {
+    machines.set(a.name, { ...a, state: a.fresh === false ? 'gone' : a.state, running: a.jobs?.length });
+  }
+  for (const m of D.ops?.policy?.machines || []) {
+    machines.set(m.name, { ...machines.get(m.name), ...m, state: m.state !== 'gone' && m.drainAsked ? 'draining' : m.state });
+  }
+  return [...machines.values()];
+}
+
+function lastSeen(m) {
+  const minutes = minutesSince(m.lastSeen);
+  if (!Number.isFinite(minutes)) return 'last seen time not recorded';
+  return `last seen <time datetime="${esc(m.lastSeen)}" title="${esc(exact(m.lastSeen))}">${esc(minutes)} min ago</time>`;
+}
+
+function machinePlacement(name, request, claims, machines) {
+  if (!name) return null;
+  const slots = slotCount(machines.find((m) => m.name === name)?.slots);
+  const slot = request ? slotOf(request, claims) : null;
+  return { name, slot: slot <= slots ? slot : null, slots };
+}
+
+function placementHtml(placement) {
+  if (!placement) return '';
+  const { name, slot, slots } = placement;
+  return machineLink(name) + (slot ? `, ${slotLabel(slot, slots)}` : '');
+}
+
+function runMachine(run, request = queueRequest(run)) {
+  if (norm(run.status) === 'waiting') return null;
+  const name = run.agent || request?.claimedBy;
+  if (norm(run.status) !== 'running') return name ? { name } : null;
+  const claims = runningClaims();
+  const claim = claims.find((r) => r.id === (run.request || request?.id || run.id));
+  return machinePlacement(claim?.claimedBy || name, claim, claims, reportedMachines());
+}
+const runPlacement = (run, request) => placementHtml(runMachine(run, request));
+
+const changeCount = (r) => Math.min(r?.covers?.length || 0, 50);
+function coverList(r, result = '') {
+  const n = changeCount(r);
+  if (n <= 1) return '';
+  const coveringSHA = short(r.sha);
+  const changes = (items) => items.map((c) => {
+    const number = c.number > 0 ? '#' + c.number : '';
+    const pr = number && r.repo ? `<a class="mono" href="${esc(`https://github.com/${r.repo}/pull/${c.number}`)}" title="Open pull request ${esc(number)} on GitHub" target="_blank" rel="noopener noreferrer">${esc(number)}</a>` : esc(number);
+    const covered = coveringSHA && c.sha && short(c.sha) !== coveringSHA
+      ? `<span class="why">covered by run on <span class="mono">${esc(coveringSHA)}</span></span>` : '';
+    const change = `${c.sha ? `<span class="mono" title="Commit checked by this run">${esc(short(c.sha))}</span> ` : ''}${pr} ${esc(c.title)}${covered}`;
+    return result ? `<tr><td>${change}</td><td>${result}</td></tr>` : `<li>${change}</li>`;
+  }).join('');
+  const list = (items) => result ? `<table class="tbl"><thead><tr><th>Change</th><th title="The result this run supplies for the change">Result on GitHub</th></tr></thead><tbody>${changes(items)}</tbody></table>`
+    : `<ul class="cover-list">${changes(items)}</ul>`;
+  const more = n - 6;
+  return list(r.covers.slice(0, 6)) + (more > 0 ? `<details id="cover-more-${esc(r.id)}" class="cover-more" data-cover><summary><span>Show ${esc(more)} more</span><span>Show fewer</span></summary>${list(r.covers.slice(6, n))}</details>` : '');
+}
+
 function toast(msg) {
   const layer = $('#layer');
   const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = msg;
