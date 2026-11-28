@@ -90,6 +90,9 @@ type RecorderOptions struct {
 	SelfUsage func() (SelfReading, bool)
 	// Diag is the diagnostics log. Optional: nil writes nothing.
 	Diag *DiagLog
+	// ExtraLogRoots names more folders for the logs catalogue, for example the IIS site folders the sources manifest
+	// found. Optional: nil uses only the configured folders.
+	ExtraLogRoots func() []string
 }
 
 // RecorderStatus is a snapshot of the recorder for the status page.
@@ -399,7 +402,11 @@ func (r *Recorder) Tick(now time.Time) {
 	}
 	r.mu.Unlock()
 	if r.o.Config.Record.LogsCatalogue && (r.lastLogs.IsZero() || now.Sub(r.lastLogs) >= logsEvery || now.Before(r.lastLogs)) {
-		r.logs = CatalogueLogs(r.o.Config.LogPaths)
+		roots := r.o.Config.LogPaths
+		if r.o.ExtraLogRoots != nil {
+			roots = MergeLogRoots(roots, r.o.ExtraLogRoots())
+		}
+		r.logs = CatalogueLogs(roots)
 		r.lastLogs = now
 		s.Logs = r.logs
 	}

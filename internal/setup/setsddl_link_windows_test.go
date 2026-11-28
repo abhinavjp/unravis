@@ -42,6 +42,7 @@ func TestSetSDDLRefusesAJunction(t *testing.T) {
 
 // A normal folder still gets its permissions, and they reach the files and folders already inside it.
 func TestSetSDDLStillWorksOnAFolder(t *testing.T) {
+	skipUnlessElevated(t)
 	dir := filepath.Join(t.TempDir(), "plain")
 	sub := filepath.Join(dir, "sub")
 	if err := os.MkdirAll(sub, 0o755); err != nil {

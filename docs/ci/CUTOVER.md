@@ -105,6 +105,8 @@ Order matters. Steps 1 and 2 are two separate pull requests into develop (both a
 
 Rollback: revert the step 2 merge (GitHub gates again within minutes), then stop using `--post-required`.
 
+Bot and fork pull requests (Dependabot): the trust gate refuses them on this PC on purpose, and the agent posts a failed `ci.yml=local/build` status with the reason. In phase 1 such a pull request cannot go green on the local check alone. Compare treats them as "only on this PC" (BL-765). Decide before step 3: merge bot pull requests as an admin, or add the bot to the allow-list after reading what its code runs (it runs third-party package scripts on this PC).
+
 ### Blocker R: the runner had to be changed first (resolved by branch claude/local-ci-runner-on-free, BL-586d)
 
 The runner only runs a workflow for an event that is in the workflow's own `on:`: `internal/localci/prrun.go` (pull requests), `runref.go` (pushes) and `poller.go`. After step 2 the fast gate has no `pull_request` and no `push` in `on:`, so the agent would refuse it and no `fast-build` would ever be posted. The pull request of step 2 would also never get a `fast-build`. Proven on 2026-11-25: `unravis-ci run <step-2 file> --event pull_request --dry-run` exits 2 with "does not run on pull_request", and with `--event push` too; with `--event workflow_dispatch` it plans all jobs.

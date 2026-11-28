@@ -206,6 +206,8 @@ func verdictOf(local *LocalSide, gh string) (verdict, note string) {
 		return VerdictLocalOnly, "GitHub has no result for it"
 	case gh == OutcomePending:
 		return VerdictLocalOnly, "GitHub has not finished"
+	case IsTrustRefusal(local.Reason):
+		return VerdictLocalOnly, "not run on this PC on purpose (" + local.Reason + "): the allow-list keeps other people's code off it, so there is nothing to compare"
 	case local.Outcome == OutcomeError:
 		return VerdictDisagree, "the local run ended without a verdict (" + firstNonEmpty(local.Reason, local.Conclusion) + ")"
 	case local.Outcome == gh:

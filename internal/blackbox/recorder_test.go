@@ -919,3 +919,16 @@ func TestFailureFlappingStaysUnderOneEventPer15Minutes(t *testing.T) {
 		})
 	}
 }
+
+func TestRecorderLogsCatalogueIncludesExtraRoots(t *testing.T) {
+	conf, extra := t.TempDir(), t.TempDir()
+	writeLog(t, conf, "a.log")
+	writeLog(t, extra, "iis.log")
+	g := newRig(t, func(c *Config) { c.Record.LogsCatalogue = true; c.LogPaths = []string{conf} })
+	g.r.o.ExtraLogRoots = func() []string { return []string{extra, conf} }
+	g.r.Tick(g.clk.t)
+	smp := readSamples(t, g.s.Dir())
+	if len(smp) != 1 || len(smp[0].Logs) != 2 {
+		t.Fatalf("want both folders, got %+v", smp)
+	}
+}

@@ -163,10 +163,10 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	defer diag.Close()
 	diag.SetOnStuck(func() { store.Event(EventDiagStopped, "diag-log-stuck") })
 	diag.SetOnResumed(func() { store.Event(EventDiagResumed, "diag-log-ok") })
-	rec := NewRecorder(RecorderOptions{Config: cfg, Store: store, Collector: col, Disk: disk, RunID: runID,
-		Now: o.Now, Ticks: o.Ticks, Budget: budget, SelfUsage: SelfUsage, Diag: diag})
 	// Where the logs of this server are, for the Servers screen. Its own goroutine; never on the recording path.
 	keeper := NewSourcesKeeper(cfg.Folder, cfg, OSSourcesEnv(), host, o.Version, o.Now, diag)
+	rec := NewRecorder(RecorderOptions{Config: cfg, Store: store, Collector: col, Disk: disk, RunID: runID,
+		Now: o.Now, Ticks: o.Ticks, Budget: budget, SelfUsage: SelfUsage, Diag: diag, ExtraLogRoots: keeper.LogRoots})
 	go keeper.Run(ctx)
 	srv := NewServer(ServerOptions{Store: store, Recorder: rec, Config: cfg, Keys: keys, Now: o.Now, Diag: diag, Update: o.Update, Sources: keeper.Doc})
 

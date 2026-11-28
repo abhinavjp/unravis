@@ -40,6 +40,7 @@ func longTempDir(t *testing.T) string {
 
 // enableRestorePrivilege lets this process name any account as a file's owner for the rest of the test run.
 func enableRestorePrivilege(t *testing.T) {
+	skipUnlessElevated(t)
 	t.Helper()
 	var tok windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &tok); err != nil {
@@ -315,6 +316,7 @@ func realWriter() *journalWriter {
 
 // machineRig is a ProgramData-like folder with the real journal folder inside it, made as setup makes it.
 func machineRig(t *testing.T) (r *Runner, journalPath string) {
+	skipUnlessElevated(t)
 	t.Helper()
 	pd := longTempDir(t)
 	r = &Runner{Sys: &System{Sec: osSecurity{}}, Dirs: Dirs{ProgramData: pd}}
@@ -477,5 +479,15 @@ func TestAPlainWriteInTheAdminOnlyFolderIsJudgedByItsRealOwner(t *testing.T) {
 		if _, serr := os.Stat(p); serr != nil {
 			t.Fatalf("a refused journal was deleted: %v", serr)
 		}
+	}
+}
+
+// skipUnlessElevated skips a test that needs an administrator token (it writes admin-only files and names other
+// owners). The result is "skipped: not run here", never a pass: the GitHub runner is elevated and runs them, and an
+// agent started without elevation on a PC must not report a failure for what it cannot try.
+func skipUnlessElevated(t *testing.T) {
+	t.Helper()
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("not run here: needs an elevated (administrator) token; the GitHub runner runs it")
 	}
 }

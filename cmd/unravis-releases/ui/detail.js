@@ -30,9 +30,23 @@ function releaseRunChips(host, r) {
   for (const x of list) {
     const label = (x.word || x.status) + ' · ' + (x.sha ? x.sha.slice(0, 7) : x.id);
     const actions = actionRunLinks(x.url, label);
-    if (actions) { actions.run.className = 'chip'; box.append(actions.run, ' ', actions.original, ' '); continue; }
-    const a = el('a', '', label); a.className = 'chip';
-    a.href = '#/run/' + encodeURIComponent(x.id); a.title = 'Open this run in the Runs tab.'; box.append(a, ' ');
+    const a = actions?.run || el('a', '', label);
+    a.className = 'chip';
+    if (!actions) { a.href = '#/run/' + encodeURIComponent(x.id); a.title = 'Open this run in the Runs tab.'; }
+    box.append(a, ' ');
+    if (actions) box.append(actions.original, ' ');
+    const placement = runMachine(x);
+    if (!placement) continue;
+    const machine = el('a', 'mono', placement.name);
+    machine.href = '#/machines';
+    machine.title = 'See the machines that run checks';
+    box.append(machine);
+    if (placement.slot) {
+      const slot = el('span', '', 'slot ' + placement.slot + ' of ' + placement.slots);
+      slot.title = SLOT_TITLE;
+      box.append(', ', slot);
+    }
+    box.append(' ');
   }
   host.append(box);
 }

@@ -999,6 +999,7 @@ type CIAgent struct {
 	PostWait   int          `json:"postWaiting"`
 	LastPost   string       `json:"lastPost,omitempty"`
 	LastError  string       `json:"lastError,omitempty"`
+	FleetID    string       `json:"fleetId,omitempty"` // the opaque id other PCs show for this agent; empty when claims are off
 }
 
 // CIAgentJob is what an agent is working on.
@@ -1118,7 +1119,7 @@ func (v *ciView) Overview() CIOverview {
 }
 
 func (v *ciView) agentOf(h localci.Heartbeat) CIAgent {
-	a := CIAgent{Name: v.rd(h.Name), State: v.rd(h.State), Fresh: h.Fresh(v.now, ciAgentStale), LastSeen: tstr(h.LastSeen), Slots: h.Slots, Jobs: []CIAgentJob{}}
+	a := CIAgent{Name: v.rd(h.Name), State: v.rd(h.State), Fresh: h.Fresh(v.now, ciAgentStale), LastSeen: tstr(h.LastSeen), Slots: h.Slots, Jobs: []CIAgentJob{}, FleetID: h.FleetID}
 	if !a.Fresh && !h.LastSeen.IsZero() {
 		a.Silent = ago(v.now.Sub(h.LastSeen))
 	}
