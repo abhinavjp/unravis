@@ -25,4 +25,4 @@ Set `REMOTE_MODE=write` for changes. Use the same release tag for each action. E
 
 Run fetch before either component update. After updating, check `UpdateStatus` and the app hash receipt before cleaning up. On a timeout, check the component and its backups before requesting another write.
 
-Note: the update.app and update.rollback actions send a script of about 26 KB as one Windows command line (limit 32,767). If a future script grows past that, the request fails before anything changes; shorten the script or stage it as a file first. Not yet verified against the live minion.
+Note: Windows refuses a command line over 32,767 characters, and Salt re-encodes a PowerShell command to about 2.7 times its length. Each recipe is therefore gzipped and sent as a short loader line (2 to 4.5 KB; under 12 KB after Salt wraps it). A 13 KB uncompressed command failed on the live minion with "The command line is too long." before anything changed. The offline tests fail if a recipe wraps to 30,000 characters or more.

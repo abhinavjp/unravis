@@ -346,10 +346,18 @@ function Test-UpdateTag([string]$Tag) {
 
 # ---------------------------------------------------------------- Windows updates
 function New-UpdatePowerShellCommand([string]$Source) {
-    # Salt parses arguments as YAML, and Windows adds another command-line parsing step.
-    # Pass one fixed script to Windows PowerShell without raw quotes or line breaks in that argument.
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Source))
-    return @{ Cmd = "powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded"; Kwargs = @('shell=powershell') }
+    # Salt parses arguments as YAML and, for shell=powershell, wraps the command in its own base64
+    # -EncodedCommand (UTF-16), which makes it about 2.7 times longer; Windows refuses a command line over
+    # 32767 characters. So the fixed script is gzipped and sent as one plain-text loader line made only of
+    # base64 and fixed words (no raw quotes inside the data, no line breaks). The loader inflates the text and
+    # runs it as a script block; the decoded script is exactly the reviewed source.
+    $raw = [Text.Encoding]::UTF8.GetBytes($Source)
+    $ms = New-Object IO.MemoryStream
+    $gz = New-Object IO.Compression.GzipStream($ms, [IO.Compression.CompressionMode]::Compress)
+    $gz.Write($raw, 0, $raw.Length); $gz.Close()
+    $b64 = [Convert]::ToBase64String($ms.ToArray())
+    $cmd = '$b=''' + $b64 + ''';$m=New-Object IO.MemoryStream(,[Convert]::FromBase64String($b));$g=New-Object IO.Compression.GzipStream($m,[IO.Compression.CompressionMode]::Decompress);$t=(New-Object IO.StreamReader($g,[Text.Encoding]::UTF8)).ReadToEnd();& ([scriptblock]::Create($t))'
+    return @{ Cmd = $cmd; Kwargs = @('shell=powershell') }
 }
 
 $script:UpdatePathChecks = @'
