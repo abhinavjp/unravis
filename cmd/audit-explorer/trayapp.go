@@ -44,9 +44,9 @@ type trayDeps struct {
 	checkUpdates  func()                     // run one check (blocks until it ends)
 	installUpdate func() error               // restart into the downloaded update (blocks)
 
-	// shownAct is what the update line did when the menu was last built (the act plus one; zero means no menu yet). A press that
+	// shownAct is what the update line did when the menu was last built (nil means no menu yet). A press that
 	// finds the status has moved on since then does nothing, so a line that said "see Updates" never restarts the app.
-	shownAct *atomic.Int32
+	shownAct *atomic.Pointer[trayAct]
 }
 
 // trayMenu builds the menu. "Start at sign-in" is shown only for an installed copy.
@@ -58,7 +58,8 @@ func trayMenu(d trayDeps) []tray.Item {
 		checking := d.checking != nil && d.checking()
 		v := viewUpdate(st, checking, time.Now())
 		if d.shownAct != nil {
-			d.shownAct.Store(int32(v.Act) + 1)
+			act := v.Act
+			d.shownAct.Store(&act)
 		}
 		busy = checking || (st.Install != nil && (st.Install.State == "launched" || st.Install.State == "downloading"))
 		items = append(items,
@@ -125,7 +126,7 @@ func trayUpdatePressed(d trayDeps) {
 	}
 	act := viewUpdate(d.update(), false, time.Now()).Act
 	if d.shownAct != nil {
-		if shown := d.shownAct.Load(); shown != 0 && trayAct(shown-1) != act {
+		if shown := d.shownAct.Load(); shown != nil && *shown != act {
 			return // the line the person clicked said something else; they can open the menu again
 		}
 	}
@@ -189,7 +190,7 @@ func trayDepsWith(reopen, quit func(), warn func(title, text string), run func(n
 		return startExe, dir, startOK
 	}
 	return trayDeps{
-		shownAct: new(atomic.Int32),
+		shownAct: new(atomic.Pointer[trayAct]),
 		reopen:   reopen,
 		quit:     quit,
 		warn:     warn,

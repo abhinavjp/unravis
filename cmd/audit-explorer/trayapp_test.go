@@ -351,7 +351,7 @@ func TestTrayPressDoesNothingWhenTheStatusMovedOnSinceTheMenuWasBuilt(t *testing
 	ready := server.UpdateStatus{Status: "available", Current: "1", Latest: "2", CanInstall: true, Install: &server.InstallInfo{State: "ready", Version: "2"}}
 	c := newTrayCalls(false)
 	d := c.withUpdater(avail)
-	d.shownAct = new(atomic.Int32)
+	d.shownAct = new(atomic.Pointer[trayAct])
 	trayMenu(d) // the menu opens showing "see Updates"
 	d.update = func() server.UpdateStatus { return ready }
 	trayOnSelect(d)(idUpdate)
