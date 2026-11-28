@@ -152,7 +152,8 @@ function Invoke-ReadRecipe([string]$Recipe) {
 function Invoke-BlackboxRead([string]$Verb) {
     Assert-Target
     $rec = New-BlackboxCommand -Fn $Verb
-    $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg (Get-SaltWait) -Retcode
+    # No -Retcode here: a read only shows what the recorder printed, and the master's salt (28 Nov, BG-SRV-UK-01) refuses --retcode-passthrough.
+    $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg (Get-SaltWait)
     $r = Invoke-Planned "$($rec.Text) on $Target" $remote
     if ($r) { Show-SaltJson $r.Out }
 }

@@ -71,3 +71,19 @@ func (k *SourcesKeeper) Run(ctx context.Context) {
 		}
 	}
 }
+
+// LogRoots are the IIS log folders of the last look that exist and could be listed, for the logs catalogue. Empty before
+// the first look.
+func (k *SourcesKeeper) LogRoots() []string {
+	d, ok := k.Doc()
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, e := range d.Sources {
+		if e.Kind == SourceIIS && e.Exists && e.Readable && e.Dir != "" {
+			out = append(out, e.Dir)
+		}
+	}
+	return out
+}
