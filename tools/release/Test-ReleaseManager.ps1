@@ -1053,6 +1053,7 @@ try {
     try {
         [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
         $u8 = (New-RunLogPath $logs) -replace '\d{2}Z', '59Z'
+        Remove-Item -LiteralPath $u8 -ErrorAction SilentlyContinue # an earlier check may have written this same name (second 59 of the same minute): start from an empty log
         $mark = [string][char]0x2713
         $child8 = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false); [Console]::Out.Write(([string][char]0x2713) + ' ok' + [char]10); [Console]::Out.Flush()"
         $seen8 = @(& $hostExe -NoProfile -Command $child8 | Write-ReleaseRunLog -Path $u8 | ForEach-Object { "$_" })
