@@ -117,7 +117,7 @@ try {
     }
     Check 'unknown update verb refused' ($null -ne (Test-WriteCall 'update.unknown' $tag $wcfg))
     $deletions = @{
-        'update.fetch' = @('$marker', '$stage'); 'update.app' = @('$work')
+        'update.fetch' = @('$marker', '$stage'); 'update.app' = @('$work'); 'update.blackbox' = @('$runCopy', '$runCopy')
         'update.rollback' = @('$work'); 'update.cleanup' = @('$stage')
     }
     foreach ($verb in @('update.fetch', 'update.blackbox', 'update.app', 'update.app-start', 'update.rollback', 'update.cleanup')) {

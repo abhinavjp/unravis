@@ -615,7 +615,22 @@ $recorder = Get-PlainItem (Join-Path $stage 'blackbox\unravis-blackbox.exe')
 if (-not $recorder -or $recorder.PSIsContainer) { throw 'The verified recorder executable is missing.' }
 Assert-PrivateStage (Get-PlainItem $recorder.DirectoryName)
 Assert-PrivateStage $recorder
-& $recorder.FullName update --json
+$svc = Get-CimInstance -ClassName Win32_Service -Filter "Name='UnravisBlackbox'"
+$installed = if ($svc.PathName -match '^\s*"([^"]+)"') { $Matches[1] } else { ($svc.PathName -split '\s+')[0] }
+$installedItem = Get-PlainItem $installed
+if (-not $installedItem -or $installedItem.PSIsContainer) { throw 'Could not find the installed recorder program.' }
+$runCopy = Join-Path $installedItem.DirectoryName 'unravis-blackbox-update.exe'
+if (Get-PlainItem $runCopy) { Remove-Item -LiteralPath $runCopy -Force }
+Copy-Item -LiteralPath $recorder.FullName -Destination $runCopy
+try { & $runCopy update --json }
+catch {
+    $why = $_.Exception.Message
+    $zone = if (Get-Item -LiteralPath $recorder.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue) { 'has Zone.Identifier' } else { 'no Zone.Identifier' }
+    $sig = (Get-AuthenticodeSignature -LiteralPath $recorder.FullName).Status
+    $av = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1116, 1117, 1121 } -MaxEvents 3 -ErrorAction SilentlyContinue | ForEach-Object { "$($_.TimeCreated.ToString('s')) id $($_.Id)" }) -join ', '
+    throw "$why [$zone; signature $sig; owner $((Get-Acl -LiteralPath $recorder.FullName).Owner); defender events: $av]"
+}
+finally { if (Get-PlainItem $runCopy) { Remove-Item -LiteralPath $runCopy -Force -ErrorAction SilentlyContinue } }
 if ($LASTEXITCODE -ne 0) { throw "The recorder update exited with code $LASTEXITCODE." }
 '@ }
         'update.app' { $stage; $install; $appSwap; @'
