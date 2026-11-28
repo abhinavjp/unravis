@@ -124,7 +124,15 @@ function runMachine(run, request = queueRequest(run)) {
 const runPlacement = (run, request) => placementHtml(runMachine(run, request));
 
 const changeCount = (r) => Math.min(r?.covers?.length || 0, 50);
-function coverList(r, result = '') {
+// What a run did with the changes it covers, in words that are true for its state. A cancelled request checked nothing.
+function coverVerb(req, run) {
+  const s = run ? norm(run.status) : '';
+  if (req?.conclusion === 'cancelled' || req?.state === 'cancelled' || (!req?.conclusion && s === 'stopped')) return 'Cancelled before checking';
+  if (req?.state === 'queued' || s === 'waiting') return 'Will check';
+  if (req?.state === 'running' || s === 'running') return 'Checking';
+  return 'Checked';
+}
+function coverList(r, result = '', heading = 'Result on GitHub') {
   const n = changeCount(r);
   if (n <= 1) return '';
   const coveringSHA = short(r.sha);
@@ -136,7 +144,7 @@ function coverList(r, result = '') {
     const change = `${c.sha ? `<span class="mono" title="Commit checked by this run">${esc(short(c.sha))}</span> ` : ''}${pr} ${esc(c.title)}${covered}`;
     return result ? `<tr><td>${change}</td><td>${result}</td></tr>` : `<li>${change}</li>`;
   }).join('');
-  const list = (items) => result ? `<table class="tbl"><thead><tr><th>Change</th><th title="The result this run supplies for the change">Result on GitHub</th></tr></thead><tbody>${changes(items)}</tbody></table>`
+  const list = (items) => result ? `<table class="tbl"><thead><tr><th>Change</th><th title="The result this run supplies for the change">${esc(heading)}</th></tr></thead><tbody>${changes(items)}</tbody></table>`
     : `<ul class="cover-list">${changes(items)}</ul>`;
   const more = n - 6;
   return list(r.covers.slice(0, 6)) + (more > 0 ? `<details id="cover-more-${esc(r.id)}" class="cover-more" data-cover><summary><span>Show ${esc(more)} more</span><span>Show fewer</span></summary>${list(r.covers.slice(6, n))}</details>` : '');

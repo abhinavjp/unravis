@@ -78,6 +78,9 @@ function setQuery(upd) {
 }
 let lastPath = '';
 let landedOn = '';
+// Which page the person is on: the route and the query that picks a section. Pinning a line or choosing a step rewrites
+// other query parts without a hashchange, and a live refresh must not treat that as a new page.
+const pageKey = (R = route()) => `${R.name}/${R.id || ''}?${['changes', 'controls'].map((k) => (R.q.has(k) ? k + '=' + R.q.get(k) : '')).join('&')}`;
 
 // ---------- header ----------
 function worst() {
@@ -135,10 +138,10 @@ function runLocation(r, request = queueRequest(r)) {
   const offline = norm(r.status) === 'running' ? Ops.stoppedReporting(r.agent || request?.claimedBy) : '';
   return `${placement ? `<span class="why">${placement}</span>` : ''}${offline}${request ? Ops.replacement(request) : ''}`;
 }
-function coverChip(r, request, verb) {
+function coverChip(r, request) {
   const n = changeCount(request);
   if (n <= 1 || request.state === 'superseded') return '';
-  return ` <a class="chip" href="#/run/${encodeURIComponent(r.id)}?changes=1" title="${esc(CHANGE_TITLE)}">${esc(verb)} ${esc(n)} changes</a>`;
+  return ` <a class="chip" href="#/run/${encodeURIComponent(r.id)}?changes=1" title="${esc(CHANGE_TITLE)}">${esc(coverVerb(request, r))} ${esc(n)} changes</a>`;
 }
 
 // ---------- Overview ----------
@@ -169,7 +172,7 @@ function viewOverview() {
   const activeLine = (r) => {
     const request = queueRequest(r);
     return `<li>${st(r.status)} <a href="#/run/${encodeURIComponent(r.id)}">${esc(wfName(r.workflow))} · ${esc(subject(r))}</a>
-      ${coverChip(r, request, norm(r.status) === 'waiting' ? 'Will check' : 'Checking')}${runLocation(r, request)}</li>`;
+      ${coverChip(r, request)}${runLocation(r, request)}</li>`;
   };
   const pulls = (o.pulls || []).slice().sort((a, b) => (norm(b.status) === 'failed') - (norm(a.status) === 'failed'));
   const sh = o.shadow || {};
@@ -183,7 +186,7 @@ function viewOverview() {
     if (!r) return `<tr><td colspan="6" class="muted">${esc(b.branch)} has no recorded run yet.</td></tr>`;
     const red = norm(r.status) === 'failed' ? redSince(b.branch, r.workflow) : null;
     return `<tr class="row" tabindex="0" data-href="#/run/${encodeURIComponent(r.id)}"><td class="w-st">${st(r.status)}</td>
-      <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">${esc(b.branch)}</a> <span class="mono muted">${esc(short(r.headSha || r.sha))}</span>${r.release ? ` <span class="chip mono">${ico('tag')}${esc(r.release)}</span>` : ''}${coverChip(r, queueRequest(r), 'checks')}<small>${esc(wfName(r.workflow))} · took ${esc(dur(r.ms))}</small>${runLocation(r)}</td>
+      <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">${esc(b.branch)}</a> <span class="mono muted">${esc(short(r.headSha || r.sha))}</span>${r.release ? ` <span class="chip mono">${ico('tag')}${esc(r.release)}</span>` : ''}${coverChip(r, queueRequest(r))}<small>${esc(wfName(r.workflow))} · took ${esc(dur(r.ms))}</small>${runLocation(r)}</td>
       <td class="clip"><div>${whereHtml(r)}</div></td>
       <td class="hide-s since">${red ? `<b>${red.sure ? '' : '≥ '}${esc(dur(Date.now() - Date.parse(red.since)))}</b>` : '<span class="muted">–</span>'}</td>
       <td class="hide-s">${branchHist(b.branch)}</td><td class="num">${when(r.start)}</td></tr>`;
@@ -259,7 +262,7 @@ function viewRuns() {
   const waits = list.map(waitMs).filter((x) => x != null).sort((a, b) => a - b);
   const med = waits.length ? dur(waits[Math.floor(waits.length / 2)]) : '';
   const row = (r) => { const d = disFor(r); const w = waitMs(r); const request = queueRequest(r); return `<tr class="row" tabindex="0" data-href="#/run/${encodeURIComponent(r.id)}"><td class="w-st">${st(r.status)}</td>
-    <td><a class="rl" href="#/run/${encodeURIComponent(r.id)}"><span class="title">${esc(wfName(r.workflow))}</span> <span class="muted">·</span> ${esc(subject(r))}</a>${d ? ' <span class="chip warn" title="GitHub’s own run passed">GitHub disagrees</span>' : ''}${coverChip(r, request, 'checks')}<small class="mono">${esc([r.event === 'pull_request' ? r.branch : '', r.author].filter(Boolean).join(' · ')) || '&nbsp;'}</small>${runLocation(r, request)}</td>
+    <td><a class="rl" href="#/run/${encodeURIComponent(r.id)}"><span class="title">${esc(wfName(r.workflow))}</span> <span class="muted">·</span> ${esc(subject(r))}</a>${d ? ' <span class="chip warn" title="GitHub’s own run passed">GitHub disagrees</span>' : ''}${coverChip(r, request)}<small class="mono">${esc([r.event === 'pull_request' ? r.branch : '', r.author].filter(Boolean).join(' · ')) || '&nbsp;'}</small>${runLocation(r, request)}</td>
     <td class="clip"><div>${whereHtml(r)}</div></td><td class="hide-s mono muted">${esc(short(r.headSha || r.sha))}</td>
     <td class="num hide-s ${w != null && w > 3e5 ? 'c-waiting' : 'muted'}">${w == null ? '–' : esc(dur(w))}</td><td class="num">${norm(r.status) === 'running' ? 'running' : esc(dur(r.ms))}</td><td class="num">${when(r.start)}</td><td>${rowMenu(r)}</td></tr>`; };
   return `<div class="ph"><h1>Runs</h1><p>Every check this project ran. Each failed row shows where it failed.</p></div>
@@ -411,6 +414,8 @@ function viewRun(R) {
   const placement = gh ? (r.agent ? machineLink(r.agent) : '') : runPlacement(r, request);
   const n = changeCount(request);
   const changes = n > 1 && request.state !== 'superseded';
+  const runAgent = changes ? reportedMachines().find((m) => m.name === (r.agent || request.claimedBy)) : null;
+  const posts = runAgent ? !!runAgent.statusMode : null;
   const byKey = new Map(jobs.map((j) => [j.key, j]));
   const failed = [], counts = Object.fromEntries(Object.keys(runStates).map((s) => [s, 0]));
   let running;
@@ -507,9 +512,9 @@ function viewRun(R) {
     ${request ? Ops.replacement(request) : ''}
     ${changes ? `<section class="sec panel card" id="run-changes" tabindex="-1" aria-labelledby="run-changes-title">
       <div class="sh"><h2 id="run-changes-title" title="${esc(CHANGE_TITLE)}">Changes this run checks</h2></div>
-      <p class="note">The run’s result applies to every covered change. Homestretch sends it to GitHub after the run.</p>
-      ${state === 'failed' ? '<p class="note">This run failed. We cannot tell which change broke it. Open the failing job on GitHub, push a fix.</p>' : ''}
-      ${coverList(request, Ops.statusResult(state))}
+      <p class="note">One run checks all of these changes together, so its result counts for each of them.${posts ? ' When the run ends, this agent sends the result to GitHub as a shadow <span class="mono">local/*</span> status. It does not block merging.' : posts === false ? ' This agent does not send results to GitHub, so they stay on this page.' : ''}</p>
+      ${state === 'failed' ? '<p class="note">This run failed, so we cannot tell which of these changes broke it. The failing job is under “The run, in order” on this page. Open it to see the error.</p>' : ''}
+      ${coverList(request, Ops.statusResult(state), posts ? 'Result on GitHub' : 'Result')}
     </section>` : ''}
     ${rate?.of > 1 ? `<p class="run-rate">This step failed in ${rate.same} of the last ${rate.of} finished runs of this workflow on this PC.</p>` : ''}
     <section class="run-flow panel" aria-labelledby="run-order"><div class="run-flow-head"><h2 id="run-order">The run, in order</h2>${filters}</div>${board}</section>
@@ -883,10 +888,10 @@ function machineJobs(m, claims, allSlots = false) {
   const orderKnown = !m.fleet || new Set(jobs.map((j) => Date.parse(j.claimedAt))).size === jobs.length;
   const entry = (job, slot) => {
     const run = !m.fleet && runIdForRequest(job);
-    const label = job.label || (m.fleet ? '' : job.id);
+    const label = job.label || 'a job';
     const item = run ? `<a href="#/run/${encodeURIComponent(run)}">${esc(label)}</a>` : esc(label);
     const location = machineLink(m.name) + (slot ? `, ${slotLabel(slot, slots)}` : '');
-    return `<li>${item}${item ? ' · ' : ''}${location}${job.claimedAt ? ` · started ${when(job.claimedAt)}` : ''}</li>`;
+    return `<li>${item} · ${location}${job.claimedAt ? ` · started ${when(job.claimedAt)}` : ''}</li>`;
   };
   const unplaced = [];
   for (const job of jobs) {
@@ -912,7 +917,10 @@ function viewMachines() {
   const ag = reportedMachines(), claims = runningClaims();
   const fleet = m?.machines || [];
   const ms = fleet.map((x) => {
-    const a = ag.find((agent) => agent.name === x.id || (x.self && agent.name === 'local'));
+    // The fleet id is opaque, and an agent may be started with any --name, so match by the id its heartbeat carries.
+    // The page's own agent is the single one when only one is reported.
+    const a = ag.find((agent) => agent.fleetId && agent.fleetId === x.id) || ag.find((agent) => agent.name === x.id) ||
+      (x.self ? (ag.find((agent) => agent.name === 'local') || (ag.length === 1 ? ag[0] : null)) : null);
     if (a) return { ...x, ...a, agent: a };
     return { ...x, name: x.id, fleet: true, state: ({ Quiet: 'gone', Stopped: 'stopped', Idle: 'reported', Running: 'reported' })[x.state], lastSeen: x.lastHeard, running: x.jobs?.length };
   });
@@ -966,7 +974,7 @@ function render() {
   const R = route(); const main = $('#main'); const w = worst();
   const run = isRun(R);
   const active = document.activeElement;
-  const samePage = main.dataset.route === location.hash;
+  const samePage = main.dataset.route === pageKey(R);
   const focused = samePage && main.contains(active) ? active.id : '';
   const summary = samePage && active?.matches('details[data-cover] > summary') ? active.parentElement.id : '';
   const openCovers = samePage ? $$('details[data-cover][open]', main).map((d) => d.id) : [];
@@ -993,7 +1001,7 @@ function render() {
   // Older data is named at the top of the page; the Releases page puts its own note under its heading (viewReleases).
   const banner = (R.name === 'releases' ? '' : Fresh.noteHtml(R.name, Date.now())) || (D.err && D.loaded && !D.at ?`<div class="empty"><b>The last refresh failed.</b> ${esc(D.err)}</div>` : '');
   main.innerHTML = banner + html;
-  main.dataset.route = location.hash;
+  main.dataset.route = pageKey(R);
   for (const id of openCovers) {
     const details = document.getElementById(id);
     if (details) details.open = true;
@@ -1019,7 +1027,7 @@ function render() {
   }
   if (summary) document.getElementById(summary)?.querySelector('summary')?.focus({ preventScroll: true });
   if (!focused && linkIndex >= 0) links()[linkIndex]?.focus({ preventScroll: true });
-  if (landedOn !== location.hash) landOnSection(R);
+  if (landedOn !== pageKey(R)) landOnSection(R);
   document.title = ({ failed: 'Failing · ', running: 'Running · ', passed: 'Passing · ' }[w]) + (TITLES[R.name] || 'Homestretch') + ' · ' + (P().name || 'Homestretch') + ' · Homestretch';
 }
 
@@ -1034,7 +1042,7 @@ function landOnSection(R) {
     }
   } else if (R.name === 'run' && R.q.has('changes')) target = $('#run-changes');
   if (!target) return;
-  landedOn = location.hash;
+  landedOn = pageKey(R);
   target.scrollIntoView({ block: 'start' });
   target.focus({ preventScroll: true });
 }
