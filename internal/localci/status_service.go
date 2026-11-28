@@ -334,9 +334,25 @@ func (s *StatusService) gate(r Request, state, desc string) {
 	}
 }
 
-// ObserveQueue posts "queued" for every request that is new in the queue (the poller's, `rerun`'s, a catch-up's),
-// and "cancelled" for one that was cancelled before it ran. A superseded request gets nothing: its newer head has
-// its own statuses.
+func (s *StatusService) coveredGates(r Request, state, desc string) {
+	for _, covered := range r.Covers {
+		if covered.SHA != r.SHA {
+			older := r
+			older.SHA = covered.SHA
+			s.gate(older, state, desc)
+		}
+	}
+}
+
+func (s *StatusService) finalGate(r Request, state, desc string) {
+	s.gate(r, state, desc)
+	if len(r.Covers) > 0 {
+		s.coveredGates(r, state, "covered by run on "+shortSHA(r.SHA)+": "+desc)
+	}
+}
+
+// ObserveQueue announces new, covered and cancelled requests. A replacement with no coverage
+// only announces its own head.
 func (s *StatusService) ObserveQueue(q *Queue) {
 	rs, err := q.folderOf("queued")
 	if err != nil {
@@ -366,10 +382,13 @@ func (s *StatusService) ObserveQueue(q *Queue) {
 	sort.Slice(fresh, func(i, j int) bool { return fresh[i].ID < fresh[j].ID })
 	for _, r := range fresh {
 		s.gate(r, StatusPending, "queued")
+		if len(r.Covers) > 0 {
+			s.coveredGates(r, StatusPending, "queued, will be covered by "+shortSHA(r.SHA))
+		}
 	}
 	for _, r := range gone {
 		if got, err := q.Get(r.ID); err == nil && got.State == StateCancelled {
-			s.gate(r, StatusError, "cancelled")
+			s.finalGate(got, StatusError, "cancelled")
 		}
 	}
 }
@@ -473,7 +492,7 @@ func (s *StatusService) Finished(r Request, since time.Time, runErr error, done 
 	case done.State == StateSuperseded:
 		return
 	case done.State == StateCancelled || done.Conclusion == StateCancelled:
-		s.gate(r, StatusError, "cancelled")
+		s.finalGate(r, StatusError, "cancelled")
 	case runErr == nil && done.Conclusion == "success":
 		n := 0
 		for _, j := range p.Jobs {
@@ -481,7 +500,7 @@ func (s *StatusService) Finished(r Request, since time.Time, runErr error, done 
 				n++
 			}
 		}
-		s.gate(r, StatusSuccess, "passed in "+took+noteIf(n > 0, fmt.Sprintf(" (%d jobs)", n)))
+		s.finalGate(r, StatusSuccess, "passed in "+took+noteIf(n > 0, fmt.Sprintf(" (%d jobs)", n)))
 	case runErr == nil && done.Conclusion == "failure":
 		why := done.Reason
 		if why == "" {
@@ -492,13 +511,13 @@ func (s *StatusService) Finished(r Request, since time.Time, runErr error, done 
 				}
 			}
 		}
-		s.gate(r, StatusFailure, "failed in "+took+noteIf(why != "", ": "+why))
+		s.finalGate(r, StatusFailure, "failed in "+took+noteIf(why != "", ": "+why))
 	default:
 		why := done.Reason
 		if runErr != nil {
 			why = runErr.Error()
 		}
-		s.gate(r, StatusError, "error after "+took+noteIf(why != "", ": "+why))
+		s.finalGate(r, StatusError, "error after "+took+noteIf(why != "", ": "+why))
 	}
 }
 
@@ -509,9 +528,9 @@ func (s *StatusService) MirrorDone(r Request, conclusion string) {
 	s.Forget(r)
 	switch conclusion {
 	case "success":
-		s.gate(r, StatusSuccess, "passed, run on another PC")
+		s.finalGate(r, StatusSuccess, "passed, run on another PC")
 	case "failure":
-		s.gate(r, StatusFailure, "failed, run on another PC")
+		s.finalGate(r, StatusFailure, "failed, run on another PC")
 	}
 }
 

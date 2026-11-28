@@ -19,6 +19,7 @@
   import Diagnostics from './BlackboxDiagnostics.svelte';
   import BlackboxCharts from './BlackboxCharts.svelte';
   import SqlCollect from './BlackboxSqlCollect.svelte';
+  import StatusCards from './BlackboxStatusCards.svelte';
   import { BBC_TEXT } from '../lib/copy/blackboxChartsCopy';
   import WizardDialog from './blackboxWizard/WizardDialog.svelte';
 
@@ -466,6 +467,7 @@
             </dl>
             {#if item.facts && item.facts.effectiveIntervalSeconds && item.facts.effectiveIntervalSeconds !== item.facts.intervalSeconds}<p class="bb-note">{T.intervalHelp}</p>{/if}
             <p class="bb-note">{keyLine(item)}</p>
+            <StatusCards {item} {thisPc} />
 
             <div>
               {#if working}<p class="bb-note" role="status">{working}</p>{/if}

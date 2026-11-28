@@ -9,7 +9,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -50,15 +53,17 @@ func PriorityFor(kind string) int {
 // Request is one asked-for run. It is one JSON file in the queue folder; the folder it sits in
 // (queued, running or done) is the truth about where it is, State is repeated inside for readers.
 type Request struct {
-	ID       string `json:"id"`
-	Kind     string `json:"kind"` // pr, push or schedule
-	Repo     string `json:"repo"`
-	Ref      string `json:"ref,omitempty"`  // head branch of a pull request, or the branch of a push or schedule
-	Base     string `json:"base,omitempty"` // base branch of a pull request
-	Number   int    `json:"number,omitempty"`
-	SHA      string `json:"sha"` // head commit the request was made for
-	Workflow string `json:"workflow"`
-	Priority int    `json:"priority"`
+	ID       string    `json:"id"`
+	Kind     string    `json:"kind"` // pr, push or schedule
+	Repo     string    `json:"repo"`
+	Ref      string    `json:"ref,omitempty"`  // head branch of a pull request, or the branch of a push or schedule
+	Base     string    `json:"base,omitempty"` // base branch of a pull request
+	Number   int       `json:"number,omitempty"`
+	SHA      string    `json:"sha"` // head commit the request was made for
+	Title    string    `json:"title,omitempty"`
+	Covers   []Covered `json:"covers,omitempty"` // earlier push requests this run will cover
+	Workflow string    `json:"workflow"`
+	Priority int       `json:"priority"`
 	// Cron is the schedule entry that fired, for kind schedule.
 	Cron       string    `json:"cron,omitempty"`
 	EnqueuedAt time.Time `json:"enqueuedAt"`
@@ -83,6 +88,41 @@ type Request struct {
 	// DeferUntil keeps a request that another PC holds in the queue until then; DeferNote says why, in plain words.
 	DeferUntil time.Time `json:"deferUntil,omitzero"`
 	DeferNote  string    `json:"deferNote,omitempty"`
+}
+
+// Covered identifies an earlier push whose gate will receive the result of the replacing run.
+type Covered struct {
+	ID     string `json:"id"`
+	SHA    string `json:"sha"`
+	Number int    `json:"number,omitempty"`
+	Title  string `json:"title,omitempty"`
+}
+
+var (
+	mergePRTitle  = regexp.MustCompile(`^Merge pull request #([0-9]+) from \S`)
+	squashPRTitle = regexp.MustCompile(`\s+\(#([0-9]+)\)$`)
+)
+
+// PRNumberFromTitle recognizes the PR number in a GitHub merge or squash commit subject.
+func PRNumberFromTitle(title string) int {
+	title, _, _ = strings.Cut(title, "\n")
+	title = strings.TrimSpace(title)
+	for _, pattern := range []*regexp.Regexp{mergePRTitle, squashPRTitle} {
+		if m := pattern.FindStringSubmatch(title); m != nil {
+			n, err := strconv.Atoi(m[1])
+			if err == nil {
+				return n
+			}
+			break
+		}
+	}
+	return 0
+}
+
+func commitTitle(message string) string {
+	title, _, _ := strings.Cut(message, "\n")
+	runes := []rune(strings.TrimSpace(title))
+	return string(runes[:min(120, len(runes))])
 }
 
 // Key names what a request is about. A new head of the same key replaces the older request.
@@ -338,8 +378,7 @@ func (q *Queue) Get(id string) (Request, error) {
 
 // Enqueue adds a request. The second result is false when an identical request (same key and head commit) is
 // already queued or running: that one is returned and nothing is added. For a pull request or a push, queued
-// or running requests of the same key with another head commit are superseded by the new one: a queued one is
-// retired at once, a running one gets a marker its agent acts on.
+// requests of the same key with another head commit are superseded by the new one. Running requests finish normally.
 func (q *Queue) Enqueue(r Request) (Request, bool, error) {
 	switch r.Kind {
 	case KindPR:
@@ -362,6 +401,8 @@ func (q *Queue) Enqueue(r Request) (Request, bool, error) {
 	}
 	r.ID, r.State, r.EnqueuedAt = q.newID(now), StateQueued, now
 	r.ClaimedBy, r.ClaimedAt, r.FinishedAt = "", time.Time{}, time.Time{}
+	r.Title = commitTitle(r.Title)
+	r.Covers = nil
 	key := r.Key()
 	var stale []Request
 	for _, f := range []string{"queued", "running"} {
@@ -376,20 +417,96 @@ func (q *Queue) Enqueue(r Request) (Request, bool, error) {
 			if o.SHA == r.SHA && o.Workflow == r.Workflow {
 				return o, false, nil
 			}
-			stale = append(stale, o)
+			if f == "queued" {
+				stale = append(stale, o)
+			}
 		}
+	}
+	// Reserve the older queued requests before publishing their replacement, so a request taken by
+	// a concurrent claimer cannot also be recorded as covered.
+	var reserved []Request
+	if r.Kind != KindSchedule {
+		for _, o := range stale {
+			held, err := q.takeMarker(o.ID, "supersede")
+			if err != nil {
+				return Request{}, false, err
+			}
+			if !held {
+				continue
+			}
+			defer q.dropMarker(o.ID)
+			current, err := q.read(q.path("queued", o.ID))
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return Request{}, false, err
+			}
+			reserved = append(reserved, current)
+		}
+	}
+	if r.Kind == KindPush {
+		r.Covers = coversOf(reserved)
 	}
 	if err := writeAtomic(q.path("queued", r.ID), r); err != nil {
 		return Request{}, false, err
 	}
-	if r.Kind != KindSchedule {
-		for _, o := range stale {
-			if _, err := q.retire(o.ID, StateSuperseded, r.ID, fmt.Sprintf("a newer head %s arrived", shortSHA(r.SHA))); err != nil && !errors.Is(err, ErrNoRequest) {
-				return r, true, err
-			}
+	for _, o := range reserved {
+		if err := q.supersedeQueued(o, r); err != nil {
+			return r, true, err
 		}
 	}
 	return r, true, nil
+}
+
+// coversOf keeps the newest entry for each SHA and preserves chronological order.
+func coversOf(older []Request) []Covered {
+	const limit = 50
+	sort.Slice(older, func(i, j int) bool {
+		if !older[i].EnqueuedAt.Equal(older[j].EnqueuedAt) {
+			return older[i].EnqueuedAt.Before(older[j].EnqueuedAt)
+		}
+		return older[i].ID < older[j].ID
+	})
+	var all []Covered
+	for _, o := range older {
+		number := o.Number
+		if number == 0 {
+			number = PRNumberFromTitle(o.Title)
+		}
+		all = append(all, o.Covers...)
+		all = append(all, Covered{ID: o.ID, SHA: o.SHA, Number: number, Title: commitTitle(o.Title)})
+	}
+	seen := make(map[string]bool)
+	var covers []Covered
+	for i := len(all) - 1; i >= 0 && len(covers) < limit; i-- {
+		c := all[i]
+		if seen[c.SHA] {
+			continue
+		}
+		seen[c.SHA] = true
+		covers = append(covers, c)
+	}
+	slices.Reverse(covers)
+	return covers
+}
+
+// supersedeQueued retires a queued request while Enqueue holds its claim marker.
+func (q *Queue) supersedeQueued(r, by Request) error {
+	done := q.path("done", r.ID)
+	err := retryFS(func() error { return os.Rename(q.path("queued", r.ID), done) })
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	r.State, r.FinishedAt, r.SupersededBy = StateSuperseded, q.now(), by.ID
+	r.Reason = fmt.Sprintf("a newer head %s arrived", shortSHA(by.SHA))
+	if r.Conclusion == "" {
+		r.Conclusion = StateSuperseded
+	}
+	return writeAtomic(done, r)
 }
 
 // claimMarker is the exclusive lock of one request: whoever creates it (O_EXCL, one winner) may move the
@@ -533,6 +650,14 @@ func (q *Queue) Claim(agent string, labels []string) (*Request, error) {
 		return nil, err
 	}
 	sortClaimOrder(rs)
+	running, err := q.folderOf("running")
+	if err != nil {
+		return nil, err
+	}
+	busy := map[string]bool{}
+	for _, r := range running {
+		busy[r.Key()] = true
+	}
 	have := map[string]bool{}
 	for _, l := range labels {
 		have[l] = true
@@ -540,6 +665,9 @@ func (q *Queue) Claim(agent string, labels []string) (*Request, error) {
 	now := q.now()
 next:
 	for _, r := range rs {
+		if busy[r.Key()] {
+			continue
+		}
 		if r.DeferUntil.After(now) {
 			continue // another PC is running it; look again when the time is up
 		}

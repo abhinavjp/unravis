@@ -122,6 +122,13 @@ try {
         # Only the paths this step owns. The build made other files (web/dist, cmd/*/ui); they are never committed here.
         $paths = @('docs/whatsnew/fragments', 'web/public/releases/notes.json', 'web/public/whatsnew')
         Invoke-Checked git @('add', '--all', '--') $paths 'git add'
+        # Fail closed: nothing but the owned paths may be staged. A generated web file in this commit fails the "generated web files" gate (rc.69, PR 482).
+        $staged = @(& git diff --cached --name-only)
+        $stray = @($staged | Where-Object { $f = $_; -not ($paths | Where-Object { $f -eq $_ -or $f.StartsWith("$_/") }) })
+        if ($stray.Count) {
+            & git reset -q
+            Stop-Here ("Refusing to commit: $($stray.Count) staged file(s) are outside the paths this step owns, for example $($stray[0]). Nothing was committed.")
+        }
         & git diff --cached --quiet
         if ($LASTEXITCODE -eq 0) { Stop-Here "Nothing to commit: the notes for $Version are already there." }
         $msg = "What's new: notes and pictures for $Version`n`nMade by tools/release/Prepare-WhatsNew.ps1 from the note files in docs/whatsnew/fragments.`n`nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"

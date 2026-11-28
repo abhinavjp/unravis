@@ -441,3 +441,28 @@ func TestCompareMergeConflictIsNotADisagreement(t *testing.T) {
 		t.Fatalf("disagree %d, want 0", rep.Disagree)
 	}
 }
+
+// A pull request the trust gate refused (a bot, a stranger, a fork) was kept off this PC on purpose: GitHub ran it
+// and this PC did not, so it is local-only, not a disagreement, and must not break the streak.
+func TestCompareTrustRefusalIsNotADisagreement(t *testing.T) {
+	for _, reason := range []string{
+		"dependabot[bot] is not in the allow-list of authors who may run code on this PC",
+		"fork pull request: a maintainer pushes it to a branch of this repository",
+		`the code is not all the owner's and "feature" is not a base branch this PC trusts for that`,
+	} {
+		e := localPR(1, shaN(1), "failure", 1)
+		e.Reason = reason
+		src := &FakeCompareSource{Results: map[string]GHChecks{shaN(1): {Runs: []GHCheck{run("quick-gate", "completed", "success")}}}}
+		rep := compareOnly(t, []IndexEntry{e}, src, 30)
+		r := rowFor(t, rep, 1)
+		if r.Verdict != VerdictLocalOnly || !strings.Contains(r.Note, "on purpose") || rep.Disagree != 0 {
+			t.Fatalf("%q: verdict %q note %q disagree %d, want local-only on purpose", reason, r.Verdict, r.Note, rep.Disagree)
+		}
+	}
+	e := localPR(2, shaN(2), "failure", 2)
+	e.Reason = "tests failed"
+	src := &FakeCompareSource{Results: map[string]GHChecks{shaN(2): {Runs: []GHCheck{run("quick-gate", "completed", "success")}}}}
+	if r := rowFor(t, compareOnly(t, []IndexEntry{e}, src, 30), 2); r.Verdict != VerdictDisagree {
+		t.Fatalf("an ordinary failure must still disagree, got %q", r.Verdict)
+	}
+}

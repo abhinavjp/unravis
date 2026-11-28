@@ -90,6 +90,9 @@ type RecorderOptions struct {
 	SelfUsage func() (SelfReading, bool)
 	// Diag is the diagnostics log. Optional: nil writes nothing.
 	Diag *DiagLog
+	// ExtraLogRoots names more folders for the logs catalogue, for example the IIS site folders the sources manifest
+	// found. Optional: nil uses only the configured folders.
+	ExtraLogRoots func() []string
 }
 
 // RecorderStatus is a snapshot of the recorder for the status page.
@@ -132,6 +135,7 @@ type Recorder struct {
 	resumedFlag  bool // next sample follows a disk-low pause
 	forceHK      bool
 	lastSkipMsg  string
+	floorHeldMsg bool // the keep-floor event was raised and the floor still holds
 	clockFwd     bool // the wall clock jumped forward since the last housekeeping pass
 	lastFreeMem  time.Time
 	self         selfTracker // this run's own cost; tick goroutine only
@@ -398,7 +402,11 @@ func (r *Recorder) Tick(now time.Time) {
 	}
 	r.mu.Unlock()
 	if r.o.Config.Record.LogsCatalogue && (r.lastLogs.IsZero() || now.Sub(r.lastLogs) >= logsEvery || now.Before(r.lastLogs)) {
-		r.logs = CatalogueLogs(r.o.Config.LogPaths)
+		roots := r.o.Config.LogPaths
+		if r.o.ExtraLogRoots != nil {
+			roots = MergeLogRoots(roots, r.o.ExtraLogRoots())
+		}
+		r.logs = CatalogueLogs(roots)
 		r.lastLogs = now
 		s.Logs = r.logs
 	}
@@ -569,6 +577,17 @@ func (r *Recorder) housekeep(now time.Time) {
 		}
 	} else {
 		r.lastSkipMsg = ""
+	}
+	// The keep floor stopped a removal the free-space rule wanted: say so once,
+	// not every minute, and again only after the floor stopped holding.
+	switch {
+	case res.FloorHeld && !r.floorHeldMsg:
+		r.floorHeldMsg = true
+		r.event(EventHousekeeping, FloorHeldMessage)
+	case !res.FloorHeld && err == nil && !res.Incomplete() && res.DiskKnown:
+		// Only a fresh disk reading says the floor stopped holding; a failed read
+		// says nothing, so it must not re-arm the event.
+		r.floorHeldMsg = false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

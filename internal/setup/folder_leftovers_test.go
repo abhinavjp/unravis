@@ -22,7 +22,10 @@ func TestUserFolderWithOnlyInstallerFilesPasses(t *testing.T) {
 	writeFile(t, filepath.Join(dir, ".previous", "pending.json"), "{}")
 	writeFile(t, filepath.Join(dir, SetupExeName), "x")
 	writeFile(t, filepath.Join(dir, "UNRAVIS-RELEASES.EXE"), "x") // name case does not matter
-	writeFile(t, filepath.Join(dir, "Desktop.ini"), "x")          // dropped by Explorer
+	writeFile(t, filepath.Join(dir, ReleasesExeName), "x")
+	writeFile(t, filepath.Join(dir, CLIDirName, HomestretchExeName), "x")
+	writeFile(t, filepath.Join(dir, CLIDirName, HSExeName), "x")
+	writeFile(t, filepath.Join(dir, "Desktop.ini"), "x") // dropped by Explorer
 	if c, ok := userFolderCheck(e); ok {
 		t.Fatalf("a folder of installer files was refused: %+v", c)
 	}

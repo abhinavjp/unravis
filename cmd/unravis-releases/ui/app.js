@@ -62,7 +62,8 @@ function redSince(branch, wf) {
 }
 
 // ---------- state ----------
-const S = { open: {}, fold: {}, step: null, logQ: '', logHit: 0, logFilter: 'all', wrap: true, follow: true, full: false, rel: null, menu: null, pin: null, busy: {}, lineTop: 0, runErr: '' };
+const S = { job: null, step: null, detailOpen: false, jobFilter: 'all', showPassed: false, readRunQuery: true, revealRunDetail: false, causeLogs: null,
+  logQ: '', logHit: 0, logFilter: 'all', wrap: true, follow: true, full: false, rel: null, menu: null, pin: null, lineTop: 0, runErr: '' };
 
 // ---------- routing ----------
 const route = () => {
@@ -76,6 +77,10 @@ function setQuery(upd) {
   const s = q.toString(); history.replaceState(null, '', '#/' + base + (s ? '?' + s : ''));
 }
 let lastPath = '';
+let landedOn = '';
+// Which page the person is on: the route and the query that picks a section. Pinning a line or choosing a step rewrites
+// other query parts without a hashchange, and a live refresh must not treat that as a new page.
+const pageKey = (R = route()) => `${R.name}/${R.id || ''}?${['changes', 'controls'].map((k) => (R.q.has(k) ? k + '=' + R.q.get(k) : '')).join('&')}`;
 
 // ---------- header ----------
 function worst() {
@@ -95,7 +100,7 @@ function paintChrome() {
     <div class="note">${ico('plus')} To add a project, list it in the projects file and restart. Each project keeps its own runs, releases and machines.</div></div>`;
   const nR = D.runsTotal || D.runs.length; const nRel = D.snapshot && D.snapshot.releases ? D.snapshot.releases.length : '';
   const nM = D.machines && D.machines.machines ? D.machines.machines.length : '';
-  const cur = R.name === 'run' ? 'runs' : R.name; const oc = Ops.counts();
+  const cur = isRun(R) ? 'runs' : R.name; const oc = Ops.counts();
   $('#tabs').innerHTML = [['overview', 'Overview', ''], ['runs', 'Runs', nR], ['queue', 'Queue', oc.queue], ['releases', 'Releases', nRel], ['machines', 'Machines', nM], ['holds', 'Holds', oc.holds], ['activity', 'Activity', oc.activity]]
     .map(([k, l, n]) => `<a class="tab" href="#/${k}" ${cur === k ? 'aria-current="page"' : ''}>${l}${n !== '' ? `<span class="n">${esc(n)}</span>` : ''}</a>`).join('');
   const run = o ? (o.running || []).length : 0; const wait = o ? (o.waiting || []).length : 0;
@@ -127,6 +132,18 @@ function noStore(what) {
   return `<div class="empty empty-top"><b>${esc(what || 'No check records found for this project.')}</b> ${D.err ? esc(D.err) : 'Homestretch reads the runs saved by <span class="mono">unravis-ci</span> on this PC. Start the agent once, and they show up here.'}</div>`;
 }
 
+function runLocation(r, request = queueRequest(r)) {
+  if (norm(r.status) === 'waiting') return Ops.waitForRun(r);
+  const placement = runPlacement(r, request);
+  const offline = norm(r.status) === 'running' ? Ops.stoppedReporting(r.agent || request?.claimedBy) : '';
+  return `${placement ? `<span class="why">${placement}</span>` : ''}${offline}${request ? Ops.replacement(request) : ''}`;
+}
+function coverChip(r, request) {
+  const n = changeCount(request);
+  if (n <= 1 || request.state === 'superseded') return '';
+  return ` <a class="chip" href="#/run/${encodeURIComponent(r.id)}?changes=1" title="${esc(CHANGE_TITLE)}">${esc(coverVerb(request, r))} ${esc(n)} changes</a>`;
+}
+
 // ---------- Overview ----------
 function viewOverview() {
   const o = D.overview;
@@ -147,8 +164,16 @@ function viewOverview() {
   } else sub = failing.length ? 'Open the failed run to see where it stopped.' : 'The last full check on every main branch passed.';
   const snap = D.snapshot; const rl = snap && snap.releases && snap.releases[0];
   const feeds = (snap && snap.feeds) || []; const rc = feeds.find((f) => f.channel === 'rc'); const stb = feeds.find((f) => f.channel === 'stable');
-  const ag = o.agents || []; const online = ag.filter((a) => a.fresh).length;
-  const free = ag.reduce((n, a) => n + Math.max(0, (a.slots || 0) - (a.jobs || []).length), 0);
+  const ag = reportedMachines(); const online = ag.filter((a) => a.state !== 'gone').length;
+  const free = ag.filter((a) => a.state === 'ready').reduce((n, a) => n + Math.max(0, (a.slots || 0) - (a.running || 0)), 0);
+  const claims = runningClaims();
+  const problems = ag.map(Ops.machineProblem).filter(Boolean);
+  const active = [...(o.running || []), ...(o.waiting || [])];
+  const activeLine = (r) => {
+    const request = queueRequest(r);
+    return `<li>${st(r.status)} <a href="#/run/${encodeURIComponent(r.id)}">${esc(wfName(r.workflow))} · ${esc(subject(r))}</a>
+      ${coverChip(r, request)}${runLocation(r, request)}</li>`;
+  };
   const pulls = (o.pulls || []).slice().sort((a, b) => (norm(b.status) === 'failed') - (norm(a.status) === 'failed'));
   const sh = o.shadow || {};
   const lane = (f, name) => {
@@ -161,20 +186,22 @@ function viewOverview() {
     if (!r) return `<tr><td colspan="6" class="muted">${esc(b.branch)} has no recorded run yet.</td></tr>`;
     const red = norm(r.status) === 'failed' ? redSince(b.branch, r.workflow) : null;
     return `<tr class="row" tabindex="0" data-href="#/run/${encodeURIComponent(r.id)}"><td class="w-st">${st(r.status)}</td>
-      <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">${esc(b.branch)}</a> <span class="mono muted">${esc(short(r.headSha || r.sha))}</span>${r.release ? ` <span class="chip mono">${ico('tag')}${esc(r.release)}</span>` : ''}<small>${esc(wfName(r.workflow))} · took ${esc(dur(r.ms))}</small></td>
+      <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">${esc(b.branch)}</a> <span class="mono muted">${esc(short(r.headSha || r.sha))}</span>${r.release ? ` <span class="chip mono">${ico('tag')}${esc(r.release)}</span>` : ''}${coverChip(r, queueRequest(r))}<small>${esc(wfName(r.workflow))} · took ${esc(dur(r.ms))}</small>${runLocation(r)}</td>
       <td class="clip"><div>${whereHtml(r)}</div></td>
       <td class="hide-s since">${red ? `<b>${red.sure ? '' : '≥ '}${esc(dur(Date.now() - Date.parse(red.since)))}</b>` : '<span class="muted">–</span>'}</td>
       <td class="hide-s">${branchHist(b.branch)}</td><td class="num">${when(r.start)}</td></tr>`;
   };
   const pullRow = (r) => { const d = disFor(r); return `<tr class="row" tabindex="0" data-href="#/run/${encodeURIComponent(r.id)}"><td class="w-st">${st(r.status)}</td>
-      <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">PR ${esc(r.pr)}</a><small class="mono" title="${esc(r.branch)}">${esc(r.branch)}</small></td><td class="clip"><div>${whereHtml(r)}</div></td>
+      <td><a class="rl title" href="#/run/${encodeURIComponent(r.id)}">PR ${esc(r.pr)}</a><small class="mono" title="${esc(r.branch)}">${esc(r.branch)}</small>${runLocation(r)}</td><td class="clip"><div>${whereHtml(r)}</div></td>
       <td class="hide-s">${d ? '<span class="chip warn">No: GitHub passed</span>' : '<span class="muted" title="The run on GitHub is compared about every 10 minutes. Only differences are listed.">No difference found</span>'}</td><td class="num">${when(r.start)}</td></tr>`; };
   return `<div class="lead">${sic(hs, 'lg')}<div><h1>${esc(head)}</h1><p>${esc(sub)}</p></div></div>
+  ${problems.length ? `<div class="nowline"><p class="note"><b>Machine problem:</b> ${problems.join(' ')} <a href="#/machines">See machine</a></p></div>` : ''}
   ${Ops.holdLine()}
   <div class="nowline"><span>${sic('waiting')}<b>${(o.waiting || []).length} waiting</b></span>
     <span>${ico('pc')} <b>${online} of ${ag.length}</b> machine${ag.length === 1 ? '' : 's'} online, ${free} free slot${free === 1 ? '' : 's'}</span>
     ${rl ? `<span>${ico('tag')} Latest release <b class="mono">${esc(rl.version)}</b> ${rl.verify === 'passed' ? 'verified' : rl.verify === 'failed' ? 'failed verify' : 'not verified yet'} ${when(rl.published)}</span>` : ''}</div>
   <div class="grid2"><div>
+    ${active.length ? `<section class="sec"><div class="sh"><h2>Running and waiting</h2></div><ul class="cover-list">${active.map(activeLine).join('')}</ul></section>` : ''}
     <section class="sec"><div class="sh"><h2>Main branches</h2><span class="muted">last full check on each</span></div>
       <table class="tbl"><thead><tr><th class="w-st">Result</th><th>Branch</th><th>Where it failed</th><th class="hide-s">Red for</th><th class="hide-s">Last 16 pushes</th><th class="num">Started</th></tr></thead><tbody>${bs.map(branchRow).join('') || '<tr><td colspan="6" class="muted">This project lists no main branches.</td></tr>'}</tbody></table></section>
     <section class="sec"><div class="sh"><h2>Pull requests</h2><span class="muted">latest run for each, failing first</span><a href="#/runs?ev=pr">All pull request runs</a></div>
@@ -190,7 +217,9 @@ function viewOverview() {
       <dl class="kv"><dt>Agree</dt><dd>${sh.agree || 0}</dd><dt>Disagree</dt><dd class="${sh.disagree ? 'c-failed' : ''}">${sh.disagree || 0}</dd><dt>Only on GitHub</dt><dd>${sh.githubOnly || 0}</dd><dt>Only on this PC</dt><dd>${sh.localOnly || 0}</dd></dl>`}
       <p class="muted">GitHub still decides merges. After ${sh.gate || 20} agreeing pull requests in a row, the local result can take over.</p></div>
     <div class="card"><h3>Machines</h3><a href="#/machines">All machines</a>
-      ${ag.length ? ag.map((a) => `<div class="mrow">${ico('pc')}<b>${esc(a.name)}</b>${a.fresh ? '<span class="chip ok">Online</span>' : '<span class="chip warn">Not heard from</span>'}<span class="muted">${(a.jobs || []).length ? (a.jobs || []).length + ' busy' : 'idle'} · ${a.slots || 0} slot${a.slots === 1 ? '' : 's'}</span></div><p class="muted">Heard from ${when(a.lastSeen)}. ${a.posted || 0} result${a.posted === 1 ? '' : 's'} sent to GitHub, ${a.postFailed || 0} failed.</p>`).join('') : '<p class="muted">No machine has reported yet.</p>'}</div>
+      ${ag.length ? ag.map((a) => `<div class="mrow">${ico('pc')}${machineLink(a.name)}${machineChips(a)} ${a.slots && Number.isInteger(a.running) && a.state !== 'gone' ? `<span class="muted">${esc(slotsBusy(a))}</span>` : ''}</div>
+        ${a.state === 'gone' ? `<p class="note">Offline (${lastSeen(a)}).</p>` : ''}${machineJobs(a, claims)}
+        ${Number.isInteger(a.posted) ? `<p class="muted">${esc(a.posted)} result${a.posted === 1 ? '' : 's'} sent to GitHub, ${esc(a.postFailed || 0)} failed.</p>` : ''}`).join('') : '<p class="muted">No machine has reported yet.</p>'}</div>
     ${Ops.queueCard()}
   </aside></div>`;
 }
@@ -232,8 +261,8 @@ function viewRuns() {
   if (text) list = list.filter((r) => [r.pr ? 'pr ' + r.pr : '', r.branch, r.author, wfName(r.workflow), r.reason, short(r.headSha || r.sha)].join(' ').toLowerCase().includes(text));
   const waits = list.map(waitMs).filter((x) => x != null).sort((a, b) => a - b);
   const med = waits.length ? dur(waits[Math.floor(waits.length / 2)]) : '';
-  const row = (r) => { const d = disFor(r); const w = waitMs(r); return `<tr class="row" tabindex="0" data-href="#/run/${encodeURIComponent(r.id)}"><td class="w-st">${st(r.status)}</td>
-    <td><a class="rl" href="#/run/${encodeURIComponent(r.id)}"><span class="title">${esc(wfName(r.workflow))}</span> <span class="muted">·</span> ${esc(subject(r))}</a>${d ? ' <span class="chip warn" title="GitHub’s own run passed">GitHub disagrees</span>' : ''}<small class="mono">${esc([r.event === 'pull_request' ? r.branch : '', r.author].filter(Boolean).join(' · ')) || '&nbsp;'}</small></td>
+  const row = (r) => { const d = disFor(r); const w = waitMs(r); const request = queueRequest(r); return `<tr class="row" tabindex="0" data-href="#/run/${encodeURIComponent(r.id)}"><td class="w-st">${st(r.status)}</td>
+    <td><a class="rl" href="#/run/${encodeURIComponent(r.id)}"><span class="title">${esc(wfName(r.workflow))}</span> <span class="muted">·</span> ${esc(subject(r))}</a>${d ? ' <span class="chip warn" title="GitHub’s own run passed">GitHub disagrees</span>' : ''}${coverChip(r, request)}<small class="mono">${esc([r.event === 'pull_request' ? r.branch : '', r.author].filter(Boolean).join(' · ')) || '&nbsp;'}</small>${runLocation(r, request)}</td>
     <td class="clip"><div>${whereHtml(r)}</div></td><td class="hide-s mono muted">${esc(short(r.headSha || r.sha))}</td>
     <td class="num hide-s ${w != null && w > 3e5 ? 'c-waiting' : 'muted'}">${w == null ? '–' : esc(dur(w))}</td><td class="num">${norm(r.status) === 'running' ? 'running' : esc(dur(r.ms))}</td><td class="num">${when(r.start)}</td><td>${rowMenu(r)}</td></tr>`; };
   return `<div class="ph"><h1>Runs</h1><p>Every check this project ran. Each failed row shows where it failed.</p></div>
@@ -255,186 +284,527 @@ function bindRuns() {
 }
 
 // ---------- one run ----------
-const splitStep = (k) => { const i = String(k).lastIndexOf(':'); return [k.slice(0, i), +k.slice(i + 1)]; };
-const detOf = (id) => D.run[id] || null;
-const jobsOf = (id) => (detOf(id) && detOf(id).jobs) || [];
-const logOf = (id, jk, idx) => D.logs[Data.logKey(id, jk, idx)];
+const splitStep = (k) => { const i = k.lastIndexOf(':'); return [k.slice(0, i), +k.slice(i + 1)]; };
+const isRun = (R) => (R.name === 'run' || R.name === 'ghrun') && !!R.id;
+const detOf = (R) => {
+  const runs = D[R.name];
+  return runs && Object.hasOwn(runs, R.id) ? runs[R.id] : null;
+};
+const jobsOf = (R) => detOf(R)?.jobs || [];
+const logOf = (R, jk, idx) => D.logs[Data.logKey(detOf(R)?.run.id || R.id, jk, idx)];
 const failedStepOf = (j) => (j.steps || []).find((s) => norm(s.status) === 'failed');
-function firstFailed(jobs) {
-  const fj = jobs.find((j) => norm(j.status) === 'failed' && (j.steps || []).some((s) => norm(s.status) === 'failed' && s.hasLog)) || jobs.find((j) => norm(j.status) === 'failed');
-  return fj ? { job: fj, step: failedStepOf(fj) } : { job: null, step: null };
-}
+const jobName = (j) => j.label || j.id || j.key;
+const stepKey = (j, s) => `${j.key}:${s.index}`;
+const githubURL = (url) => typeof url === 'string' && url.startsWith('https://github.com/') ? url : '';
+const runStates = { passed: 'Passed', failed: 'Failed', running: 'Running', waiting: 'Not started',
+  skipped: 'Skipped', stopped: 'Stopped', finished: 'Finished', unknown: 'Not recorded' };
+const runState = (record) => Object.hasOwn(runStates, norm(record.status)) ? norm(record.status) : 'unknown';
+const runWord = (record) => record.word && record.status !== 'waiting' ? record.word : runStates[runState(record)];
+const statusIcon = (state) => state === 'finished' ? 'clock' : state;
+const runStatus = (record) => {
+  const state = runState(record);
+  return state === 'finished' ? `<span class="st">${ico('clock')}${esc(runWord(record))}</span>` : st(state, runWord(record));
+};
 const ERR_RE = /NEW FAILURE|^--- FAIL|panic:|::error::/;
-
-// A very small Markdown reader for the run summary: headings, bullets, tables, bold, code. Everything is escaped first.
-function mdx(src) {
-  const inl = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
-  const out = []; let list = false; let tab = [];
-  const flushT = () => { if (!tab.length) return; out.push('<table>' + tab.map((cells, i) => '<tr>' + cells.map((c) => `<${i ? 'td' : 'th'}>${inl(c)}</${i ? 'td' : 'th'}>`).join('') + '</tr>').join('') + '</table>'); tab = []; };
-  for (const line of String(src || '').split(/\r?\n/)) {
-    if (/^\s*\|/.test(line)) { const cells = line.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()); if (!cells.every((c) => /^:?-+:?$/.test(c))) tab.push(cells); continue; }
-    flushT();
-    const b = /^\s*[-*]\s+(.*)$/.exec(line); const h = /^(#{1,4})\s+(.*)$/.exec(line);
-    if (b) { if (!list) { out.push('<ul>'); list = true; } out.push(`<li>${inl(b[1])}</li>`); continue; }
-    if (list) { out.push('</ul>'); list = false; }
-    if (h) out.push(`<h4>${inl(h[2])}</h4>`); else if (line.trim()) out.push(`<p>${inl(line)}</p>`);
+const errorInLog = new WeakMap();
+function firstError(log) {
+  if (!log?.lines) return null;
+  if (!errorInLog.has(log)) {
+    const i = log.lines.findIndex((l) => ERR_RE.test(l.x));
+    errorInLog.set(log, i < 0 ? null : { line: Number(log.from) + i + 1, text: log.lines[i].x });
   }
-  flushT(); if (list) out.push('</ul>'); return out.join('');
+  return errorInLog.get(log);
 }
 
-function jobHtml(id, j) {
-  const js = norm(j.status); const open = S.open[j.key] ?? (js !== 'passed');
-  const total = Math.max(1, ...(j.steps || []).map((s) => s.ms || 0));
-  const li = (s) => { const k = j.key + ':' + s.index; const ss = norm(s.status);
-    return `<li class="step ${ss}" data-s="${esc(k)}" ${S.step === k ? 'aria-current="true"' : ''} tabindex="0" title="${s.index}. ${esc(s.name)}">${sic(ss)}<span class="nm">${s.index}. ${esc(s.name)}</span>${s.ms ? `<span class="tb" aria-hidden="true"><i data-w="${Math.max(4, Math.round(100 * s.ms / total))}"></i></span>` : ''}<span class="d">${ss === 'skipped' ? 'skip' : s.ms ? esc(dur(s.ms)) : ''}</span></li>`; };
-  let body = '';
-  if (open) {
-    const steps = j.steps || []; const fold = js !== 'passed' && S.fold[j.key] !== false;
-    if (!fold) body = steps.map(li).join('');
-    else {
-      const keep = (s) => ['failed', 'running', 'waiting'].includes(norm(s.status)) || S.step === j.key + ':' + s.index;
-      for (let i = 0; i < steps.length;) {
-        if (keep(steps[i])) { body += li(steps[i]); i++; continue; }
-        let e = i; while (e < steps.length && !keep(steps[e])) e++;
-        const run = steps.slice(i, e);
-        if (run.length > 2) body += `<li><button type="button" class="fold" data-fold="${esc(j.key)}">${ico('chev')} ${run.filter((x) => norm(x.status) === 'passed').length} passed${run.some((x) => norm(x.status) === 'skipped') ? `, ${run.filter((x) => norm(x.status) === 'skipped').length} skipped` : ''} step${run.length === 1 ? '' : 's'} <span class="mono ml-a">${esc(dur(run.reduce((n, x) => n + (x.ms || 0), 0)))}</span></button></li>`;
-        else body += run.map(li).join('');
-        i = e;
-      }
+function runColumns(jobs, unlisted) {
+  const columns = [[]];
+  const timed = [], waiting = [];
+  for (const job of jobs) {
+    const start = ts(job.start), end = ts(job.end);
+    if (Number.isFinite(start)) timed.push({ job, start, end, depth: 0 });
+    else if (runState(job) === 'waiting') waiting.push(job);
+    else columns[0].push(job);
+  }
+  timed.sort((a, b) => a.start - b.start);
+  const ended = timed.filter((j) => j.end >= j.start).sort((a, b) => a.end - b.end || a.start - b.start);
+  let finished = 0, deepest = -1;
+  for (const entry of timed) {
+    // Equal starts share a depth, even if one job has zero recorded duration.
+    while (finished < ended.length && ended[finished].end <= entry.start && ended[finished].start < entry.start) {
+      deepest = Math.max(deepest, ended[finished++].depth);
     }
+    entry.depth = deepest + 1;
+    (columns[entry.depth] ||= []).push(entry.job);
   }
-  return `<div class="job" data-open="${open}"><button type="button" class="jhead" data-j="${esc(j.key)}" aria-expanded="${open}">${sic(js)}<span>${esc(j.label || j.id)}${j.pseudo ? ' <span class="chip">runner stage</span>' : ''}</span><span class="d">${esc(dur(j.ms))}</span>${ico('chev', 'ch')}</button>${open ? `<ul class="steps">${body}</ul>` : ''}</div>`;
+  const hasRun = timed.length || columns[0].some((j) => ['failed', 'passed', 'running', 'finished'].includes(runState(j)));
+  const hasWaiting = !!(hasRun && (waiting.length || unlisted));
+  if (hasWaiting) columns.push(waiting);
+  else columns[0].push(...waiting);
+  return { columns, hasWaiting };
 }
 
-function viewRun(id) {
-  const det = detOf(id); const fromList = D.runs.find((x) => x.id === id);
-  if (!det && !fromList) {
-    if (S.runErr) return `<div class="crumb"><a href="#/runs">Runs</a></div><div class="empty"><b>That run is not on this PC.</b> ${esc(S.runErr)} <a href="#/runs">Back to all runs</a>.</div>`;
-    return `<div class="crumb"><a href="#/runs">Runs</a></div>${loadingHtml}`;
+function runHref(R, job, index, line) {
+  const q = new URLSearchParams();
+  if (job != null) q.set('job', job);
+  if (index != null) q.set('step', index);
+  if (line != null) q.set('L', line);
+  return `#/${R.name}/${encodeURIComponent(R.id)}${q.size ? '?' + q : ''}`;
+}
+
+function initialRunStep(j, det) {
+  const steps = j.steps || [];
+  return failedStepOf(j) || steps.find((s) => runState(s) === 'running') ||
+    steps.find((s) => s.hasLog) || steps[0] || (j.key === '_checkout' && det.checkout ? { index: 0 } : null);
+}
+
+function jobHtml(j) {
+  const state = runState(j), selected = S.job === j.key;
+  let active = null;
+  const strip = (j.steps || []).map((s) => {
+    const k = stepKey(j, s), status = runState(s);
+    if ((status === 'failed' && active?.status !== 'failed') || (status === 'running' && !active)) active = s;
+    const tip = `Step ${s.index} · ${s.name} · ${runWord(s)}${s.ms != null ? ' · ' + dur(s.ms) : ''}`;
+    return `<span class="run-cell ${status}${S.step === k ? ' current' : ''}" data-strip="${esc(s.index)}" title="${esc(tip)}"></span>`;
+  }).join('');
+  return `<button class="run-node ${state}" type="button" id="node-${esc(j.key)}" data-job="${esc(j.key)}" data-job-state="${state}" aria-pressed="${selected}">
+    <span class="run-node-head">${ico(statusIcon(state))}<strong>${esc(jobName(j))}</strong>${j.ms != null ? `<span class="mono">${esc(dur(j.ms))}</span>` : ''}</span>
+    <span class="run-node-meta">${esc(runWord(j))}${active ? ` · Step ${esc(active.index)}` : ''}
+      ${j.reason && ['skipped', 'waiting', 'stopped'].includes(state) ? `<span class="run-reason">${esc(j.reason)}</span>` : ''}</span>
+    ${strip ? `<span class="run-strip" aria-hidden="true">${strip}</span>` : ''}</button>`;
+}
+
+function runSteps(det, j) {
+  const steps = j?.steps || [];
+  const max = steps.reduce((n, s) => Math.max(n, s.ms || 0), 1);
+  const canHide = j && runState(j) === 'failed' && steps.some((s) => runState(s) === 'passed');
+  const hide = canHide && !S.showPassed;
+  let hidden = 0;
+  const rows = [];
+  const flush = () => {
+    if (hidden) rows.push(`<li class="run-step-note">${hidden} passed step${hidden === 1 ? '' : 's'} hidden</li>`);
+    hidden = 0;
+  };
+  for (const s of steps) {
+    const k = stepKey(j, s), state = runState(s);
+    if (hide && state === 'passed' && k !== S.step) { hidden++; continue; }
+    flush();
+    rows.push(`<li><button type="button" class="run-step ${state}" id="step-${esc(k)}" data-step="${esc(s.index)}" ${S.step === k ? 'aria-current="true"' : ''}>
+      <span class="mono">${esc(s.index)}</span>${ico(statusIcon(state))}<span class="run-step-name">${esc(s.name)}<small>${esc(runWord(s))}${state === 'skipped' && s.err ? ` · ${esc(s.err)}` : ''}</small>
+      ${s.ms > 0 ? `<span class="tb" aria-hidden="true"><i data-w="${Math.max(2, Math.round(100 * s.ms / max))}"></i></span>` : ''}</span>
+      ${s.ms != null ? `<span class="mono">${esc(dur(s.ms))}</span>` : ''}</button></li>`);
   }
-  const r = (det && det.run) || fromList; const s = norm(r.status); const jobs = jobsOf(id);
-  const ff = firstFailed(jobs); const failJobs = jobs.filter((j) => norm(j.status) === 'failed');
+  flush();
+  const checkout = det.checkout ? `<button type="button" class="run-checkout link" id="run-checkout">Checkout log</button>` : '';
+  return `<div class="panel run-steps" aria-label="Steps">
+    <div class="run-step-head"><h3>${esc(S.step === '_checkout:0' && !j ? 'Getting the code' : j ? jobName(j) : 'Steps')}</h3>
+    ${j ? `<div>${runStatus(j)}${j.ms != null ? ` · ${esc(dur(j.ms))}` : ''}</div>` : ''}
+    ${j?.reason && ['skipped', 'waiting', 'stopped'].includes(runState(j)) ? `<div class="run-reason">${esc(j.reason)}</div>` : ''}
+    ${canHide ? `<button type="button" class="link" id="run-show-passed">${hide ? 'Show passed steps' : 'Hide passed steps'}</button>` : ''}</div>
+    ${rows.length ? `<ol>${rows.join('')}</ol>` : '<p class="run-step-note">No steps recorded.</p>'}${checkout}</div>`;
+}
+
+function viewRun(R) {
+  const det = detOf(R);
+  const gh = R.name === 'ghrun';
+  const crumb = '<a href="#/runs">Runs</a>';
+  if (!det) return `<div class="crumb">${crumb}</div>${S.runErr ? `<div class="empty"><b>The run could not be read.</b> ${esc(S.runErr)}</div>` : loadingHtml}`;
+  const r = det.run;
+  const state = runState(r), jobs = jobsOf(R);
+  const request = gh ? null : queueRequest(r);
+  const placement = gh ? (r.agent ? machineLink(r.agent) : '') : runPlacement(r, request);
+  const n = changeCount(request);
+  const changes = n > 1 && request.state !== 'superseded';
+  const runAgent = changes ? reportedMachines().find((m) => m.name === (r.agent || request.claimedBy)) : null;
+  const posts = runAgent ? !!runAgent.statusMode : null;
+  const byKey = new Map(jobs.map((j) => [j.key, j]));
+  const failed = [], counts = Object.fromEntries(Object.keys(runStates).map((s) => [s, 0]));
+  let running;
+  for (const j of jobs) {
+    const s = runState(j);
+    counts[s]++;
+    if (s === 'failed') failed.push(j);
+    if (s === 'running' && !running) running = j;
+  }
+  if (!byKey.has(S.job) && !(S.job === '_checkout' && det.checkout)) {
+    const job = failed[0] || running || jobs[0];
+    S.job = job?.key ?? (det.checkout ? '_checkout' : null);
+    S.step = null;
+  }
   if (!S.step) {
-    if (ff.job && ff.step) S.step = ff.job.key + ':' + ff.step.index;
-    else if (jobs[0]) { const f = (jobs[0].steps || []).find((x) => x.hasLog) || (jobs[0].steps || [])[0]; if (f) S.step = jobs[0].key + ':' + f.index; }
-    else if (det && det.checkout) S.step = '_checkout:0';
+    const job = byKey.get(S.job);
+    const step = job && initialRunStep(job, det);
+    S.step = step ? stepKey(job, step) : S.job === '_checkout' && det.checkout ? '_checkout:0' : null;
+    if (step && runState(step) === 'failed') S.logFilter = 'err';
   }
-  const pinL = route().q.get('L'); if (pinL) S.pin = +pinL;
-  const posted = (det && det.posted) || []; const mine = posted.find((p) => /fast-build/.test(p.context || '')) || posted[0];
-  const dsh = disFor(r); const rate = s === 'failed' ? stepRate(r) : null; const wt = waitMs(r);
-  const summary = (det && det.summary) || '';
-  let ferr = null;
-  if (ff.job && ff.step) { const lg = logOf(id, ff.job.key, ff.step.index); if (lg) { const i = lg.lines.findIndex((l) => ERR_RE.test(l.x)); if (i >= 0) ferr = { line: lg.from + i + 1, text: lg.lines[i].x }; } }
-  const failEntry = s === 'failed' && (ff.step || r.reason);
-  const wh = parseWhy(r.reason);
-  const subj = subject(r);
-  const hasLogs = jobs.length || (det && det.checkout);
-  let body;
-  if (hasLogs) {
-    const chk = det && det.checkout ? `<div class="job" data-open="true"><button type="button" class="jhead" data-j="_checkout" aria-expanded="true">${sic('passed')}<span>Getting the code</span><span class="d"></span>${ico('chev', 'ch')}</button><ul class="steps"><li class="step passed" data-s="_checkout:0" ${S.step === '_checkout:0' ? 'aria-current="true"' : ''} tabindex="0"><span class="nm">Checkout log</span></li></ul></div>` : '';
-    const planned = det && det.planned && det.planned > jobs.length && s === 'running' ? `<p class="muted fs-xs mt8">${jobs.length} of ${det.planned} jobs started so far.</p>` : '';
-    body = `<div class="rbody"><div class="panel jobs" id="jobs">${chk}${jobs.map((j) => jobHtml(id, j)).join('')}${planned}</div><div id="logpane"></div></div>
-      ${summary ? `<details class="panel summary"><summary>${ico('chev', 'ch')} Summary written by the run</summary><div class="md">${mdx(summary)}</div>${det.summaryCut ? '<p class="muted fs-xs">The summary was cut because it is long.</p>' : ''}</details>` : ''}`;
-  } else {
-    body = `<div class="empty empty-top"><b>${s === 'waiting' ? 'This run is waiting for a machine.' : s === 'stopped' ? 'This run was stopped before it finished.' : 'No step records for this run on this PC.'}</b> ${esc(r.reason || r.note || '')}</div>`;
+  if (S.readRunQuery) {
+    const job = byKey.get(R.q.get('job'));
+    const index = R.q.get('step');
+    const step = job && ((job.steps || []).find((s) => index != null && s.index === +index) || initialRunStep(job, det));
+    if (job) {
+      S.job = job.key;
+      S.step = step ? stepKey(job, step) : null;
+    } else if (R.q.get('job') === '_checkout' && det.checkout) {
+      S.job = '_checkout'; S.step = '_checkout:0';
+    }
+    const line = Number(R.q.get('L'));
+    S.pin = Number.isSafeInteger(line) && line > 0 ? line : null;
+    if (S.pin) S.logFilter = 'all';
+    if (S.pin || R.q.has('job')) { S.detailOpen = true; S.revealRunDetail = true; }
+    S.readRunQuery = false;
   }
+  const j = byKey.get(S.job);
+  const selectedIndex = S.step ? splitStep(S.step)[1] : null;
+  const selectedStep = j?.steps?.find((s) => s.index === selectedIndex);
+  const title = r.release ? `Release ${r.release}` : [wfName(r.workflow), r.pr ? `PR ${r.pr}` : r.branch].filter(Boolean).join(' · ') || 'Run';
+  const sha = r.headSha || r.sha, url = githubURL(r.url);
   const meta = [
-    r.event === 'pull_request' && r.pr ? `<span>${ico('pr')} <a href="${esc(ghUrl('/pull/' + r.pr))}" target="_blank" rel="noopener noreferrer">PR ${esc(r.pr)}</a></span>` : '',
-    r.branch ? `<span>${ico('branch')} <span class="mono">${esc(r.branch)}</span>${r.event === 'pull_request' && r.base ? ` into <span class="mono">${esc(r.base)}</span>` : ''}</span>` : '',
-    r.author ? `<span>${ico('user')} ${esc(r.author)}</span>` : '',
-    (r.headSha || r.sha) ? `<span>${ico('commit')} <span class="mono" title="${esc(r.headSha || r.sha)}">${esc(short(r.headSha || r.sha))}</span></span>` : '',
-    `<span>${ico('clock')} started ${when(r.start)}${s !== 'running' && r.ms != null ? `, took ${esc(dur(r.ms))}` : ''}${wt != null ? `, waited ${esc(dur(wt))} for a machine` : ''}</span>`,
-    r.agent ? `<span>${ico('pc')} <span class="mono">${esc(r.agent)}</span></span>` : '',
-    `<span class="mono">${esc(r.workflow)}</span>`,
+    r.branch && `<span class="run-pill">${ico('branch')}${esc(r.branch)}</span>`,
+    sha && `<span class="run-pill mono" title="${esc(sha)}">${ico('commit')}${esc(short(sha))}</span>`,
+    r.start && `<span class="run-pill">${ico('clock')}<time datetime="${esc(r.start)}">${esc(exact(r.start))}</time></span>`,
+    placement && `<span class="run-pill">${ico('pc')}<span>${placement}</span></span>`,
+    changes && `<span class="run-pill" title="${esc(CHANGE_TITLE)}">${esc(n)} changes</span>`,
+    r.author && `<span class="run-pill">${ico('user')}${esc(r.author)}</span>`,
   ].filter(Boolean).join('');
-  return `<div class="crumb"><a href="#/runs">Runs</a> / ${esc(wfName(r.workflow))} · ${esc(subj)}</div>
-  <div class="rh">${sic(s, 'lg')}<div class="minw0"><h1>${esc(wfName(r.workflow))} on ${esc(subj)} ${st(s)}</h1><div class="meta">${meta}</div></div>
-    <div class="acts">${s === 'running' ? laterBtn('btn', ico('stop'), 'Cancel', WHY.cancel) : ''}${s === 'failed' ? laterBtn('btn', ico('rerun'), 'Re-run failed job', WHY.rerunjob) : ''}${s !== 'running' ? laterBtn('btn', ico('rerun'), 'Re-run all', WHY.rerun) : ''}${r.pr ? `<a class="btn icon" href="${esc(ghUrl('/pull/' + r.pr))}" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open on GitHub">${ico('out')}</a>` : ''}</div></div>
-  ${failEntry ? `<div class="fail" role="region" aria-label="Why it failed">${sic('failed', 'lg')}<div><b>Failed in ${ff.job ? esc(ff.job.label || ff.job.id) : wh ? esc(wh.job) : 'a step'} › step ${ff.step ? ff.step.index : wh ? wh.n : '?'}: ${esc(ff.step ? ff.step.name : wh ? wh.name : r.reason)}</b></div>
-    ${ferr ? `<div class="err" title="${esc(ferr.text)}">${esc(ferr.text)}</div>` : ff.step && ff.step.err ? `<div class="err" title="${esc(ff.step.err)}">${esc(ff.step.err)}</div>` : ''}
-    <div class="hint">${rate && rate.of > 1 ? `This step failed in <b class="strong">${rate.same} of the last ${rate.of}</b> finished ${esc(wfName(r.workflow))} runs on this PC. Counts only; it does not decide whether the failure is real.` : 'There are too few finished runs of this workflow to compare.'}${ferr ? ` First error is on line ${ferr.line} of the step log.` : ''}</div>
-    <div class="go">${ferr ? '<button type="button" class="btn sm" id="goerr">Go to error <kbd>e</kbd></button>' : ''}${failJobs.length > 1 ? '<button type="button" class="btn sm ghost" id="nextf">Next failed job <kbd>f</kbd></button>' : ''}</div></div>` : ''}
-  ${mine ? `<div class="cmp"><span>Reported to GitHub as <span class="mono">${esc(mine.context)}</span>: ${st(mine.status || mine.state)}</span>${dsh ? '<span class="chip warn">GitHub’s own run passed: they disagree</span>' : s !== 'running' && r.pr ? '<span class="chip">No difference found with GitHub</span>' : ''}<span>Shadow mode: GitHub’s own run still decides merges.</span></div>` : ''}
-  ${body}`;
+  const primary = ['failed', 'running', 'waiting', 'passed'];
+  const unlisted = det.live ? Math.max(0, (det.planned || 0) - jobs.length) : 0;
+  const total = jobs.length + unlisted;
+  counts.waiting += unlisted;
+  const extra = Object.keys(runStates).filter((s) => !primary.includes(s) && counts[s]);
+  const states = [...primary, ...extra];
+  const totals = states.map((s) => `${counts[s]} ${runStates[s].toLowerCase()}`);
+  const tiles = primary.map((s) => `<div class="run-tile ${s}">${ico(statusIcon(s))}<strong>${counts[s]}</strong><span>${runStates[s].toLowerCase()}</span></div>`).join('');
+  const { columns, hasWaiting } = runColumns(jobs, unlisted);
+  const filters = `<div class="run-filters" role="radiogroup" aria-label="Filter jobs">${[['all', 'All'], ...primary.map((s) => [s, runStates[s]])].map(([s, label]) =>
+    `<label><input type="radio" name="run-filter" id="run-filter-${s}" value="${s}" ${S.jobFilter === s ? 'checked' : ''}><span>${label}</span></label>`).join('')}</div>`;
+  const board = total ? `<div class="run-board" id="run-board" tabindex="0" aria-label="Jobs in run order">${columns.map((col, i) => {
+    const label = hasWaiting && i === columns.length - 1 ? 'Waiting' : i === 0 ? 'Ran first' : i === columns.length - 1 ? 'Last' : 'Then';
+    const notStarted = unlisted && i === (hasWaiting ? columns.length - 1 : 0) ? `<p class="run-unlisted">${unlisted} ${unlisted === 1 ? 'job' : 'jobs'} not started</p>` : '';
+    return `<div class="run-column${col.length >= 5 && columns.length <= 3 ? ' wide' : ''}">
+      <h3><span>${i + 1}</span> ${label}</h3><div class="run-stack">${col.map(jobHtml).join('')}${notStarted}<p class="run-column-empty" hidden>No jobs match.</p></div></div>`;
+  }).join('')}</div>` : '<p class="run-step-note">No jobs recorded.</p>';
+  const actions = `${failed.length ? `<button type="button" class="btn" id="goerr">${gh ? 'Open failed job' : 'Go to error'} <kbd>e</kbd></button>` : ''}
+    ${failed.length > 1 ? '<button type="button" class="btn" id="nextf">Next failed job <kbd>f</kbd></button>' : ''}`;
+  const cards = failed.map((job) => {
+    const step = failedStepOf(job);
+    const lg = !gh && (step?.hasLog ? logOf(R, job.key, step.index) : job.key === '_checkout' && det.checkout ? logOf(R, job.key, 0) : null);
+    const line = firstError(lg)?.text || (step?.err || '').split(/\r?\n/, 1)[0];
+    return `<article class="run-cause">
+      <div class="run-cause-head">${sic('failed')}<div><h3>${esc(jobName(job))}</h3>${step ? `<p>${esc(step.name)}</p>` : ''}</div></div>
+      <p class="run-cause-line mono" id="cause-${esc(job.key)}"${line ? '' : ' hidden'}>${esc(line)}</p>
+      <a class="btn sm" data-cause="${esc(job.key)}" href="${esc(runHref(R, job.key, step?.index))}">See the log</a></article>`;
+  }).join('');
+  const rate = !gh && state === 'failed' ? stepRate(r) : null;
+  return `<div class="run-page"><div class="crumb">${crumb} / ${esc(title)}</div>
+    <header class="rh"><h1>${esc(title)}</h1><div class="meta">${meta}</div>
+      ${gh ? `<p class="run-source">Read from GitHub${url ? ` · <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open the run on GitHub</a>` : ''}</p>` : ''}</header>
+    <section class="run-hero ${state}" aria-label="Run result">
+      <div class="run-verdict">${ico(statusIcon(state))}<div><h2>${esc(runWord(r))}</h2>
+        <p>${total} ${total === 1 ? 'job' : 'jobs'}${r.ms != null ? ` · ${esc(dur(r.ms))}` : ''}</p>
+        ${r.reason && (['skipped', 'waiting', 'stopped'].includes(state) || (state === 'failed' && !failed.length)) ? `<p>${esc(r.reason)}</p>` : ''}</div></div>
+      <div class="run-tiles">${tiles}</div>
+      ${total ? `<div class="run-bar" role="img" aria-label="${esc(totals.join(', '))}">${states.filter((s) => counts[s]).map((s) =>
+        `<span class="${s}" data-flex="${counts[s]}"></span>`).join('')}</div>` : ''}
+      ${extra.length ? `<p class="run-other-counts">${esc(totals.slice(primary.length).join(' · '))}</p>` : ''}
+      ${actions.trim() ? `<div class="run-actions">${actions}</div>` : ''}</section>
+    ${cards ? `<section class="run-causes" aria-label="What failed">${cards}</section>` : ''}
+    ${!gh && state === 'waiting' ? `<p class="note mt">${Ops.waitForRun(r)}</p>` : ''}
+    ${!gh && state === 'running' ? Ops.stoppedReporting(r.agent || request?.claimedBy) : ''}
+    ${request ? Ops.replacement(request) : ''}
+    ${changes ? `<section class="sec panel card" id="run-changes" tabindex="-1" aria-labelledby="run-changes-title">
+      <div class="sh"><h2 id="run-changes-title" title="${esc(CHANGE_TITLE)}">Changes this run checks</h2></div>
+      <p class="note">One run checks all of these changes together, so its result counts for each of them.${posts ? ' When the run ends, this agent sends the result to GitHub as a shadow <span class="mono">local/*</span> status. It does not block merging.' : posts === false ? ' This agent does not send results to GitHub, so they stay on this page.' : ''}</p>
+      ${state === 'failed' ? '<p class="note">This run failed, so we cannot tell which of these changes broke it. The failing job is under “The run, in order” on this page. Open it to see the error.</p>' : ''}
+      ${coverList(request, Ops.statusResult(state), posts ? 'Result on GitHub' : 'Result')}
+    </section>` : ''}
+    ${rate?.of > 1 ? `<p class="run-rate">This step failed in ${rate.same} of the last ${rate.of} finished runs of this workflow on this PC.</p>` : ''}
+    <section class="run-flow panel" aria-labelledby="run-order"><div class="run-flow-head"><h2 id="run-order">The run, in order</h2>${filters}</div>${board}</section>
+    <details class="run-detail panel" id="run-detail"${S.detailOpen ? ' open' : ''}>
+      <summary id="run-toggle">${ico('chev', 'ch')}<strong>Steps and log</strong>
+        ${j ? `<span class="run-selected">${runStatus(j)} <span>${esc(jobName(j))}${selectedStep ? ` · Step ${esc(selectedStep.index)}` : ''}</span></span>` : ''}
+        <span class="run-detail-toggle" aria-hidden="true"></span></summary>
+      <div class="rbody">${runSteps(det, j)}<section id="logpane" aria-label="Log"></section></div>
+    </details></div>`;
 }
 
-function ensureLog(id, jk, idx) {
-  const k = Data.logKey(id, jk, idx); if (S.busy[k]) return; S.busy[k] = 1;
-  const done = () => { delete S.busy[k]; const R = route(); if (R.name === 'run' && R.id === id && S.step === jk + ':' + idx) paintLog(); };
-  Data.loadLog(id, jk, idx).then(done, (e) => { D.logs[k] = { lines: [], from: 0, total: 0, live: false, err: e.message }; done(); });
+const pendingLogs = new Map();
+function ensureLog(R, jk, idx) {
+  const epoch = Data.epoch;
+  const id = detOf(R)?.run.id || R.id;
+  const logKey = Data.logKey(id, jk, idx), k = `${epoch}|${logKey}`;
+  if (pendingLogs.has(k)) return pendingLogs.get(k);
+  const fetch = Data.loadLog(id, jk, idx).catch((e) => {
+    if (Data.epoch !== epoch || D.logs[logKey]?.lines || D.logs[logKey]?.err === e.message) return false;
+    D.logs[logKey] = { err: e.message };
+    return true;
+  }).finally(() => pendingLogs.delete(k));
+  pendingLogs.set(k, fetch);
+  return fetch;
 }
+
+function syncCauseLogs(R) {
+  if (R.name !== 'run') return;
+  const epoch = Data.epoch, det = detOf(R);
+  const work = S.causeLogs ||= { queue: [], seen: new Set(), active: 0 };
+  const current = () => Data.epoch === epoch && sameRun(R) && S.causeLogs === work;
+  for (const job of det.jobs || []) {
+    if (runState(job) !== 'failed') continue;
+    const step = failedStepOf(job);
+    const idx = step?.hasLog ? step.index : job.key === '_checkout' && det.checkout ? 0 : null;
+    if (idx == null || logOf(R, job.key, idx)) continue;
+    const key = `${det.run.id}|${job.key}|${idx}`;
+    if (!work.seen.has(key)) { work.seen.add(key); work.queue.push([job.key, idx]); }
+  }
+  const read = async () => {
+    work.active++;
+    try {
+      while (work.queue.length && current()) {
+        const [key, idx] = work.queue.shift();
+        await ensureLog(R, key, idx);
+        if (!current()) return;
+        const error = firstError(logOf(R, key, idx));
+        const line = document.getElementById('cause-' + key);
+        if (error && line) { line.textContent = error.text; line.hidden = false; }
+      }
+    } finally {
+      work.active--;
+    }
+  };
+  const workers = Math.min(3 - work.active, work.queue.length);
+  for (let i = 0; i < workers; i++) void read();
+}
+
 function paintLog() {
-  const R = route(); const id = R.id; const pane = $('#logpane'); if (!pane || !S.step) return;
-  const det = detOf(id); if (!det) return;
-  const [jk, idx] = splitStep(S.step); const r = det.run;
-  const job = jobsOf(id).find((j) => j.key === jk); const step = job && (job.steps || []).find((x) => x.index === idx);
-  const title = jk === '_checkout' ? 'Getting the code' : `${job ? (job.label || job.id) : jk} › ${idx}. ${step ? step.name : ''}`;
-  const ss = step ? norm(step.status) : 'passed';
-  const head = `<div class="lt"><h3>${sic(ss)}<span>${esc(title)}</span></h3></div>`;
-  if (step && !step.hasLog) { pane.innerHTML = `<div class="log">${head}<div class="empty pad-log">${ss === 'skipped' ? 'This step did not run because its condition was not met.' : ss === 'waiting' ? 'This step has not started yet.' : 'This step has no log saved on this PC.'}</div></div>`; return; }
-  const lg = logOf(id, jk, idx);
-  if (!lg) { pane.innerHTML = `<div class="log">${head}<div class="empty pad-log">Loading the log…</div></div>`; ensureLog(id, jk, idx); return; }
-  if (lg.err) { pane.innerHTML = `<div class="log">${head}<div class="empty pad-log"><b>The log could not be read.</b> ${esc(lg.err)}</div></div>`; return; }
+  const R = route(), pane = $('#logpane'), det = detOf(R);
+  if (!pane || !det || !S.detailOpen) return;
+  const [jk, idx] = S.step ? splitStep(S.step) : [S.job, null];
+  const job = (det.jobs || []).find((j) => j.key === jk);
+  const step = job?.steps?.find((s) => s.index === idx);
+  const checkout = jk === '_checkout' && idx === 0 && det.checkout;
+  const title = checkout ? 'Checkout log' : step ? `${jobName(job)} / ${step.index}. ${step.name}` : job ? jobName(job) : 'Log';
+  const head = `<h3>${step ? runStatus(step) : ''}<span>${esc(title)}</span></h3>`;
+  const empty = (html) => { pane.innerHTML = `<div class="log"><div class="lt">${head}</div><div class="empty pad-log">${html}</div></div>`; };
+  const gh = R.name === 'ghrun';
+  if (gh) {
+    const url = githubURL(job?.url);
+    if (job) empty(`GitHub keeps this log.${url ? ` <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open the job on GitHub.</a>` : ''}`);
+    else empty('No job selected.');
+    return;
+  }
+  if (!checkout && !step?.hasLog) {
+    empty(step ? step.err ? esc(step.err) : 'No log recorded for this step.' : job ? 'No step selected.' : 'No job selected.');
+    return;
+  }
+
+  const lg = logOf(R, jk, idx);
+  if (!lg || (lg.live && !det.live)) {
+    if (!lg) empty('Loading the log…');
+    const epoch = Data.epoch, key = S.step;
+    ensureLog(R, jk, idx).then((changed) => {
+      if (changed && Data.epoch === epoch && sameRun(R) && S.step === key && $('#logpane') === pane) paintLog();
+    });
+    if (!lg) return;
+  }
+  if (lg.err) { empty(`<b>The log could not be read.</b> ${esc(lg.err)}`); return; }
+  const active = document.activeElement;
+  const focused = pane.contains(active) ? active.id : '';
+  const caret = focused === 'lq' ? [active.selectionStart, active.selectionEnd] : null;
   const cls = (x) => (/NEW FAILURE|^--- FAIL|panic:|FAIL\t|::error::|exit code [1-9]/.test(x) ? 'err' : /::notice::|::warning::/.test(x) ? 'note' : /^\s+\|/.test(x) ? 'dim' : '');
-  const all = lg.lines.map((l, i) => [lg.from + i + 1, l.x, cls(l.x)]);
+  const all = (lg.lines || []).map((l, i) => [Number(lg.from) + i + 1, l.x, cls(l.x)]);
   const nErr = all.filter((l) => l[2] === 'err' || l[2] === 'note').length;
-  const shown = S.logFilter === 'err' ? all.filter((l) => l[2] === 'err' || l[2] === 'note') : all;
-  const q = S.logQ.trim().toLowerCase(); const hits = q ? shown.map((l, i) => (l[1].toLowerCase().includes(q) ? i : -1)).filter((i) => i >= 0) : [];
+  const shown = S.logFilter === 'err' ? all.filter((l) => l[2] === 'err' || l[2] === 'note' || l[0] === S.pin) : all;
+  const q = S.logQ.trim().toLowerCase();
+  const hits = q ? shown.map((l, i) => (l[1].toLowerCase().includes(q) ? i : -1)).filter((i) => i >= 0) : [];
   if (S.logHit >= hits.length) S.logHit = 0;
   const re = q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi') : null;
-  const hl = (x, i) => { if (!re) return esc(x); let n = 0; const isCur = hits[S.logHit] === i; return esc(x).replace(new RegExp(esc(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), (m) => `<mark${isCur && n++ === 0 ? ' class="cur"' : ''}>${m}</mark>`); };
+  const hl = (x, i) => {
+    if (!re) return esc(x);
+    let start = 0, html = '', match;
+    while ((match = re.exec(x))) {
+      html += esc(x.slice(start, match.index)) + `<mark${hits[S.logHit] === i && start === 0 ? ' class="cur"' : ''}>${esc(match[0])}</mark>`;
+      start = re.lastIndex;
+    }
+    return html + esc(x.slice(start));
+  };
   const live = !!lg.live;
-  pane.innerHTML = `<div class="log${S.full ? ' full' : ''}"><div class="lt"><h3>${sic(ss)}<span>${esc(title)}</span></h3>
-    <label class="field" id="lqf">${ico('search')}<input id="lq" type="search" placeholder="Search this log" value="${esc(S.logQ)}" aria-label="Search this log"></label>${q ? `<span class="hits">${hits.length ? S.logHit + 1 + ' of ' + hits.length : 'no match'}</span><button type="button" class="btn sm ghost icon" id="hp" aria-label="Previous match">${ico('up')}</button><button type="button" class="btn sm ghost icon" id="hn" aria-label="Next match">${ico('down')}</button>` : ''}
-    <div class="seg"><button type="button" data-lf="all" aria-pressed="${S.logFilter === 'all'}">All</button><button type="button" data-lf="err" aria-pressed="${S.logFilter === 'err'}">Errors and notes<span class="n">${nErr}</span></button></div>
+  const error = firstError(lg);
+  pane.innerHTML = `<div class="log${S.full ? ' full' : ''}"><div class="lt">${head}
+    <div class="seg" role="group" aria-label="Log view">
+      <button type="button" id="run-log-errors" data-lf="err" aria-pressed="${S.logFilter === 'err'}" title="Show errors and notes">Errors <span class="n">${nErr}</span></button>
+      <button type="button" id="run-log-all" data-lf="all" aria-pressed="${S.logFilter === 'all'}">Whole log</button></div>
+    <label class="field" id="lqf">${ico('search')}<input id="lq" type="search" placeholder="Search this log" value="${esc(S.logQ)}" aria-label="Search this log"></label>${q ? `<span class="hits" role="status">${hits.length ? S.logHit + 1 + ' of ' + hits.length : 'No match'}</span><button type="button" class="btn sm ghost icon" id="hp" aria-label="Previous match">${ico('up')}</button><button type="button" class="btn sm ghost icon" id="hn" aria-label="Next match">${ico('down')}</button>` : ''}
     <label class="tog"><input type="checkbox" id="wrap" ${S.wrap ? 'checked' : ''}> Wrap</label>${live ? `<label class="tog"><input type="checkbox" id="fol" ${S.follow ? 'checked' : ''}> Follow</label>` : ''}
-    <button type="button" class="btn ghost icon" id="lcopy" title="Copy the log" aria-label="Copy the log">${ico('copy')}</button><button type="button" class="btn ghost icon" id="ldl" title="Download the log" aria-label="Download the log">${ico('dl')}</button><button type="button" class="btn ghost icon" id="lfull" title="Full screen" aria-label="Full screen">${ico('full')}</button></div>
-    <div class="lines${S.wrap ? '' : ' nowrap'}" id="lines" tabindex="0">${shown.map((l, i) => `<div class="ln ${l[2]} ${S.pin === l[0] ? 'pin' : ''}" id="L${l[0]}"><a class="g" href="#/run/${encodeURIComponent(id)}?L=${l[0]}" data-l="${l[0]}" title="Link to line ${l[0]}">${l[0]}</a><span>${hl(l[1], i)}</span></div>`).join('') || '<div class="empty pad-log">This log is empty so far.</div>'}</div>
-    <div class="lf"><span>${lg.total} line${lg.total === 1 ? '' : 's'}${lg.cut ? ', earlier lines cut' : ''}${live ? ' · streaming' : ''}</span><span class="ml-a muted">Click a line number to link to it</span></div></div>`;
+    <button type="button" class="btn ghost icon" id="lcopy" title="Copy the log" aria-label="Copy the log">${ico('copy')}</button><button type="button" class="btn ghost icon" id="ldl" title="Download the log" aria-label="Download the log">${ico('dl')}</button><button type="button" class="btn ghost icon" id="lfull" title="${S.full ? 'Exit full screen' : 'Full screen'}" aria-label="${S.full ? 'Exit full screen' : 'Full screen'}">${ico('full')}</button></div>
+    ${error ? `<div class="run-log-error">${sic('failed')}<span>First error on line ${error.line}</span><button class="btn sm" type="button" id="run-log-jump">Go to line</button></div>` : ''}
+    <div class="lines${S.wrap ? '' : ' nowrap'}" id="lines" tabindex="0">${shown.map((l, i) => `<div class="ln ${l[2]} ${S.pin === l[0] ? 'pin' : ''}" id="L${l[0]}"><a class="g" href="${esc(runHref(R, jk, idx, l[0]))}" data-l="${l[0]}" title="Link to line ${l[0]}">${l[0]}</a><span>${hl(l[1], i)}</span></div>`).join('') || `<div class="empty pad-log">${all.length ? 'No errors or notes in this log.' : 'This log is empty so far.'}</div>`}</div>
+    <div class="lf"><span>${esc(lg.total)} line${lg.total === 1 ? '' : 's'}${lg.cut ? ' · Earlier lines omitted' : ''}${live ? ' · Live' : ''}</span><span>Click a line number to copy its link</span></div></div>`;
   const ln = $('#lines');
-  const cur = ln.querySelectorAll('mark.cur')[0];
-  if (live && S.follow) ln.scrollTop = ln.scrollHeight;
-  else if (cur) cur.scrollIntoView({ block: 'center' });
-  else if (S.pin && $('#L' + S.pin)) ln.scrollTop = Math.max(0, $('#L' + S.pin).offsetTop - 60);
-  else ln.scrollTop = S.lineTop || 0;
-  ln.onscroll = () => { S.lineTop = ln.scrollTop; if (live && S.follow && ln.scrollHeight - ln.scrollTop - ln.clientHeight > 40) { S.follow = false; const f = $('#fol'); if (f) f.checked = false; } };
+  const cur = $('mark.cur', ln);
+  const pin = S.pin && $('#L' + S.pin, ln);
+  if (cur) ln.scrollTop += cur.getBoundingClientRect().top - ln.getBoundingClientRect().top - ln.clientHeight / 2;
+  else if (pin) ln.scrollTop += pin.getBoundingClientRect().top - ln.getBoundingClientRect().top - 60;
+  else if (live && S.follow) ln.scrollTop = ln.scrollHeight;
+  else ln.scrollTop = S.lineTop;
+  ln.onscroll = () => {
+    S.lineTop = ln.scrollTop;
+    if (live && S.follow && !cur && !pin && ln.scrollHeight - ln.scrollTop - ln.clientHeight > 40) {
+      S.follow = false;
+      $('#fol').checked = false;
+    }
+  };
+
   const lq = $('#lq');
-  lq.oninput = () => { const pos = lq.selectionStart; S.logQ = lq.value; S.logHit = 0; S.lineTop = 0; paintLog(); const n = $('#lq'); n.focus(); n.setSelectionRange(pos, pos); };
-  lq.onkeydown = (e) => { if (e.key !== 'Enter' || !hits.length) return; e.preventDefault(); S.logHit = (S.logHit + (e.shiftKey ? -1 : 1) + hits.length) % hits.length; paintLog(); $('#lq').focus(); };
-  const hop = (d) => { if (!hits.length) return; S.logHit = (S.logHit + d + hits.length) % hits.length; paintLog(); };
-  if ($('#hp')) { $('#hp').onclick = () => hop(-1); $('#hn').onclick = () => hop(1); }
-  $$('[data-lf]', pane).forEach((b) => { b.onclick = () => { S.logFilter = b.dataset.lf; S.lineTop = 0; paintLog(); }; });
+  lq.oninput = () => { S.logQ = lq.value; S.logHit = 0; S.lineTop = 0; paintLog(); };
+  const hop = (d) => {
+    if (!hits.length) return;
+    S.logHit = (S.logHit + d + hits.length) % hits.length;
+    paintLog();
+  };
+  lq.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); hop(e.shiftKey ? -1 : 1); } };
+  if (q) { $('#hp').onclick = () => hop(-1); $('#hn').onclick = () => hop(1); }
+  $$('[data-lf]', pane).forEach((b) => { b.onclick = () => { S.logFilter = b.dataset.lf; S.logHit = 0; S.lineTop = 0; paintLog(); }; });
   $('#wrap').onchange = (e) => { S.wrap = e.target.checked; paintLog(); };
-  if ($('#fol')) $('#fol').onchange = (e) => { S.follow = e.target.checked; paintLog(); };
+  if (live) $('#fol').onchange = (e) => {
+    S.follow = e.target.checked;
+    if (S.follow) { S.pin = null; S.logQ = ''; setQuery({ L: '', job: '', step: '' }); }
+    paintLog();
+  };
   const text = () => all.map((l) => l[1]).join('\n');
   $('#lcopy').onclick = () => navigator.clipboard.writeText(text()).then(() => toast('Log copied.'), () => toast('Could not copy.'));
-  $('#ldl').onclick = () => { const a = document.createElement('a'); const u = URL.createObjectURL(new Blob([text()], { type: 'text/plain' })); a.href = u; a.download = `${r.id}-${jk}-step${idx}.log`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 1000); };
+  $('#ldl').onclick = () => { const a = document.createElement('a'); const u = URL.createObjectURL(new Blob([text()], { type: 'text/plain' })); a.href = u; a.download = `${det.run.id}-${jk}-step${idx}.log`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 1000); };
   $('#lfull').onclick = () => { S.full = !S.full; paintLog(); };
-  $$('.ln .g', pane).forEach((a) => { a.onclick = (e) => { e.preventDefault(); S.pin = +a.dataset.l; setQuery({ L: S.pin }); const u = location.href; navigator.clipboard.writeText(u).then(() => toast(`Link to line ${S.pin} copied.`), () => {}); paintLog(); }; });
+  const pinLine = (line) => {
+    S.pin = line;
+    setQuery({ L: line, job: jk, step: idx });
+    paintLog();
+  };
+  if (error) $('#run-log-jump').onclick = () => { S.logQ = ''; S.logFilter = 'all'; pinLine(error.line); };
+  ln.onclick = (e) => {
+    const a = e.target.closest('a[data-l]');
+    if (!a || !plainClick(e)) return;
+    e.preventDefault();
+    pinLine(+a.dataset.l);
+    navigator.clipboard.writeText(location.href).then(() => toast(`Link to line ${S.pin} copied.`), () => toast('Could not copy.'));
+  };
+  if (focused) {
+    const replacement = document.getElementById(focused);
+    replacement?.focus({ preventScroll: true });
+    if (replacement && caret) replacement.setSelectionRange(...caret);
+  }
 }
-function gotoError() {
-  const id = route().id; const ff = firstFailed(jobsOf(id)); if (!ff.job || !ff.step) return;
-  const lg = logOf(id, ff.job.key, ff.step.index); if (!lg) return;
-  const i = lg.lines.findIndex((l) => ERR_RE.test(l.x)); if (i < 0) return;
-  S.step = ff.job.key + ':' + ff.step.index; S.pin = lg.from + i + 1; S.logFilter = 'all'; S.logQ = ''; setQuery({ L: S.pin }); render();
-  const p = $('#logpane'); if (p) p.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+const sameRun = (R) => { const now = route(); return now.name === R.name && now.id === R.id; };
+const plainClick = (e) => !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+function pickRunStep(R, job, index, { reveal = false, open = true, scroll = true } = {}) {
+  const det = detOf(R);
+  const j = jobsOf(R).find((x) => x.key === job);
+  if (!j && !(job === '_checkout' && det.checkout)) return;
+  const step = j && (index == null ? initialRunStep(j, det) : j.steps?.find((s) => s.index === index));
+  if (S.job !== job) S.showPassed = false;
+  S.job = job;
+  S.step = step ? stepKey(j, step) : job === '_checkout' && det.checkout ? '_checkout:0' : null;
+  S.detailOpen = open;
+  S.pin = null;
+  S.logQ = '';
+  S.logHit = 0;
+  S.lineTop = 0;
+  S.logFilter = step && runState(step) === 'failed' ? 'err' : 'all';
+  setQuery({ L: '', job: '', step: '' });
+  render();
+  const d = $('#run-detail');
+  if (open && scroll && (reveal || d.getBoundingClientRect().top > innerHeight * 0.65)) {
+    d.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
 }
-function nextFailedJob() {
-  const id = route().id; const fj = jobsOf(id).filter((j) => norm(j.status) === 'failed'); if (fj.length < 2) return;
-  const cur = splitStep(S.step || ':0')[0]; const i = fj.findIndex((j) => j.key === cur); const nj = fj[(i + 1) % fj.length];
-  const fs = failedStepOf(nj) || (nj.steps || [])[0]; S.step = nj.key + ':' + (fs ? fs.index : 1); S.open[nj.key] = true; S.logQ = ''; S.pin = null; render();
-}
-function bindRun() {
+
+async function gotoError(jobKey = S.job) {
+  const R = route(), det = detOf(R);
+  const failed = jobsOf(R).filter((j) => runState(j) === 'failed');
+  const job = failed.find((j) => j.key === jobKey) || failed[0];
+  if (!job) return;
+  const step = failedStepOf(job);
+  pickRunStep(R, job.key, step?.index, { reveal: true });
+  const key = S.step, epoch = Data.epoch;
+  const idx = step?.hasLog ? step.index : job.key === '_checkout' && det.checkout ? 0 : null;
+  if (R.name !== 'run' || idx == null) return;
+  if (!logOf(R, job.key, idx)) await ensureLog(R, job.key, idx);
+  if (Data.epoch !== epoch || !sameRun(R) || S.step !== key) return;
+  const error = firstError(logOf(R, job.key, idx));
+  if (!error) return;
+  S.pin = error.line;
+  S.logFilter = 'all';
+  setQuery({ L: S.pin, job: job.key, step: idx });
   paintLog();
-  $$('.jhead').forEach((b) => { b.onclick = () => { const y = scrollY; const j = jobsOf(route().id).find((x) => x.key === b.dataset.j); const cur = S.open[b.dataset.j] ?? (j ? norm(j.status) !== 'passed' : true); S.open[b.dataset.j] = !cur; render(); scrollTo(0, y); }; });
-  $$('.fold').forEach((b) => { b.onclick = () => { const y = scrollY; S.fold[b.dataset.fold] = false; render(); scrollTo(0, y); }; });
-  $$('.step[data-s]').forEach((li) => {
-    const pick = () => { const y = scrollY; S.step = li.dataset.s; S.logQ = ''; S.pin = null; S.lineTop = 0; setQuery({ L: '' }); render(); scrollTo(0, y); };
-    li.onclick = pick; li.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } };
+}
+
+function nextFailedJob() {
+  const R = route();
+  const failed = jobsOf(R).filter((j) => runState(j) === 'failed');
+  if (failed.length < 2) return;
+  const i = failed.findIndex((j) => j.key === S.job);
+  if (S.jobFilter !== 'all' && S.jobFilter !== 'failed') S.jobFilter = 'failed';
+  pickRunStep(R, failed[(i + 1) % failed.length].key, null, { reveal: true });
+}
+
+function bindRun(R) {
+  const details = $('#run-detail'), det = detOf(R);
+  if (!details) return;
+  details.ontoggle = () => {
+    if (!details.isConnected || S.detailOpen === details.open) return;
+    S.detailOpen = details.open;
+    if (details.open) paintLog();
+    else S.full = false;
+  };
+  if (!det) return;
+  const filterBoard = () => {
+    $$('.run-stack').forEach((stack) => {
+      let visible = false;
+      $$('[data-job]', stack).forEach((b) => {
+        b.hidden = S.jobFilter !== 'all' && S.jobFilter !== b.dataset.jobState;
+        if (!b.hidden) visible = true;
+      });
+      const unlisted = $('.run-unlisted', stack);
+      if (unlisted) {
+        unlisted.hidden = !['all', 'waiting'].includes(S.jobFilter);
+        visible ||= !unlisted.hidden;
+      }
+      $('.run-column-empty', stack).hidden = visible;
+    });
+  };
+  filterBoard();
+  syncCauseLogs(R);
+  paintLog();
+  if (S.revealRunDetail) {
+    S.revealRunDetail = false;
+    details.scrollIntoView({ block: 'start' });
+  }
+  const board = $('#run-board');
+  if (board) board.onclick = (e) => {
+    const b = e.target.closest('[data-job]');
+    if (!b) return;
+    const cell = e.target.closest('[data-strip]');
+    pickRunStep(R, b.dataset.job, cell ? +cell.dataset.strip : null);
+    if (e.detail === 0) $('#run-toggle').focus();
+  };
+  $('.run-filters').onchange = (e) => {
+    S.jobFilter = e.target.value;
+    filterBoard();
+    const first = $('[data-job]:not([hidden])');
+    if (first && !jobsOf(R).some((j) => j.key === S.job && (S.jobFilter === 'all' || S.jobFilter === runState(j)))) {
+      pickRunStep(R, first.dataset.job, null, { open: S.detailOpen, scroll: false });
+    }
+  };
+  $$('.run-step').forEach((b) => { b.onclick = () => pickRunStep(R, S.job, +b.dataset.step, { scroll: false }); });
+  $$('.run-cause [data-cause]').forEach((a) => {
+    a.onclick = (e) => {
+      if (!plainClick(e)) return;
+      e.preventDefault();
+      gotoError(a.dataset.cause);
+    };
   });
-  if ($('#goerr')) $('#goerr').onclick = gotoError;
+  if ($('#run-checkout')) $('#run-checkout').onclick = () => pickRunStep(R, '_checkout', 0, { scroll: false });
+  if ($('#run-show-passed')) $('#run-show-passed').onclick = () => { S.showPassed = !S.showPassed; render(); };
+  if ($('#goerr')) $('#goerr').onclick = () => gotoError();
   if ($('#nextf')) $('#nextf').onclick = nextFailedJob;
-  bindMenus();
 }
 
 // ---------- Releases ----------
@@ -502,28 +872,87 @@ function dialog(kind, v) {
 }
 
 // ---------- Machines ----------
+function machineChips(m) {
+  const offline = m.state === 'gone' || m.state === 'stopped';
+  const online = m.state && !offline;
+  const accepting = m.state === 'ready';
+  return `${m.state ? `<span class="chip ${online ? 'ok' : 'warn'}" title="Whether the machine is reporting to Homestretch">${online ? 'Online' : 'Offline'}</span>` : ''}
+    ${m.state && m.state !== 'reported' ? `<span class="chip ${accepting ? 'ok' : 'warn'}" title="Whether the machine accepts new jobs">${accepting ? 'Accepting runs' : 'Not accepting'}</span>` : ''}
+    ${!offline && m.running > 0 ? `<span class="chip run" title="Jobs running on this machine">Busy ${esc(m.running)}${m.slots > 0 ? ` of ${esc(m.slots)}` : ''}</span>` : ''}`;
+}
+
+function machineJobs(m, claims, allSlots = false) {
+  const jobs = claims.filter((r) => r.claimedBy === m.name);
+  const slots = slotCount(m.slots);
+  const bySlot = new Map();
+  const orderKnown = !m.fleet || new Set(jobs.map((j) => Date.parse(j.claimedAt))).size === jobs.length;
+  const entry = (job, slot) => {
+    const run = !m.fleet && runIdForRequest(job);
+    const label = job.label || 'a job';
+    const item = run ? `<a href="#/run/${encodeURIComponent(run)}">${esc(label)}</a>` : esc(label);
+    const location = machineLink(m.name) + (slot ? `, ${slotLabel(slot, slots)}` : '');
+    return `<li>${item} · ${location}${job.claimedAt ? ` · started ${when(job.claimedAt)}` : ''}</li>`;
+  };
+  const unplaced = [];
+  for (const job of jobs) {
+    const slot = orderKnown ? slotOf(job, claims) : null;
+    if (slot && slot <= slots) bySlot.set(slot, job);
+    else unplaced.push(entry(job));
+  }
+  const runningKnown = Number.isInteger(m.running) && m.running >= 0;
+  const busy = runningKnown ? Math.max(m.running, jobs.length) : jobs.length;
+  const rows = Array.from({ length: allSlots ? slots : Math.min(busy, slots) }, (_, i) => {
+    const slot = i + 1, job = bySlot.get(slot);
+    if (job) return entry(job, slot);
+    const state = slot <= busy ? 'Busy · run placement not recorded' : m.state === 'gone' || m.state === 'stopped' ? 'Unavailable' : runningKnown ? 'Free' : 'Occupancy not recorded';
+    return `<li>${slotLabel(slot, slots)} · ${state}</li>`;
+  });
+  const list = rows.join('') + unplaced.join('');
+  return list ? `<ul class="cover-list why">${list}</ul>` : '';
+}
+
 function viewMachines() {
   const m = D.machines; const o = D.overview;
   if (!o && !m) return D.err ? noStore('Machines could not be read.') : loadingHtml;
-  if (!m || (m.show === false && !(m.machines || []).length)) return `<div class="ph"><h1>Machines</h1></div><div class="empty"><b>This project has no machine records.</b> Start <span class="mono">unravis-ci serve</span> on a PC and it shows up here.</div>`;
-  const ms = m.machines || []; const ag = (o && o.agents) || [];
+  const ag = reportedMachines(), claims = runningClaims();
+  const fleet = m?.machines || [];
+  const ms = fleet.map((x) => {
+    // The fleet id is opaque, and an agent may be started with any --name, so match by the id its heartbeat carries.
+    // The page's own agent is the single one when only one is reported.
+    const a = ag.find((agent) => agent.fleetId && agent.fleetId === x.id) || ag.find((agent) => agent.name === x.id) ||
+      (x.self ? (ag.find((agent) => agent.name === 'local') || (ag.length === 1 ? ag[0] : null)) : null);
+    if (a) return { ...x, ...a, agent: a };
+    return { ...x, name: x.id, fleet: true, state: ({ Quiet: 'gone', Stopped: 'stopped', Idle: 'reported', Running: 'reported' })[x.state], lastSeen: x.lastHeard, running: x.jobs?.length };
+  });
+  for (const a of ag) {
+    if (!ms.some((x) => x.name === a.name)) ms.push({ ...a, id: a.name, agent: a });
+  }
   const now = Date.now(); const hourAgo = now - 3600e3;
-  const mine = D.runs.filter((r) => r.agent === 'local' && ts(r.start) > hourAgo);
   const waits = D.runs.map(waitMs).filter((x) => x != null).sort((a, b) => a - b);
   const pc = (k) => (waits.length ? dur(waits[Math.min(waits.length - 1, Math.floor(waits.length * k))]) : '–');
   const card = (x) => {
-    const busy = (x.jobs || []).length; const slots = x.slots || 0; const lh = x.lastHeard ? ts(x.lastHeard) : 0; const fresh = lh && now - lh < 120e3;
-    const a = x.self ? ag[0] : null;
-    return `<div class="mach"><div><div class="mach-top">${ico('pc')}<b class="mono">${esc(x.id)}</b>${x.self ? '<span class="chip">This PC</span>' : ''}</div>
-      <div class="mt6">${!fresh ? '<span class="chip warn">Quiet</span>' : busy ? '<span class="chip run">Running</span>' : '<span class="chip ok">Idle</span>'} <span class="muted">${busy ? busy + ' job' + (busy === 1 ? '' : 's') + ' running' : 'no jobs'} · heard from ${when(x.lastHeard)}</span></div></div>
-      <div><div class="lbl">Slots</div><div class="val"><span class="slots">${Array.from({ length: slots }, (_, i) => `<i class="${i < busy ? 'busy' : ''}"></i>`).join('')}</span> ${Math.max(0, slots - busy)} of ${slots} free</div></div>
-      <div><div class="lbl">Last hour</div><div class="val">${x.self ? `${mine.length} run${mine.length === 1 ? '' : 's'}, ${mine.filter((r) => norm(r.status) === 'failed').length} failed` : '<span class="muted">Not reported by other PCs</span>'}</div></div>
+    const slots = slotCount(x.slots), a = x.agent;
+    const mine = D.runs.filter((r) => r.agent === x.name && ts(r.start) > hourAgo);
+    const waiting = (D.ops?.queue?.queued || []).filter((r) => r.why?.code !== 'ready' && r.why?.machines?.includes(x.name) &&
+      ['busy', 'offline', 'draining'].includes(r.why.code));
+    // The fleet API returns labels and start times only. Tied or missing times cannot identify a slot there.
+    const fleetJobs = (x.jobs || []).map((j, i) => ({ id: String(i), label: j.label, claimedAt: j.since, claimedBy: x.name }));
+    return `<div class="mach"><div><div class="mach-top">${ico('pc')}<b>${machineLink(x.name)}</b>${x.self ? '<span class="chip">This PC</span>' : ''}</div>
+      <div class="mrow mt6">${machineChips(x)}</div>
+      <p class="note">${lastSeen(x)} · Disk: ${x.state === 'ready' ? 'ok' : x.state === 'low-disk' ? 'low' : 'unknown'}</p>
+      ${['low-disk', 'paused', 'draining'].includes(x.state) ? Ops.machineProblem(x) : ''}
+      ${x.state === 'stopped' ? '<span class="why">Stopped. It takes no new jobs.</span>' : ''}</div>
+      <div><div class="lbl">Slots</div><div class="val">${slots && Number.isInteger(x.running) ? `${slotSquares(slots, x.running)}${esc(slotsBusy(x))}` : '<span class="muted">Capacity not recorded</span>'}</div>
+        ${Ops.nextFree(x)}${machineJobs(x, x.fleet ? fleetJobs : claims, true)}</div>
+      <div><div class="lbl">Last hour</div><div class="val">${a ? `${esc(mine.length)} run${mine.length === 1 ? '' : 's'}, ${esc(mine.filter((r) => norm(r.status) === 'failed').length)} failed` : '<span class="muted">Not reported by other PCs</span>'}</div></div>
       <div><div class="lbl">Wait for a slot</div><div class="val">${pc(0.5)} median</div><div class="muted fs-xs">slowest 1 in 20 waited ${pc(0.95)} or more, over the runs loaded</div></div>
       <div><div class="lbl">Results to GitHub</div><div class="val">${a ? `${a.posted || 0} sent${a.postFailed ? ', ' + a.postFailed + ' failed' : ', none failed'}${a.postWaiting ? ', ' + a.postWaiting + ' waiting' : ''}` : '<span class="muted">Not reported</span>'}</div><div class="muted fs-xs">Shadow mode: reported as <span class="mono">local/*</span>, does not gate merges</div></div>
-      <div>${Ops.machineCell(x)}</div></div>`;
+      <div>${Ops.machineCell(x)}</div>
+      ${waiting.length ? `<div class="machine-waiting"><div class="lbl">Waiting for this machine</div><ul class="cover-list">${waiting.map((r) =>
+        `<li><a href="#/run/${encodeURIComponent(r.id)}">${esc(r.label)}</a>${Ops.waitReason(r, 'machines')}</li>`).join('')}</ul></div>` : ''}</div>`;
   };
   const cmd = `unravis-ci serve --repo ${REPO()}`;
-  return `<div class="ph"><h1>Machines</h1><p>A machine is a PC that runs checks. Each slot runs one job at a time. A machine that has not reported for about 3 minutes shows as Quiet.</p></div>
+  return `<div class="ph"><h1>Machines</h1><p>A machine is a PC that runs checks. Each slot runs one job at a time. ${SLOT_TITLE}</p></div>
   ${ms.length ? `<div class="panel">${ms.map(card).join('')}</div>` : '<div class="empty"><b>No machine has reported yet.</b></div>'}
   <section class="sec"><div class="sh"><h2>Add a machine</h2></div><p class="muted lede">A second machine lets two pull requests check at the same time, and keeps checks going when this PC is off. On that machine, run the agent for this project:</p>
     <div class="cmd"><code>${esc(cmd)}</code><button type="button" class="btn sm" data-copy="${esc(cmd)}">${ico('copy')} Copy</button></div>
@@ -540,17 +969,29 @@ function keysDialog() {
 }
 
 // ---------- render ----------
-const TITLES = { overview: 'Overview', runs: 'Runs', run: 'Run', releases: 'Releases', machines: 'Machines', queue: 'Queue', holds: 'Holds', activity: 'Activity' };
+const TITLES = { overview: 'Overview', runs: 'Runs', run: 'Run', ghrun: 'GitHub run', releases: 'Releases', machines: 'Machines', queue: 'Queue', holds: 'Holds', activity: 'Activity' };
 function render() {
-  loadDis(); paintChrome();
   const R = route(); const main = $('#main'); const w = worst();
+  const run = isRun(R);
+  const active = document.activeElement;
+  const samePage = main.dataset.route === pageKey(R);
+  const focused = samePage && main.contains(active) ? active.id : '';
+  const summary = samePage && active?.matches('details[data-cover] > summary') ? active.parentElement.id : '';
+  const openCovers = samePage ? $$('details[data-cover][open]', main).map((d) => d.id) : [];
+  const href = samePage && main.contains(active) ? active.getAttribute('href') : null;
+  const links = () => $$('a[href]', main).filter((a) => a.getAttribute('href') === href);
+  const linkIndex = href ? links().indexOf(active) : -1;
+  const caret = focused === 'lq' ? [active.selectionStart, active.selectionEnd] : null;
+  const boardScroll = run ? $('#run-board')?.scrollLeft : null;
+  const stepScroll = run ? $('.run-steps')?.scrollTop : null;
+  loadDis(); paintChrome();
   const loading = !D.loaded;
   let html;
   if (loading) html = loadingHtml;
   else if (D.projectsErr && !D.projects.length) html = `<div class="empty empty-top"><b>The project list could not be read.</b> ${esc(D.projectsErr)}</div>`;
   else if (R.name === 'overview') html = viewOverview();
   else if (R.name === 'runs') html = viewRuns();
-  else if (R.name === 'run' && R.id) html = viewRun(R.id);
+  else if (run) html = viewRun(R);
   else if (R.name === 'releases') html = viewReleases();
   else if (R.name === 'machines') html = viewMachines();
   else if (R.name === 'queue') html = Ops.viewQueue();
@@ -560,6 +1001,11 @@ function render() {
   // Older data is named at the top of the page; the Releases page puts its own note under its heading (viewReleases).
   const banner = (R.name === 'releases' ? '' : Fresh.noteHtml(R.name, Date.now())) || (D.err && D.loaded && !D.at ?`<div class="empty"><b>The last refresh failed.</b> ${esc(D.err)}</div>` : '');
   main.innerHTML = banner + html;
+  main.dataset.route = pageKey(R);
+  for (const id of openCovers) {
+    const details = document.getElementById(id);
+    if (details) details.open = true;
+  }
   $$('[data-check]', main).forEach((b) => { b.onclick = () => { toast('Checking again…'); Data.tick(true); }; });
   $$('table.tbl th', main).forEach((th) => th.setAttribute('scope', 'col'));
   $$('table.tbl', main).forEach((t) => { if (t.parentElement.className !== 'tw') { const d = document.createElement('div'); d.className = 'tw'; t.replaceWith(d); d.appendChild(t); } });
@@ -567,24 +1013,76 @@ function render() {
   if (!loading) {
     if (R.name === 'overview') bindRows();
     else if (R.name === 'runs') bindRuns();
-    else if (R.name === 'run' && R.id) bindRun();
+    else if (run) bindRun(R);
     else if (R.name === 'releases') bindReleases();
     else if (R.name === 'machines') { bindMenus(); Ops.bind(); }
     else if (['queue', 'holds', 'activity'].includes(R.name)) Ops.bind();
   }
+  if (boardScroll && $('#run-board')) $('#run-board').scrollLeft = boardScroll;
+  if (stepScroll && $('.run-steps')) $('.run-steps').scrollTop = stepScroll;
+  if (focused) {
+    const replacement = document.getElementById(focused);
+    replacement?.focus({ preventScroll: true });
+    if (replacement && caret) replacement.setSelectionRange(...caret);
+  }
+  if (summary) document.getElementById(summary)?.querySelector('summary')?.focus({ preventScroll: true });
+  if (!focused && linkIndex >= 0) links()[linkIndex]?.focus({ preventScroll: true });
+  if (landedOn !== pageKey(R)) landOnSection(R);
   document.title = ({ failed: 'Failing · ', running: 'Running · ', passed: 'Passing · ' }[w]) + (TITLES[R.name] || 'Homestretch') + ' · ' + (P().name || 'Homestretch') + ' · Homestretch';
 }
 
+function landOnSection(R) {
+  let target;
+  if (R.name === 'queue' && R.q.has('controls')) target = $('#queue-controls');
+  else if (R.name === 'queue' && R.q.has('changes')) {
+    const details = document.getElementById('queue-covers-' + R.q.get('changes'));
+    if (details) {
+      details.open = true;
+      target = details.querySelector('summary');
+    }
+  } else if (R.name === 'run' && R.q.has('changes')) target = $('#run-changes');
+  if (!target) return;
+  landedOn = pageKey(R);
+  target.scrollIntoView({ block: 'start' });
+  target.focus({ preventScroll: true });
+}
+
 // A run that is open keeps refreshing its jobs and the log of the step on screen while it is live.
-async function refreshRun() {
-  const R = route(); if (R.name !== 'run' || !R.id) return false;
-  let ch = false;
-  try { const c = await Data.loadRun(R.id); S.runErr = ''; ch = !!c; } catch (e) { if (!detOf(R.id)) { S.runErr = e.message; ch = true; } }
-  if (S.step && detOf(R.id)) {
-    const [jk, idx] = splitStep(S.step); const lg = logOf(R.id, jk, idx); const run = detOf(R.id).run;
-    if (!lg || lg.live || norm(run.status) === 'running') { try { if (await Data.loadLog(R.id, jk, idx)) { if (!ch) { paintLog(); } } } catch (e) { /* keep the last log */ } }
-  }
-  return ch;
+const pendingRuns = new Map();
+async function refreshRun(force = false) {
+  const R = route();
+  if (!D.loaded || !isRun(R)) return false;
+  const prior = detOf(R);
+  if (!force && prior && !prior.live) return false;
+  const epoch = Data.epoch, key = `${epoch}|${R.name}|${R.id}`;
+  const current = () => Data.epoch === epoch && sameRun(R);
+  if (pendingRuns.has(key)) return pendingRuns.get(key);
+  const load = async () => {
+    let changed = false;
+    try {
+      const read = R.name === 'ghrun' ? Data.loadGhRun : Data.loadRun;
+      changed = !!(await read(R.id));
+      if (!current()) return false;
+      if (S.runErr) { S.runErr = ''; changed = true; }
+    } catch (e) {
+      if (!current()) return false;
+      if (!detOf(R) && S.runErr !== e.message) { S.runErr = e.message; changed = true; }
+    }
+    if (R.name === 'run' && S.step && (prior?.live || detOf(R)?.live)) {
+      const selected = S.step, [jk, idx] = splitStep(selected);
+      const det = detOf(R), job = det?.jobs?.find((j) => j.key === jk);
+      const hasLog = job?.steps?.some((s) => s.index === idx && s.hasLog) || (jk === '_checkout' && det?.checkout);
+      if (hasLog && (S.detailOpen || logOf(R, jk, idx)?.live)) {
+        const logChanged = await ensureLog(R, jk, idx);
+        if (!current()) return false;
+        if (logChanged && !changed && S.step === selected) paintLog();
+      }
+    }
+    return changed;
+  };
+  const pending = load().finally(() => pendingRuns.delete(key));
+  pendingRuns.set(key, pending);
+  return pending;
 }
 
 function start() {
@@ -592,14 +1090,22 @@ function start() {
   lastPath = location.hash.split('?')[0];
   addEventListener('hashchange', () => {
     $('#layer').innerHTML = ''; S.menu = null;
+    landedOn = '';
     const p = location.hash.split('?')[0];
-    if (p !== lastPath) { S.step = null; S.logQ = ''; S.logHit = 0; S.full = false; S.pin = null; S.lineTop = 0; S.runErr = ''; scrollTo(0, 0); }
-    if (p !== lastPath) Ops.reset();
+    if (p !== lastPath) {
+      Object.assign(S, { job: null, step: null, detailOpen: false, jobFilter: 'all', showPassed: false, revealRunDetail: false, causeLogs: null,
+        logQ: '', logHit: 0, logFilter: 'all', full: false, pin: null, lineTop: 0, runErr: '' });
+      scrollTo(0, 0);
+      Ops.reset();
+    }
+    S.readRunQuery = true;
     lastPath = p;
     render();
-    if (route().name === 'run') refreshRun().then((c) => { if (c) render(); });
+    if (isRun(route())) refreshRun(true).then((c) => { if (c) render(); });
   });
   document.addEventListener('click', (e) => {
+    const link = e.target.closest('a[href]');
+    if (link && link.getAttribute('href') === location.hash && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) landOnSection(route());
     if (S.menu && !e.target.closest('.sw') && !e.target.closest('.rowmenu')) { S.menu = null; paintChrome(); $$('.rowmenu .menu').forEach((x) => { x.hidden = true; }); $$('.kebab').forEach((x) => x.setAttribute('aria-expanded', 'false')); }
   });
   $('#keysb').onclick = keysDialog;
@@ -608,16 +1114,19 @@ function start() {
     if (e.key === 'Escape') {
       if ($('#layer').children.length) { $('#layer').innerHTML = ''; return; }
       if (Ops.escape()) return;
-      if (S.full) { S.full = false; render(); return; }
+      if (S.full) { S.full = false; paintLog(); return; }
       if (S.menu) { S.menu = null; paintChrome(); $$('.rowmenu .menu').forEach((x) => { x.hidden = true; }); }
       return;
     }
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement && document.activeElement.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key === '/') { const t = $('#lq') || $('#q'); if (t) { e.preventDefault(); t.focus(); } return; }
+    if (e.key === '/') {
+      if (isRun(route()) && $('#run-detail') && !S.detailOpen) { S.detailOpen = true; $('#run-detail').open = true; paintLog(); }
+      const t = $('#lq') || $('#q'); if (t) { e.preventDefault(); t.focus(); } return;
+    }
     if (e.key === '?') { keysDialog(); return; }
     if (e.key === 'g') { gPending = Date.now(); return; }
     if (gPending && Date.now() - gPending < 1200) { const t = { o: 'overview', r: 'runs', q: 'queue', l: 'releases', m: 'machines', h: 'holds', a: 'activity' }[e.key]; gPending = 0; if (t) { go('/' + t); return; } }
-    if (route().name === 'run') { if (e.key === 'e') gotoError(); else if (e.key === 'f') nextFailedJob(); }
+    if (isRun(route())) { if (e.key === 'e') gotoError(); else if (e.key === 'f') nextFailedJob(); }
   });
   render();
   Data.start(async (kind) => {
@@ -627,6 +1136,6 @@ function start() {
     if (!typing || c) render();
     else paintChrome();
   });
-  if (route().name === 'run') refreshRun().then((c) => { if (c) render(); });
+  if (isRun(route())) refreshRun(true).then((c) => { if (c) render(); });
 }
 start();

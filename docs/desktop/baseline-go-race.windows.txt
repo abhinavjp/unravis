@@ -1,0 +1,7 @@
+# Fail only under go test -race on a Windows host (the Linux CI never builds these Windows-only files). Read by compare-go-failures.mjs on a Windows host only.
+# cmd/audit-explorer: checkptr fatal in golang.org/x/sys/windows (SID.SubAuthorityCount) in TestIntegrityLevelReadable.
+# cmd/unravis-releases: the -race test exe will not start (side-by-side configuration is incorrect: the embedded manifest with the cgo link).
+# internal/blackbox TestCompositionFootprintGate: a CPU budget that the race detector overruns on a PC (25.7% of one core).
+pkg.api-audit-explorer/cmd/audit-explorer
+pkg.api-audit-explorer/cmd/unravis-releases
+api-audit-explorer/internal/blackbox.TestCompositionFootprintGate

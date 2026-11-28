@@ -57,6 +57,9 @@ type BlackboxPC interface {
 	// SetupSQL turns SQL collection on (one prompt); ClearSQLLogin deletes the saved SQL login.
 	SetupSQL(ctx context.Context, loginFile, loginSHA string, windows, enable bool) (blackbox.SQLSetupOutcome, error)
 	ClearSQLLogin(ctx context.Context) error
+	// SetupSQLHandover is SetupSQL for a saved login the key keeper holds: the helper fetches it from the keeper by the one-time id, so
+	// no file is made and the login never reaches this process.
+	SetupSQLHandover(ctx context.Context, handoverID, keeperPipe string, enable bool) (blackbox.SQLSetupOutcome, error)
 }
 
 // BlackboxDeps wires the Blackbox pages. Only Store is required; a missing ThisPC
@@ -229,8 +232,23 @@ type bbFacts struct {
 	// Unread is the number of recording files that could not be read to the end. It is what makes a Blackbox Incomplete.
 	Unread      int      `json:"unread,omitempty"`
 	FreePercent *float64 `json:"freePercent,omitempty"`
+	// Bytes is the size of the recording files in the manifest. Absent when there are none.
+	Bytes int64 `json:"bytes,omitempty"`
+	// MaxGB and KeepDays are the recorder's own size cap and keep window, from its status page. Absent from a recorder that does not report them.
+	MaxGB    float64 `json:"maxGB,omitempty"`
+	KeepDays int     `json:"keepDays,omitempty"`
+	// SQL is the SQL collector's own four-field status from the recorder's status page. Absent when the recorder does not report it.
+	SQL *bbSQL `json:"sql,omitempty"`
 	// Update is the recorder's own self-update state, copied from its status page. Absent from a recorder that does not report it.
 	Update *bbUpdate `json:"update,omitempty"`
+}
+
+// bbSQL is the SQL collector state the recorder shows on its status page. It carries no instance name, version or error text.
+type bbSQL struct {
+	Enabled  bool       `json:"enabled"`
+	State    string     `json:"state"`
+	LastOK   *time.Time `json:"lastOK,omitempty"`
+	Failures int        `json:"failures,omitempty"`
 }
 
 // bbUpdate is the recorder's update state as Unravis shows it. The words come from a recorder over plain HTTP, so each one is
@@ -334,6 +352,7 @@ func (b *blackboxHub) facts(rd *blackbox.Reading, rep *blackbox.ReadReport) *bbF
 	}
 	for _, fe := range m.Files {
 		f.Samples += fe.Samples
+		f.Bytes += fe.Bytes
 	}
 	for _, g := range m.Gaps {
 		if g.Seconds > f.LongestGapSeconds {
@@ -345,6 +364,10 @@ func (b *blackboxHub) facts(rd *blackbox.Reading, rep *blackbox.ReadReport) *bbF
 	}
 	if rd.Status != nil {
 		f.FreePercent = rd.Status.FreePercent
+		f.MaxGB, f.KeepDays = rd.Status.MaxGB, rd.Status.KeepDays
+		if q := rd.Status.SQL; q.State != "" {
+			f.SQL = &bbSQL{Enabled: q.Enabled, State: capRunes(q.State, 40), LastOK: q.LastOK, Failures: q.Failures}
+		}
 		f.Update = bbUpdateFrom(rd.Status.Update)
 	}
 	return f

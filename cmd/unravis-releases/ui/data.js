@@ -5,7 +5,7 @@
 // D.at is when runs and machines were last read (the fast poll); D.snapshotAt is when the releases were last read (the slow
 // poll). Each moves only on a successful read, so when a read fails the old answer stays on screen and its time stays put.
 const D = { projects: [], pid: '', overview: null, runs: [], runsTotal: 0, machines: null, snapshot: null,
-  run: {}, logs: {}, at: 0, snapshotAt: 0, snapshotErr: '', err: '', loaded: false, projectsErr: '',
+  run: {}, ghrun: {}, logs: {}, at: 0, snapshotAt: 0, snapshotErr: '', err: '', loaded: false, projectsErr: '',
   // The queue, machine rules, holds and activity (BL-706). err holds one plain-words message per answer that failed;
   // old is true when this program is too old to know the four routes (it answered 404 without a message).
   ops: { queue: null, policy: null, holds: null, activity: null, err: {}, old: false, loaded: false } };
@@ -81,7 +81,7 @@ const Data = (() => {
   function pick(id) {
     if (id === D.pid) return;
     D.pid = id; epoch++;
-    D.overview = null; D.runs = []; D.runsTotal = 0; D.machines = null; D.run = {}; D.logs = {};
+    D.overview = null; D.runs = []; D.runsTotal = 0; D.machines = null; D.run = {}; D.ghrun = {}; D.logs = {};
     D.ops = { queue: null, policy: null, holds: null, activity: null, err: {}, old: false, loaded: false };
     for (const k of Object.keys(sig)) if (k !== 'projects' && k !== 'snapshot') delete sig[k];
     try { localStorage.setItem(SAVED, id); } catch (e) { /* not saved */ }
@@ -106,7 +106,8 @@ const Data = (() => {
     if (my !== epoch) return false; // the project was switched while this was loading
     D.at = Date.now(); D.err = '';
     // "now" moves every second on the server, so it must not count as a change.
-    const ovs = { ...ov, now: 0 }; const mas = ma && { ...ma, now: 0 };
+    const ovs = { ...ov, now: 0, seenAges: (ov.agents || []).map((a) => minutesSince(a.lastSeen)) };
+    const mas = ma && { ...ma, now: 0, seenAges: (ma.machines || []).map((m) => minutesSince(m.lastHeard)) };
     const c1 = !same('overview', ovs); const c2 = !same('runs', rs); const c3 = !same('machines', mas);
     D.overview = ov; D.runs = rs.runs || []; D.runsTotal = rs.total || 0; D.machines = ma;
     return c1 || c2 || c3;
@@ -123,7 +124,9 @@ const Data = (() => {
         const v = await api(path, { ...P(), ...extra });
         if (my !== epoch) return;
         o.err[key] = '';
-        if (!same('ops-' + key, { ...v, now: '' })) changed = true;
+        const waitAges = key === 'queue' ? (v.queued || []).map((r) => [waitMinutes(r), longWait(r)]) : null;
+        const seenAges = key === 'policy' ? (v.machines || []).map((m) => minutesSince(m.lastSeen)) : null;
+        if (!same('ops-' + key, { ...v, now: '', waitAges, seenAges })) changed = true;
         o[key] = v;
       } catch (e) {
         if (my !== epoch) return;
@@ -149,8 +152,16 @@ const Data = (() => {
     const my = epoch;
     const det = await api('/api/run', { ...P(), id });
     if (my !== epoch) return null;
-    const changed = JSON.stringify(D.run[id] && { ...D.run[id], run: 0 }) !== JSON.stringify({ ...det, run: 0 });
+    const changed = !same('run:' + id, det);
     D.run[id] = det; return changed;
+  }
+
+  async function loadGhRun(id) {
+    const my = epoch;
+    const det = await api('/api/ghrun', { id });
+    if (my !== epoch) return null;
+    const changed = !same('ghrun:' + id, det);
+    D.ghrun[id] = det; return changed;
   }
 
   // One step log (job "_checkout" is the log of getting the code). The last 5000 lines come back, with their first line number.
@@ -204,5 +215,5 @@ const Data = (() => {
     try { body = await res.json(); } catch (e) { /* not JSON */ }
     return Object.assign({ ok: false, message: `The server answered ${res.status}.` }, body || {}, { status: res.status });
   }
-  return { api, act, start, tick, pick, loadRun, loadLog, logKey, refreshOps, get epoch() { return epoch; } };
+  return { api, act, start, tick, pick, loadRun, loadGhRun, loadLog, logKey, refreshOps, get epoch() { return epoch; } };
 })();

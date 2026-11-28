@@ -6,6 +6,21 @@ const Legacy = (() => {
 const { $, el, link, when, status, WORD, GLYPH, STEP_KIND, OWN, NEXT, STEPS, CHANNELS } = LegacyCore;
 let shown = [], snap = null;
 
+function actionRunLinks(url, label) {
+  if (typeof url !== 'string' || !url.startsWith('https://github.com/')) return null;
+  const match = /\/actions\/runs\/(\d+)(?=\/|$)/.exec(url.split(/[?#]/, 1)[0]);
+  if (!match) return null;
+  const run = el('a', '', label);
+  run.href = '#/ghrun/' + match[1];
+  const original = el('a', '', 'on GitHub');
+  original.href = url;
+  original.target = '_blank';
+  original.rel = 'noopener noreferrer';
+  const small = el('small');
+  small.append(original);
+  return { run, original: small };
+}
+
 // Links to the CI runs that checked this release's commit, read from the runs the page already holds.
 function releaseRunChips(host, r) {
   if (!r || r.version === NEXT || typeof D === 'undefined') return;
@@ -13,8 +28,25 @@ function releaseRunChips(host, r) {
   if (!list.length) return;
   const box = el('p', 'runchips'); box.append(el('span', 'k', "Checks on this release's commit: "));
   for (const x of list) {
-    const a = el('a'); a.className = 'chip'; a.textContent = (x.word || x.status) + ' · ' + (x.sha ? x.sha.slice(0, 7) : x.id);
-    a.href = '#/run/' + encodeURIComponent(x.id); a.title = 'Open this run in the Runs tab.'; box.append(a, ' ');
+    const label = (x.word || x.status) + ' · ' + (x.sha ? x.sha.slice(0, 7) : x.id);
+    const actions = actionRunLinks(x.url, label);
+    const a = actions?.run || el('a', '', label);
+    a.className = 'chip';
+    if (!actions) { a.href = '#/run/' + encodeURIComponent(x.id); a.title = 'Open this run in the Runs tab.'; }
+    box.append(a, ' ');
+    if (actions) box.append(actions.original, ' ');
+    const placement = runMachine(x);
+    if (!placement) continue;
+    const machine = el('a', 'mono', placement.name);
+    machine.href = '#/machines';
+    machine.title = 'See the machines that run checks';
+    box.append(machine);
+    if (placement.slot) {
+      const slot = el('span', '', 'slot ' + placement.slot + ' of ' + placement.slots);
+      slot.title = SLOT_TITLE;
+      box.append(', ', slot);
+    }
+    box.append(' ');
   }
   host.append(box);
 }
@@ -490,8 +522,11 @@ function panelChecks(p, j) {
   const ul = el('ul', 'rows');
   for (const c of list.slice().sort((a, b) => (checkState(a)[0] === 'bad' ? 0 : 1) - (checkState(b)[0] === 'bad' ? 0 : 1))) {
     const [k, w] = checkState(c);
-    const li = el('li'); li.append(chip(k, w), el('span', 'nm', c.name), el('span', 'at', c.seconds ? dur(c.seconds) : ''));
-    const a = link(c.url, 'Open'); li.append(a || el('span'));
+    const actions = actionRunLinks(c.url, c.name);
+    const name = actions ? actions.run : el('span', 'nm', c.name);
+    if (actions) name.className = 'lg-nm';
+    const li = el('li'); li.append(chip(k, w), name, el('span', 'at', c.seconds ? dur(c.seconds) : ''));
+    li.append(actions?.original || link(c.url, 'Open') || el('span'));
     ul.append(li);
   }
   p.append(ul);

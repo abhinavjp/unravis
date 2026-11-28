@@ -63,3 +63,36 @@ func CatalogueLogs(roots []string) []LogEntry {
 	}
 	return all
 }
+
+// MergeLogRoots adds the folders the sources manifest found (for example IIS sites logging outside the default folder) to
+// the configured roots. A found folder is skipped when a configured one is the same or holds it, so nothing is walked
+// twice. The result never has more than maxLogPaths folders; the configured ones always come first.
+func MergeLogRoots(configured, found []string) []string {
+	out := append([]string(nil), configured...)
+	key := func(p string) string {
+		return strings.ToLower(strings.TrimRight(filepath.Clean(p), `\/`))
+	}
+	covers := func(root, p string) bool {
+		r, q := key(root), key(p)
+		return q == r || strings.HasPrefix(q, r+`\`) || strings.HasPrefix(q, r+`/`)
+	}
+	for _, f := range found {
+		if len(out) >= maxLogPaths {
+			break
+		}
+		if strings.TrimSpace(f) == "" {
+			continue
+		}
+		dup := false
+		for _, r := range out {
+			if covers(r, f) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, f)
+		}
+	}
+	return out
+}

@@ -86,12 +86,16 @@ type HelperRequest struct {
 	DeleteRecordings bool   // remove
 	ConfirmName      string // remove with DeleteRecordings: the name, typed
 
-	// setup-sql: the file holding the SQL login (made by the caller or by the key keeper; the helper only reads it and never writes or deletes it) and its SHA-256, or SQLWindows to use
-	// Windows sign-in instead; SQLEnable starts the service when it is set up.
-	SQLLoginFile string
-	SQLLoginSHA  string
-	SQLWindows   bool
-	SQLEnable    bool
+	// setup-sql: where the helper gets the SQL login, or SQLWindows to use Windows sign-in instead; SQLEnable starts the service when it is
+	// set up. The login is either in a file the caller made (SQLLoginFile and its SHA-256: the helper only reads it and never writes or
+	// deletes it) or held by the key keeper under a one-time id (SQLHandoverID, with the keeper's pipe name in SQLHandoverPipe): the helper
+	// fetches it from the keeper itself, so the id on the command line is useless to anyone else and no file is ever made.
+	SQLLoginFile    string
+	SQLLoginSHA     string
+	SQLHandoverID   string
+	SQLHandoverPipe string
+	SQLWindows      bool
+	SQLEnable       bool
 }
 
 // HelperAnswer is what the helper printed.
@@ -168,9 +172,12 @@ func HelperArgs(req HelperRequest, cfgPath string) []string {
 	case OpInstall, OpApply:
 		args = append(args, "--config", cfgPath)
 	case OpSQLSetup:
-		if req.SQLWindows {
+		switch {
+		case req.SQLWindows:
 			args = append(args, "--windows-signin")
-		} else {
+		case req.SQLHandoverID != "":
+			args = append(args, "--login-handover", req.SQLHandoverID, "--keeper-pipe", req.SQLHandoverPipe)
+		default:
 			args = append(args, "--login-file", req.SQLLoginFile, "--login-sha256", req.SQLLoginSHA)
 		}
 		if req.SQLEnable {
@@ -292,8 +299,8 @@ func (t *ThisPC) do(ctx context.Context, req HelperRequest) (HelperAnswer, error
 		return HelperAnswer{}, &ThisPCError{Reason: ReasonConfirm, Message: ErrConfirmName.Error(), Cause: ErrConfirmName}
 	}
 	if req.SQLLoginFile != "" {
-		// The helper only reads the login file. A file the app wrote itself is removed here when the call ends, however it ends; one made by
-		// the key keeper is removed by the keeper (a short timer, and a sweep when it starts), because the app may not own it.
+		// The helper only reads the login file, which the app wrote itself (a login the person typed, or one a per-user Unravis holds): it is
+		// removed here when the call ends, however it ends. A login the key keeper holds is never in a file (SQLHandoverID).
 		defer removeLoginFile(req.SQLLoginFile)
 	}
 	cfgPath := ""
@@ -405,6 +412,19 @@ type SQLSetupOutcome struct {
 	LoginSaved  bool   // a SQL login is now saved (false: Windows sign-in)
 	Started     bool   // the SQL service was started
 	GrantScript string // with Windows sign-in: what the owner runs in SSMS first
+}
+
+// SetupSQLHandover is SetupSQL for a saved login the key keeper holds: the helper fetches it from the keeper over the keeper's pipe with
+// the one-time id, so the login is in no file and never reaches this process.
+func (t *ThisPC) SetupSQLHandover(ctx context.Context, handoverID, keeperPipe string, enable bool) (SQLSetupOutcome, error) {
+	if handoverID == "" {
+		return SQLSetupOutcome{}, &ThisPCError{Reason: ReasonInvalid, Message: "There is no saved login to hand to the Blackbox."}
+	}
+	a, err := t.do(ctx, HelperRequest{Op: OpSQLSetup, SQLHandoverID: handoverID, SQLHandoverPipe: keeperPipe, SQLEnable: enable})
+	if err != nil {
+		return SQLSetupOutcome{}, err
+	}
+	return SQLSetupOutcome{Installed: a.SQLInstalled, LoginSaved: a.LoginSaved, Started: a.Started, GrantScript: a.GrantScript}, nil
 }
 
 // SetupSQL turns SQL collection on: one administrator prompt. Give loginFile and its SHA-256 for a SQL login, or windows for Windows

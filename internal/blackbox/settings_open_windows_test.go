@@ -21,6 +21,7 @@ import (
 
 // lockedSettings writes data to a file in a fresh folder and locks it as the installer does (lockAdminOnlyFile).
 func lockedSettings(t *testing.T, data []byte) string {
+	skipUnlessElevated(t)
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir()) // the reader wants the file's final path, with no 8.3 names
 	if err != nil {
@@ -362,5 +363,15 @@ func TestReadVerifiedSettingsRefusalStages(t *testing.T) {
 	_, err = readOpenedSettings(good)
 	if RefusalStage(err) != StageOpen || RefusalWord(err) != WordSharing || FallbackAllowedFor(err) {
 		t.Errorf("a held file: stage %q word %q fallback %v, want open, sharing, false", RefusalStage(err), RefusalWord(err), FallbackAllowedFor(err))
+	}
+}
+
+// skipUnlessElevated skips a test that needs an administrator token (it writes admin-only files and names other
+// owners). The result is "skipped: not run here", never a pass: the GitHub runner is elevated and runs them, and an
+// agent started without elevation on a PC must not report a failure for what it cannot try.
+func skipUnlessElevated(t *testing.T) {
+	t.Helper()
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("not run here: needs an elevated (administrator) token; the GitHub runner runs it")
 	}
 }

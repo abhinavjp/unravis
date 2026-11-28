@@ -31,7 +31,7 @@ func backupEntry(name string) bool {
 	if stagedName(orig) {
 		return true
 	}
-	for _, own := range []string{ShortcutName, QuitShortcutName, ReleasesShortcutName, StateFileName, blackbox.KeyFileName, blackbox.ConfigFileName, blackbox.ConfigFileName + ".bak", blackbox.InstalledExeName, blackbox.ManagedMarkerName, blackbox.StoppedByUserMarkerName} {
+	for _, own := range []string{ShortcutName, QuitShortcutName, ReleasesShortcutName, LegacyReleasesShortcutName, StateFileName, blackbox.KeyFileName, blackbox.ConfigFileName, blackbox.ConfigFileName + ".bak", blackbox.InstalledExeName, blackbox.ManagedMarkerName, blackbox.StoppedByUserMarkerName} {
 		if strings.EqualFold(orig, own) {
 			return true
 		}
@@ -41,7 +41,7 @@ func backupEntry(name string) bool {
 
 // stagedName says name is a file a staging folder holds: the programs setup places, and the second Blackbox copy it stages for the beside-app place.
 func stagedName(name string) bool {
-	for _, own := range []string{AppExeName, KeeperExeName, BlackboxExeName, ReleasesExeName, CLIExeName, CLIInstalledName, SetupExeName, "beside-app-" + BlackboxExeName} {
+	for _, own := range []string{AppExeName, KeeperExeName, BlackboxExeName, ReleasesExeName, LegacyReleasesExeName, CLIExeName, CLIInstalledName, HomestretchExeName, HSExeName, SetupExeName, "beside-app-" + BlackboxExeName} {
 		if strings.EqualFold(name, own) {
 			return true
 		}
@@ -77,8 +77,9 @@ func workFolderOwned(parent, name string) bool {
 	case strings.EqualFold(name, update.PreviousDir):
 		allowed = previousName
 	case strings.EqualFold(name, CLIDirName):
-		// The bin folder holds the command line program and nothing else; any other file makes it somebody's folder.
-		allowed = func(n string) bool { return strings.EqualFold(n, CLIInstalledName) }
+		allowed = func(n string) bool {
+			return strings.EqualFold(n, CLIInstalledName) || strings.EqualFold(n, HomestretchExeName) || strings.EqualFold(n, HSExeName)
+		}
 	default:
 		return false
 	}

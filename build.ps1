@@ -10,9 +10,8 @@ param(
     [switch]$Release,
     # Local development only: do not pin the app to the helper, so the helper can be rebuilt alone. The log says so loudly.
     [switch]$Unpinned,
-    # A script that signs the files it is given, in place (tools/release/Sign-Binaries.ps1). Called three times, in the one order
-    # that keeps the pin and the installer payload true: the Blackbox first (the pin is its SIGNED hash), then the app and keeper
-    # (before the installer embeds them), then the installer and Lite last. Without it nothing is signed.
+    # A script that signs the files it is given, in place (tools/release/Sign-Binaries.ps1). The Blackbox is signed before its hash
+    # is pinned, and every payload file is signed before setup embeds it. The installer and Lite are signed last.
     [string]$SignScript
 )
 
@@ -172,15 +171,14 @@ try {
     Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), './cmd/unravis-keeper')
     # The thin command-line program. A console program (not $GuiLdFlags) so it writes to the terminal; setup installs it as bin\unravis.exe and puts bin on PATH.
     Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-cli.exe'), './cmd/unravis')
-    # The releases window (read-only release status, its own icon). A GUI program like the app, so it opens no console; it ships inside the setup program and updates with it.
-    Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $GuiLdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-releases.exe'), './cmd/unravis-releases')
-    Invoke-Sign @((Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), (Join-Path $UtilityRoot 'dist\unravis-cli.exe'), (Join-Path $UtilityRoot 'dist\unravis-releases.exe'))
-    # Homestretch (BL-708): the release and CI command line, `homestretch.exe`, and its short name `hs.exe` (a copy of it). Console programs.
-    # They are for the person who cuts releases and runs CI, not part of the installer payload, so setup and its manifest are unchanged.
+    # The Homestretch dashboard ships as an optional GUI program inside setup and updates with it.
+    Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $GuiLdFlags, '-o', (Join-Path $UtilityRoot 'dist\homestretch-app.exe'), './cmd/unravis-releases')
+    Invoke-Sign @((Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), (Join-Path $UtilityRoot 'dist\unravis-cli.exe'), (Join-Path $UtilityRoot 'dist\homestretch-app.exe'))
+    # Setup installs the Homestretch console program and its short alias in bin, the folder already added to PATH.
     # The old unravis-ci program stays in the source tree as a shim (cmd/unravis-ci); it is not built here because nothing in dist ever shipped it.
     Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\homestretch.exe'), './cmd/homestretch')
+    Invoke-Sign @((Join-Path $UtilityRoot 'dist\homestretch.exe'))
     Copy-Item -LiteralPath (Join-Path $UtilityRoot 'dist\homestretch.exe') -Destination (Join-Path $UtilityRoot 'dist\hs.exe') -Force
-    Invoke-Sign @((Join-Path $UtilityRoot 'dist\homestretch.exe'), (Join-Path $UtilityRoot 'dist\hs.exe'))
 
     # The one-file installer comes last: it embeds the programs above with a manifest of their SHA-256, so setup refuses a
     # payload that was changed after the build. The payload folder is cleared first and is not committed (see its README.txt).
@@ -188,7 +186,7 @@ try {
     $PayloadDir = Join-Path $UtilityRoot 'cmd\unravis-setup\payload'
     Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -notin @('README.txt', '.gitignore') } | Remove-Item -Recurse -Force
     $PayloadFiles = @()
-    foreach ($Name in @('unravis.exe', 'unravis-keeper.exe', 'unravis-blackbox.exe', 'unravis-releases.exe', 'unravis-cli.exe')) {
+    foreach ($Name in @('unravis.exe', 'unravis-keeper.exe', 'unravis-blackbox.exe', 'homestretch-app.exe', 'unravis-cli.exe', 'homestretch.exe', 'hs.exe')) {
         $Source = Join-Path $UtilityRoot "dist\$Name"
         Copy-Item -LiteralPath $Source -Destination (Join-Path $PayloadDir $Name) -Force
         $PayloadSha = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -206,11 +204,11 @@ try {
         # Unravis Lite: a small console viewer for one Blackbox (docs/auto-updater/SPEC.md). It stays a console program so it can print the one-time link.
         Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-lite.exe'), './cmd/unravis-lite')
         Invoke-Sign @((Join-Path $UtilityRoot 'dist\unravis-setup.exe'), (Join-Path $UtilityRoot 'dist\unravis-lite.exe'))
-        # Subsystem check: the app and the releases window must be GUI (2) so they open no console; every other program built here stays console (3).
+        # Subsystem check: Unravis and the Homestretch dashboard are GUI (2). The other programs are console (3).
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis.exe')
         if ($Subsystem -ne 2) { throw "unravis.exe: PE subsystem $Subsystem, expected 2" }
-        $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-releases.exe')
-        if ($Subsystem -ne 2) { throw "unravis-releases.exe: PE subsystem $Subsystem, expected 2" }
+        $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\homestretch-app.exe')
+        if ($Subsystem -ne 2) { throw "homestretch-app.exe: PE subsystem $Subsystem, expected 2" }
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-keeper.exe')
         if ($Subsystem -ne 3) { throw "unravis-keeper.exe: PE subsystem $Subsystem, expected 3" }
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-cli.exe')

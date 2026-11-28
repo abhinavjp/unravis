@@ -813,6 +813,36 @@
       ]
     },
     {
+      "id": "r8-local-run-failed",
+      "phase": "R",
+      "note": "Local failed run with two failed jobs and their first error lines.",
+      "app": "releases",
+      "narrow": true,
+      "steps": [
+        { "goto": "/" },
+        { "click": "css=#tabs a[href=\"#/runs\"]" },
+        { "click": "css=a.rl[href$=\"-push-audit-failed-ci\"]" },
+        { "waitFor": "text=--- FAIL: TestOpenExample" },
+        { "click": "css=.run-cause a" },
+        { "waitFor": "css=#run-log-jump" }
+      ]
+    },
+    {
+      "id": "r9-local-run-running",
+      "phase": "R",
+      "note": "Local running run with a finished job, two running jobs and one job still to start.",
+      "app": "releases",
+      "narrow": true,
+      "steps": [
+        { "goto": "/" },
+        { "click": "css=#tabs a[href=\"#/runs\"]" },
+        { "click": "css=a.rl[href$=\"-push-audit-running-ci\"]" },
+        { "waitFor": "css=#run-board .run-node.running" },
+        { "click": "css=#run-toggle" },
+        { "waitFor": "css=#fol" }
+      ]
+    },
+    {
       "id": "l1-lite-home",
       "phase": "L",
       "note": "Unravis Lite: one Blackbox that is recording, with its facts.",

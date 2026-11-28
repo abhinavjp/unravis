@@ -414,6 +414,26 @@ func TestExpandMatrixFromParsedWorkflow(t *testing.T) {
 	}
 }
 
+func TestMatrixLabelExpressions(t *testing.T) {
+	cases := []struct {
+		name  string
+		combo map[string]any
+		want  string
+	}{
+		{"go-tests (${{ matrix.shard }}/3)", map[string]any{"shard": 2}, "go-tests (2/3)"},
+		{"${{ matrix.os }} / ${{ matrix.shard }}", map[string]any{"os": "linux", "shard": 2}, "linux / 2"},
+		{"${{ github.ref }}", nil, "${{ github.ref }}"},
+		{"missing ${{ matrix.unknown }}", nil, "missing "},
+		{"plain", map[string]any{"axis": 1}, "plain (1)"},
+		{"${{ matrix.os }} ${{ env.FOO }}", map[string]any{"os": "linux"}, "linux ${{ env.FOO }}"},
+	}
+	for _, tc := range cases {
+		if got := MatrixLabel(&Job{Name: tc.name}, tc.combo); got != tc.want {
+			t.Errorf("%q: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestMatrixLabel(t *testing.T) {
 	j := &Job{ID: "go-tests", Strategy: &Strategy{Matrix: MatrixSpec{AxisOrder: []string{"shard"}}}}
 	if got := MatrixLabel(j, map[string]any{"shard": 1}); got != "go-tests (1)" {
