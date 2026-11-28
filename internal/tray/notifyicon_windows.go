@@ -20,7 +20,11 @@ const (
 	nifMessage = 0x01
 	nifIcon    = 0x02
 	nifTip     = 0x04
+	nifInfo    = 0x10
 	nifShowTip = 0x80
+
+	niifInfo       = 0x01    // NIIF_INFO: the information symbol
+	niifRespectDND = 0x80000 // NIIF_RESPECT_QUIET_TIME: stay silent while Windows is in Do not disturb
 
 	notifyIconVersion4 = 4
 
@@ -121,6 +125,46 @@ func modifyTip(hwnd windows.Handle, id uint32, tip string) error {
 	fillTip(&d.szTip, tip)
 	if err := shellNotify(nimModify, &d); err != nil {
 		return fmt.Errorf("tray: modify notification icon: %w", err)
+	}
+	return nil
+}
+
+// modifyIcon changes the icon image and the tooltip of an existing icon.
+func modifyIcon(hwnd windows.Handle, id uint32, icon windows.Handle, tip string) error {
+	d := newNotifyIconData(hwnd, id)
+	d.uFlags = nifIcon | nifTip | nifShowTip
+	d.hIcon = uintptr(icon)
+	fillTip(&d.szTip, tip)
+	if err := shellNotify(nimModify, &d); err != nil {
+		return fmt.Errorf("tray: modify notification icon: %w", err)
+	}
+	return nil
+}
+
+// fillUnits writes s into dst as zero-terminated UTF-16, keeping at most len(dst)-1 units and never half of a surrogate pair.
+func fillUnits(dst []uint16, s string) {
+	for i := range dst {
+		dst[i] = 0
+	}
+	units := utf16.Encode([]rune(s))
+	if len(units) > len(dst)-1 {
+		units = units[:len(dst)-1]
+		if last := units[len(units)-1]; last >= 0xD800 && last <= 0xDBFF {
+			units = units[:len(units)-1]
+		}
+	}
+	copy(dst, units)
+}
+
+// modifyInfo shows a pop-up (balloon) from the existing icon.
+func modifyInfo(hwnd windows.Handle, id uint32, title, text string) error {
+	d := newNotifyIconData(hwnd, id)
+	d.uFlags = nifInfo
+	fillUnits(d.szInfoTitle[:], title)
+	fillUnits(d.szInfo[:], text)
+	d.dwInfoFlags = niifInfo | niifRespectDND
+	if err := shellNotify(nimModify, &d); err != nil {
+		return fmt.Errorf("tray: show notice: %w", err)
 	}
 	return nil
 }

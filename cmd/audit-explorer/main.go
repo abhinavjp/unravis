@@ -424,7 +424,7 @@ func run(args []string, getenv func(string) string) error {
 		defer listenInstanceEvents(appCtx, cancel, instanceNames)()
 	}
 	if interactive {
-		defer startInteractive(appCtx, cancel, reo, instanceNames)()
+		defer startInteractive(appCtx, cancel, reo, instanceNames, updater)()
 	}
 
 	opened := false
@@ -591,7 +591,7 @@ func writeSessionFile(getenv func(string) string, listener net.Listener, token s
 // through ("open" re-arms a launch code and opens the browser, "quit" cancels appCtx) and the tray icon. Quit and an end-session cancel
 // appCtx, which runs the same shutdown as Ctrl+C. If either cannot start the app still runs. The result stops the tray, then the
 // instance listener; the caller defers it.
-func startInteractive(appCtx context.Context, cancel context.CancelFunc, reo *reopener, names instance.Names) (stop func()) {
+func startInteractive(appCtx context.Context, cancel context.CancelFunc, reo *reopener, names instance.Names, updater *server.Updater) (stop func()) {
 	stopListen := func() {}
 	if stopFn, lerr := instance.Listen(appCtx, names, reo.Reopen, cancel); lerr != nil {
 		log.Printf("Second launches cannot reach this copy: %v", lerr)
@@ -599,8 +599,11 @@ func startInteractive(appCtx context.Context, cancel context.CancelFunc, reo *re
 		stopListen = stopFn
 	}
 	deps := productionTrayDeps(reo.Reopen, cancel, showMessage)
+	deps.openTo = reo.ReopenTo
+	stopUpdates := wireTrayUpdates(appCtx, &deps, updater, tray.Notify, log.Printf)
 	opts := tray.Options{
 		Tooltip:      "Unravis",
+		State:        func() tray.State { return trayState(deps) },
 		Menu:         func() []tray.Item { return trayMenu(deps) },
 		OnSelect:     trayOnSelect(deps),
 		OnOpen:       reo.Reopen,
@@ -610,6 +613,7 @@ func startInteractive(appCtx context.Context, cancel context.CancelFunc, reo *re
 	trayDone := startTray(appCtx, tray.Run, opts, log.Printf)
 	return func() {
 		stopTray(cancel, &endingSession, trayDone, trayExitGuard)
+		stopUpdates()
 		stopListen()
 	}
 }

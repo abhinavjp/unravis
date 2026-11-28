@@ -423,6 +423,34 @@ func TestQuitSignalCancelsTheAppContext(t *testing.T) {
 	}
 }
 
+func TestReopenToLandsOnAScreen(t *testing.T) {
+	f := newFakeReopen()
+	f.r.ReopenTo("whatsnew")
+	if len(f.opened) != 1 || f.opened[0] != "http://127.0.0.1:5555/launch?c="+f.rearmCodes[0]+"&to=whatsnew" {
+		t.Fatalf("opened = %v", f.opened)
+	}
+	f.noWarn(t)
+}
+
+func TestReopenToEscapesTheScreenName(t *testing.T) {
+	f := newFakeReopen()
+	f.r.ReopenTo("a&b=c")
+	if len(f.opened) != 1 || !strings.HasSuffix(f.opened[0], "&to=a%26b%3Dc") {
+		t.Fatalf("opened = %v", f.opened)
+	}
+}
+
+func TestReopenToDifferentScreenIsNotThrottled(t *testing.T) {
+	f := newFakeReopen()
+	f.r.Reopen()
+	f.advance(time.Second)
+	f.r.ReopenTo("updates") // a notice click right after another open still works
+	f.r.ReopenTo("updates") // the same request again is dropped
+	if len(f.opened) != 2 {
+		t.Fatalf("opened %d times, want 2: %v", len(f.opened), f.opened)
+	}
+}
+
 // A panic inside the work (the callers recover it and the process lives on) must not leave the limiter busy: the next request has to be
 // tried, and the panicked attempt must not start the gap.
 func TestReopenPanicDoesNotLeaveTheLimiterBusy(t *testing.T) {

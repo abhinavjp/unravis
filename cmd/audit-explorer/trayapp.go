@@ -5,10 +5,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"api-audit-explorer/internal/applog"
 	"api-audit-explorer/internal/autostart"
+	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/tray"
+	"api-audit-explorer/internal/version"
 )
 
 // Menu item IDs. Zero is reserved: a separator has no ID.
@@ -17,9 +21,14 @@ const (
 	idLogs      uint32 = 2
 	idAutostart uint32 = 3
 	idQuit      uint32 = 4
+	idInfo      uint32 = 5 // the greyed version line
+	idUpdate    uint32 = 6 // the update line; some states make it a button
+	idCheck     uint32 = 7
+	idWhatsNew  uint32 = 8
 )
 
-// trayDeps is everything the tray menu does, so tests can use fakes.
+// trayDeps is everything the tray menu does, so tests can use fakes. The update fields are nil in a run with no update checker (a demo
+// run); the menu then leaves those lines out.
 type trayDeps struct {
 	reopen           func()
 	quit             func()
@@ -28,22 +37,61 @@ type trayDeps struct {
 	autostartEnabled func() bool
 	setAutostart     func(on bool) error
 	warn             func(title, text string)
+
+	openTo        func(to string)            // open a screen: "updates" or "whatsnew"
+	update        func() server.UpdateStatus // the cached update status
+	checking      func() bool                // a check the person started is running
+	checkUpdates  func()                     // run one check (blocks until it ends)
+	installUpdate func() error               // restart into the downloaded update (blocks)
+
+	// shownAct is what the update line did when the menu was last built (nil means no menu yet). A press that
+	// finds the status has moved on since then does nothing, so a line that said "see Updates" never restarts the app.
+	shownAct *atomic.Pointer[trayAct]
 }
 
 // trayMenu builds the menu. "Start at sign-in" is shown only for an installed copy.
 func trayMenu(d trayDeps) []tray.Item {
-	items := []tray.Item{
-		{ID: idOpen, Text: "Open Unravis"},
-		{ID: idLogs, Text: "Open log folder"},
+	var items []tray.Item
+	busy := false
+	if d.update != nil {
+		st := d.update()
+		checking := d.checking != nil && d.checking()
+		v := viewUpdate(st, checking, time.Now())
+		if d.shownAct != nil {
+			act := v.Act
+			d.shownAct.Store(&act)
+		}
+		busy = checking || (st.Install != nil && (st.Install.State == "launched" || st.Install.State == "downloading"))
+		items = append(items,
+			tray.Item{ID: idInfo, Text: versionLine(st), Disabled: true},
+			tray.Item{ID: idUpdate, Text: v.Line, Disabled: v.Act == actNone})
+	} else {
+		items = append(items, tray.Item{ID: idInfo, Text: clipRunes("Unravis "+version.Version, tray.MaxTextRunes), Disabled: true})
+	}
+	items = append(items, tray.Item{Separator: true}, tray.Item{ID: idOpen, Text: "Open Unravis"})
+	if d.update != nil {
+		items = append(items, tray.Item{ID: idCheck, Text: "Check for updates", Disabled: busy})
+	}
+	if d.openTo != nil {
+		items = append(items, tray.Item{ID: idWhatsNew, Text: "What's new"})
 	}
 	if d.autostartAllowed() {
 		items = append(items, tray.Item{ID: idAutostart, Text: "Start at sign-in", Checked: d.autostartEnabled()})
 	}
-	return append(items, tray.Item{Separator: true}, tray.Item{ID: idQuit, Text: "Quit Unravis"})
+	return append(items, tray.Item{ID: idLogs, Text: "Open log folder"}, tray.Item{Separator: true}, tray.Item{ID: idQuit, Text: "Quit Unravis"})
+}
+
+// trayState is the tooltip and the attention dot, polled by the tray every few seconds from the cached status.
+func trayState(d trayDeps) tray.State {
+	if d.update == nil {
+		return tray.State{}
+	}
+	v := viewUpdate(d.update(), d.checking != nil && d.checking(), time.Now())
+	return tray.State{Tooltip: v.Tip, Attention: v.Attention}
 }
 
 // trayOnSelect returns the menu handler. It runs on the tray thread, so it
-// never blocks: a failed sign-in change is reported on its own goroutine.
+// never blocks: a failed sign-in change, a check and an install each run on their own goroutine.
 func trayOnSelect(d trayDeps) func(uint32) {
 	return func(id uint32) {
 		switch id {
@@ -57,6 +105,43 @@ func trayOnSelect(d trayDeps) func(uint32) {
 			}
 		case idQuit:
 			d.quit()
+		case idWhatsNew:
+			if d.openTo != nil {
+				d.openTo("whatsnew")
+			}
+		case idCheck:
+			if d.checkUpdates != nil {
+				go d.checkUpdates()
+			}
+		case idUpdate:
+			trayUpdatePressed(d)
+		}
+	}
+}
+
+// trayUpdatePressed does what the update line says, from the status as it is now.
+func trayUpdatePressed(d trayDeps) {
+	if d.update == nil {
+		return
+	}
+	act := viewUpdate(d.update(), false, time.Now()).Act
+	if d.shownAct != nil {
+		if shown := d.shownAct.Load(); shown != nil && *shown != act {
+			return // the line the person clicked said something else; they can open the menu again
+		}
+	}
+	switch act {
+	case actInstall:
+		if d.installUpdate != nil {
+			go func() {
+				if err := d.installUpdate(); err != nil {
+					d.warn("Unravis could not start the update", err.Error())
+				}
+			}()
+		}
+	case actUpdates:
+		if d.openTo != nil {
+			d.openTo("updates")
 		}
 	}
 }
@@ -105,9 +190,10 @@ func trayDepsWith(reopen, quit func(), warn func(title, text string), run func(n
 		return startExe, dir, startOK
 	}
 	return trayDeps{
-		reopen: reopen,
-		quit:   quit,
-		warn:   warn,
+		shownAct: new(atomic.Pointer[trayAct]),
+		reopen:   reopen,
+		quit:     quit,
+		warn:     warn,
 		openLogs: func() {
 			_ = run(windowsFile("explorer.exe"), applog.DefaultDir(os.Getenv))
 		},

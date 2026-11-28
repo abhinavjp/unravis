@@ -1,15 +1,15 @@
 <script lang="ts">
   import { comparisonLabel, STARTUP_TEXT, STARTUP_TITLE } from './lib/copy/startupCopy';
   import { scopeProblem } from './lib/autorun';
-  import { api, VALIDATION_MESSAGE } from './lib/api';
+  import { api, VALIDATION_MESSAGE, takeLaunchTarget } from './lib/api';
   import { WAIT_TEXT } from './lib/copy/waitCopy';
-  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeImportPopup, closeSidePanel, onWindowKey, openCaseHome, openCaseImport, openTracing, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
+  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeImportPopup, closeSidePanel, onWindowKey, openSidePanel, openCaseHome, openCaseImport, openTracing, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
   import { codeUi } from './lib/codeModeUi.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import UpdateBanner from './components/UpdateBanner.svelte';
   import LivenessBanner from './components/LivenessBanner.svelte';
   import { liveness, startLivenessWatch } from './lib/liveness.svelte';
-  import { checkWhatsNewOnStart, refreshUpdateStatus, startUpdateWatch, updates, whatsNew } from './lib/updateState.svelte';
+  import { checkWhatsNewOnStart, openWhatsNew, refreshUpdateStatus, startUpdateWatch, updates, whatsNew } from './lib/updateState.svelte';
   import { loadNotes, normalizeVersion, parseableVersion } from './lib/updateNotes';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
@@ -57,6 +57,14 @@
   const info = $derived(app.info);
   // Read the update status once the app is up, then every ten minutes. It is a local call; the program's own timer does the checking.
   $effect(() => { if (info) return startUpdateWatch(); });
+  // A start link from the tray (or a notice's click) can ask for one screen: the Updates or Blackbox panel, or What's new.
+  $effect(() => {
+    // Wait for the first screen: moving to the start, case or unlock screen puts a side panel away, so a panel opened sooner would close at once.
+    if (!info || app.screen === 'loading') return;
+    const to = takeLaunchTarget();
+    if (to === 'whatsnew') openWhatsNew(false);
+    else if (to) openSidePanel(to);
+  });
   // Every 20 seconds while the page is visible, one light read of the app (its version), so a stopped or restarted app is noticed even
   // when nobody presses anything. Three lost requests in a row say the same sooner (liveness.svelte.ts).
   $effect(() => { if (info) return startLivenessWatch(() => api.version()); });

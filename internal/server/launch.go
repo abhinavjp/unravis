@@ -13,6 +13,10 @@ import (
 // It carries a single-use launch code, never the session token, so the token
 // stays out of process command lines and log files.
 const launchPath = "/launch"
+
+// LaunchTargets are the screens a start link may open straight away (/launch?c=...&to=updates). The page shows nothing else.
+var LaunchTargets = map[string]bool{"updates": true, "whatsnew": true, "blackbox": true}
+
 const launchStylePath = "/launch.css"
 
 // launchState holds the pending launch code. The code is random, valid once and
@@ -128,6 +132,11 @@ func (h *handler) serveLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.event(r, "session_launch")
-	w.Header().Set("Location", "/#t="+url.QueryEscape(h.token))
+	loc := "/#t=" + url.QueryEscape(h.token)
+	// The tray and its notices open a particular screen: only a name from the list below is passed on, never anything else.
+	if to := r.URL.Query().Get("to"); LaunchTargets[to] {
+		loc += "&open=" + to
+	}
+	w.Header().Set("Location", loc)
 	w.WriteHeader(http.StatusFound)
 }

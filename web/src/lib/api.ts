@@ -20,6 +20,14 @@ function storage(): Storage | null {
 
 /** How this tab got its token: 'link' for a fresh launch, 'stored' for a resumed session, '' for none. */
 let sessionOrigin: '' | 'link' | 'stored' = '';
+/** The screen a start link asked to open (the tray's "Updates", a notice's click). Only these names are taken; the rest of the fragment is ignored. */
+let launchTarget: '' | 'updates' | 'whatsnew' | 'blackbox' = '';
+/** The screen the start link asked for, once; later calls answer ''. */
+export function takeLaunchTarget(): '' | 'updates' | 'whatsnew' | 'blackbox' {
+  const to = launchTarget;
+  launchTarget = '';
+  return to;
+}
 
 /**
  * The dashboard never writes its session token into the page. The launch link
@@ -33,6 +41,8 @@ export function readSessionToken(): string {
     if (typeof location !== 'undefined' && location.hash.length > 1) {
       const params = new URLSearchParams(location.hash.slice(1));
       fromLink = params.get('t') ?? '';
+      const open = params.get('open');
+      if (fromLink && (open === 'updates' || open === 'whatsnew' || open === 'blackbox')) launchTarget = open;
       if (params.has('t') && typeof history !== 'undefined') history.replaceState(history.state, '', location.pathname + location.search);
     }
   } catch { /* an unreadable fragment is the same as none */ }
