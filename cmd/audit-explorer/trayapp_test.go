@@ -344,3 +344,22 @@ func TestProductionDepsHideStartAtSignInForATestBinary(t *testing.T) {
 		t.Fatal("a test binary must not be an installed copy")
 	}
 }
+
+// A line that said "see Updates" must never restart the app because the status moved to ready before the press.
+func TestTrayPressDoesNothingWhenTheStatusMovedOnSinceTheMenuWasBuilt(t *testing.T) {
+	avail := server.UpdateStatus{Status: "available", Current: "1", Latest: "2"}
+	ready := server.UpdateStatus{Status: "available", Current: "1", Latest: "2", CanInstall: true, Install: &server.InstallInfo{State: "ready", Version: "2"}}
+	c := newTrayCalls(false)
+	d := c.withUpdater(avail)
+	d.shownAct = new(atomic.Int32)
+	trayMenu(d) // the menu opens showing "see Updates"
+	d.update = func() server.UpdateStatus { return ready }
+	trayOnSelect(d)(idUpdate)
+	time.Sleep(50 * time.Millisecond)
+	if c.installs.Load() != 0 || len(c.opened) != 0 {
+		t.Fatalf("a stale press acted: installs=%d opened=%v", c.installs.Load(), c.opened)
+	}
+	trayMenu(d) // a fresh menu shows the restart line, so the press now installs
+	trayOnSelect(d)(idUpdate)
+	waitUntil(t, func() bool { return c.installs.Load() == 1 })
+}

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"api-audit-explorer/internal/applog"
@@ -42,6 +43,10 @@ type trayDeps struct {
 	checking      func() bool                // a check the person started is running
 	checkUpdates  func()                     // run one check (blocks until it ends)
 	installUpdate func() error               // restart into the downloaded update (blocks)
+
+	// shownAct is what the update line did when the menu was last built (the act plus one; zero means no menu yet). A press that
+	// finds the status has moved on since then does nothing, so a line that said "see Updates" never restarts the app.
+	shownAct *atomic.Int32
 }
 
 // trayMenu builds the menu. "Start at sign-in" is shown only for an installed copy.
@@ -52,6 +57,9 @@ func trayMenu(d trayDeps) []tray.Item {
 		st := d.update()
 		checking := d.checking != nil && d.checking()
 		v := viewUpdate(st, checking, time.Now())
+		if d.shownAct != nil {
+			d.shownAct.Store(int32(v.Act) + 1)
+		}
 		busy = checking || (st.Install != nil && (st.Install.State == "launched" || st.Install.State == "downloading"))
 		items = append(items,
 			tray.Item{ID: idInfo, Text: versionLine(st), Disabled: true},
@@ -115,7 +123,13 @@ func trayUpdatePressed(d trayDeps) {
 	if d.update == nil {
 		return
 	}
-	switch viewUpdate(d.update(), false, time.Now()).Act {
+	act := viewUpdate(d.update(), false, time.Now()).Act
+	if d.shownAct != nil {
+		if shown := d.shownAct.Load(); shown != 0 && trayAct(shown-1) != act {
+			return // the line the person clicked said something else; they can open the menu again
+		}
+	}
+	switch act {
 	case actInstall:
 		if d.installUpdate != nil {
 			go func() {
@@ -175,9 +189,10 @@ func trayDepsWith(reopen, quit func(), warn func(title, text string), run func(n
 		return startExe, dir, startOK
 	}
 	return trayDeps{
-		reopen: reopen,
-		quit:   quit,
-		warn:   warn,
+		shownAct: new(atomic.Int32),
+		reopen:   reopen,
+		quit:     quit,
+		warn:     warn,
 		openLogs: func() {
 			_ = run(windowsFile("explorer.exe"), applog.DefaultDir(os.Getenv))
 		},
