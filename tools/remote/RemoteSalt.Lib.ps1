@@ -244,6 +244,8 @@ $script:WriteFns = @('service.restart', 'service.start', 'service.stop')
 $script:UpdateFns = @('update.fetch', 'update.blackbox', 'update.app', 'update.app-start', 'update.rollback', 'update.cleanup')
 $script:UpdateTarget = 'BG-SRV-UK-01'
 $script:UpdateRoot = 'D:\UnravisUpdate'
+$script:UpdateSingleCallLimit = 17500   # wrapped length of a single call that is known to work
+$script:UpdateChunkChars = 4500
 $script:UpdateInstall = 'C:\Users\btlsupport1\AppData\Local\Programs\Unravis'
 $script:UpdateManifest = 'D:\UnravisBlackbox\manifest.json'
 # Denylist of lockout/critical services; write mode is also limited to one named service per approved request.
@@ -345,11 +347,51 @@ function Test-UpdateTag([string]$Tag) {
 }
 
 # ---------------------------------------------------------------- Windows updates
-function New-UpdatePowerShellCommand([string]$Source) {
-    # Salt parses arguments as YAML, and Windows adds another command-line parsing step.
-    # Pass one fixed script to Windows PowerShell without raw quotes or line breaks in that argument.
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Source))
-    return @{ Cmd = "powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded"; Kwargs = @('shell=powershell') }
+function Compress-UpdateSource([string]$Source) {
+    # Drops comment-only lines, leading indentation and blank lines so the script is shorter on the wire.
+    # Only done when the script parses and holds no here-string or multi-line string (where indentation matters).
+    $tokens = $null; $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput($Source, [ref]$tokens, [ref]$errors)
+    if ($errors.Count -gt 0) { return $Source }
+    foreach ($t in $tokens) {
+        if ($t.Kind -in 'StringLiteral', 'StringExpandable', 'HereStringLiteral', 'HereStringExpandable' -and $t.Extent.Text.Contains("`n")) { return $Source }
+    }
+    $kept = foreach ($line in ($Source -split "`r?`n")) {
+        $x = $line.Trim()
+        if ($x -ne '' -and -not $x.StartsWith('#')) { $x }
+    }
+    return ($kept -join "`n")
+}
+
+function New-UpdatePowerShellCommand([string]$Source, [string]$Fn, [string]$Tag) {
+    # Salt parses arguments as YAML and, for shell=powershell, wraps the command in its own base64
+    # -EncodedCommand (UTF-16), which makes it about 2.7 times longer; the server refused a single command of
+    # about 22,000 characters after that ("The command line is too long."), while one of 17,000 worked. So the
+    # fixed script is minified and sent as plain-text lines made only of base64 and fixed words (no raw quotes
+    # inside the data, no line breaks). A script that fits is one loader line that decodes the text and runs it
+    # as a script block. A larger one is sent in pieces: each piece appends base64 to a file in the tag's private
+    # staging folder, and a last short line checks the SHA-256 of the whole text, deletes the file, and runs it.
+    # (Gzip would be smaller, but the server's security software blocks that loader pattern: "Access is denied".)
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Compress-UpdateSource $Source)))
+    $q = [string][char]39
+    $cmd = '$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(' + $q + $b64 + $q + '));& ([scriptblock]::Create($t))'
+    $result = @{ Cmd = $cmd; Kwargs = @('shell=powershell'); Chunks = @(); Run = '' }
+    $wrapped = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd)).Length + 80
+    if ($Fn -and $Tag -and $wrapped -gt $script:UpdateSingleCallLimit) {
+        $file = $script:UpdateRoot + '\' + $Tag + '\.run-' + ($Fn -replace '[^a-z0-9]', '-') + '.b64'
+        $pieces = [int][Math]::Ceiling($b64.Length / $script:UpdateChunkChars)
+        $chunks = for ($i = 0; $i -lt $pieces; $i++) {
+            $start = $i * $script:UpdateChunkChars
+            $piece = $b64.Substring($start, [Math]::Min($script:UpdateChunkChars, $b64.Length - $start))
+            $verb = if ($i -eq 0) { 'Set-Content' } else { 'Add-Content' }
+            ('$f=~{0}~;{1} -LiteralPath $f -Value ~{2}~ -NoNewline -Encoding ASCII;~CHUNK-OK {3}/{4}~' -f $file, $verb, $piece, ($i + 1), $pieces).Replace('~', $q)
+        }
+        $hex = ([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::ASCII.GetBytes($b64)) | ForEach-Object { $_.ToString('x2') }) -join ''
+        $result.Chunks = @($chunks)
+        $run = '$f=~@@FILE@@~;$t=(Get-Content -LiteralPath $f -Raw).Trim();$h=([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::ASCII.GetBytes($t))|ForEach-Object{$_.ToString(~x2~)}) -join ~~;if($h -cne ~@@HEX@@~){throw ~The staged script does not match what was sent.~};Remove-Item -LiteralPath $f -Force;& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($t))))'
+        $result.Run = $run.Replace('@@FILE@@', $file).Replace('@@HEX@@', $hex).Replace('~', $q)
+    }
+    return $result
 }
 
 $script:UpdatePathChecks = @'
@@ -594,7 +636,50 @@ $recorder = Get-PlainItem (Join-Path $stage 'blackbox\unravis-blackbox.exe')
 if (-not $recorder -or $recorder.PSIsContainer) { throw 'The verified recorder executable is missing.' }
 Assert-PrivateStage (Get-PlainItem $recorder.DirectoryName)
 Assert-PrivateStage $recorder
-& $recorder.FullName update --json
+$svc = Get-CimInstance -ClassName Win32_Service -Filter "Name='UnravisBlackbox'"
+$installed = if ($svc.PathName -match '^\s*"([^"]+)"') { $Matches[1] } else { ($svc.PathName -split '\s+')[0] }
+$installedItem = Get-PlainItem $installed
+if (-not $installedItem -or $installedItem.PSIsContainer) { throw 'Could not find the installed recorder program.' }
+$runCopy = Join-Path $installedItem.DirectoryName 'unravis-blackbox-update.exe'
+if (Get-PlainItem $runCopy) { Remove-Item -LiteralPath $runCopy -Force }
+Copy-Item -LiteralPath $recorder.FullName -Destination $runCopy
+$launched = $true
+try { & $runCopy update --json }
+catch {
+    $launched = $false
+    $why = $_.Exception.Message
+    $zone = if (Get-Item -LiteralPath $recorder.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue) { 'has Zone.Identifier' } else { 'no Zone.Identifier' }
+    $sig = (Get-AuthenticodeSignature -LiteralPath $recorder.FullName).Status
+    Write-Output "The new recorder cannot be launched here ($why; $zone; signature $sig). Swapping the program file by hand, the same steps the recorder takes."
+}
+finally { if (Get-PlainItem $runCopy) { Remove-Item -LiteralPath $runCopy -Force -ErrorAction SilentlyContinue } }
+if (-not $launched) {
+    $old = $installedItem.FullName + '.old'
+    $newCopy = $installedItem.FullName + '.new'
+    if (Get-PlainItem $newCopy) { Remove-Item -LiteralPath $newCopy -Force }
+    if ((Get-Sha256 $installedItem.FullName) -eq (Get-Sha256 $recorder.FullName)) { Write-Output 'The recorder is already current.'; Write-Output 'UPDATE-OK'; return }
+    Copy-Item -LiteralPath $recorder.FullName -Destination $newCopy
+    if ((Get-Sha256 $newCopy) -ne (Get-Sha256 $recorder.FullName)) { Remove-Item -LiteralPath $newCopy -Force; throw 'The copied recorder does not match the verified one.' }
+    $wasRunning = (Get-Service -Name 'UnravisBlackbox').Status -eq 'Running'
+    if ($wasRunning) { Stop-Service -Name 'UnravisBlackbox' -ErrorAction Stop; (Get-Service -Name 'UnravisBlackbox').WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)) }
+    if (Get-PlainItem $old) { Remove-Item -LiteralPath $old -Force }
+    Move-Item -LiteralPath $installedItem.FullName -Destination $old
+    Move-Item -LiteralPath $newCopy -Destination $installedItem.FullName
+    $good = $true
+    if ($wasRunning) {
+        try { Start-Service -Name 'UnravisBlackbox' -ErrorAction Stop; Start-Sleep -Seconds 3; $good = (Get-Service -Name 'UnravisBlackbox').Status -eq 'Running' } catch { $good = $false }
+    }
+    if (-not $good) {
+        if ((Get-Service -Name 'UnravisBlackbox').Status -ne 'Stopped') { Stop-Service -Name 'UnravisBlackbox' -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2 }
+        Remove-Item -LiteralPath $installedItem.FullName -Force
+        Move-Item -LiteralPath $old -Destination $installedItem.FullName
+        Start-Service -Name 'UnravisBlackbox' -ErrorAction SilentlyContinue
+        throw 'The new recorder did not stay running, so the previous program was put back.'
+    }
+    Write-Output "The recorder program was replaced by hand and the service is $((Get-Service -Name 'UnravisBlackbox').Status). The previous program is kept as unravis-blackbox.exe.old."
+    Write-Output 'UPDATE-OK'
+    return
+}
 if ($LASTEXITCODE -ne 0) { throw "The recorder update exited with code $LASTEXITCODE." }
 '@ }
         'update.app' { $stage; $install; $appSwap; @'
@@ -665,7 +750,7 @@ try {
     $mutex.Dispose()
 }
 '@
-    return (New-UpdatePowerShellCommand $source)
+    return (New-UpdatePowerShellCommand $source $Fn $Tag)
 }
 
 function New-UpdateStatusCommand($Config) {

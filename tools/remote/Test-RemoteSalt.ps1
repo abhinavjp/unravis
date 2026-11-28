@@ -10,8 +10,11 @@ $script:pass = 0; $script:fail = 0
 function Check([string]$Name, [bool]$Cond) { if ($Cond) { $script:pass++ } else { $script:fail++; Write-Host "FAIL: $Name" } }
 function Throws([scriptblock]$B) { try { & $B | Out-Null; return $false } catch { return $true } }
 function Get-EmbeddedScript([string]$Command) {
-    return [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(($Command -split ' ')[-1]))
+    $b64 = [regex]::Match($Command, '^\$t=\[Text\.Encoding\]::UTF8\.GetString\(\[Convert\]::FromBase64String\(''([A-Za-z0-9+/]+={0,2})''\)\);& \(\[scriptblock\]::Create\(\$t\)\)\z').Groups[1].Value
+    return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64))
 }
+# What Windows sees after Salt re-wraps a shell=powershell command as UTF-16 base64 -EncodedCommand.
+function Get-SaltWrappedLength([string]$Command) { return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Command)).Length + 80 }
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("remote-salt-test-" + [guid]::NewGuid().ToString('N'))
 $originalRemoteHome = $env:UNRAVIS_REMOTE_HOME
@@ -114,7 +117,7 @@ try {
     }
     Check 'unknown update verb refused' ($null -ne (Test-WriteCall 'update.unknown' $tag $wcfg))
     $deletions = @{
-        'update.fetch' = @('$marker', '$stage'); 'update.app' = @('$work')
+        'update.fetch' = @('$marker', '$stage'); 'update.app' = @('$work'); 'update.blackbox' = @('$runCopy', '$runCopy', '$newCopy', '$newCopy', '$old', '$installedItem.FullName')
         'update.rollback' = @('$work'); 'update.cleanup' = @('$stage')
     }
     foreach ($verb in @('update.fetch', 'update.blackbox', 'update.app', 'update.app-start', 'update.rollback', 'update.cleanup')) {
@@ -124,11 +127,22 @@ try {
         $recipe = New-UpdateCommand $verb $tag
         $remote = New-SaltRemoteCommand 'salt' (@($updateTarget, 'cmd.run', $recipe.Cmd) + $recipe.Kwargs) $wcfg 170
         Check "$verb has one quoted YAML-safe Windows command" (
-            $recipe.Cmd -cmatch '^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/]+={0,2}\z' -and
+            $recipe.Cmd -cmatch '^\$t=\[Text\.Encoding\]::UTF8\.GetString\(\[Convert\]::FromBase64String\(''[A-Za-z0-9+/]+={0,2}''\)\);& \(\[scriptblock\]::Create\(\$t\)\)\z' -and
+            $recipe.Cmd -notmatch "`n" -and
             (Test-YamlSafe $recipe.Cmd) -and
-            $remote -ceq "sudo -n salt --out=json --no-color --static -t 170 '$updateTarget' 'cmd.run' '$($recipe.Cmd)' 'shell=powershell'" -and
-            (ConvertTo-WinArg $remote).Length -lt 32000
+            $remote -ceq "sudo -n salt --out=json --no-color --static -t 170 '$updateTarget' 'cmd.run' '$($recipe.Cmd.Replace("'", "'\''"))' 'shell=powershell'"
         )
+        $sent = if ($recipe.Chunks.Count) { @($recipe.Chunks) + $recipe.Run } else { @($recipe.Cmd) }
+        Check "$verb every sent command fits the length that is known to work after Salt re-encodes it" (@($sent | Where-Object { (Get-SaltWrappedLength $_) -gt 17600 }).Count -eq 0)
+        Check "$verb every sent command is one YAML-safe line" (@($sent | Where-Object { $_ -match "`n" -or -not (Test-YamlSafe $_) }).Count -eq 0)
+        if ($recipe.Chunks.Count) {
+            $joined = -join ($recipe.Chunks | ForEach-Object { [regex]::Match($_, "-Value '([A-Za-z0-9+/=]*)' -NoNewline").Groups[1].Value })
+            $fromChunks = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($joined))
+            Check "$verb pieces rebuild the full script" ($fromChunks -ceq (Get-EmbeddedScript $recipe.Cmd))
+            $hex = ([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::ASCII.GetBytes($joined)) | ForEach-Object { $_.ToString('x2') }) -join ''
+            Check "$verb final line checks the SHA-256 of the pieces" ($recipe.Run.Contains("'$hex'") -and $recipe.Chunks[0].Contains('Set-Content') -and ($recipe.Chunks.Count -lt 2 -or $recipe.Chunks[1].Contains('Add-Content')))
+            Check "$verb pieces stay inside the private tag staging folder" (@($recipe.Chunks + $recipe.Run | Where-Object { -not $_.Contains("'$updateRoot\$tag\.run-") }).Count -eq 0)
+        }
         $source = Get-EmbeddedScript $recipe.Cmd
         $tokens = $null; $errors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
@@ -572,7 +586,7 @@ if ($FailInstall) {
     $approve = @('-Action', 'WriteApprove', '-Hash', $updateHash, '-ApprovalNote', 'test go FAKE-PASSWORD-123')
     $r = Run $approve
     Check 'update approval previews the fixed command and hides the password' (
-        $r.Code -eq 0 -and $r.Out.Contains("update.fetch '$tag'") -and $r.Out.Contains("'cmd.run' 'powershell.exe") -and
+        $r.Code -eq 0 -and $r.Out.Contains("update.fetch '$tag'") -and $r.Out.Contains("'cmd.run' '`$t=") -and
         -not $r.Out.Contains('FAKE-PASSWORD-123')
     )
     Set-Content -LiteralPath $envFile -Value ($testSettings + 'REMOTE_MODE=readonly')
@@ -602,7 +616,7 @@ if ($FailInstall) {
 function Invoke-RemoteSsh($Config, [string]$RemoteCommand, [int]$TimeoutSec) {
     $latest = Get-Content -LiteralPath (Join-Path (Get-RemoteHome) 'audit.log') -Tail 1 | ConvertFrom-Json
     if ($latest.decision -ne 'starting' -or $latest.command -notlike 'update.fetch*') { throw 'Missing update start audit.' }
-    if ($RemoteCommand -notmatch "'cmd\.run' 'powershell\.exe" -or $TimeoutSec -lt 630) { throw 'Unexpected fake update call.' }
+    if ($RemoteCommand -notmatch "'cmd\.run' '\`$t=" -or $TimeoutSec -lt 630) { throw 'Unexpected fake update call.' }
     if (Test-Path -LiteralPath (Join-Path (Get-RemoteHome) "pending\$Hash.json")) { throw 'Approval was not consumed before running.' }
     return @{ Exit = 0; TimedOut = $false; Out = '{"BG-SRV-UK-01":"fake update ran UPDATE-OK"}'; Err = '' }
 }
