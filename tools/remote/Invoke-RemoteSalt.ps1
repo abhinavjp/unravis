@@ -315,6 +315,7 @@ switch ($Action) {
         Assert-Target
         $isBb = $Fn -like 'blackbox.*'
         $isUpdate = $Fn -in $script:UpdateFns
+        $chunkRemotes = @()
         if ($isBb) {
             $e = Test-BlackboxWrite $Fn $Name $pargs $script:Cfg; if ($e) { Deny $e }
             $rec = New-BlackboxCommand -Fn $Fn -Name $Name -WriteArgs $pargs
@@ -330,7 +331,9 @@ switch ($Action) {
                 $rec = New-UpdateCommand $Fn $Name
                 $wait = if ($Fn -eq 'update.fetch') { [Math]::Max($TimeoutSec - 30, 600) } else { [Math]::Max($TimeoutSec - 30, 170) }
                 $approveSec = $wait + 30
-                $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $rec.Cmd) + $rec.Kwargs) $script:Cfg $wait
+                $sendCmd = if ($rec.Chunks.Count) { $rec.Run } else { $rec.Cmd }
+                $remote = New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $sendCmd) + $rec.Kwargs) $script:Cfg $wait
+                $chunkRemotes = @($rec.Chunks | ForEach-Object { New-SaltRemoteCommand 'salt' (@($Target, 'cmd.run', $_) + $rec.Kwargs) $script:Cfg 60 })
             } else {
                 $remote = New-SaltRemoteCommand 'salt' @($Target, $Fn, $Name) $script:Cfg 60
                 $approveSec = [Math]::Max($TimeoutSec, 90)
@@ -344,6 +347,14 @@ switch ($Action) {
         $auditCommand = if ($isUpdate) { $shown } else { $remote }
         Write-Audit -Action 'WriteApprove' -Decision 'starting' -Target $Target -Command $auditCommand -Note "approved: $ApprovalNote" -Secrets $script:Secrets
         try {
+            $chunkNumber = 0
+            foreach ($piece in @($chunkRemotes)) {
+                $chunkNumber++
+                $c = Invoke-RemoteSsh -Config $script:Cfg -RemoteCommand $piece -TimeoutSec 90
+                if ($c.TimedOut -or $c.Exit -ne 0 -or $c.Out -notmatch ('CHUNK-OK ' + $chunkNumber + '/')) {
+                    throw ("Sending the update script failed at piece $chunkNumber of $(@($chunkRemotes).Count); nothing was run. Output: " + (Protect-Text ($c.Out + ' ' + $c.Err) $script:Secrets).Trim())
+                }
+            }
             $r = Invoke-RemoteSsh -Config $script:Cfg -RemoteCommand $remote -TimeoutSec $approveSec
         } catch {
             Write-Audit -Action 'WriteApprove' -Decision 'failed' -Target $Target -Command $auditCommand -Note 'SSH invocation failed; state unknown' -Secrets $script:Secrets

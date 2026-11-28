@@ -244,6 +244,8 @@ $script:WriteFns = @('service.restart', 'service.start', 'service.stop')
 $script:UpdateFns = @('update.fetch', 'update.blackbox', 'update.app', 'update.app-start', 'update.rollback', 'update.cleanup')
 $script:UpdateTarget = 'BG-SRV-UK-01'
 $script:UpdateRoot = 'D:\UnravisUpdate'
+$script:UpdateSingleCallLimit = 17500   # wrapped length of a single call that is known to work
+$script:UpdateChunkChars = 4500
 $script:UpdateInstall = 'C:\Users\btlsupport1\AppData\Local\Programs\Unravis'
 $script:UpdateManifest = 'D:\UnravisBlackbox\manifest.json'
 # Denylist of lockout/critical services; write mode is also limited to one named service per approved request.
@@ -361,16 +363,35 @@ function Compress-UpdateSource([string]$Source) {
     return ($kept -join "`n")
 }
 
-function New-UpdatePowerShellCommand([string]$Source) {
+function New-UpdatePowerShellCommand([string]$Source, [string]$Fn, [string]$Tag) {
     # Salt parses arguments as YAML and, for shell=powershell, wraps the command in its own base64
-    # -EncodedCommand (UTF-16), which makes it about 2.7 times longer; Windows refuses a command line over
-    # 32767 characters. So the fixed script is minified and sent as one plain-text loader line made only of
-    # base64 and fixed words (no raw quotes inside the data, no line breaks); the loader decodes the text and
-    # runs it as a script block. The decoded script is the reviewed source without comments and indentation.
+    # -EncodedCommand (UTF-16), which makes it about 2.7 times longer; the server refused a single command of
+    # about 22,000 characters after that ("The command line is too long."), while one of 17,000 worked. So the
+    # fixed script is minified and sent as plain-text lines made only of base64 and fixed words (no raw quotes
+    # inside the data, no line breaks). A script that fits is one loader line that decodes the text and runs it
+    # as a script block. A larger one is sent in pieces: each piece appends base64 to a file in the tag's private
+    # staging folder, and a last short line checks the SHA-256 of the whole text, deletes the file, and runs it.
     # (Gzip would be smaller, but the server's security software blocks that loader pattern: "Access is denied".)
-    $raw = [Text.Encoding]::UTF8.GetBytes((Compress-UpdateSource $Source))
-    $cmd = '$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(''' + [Convert]::ToBase64String($raw) + '''));& ([scriptblock]::Create($t))'
-    return @{ Cmd = $cmd; Kwargs = @('shell=powershell') }
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Compress-UpdateSource $Source)))
+    $q = [string][char]39
+    $cmd = '$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(' + $q + $b64 + $q + '));& ([scriptblock]::Create($t))'
+    $result = @{ Cmd = $cmd; Kwargs = @('shell=powershell'); Chunks = @(); Run = '' }
+    $wrapped = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd)).Length + 80
+    if ($Fn -and $Tag -and $wrapped -gt $script:UpdateSingleCallLimit) {
+        $file = $script:UpdateRoot + '\' + $Tag + '\.run-' + ($Fn -replace '[^a-z0-9]', '-') + '.b64'
+        $pieces = [int][Math]::Ceiling($b64.Length / $script:UpdateChunkChars)
+        $chunks = for ($i = 0; $i -lt $pieces; $i++) {
+            $start = $i * $script:UpdateChunkChars
+            $piece = $b64.Substring($start, [Math]::Min($script:UpdateChunkChars, $b64.Length - $start))
+            $verb = if ($i -eq 0) { 'Set-Content' } else { 'Add-Content' }
+            ('$f=~{0}~;{1} -LiteralPath $f -Value ~{2}~ -NoNewline -Encoding ASCII;~CHUNK-OK {3}/{4}~' -f $file, $verb, $piece, ($i + 1), $pieces).Replace('~', $q)
+        }
+        $hex = ([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::ASCII.GetBytes($b64)) | ForEach-Object { $_.ToString('x2') }) -join ''
+        $result.Chunks = @($chunks)
+        $run = '$f=~@@FILE@@~;$t=(Get-Content -LiteralPath $f -Raw).Trim();$h=([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::ASCII.GetBytes($t))|ForEach-Object{$_.ToString(~x2~)}) -join ~~;if($h -cne ~@@HEX@@~){throw ~The staged script does not match what was sent.~};Remove-Item -LiteralPath $f -Force;& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($t))))'
+        $result.Run = $run.Replace('@@FILE@@', $file).Replace('@@HEX@@', $hex).Replace('~', $q)
+    }
+    return $result
 }
 
 $script:UpdatePathChecks = @'
@@ -729,7 +750,7 @@ try {
     $mutex.Dispose()
 }
 '@
-    return (New-UpdatePowerShellCommand $source)
+    return (New-UpdatePowerShellCommand $source $Fn $Tag)
 }
 
 function New-UpdateStatusCommand($Config) {

@@ -132,7 +132,17 @@ try {
             (Test-YamlSafe $recipe.Cmd) -and
             $remote -ceq "sudo -n salt --out=json --no-color --static -t 170 '$updateTarget' 'cmd.run' '$($recipe.Cmd.Replace("'", "'\''"))' 'shell=powershell'"
         )
-        Check "$verb fits Windows' command-line limit after Salt re-encodes it" ((Get-SaltWrappedLength $recipe.Cmd) -lt 31000)
+        $sent = if ($recipe.Chunks.Count) { @($recipe.Chunks) + $recipe.Run } else { @($recipe.Cmd) }
+        Check "$verb every sent command fits the length that is known to work after Salt re-encodes it" (@($sent | Where-Object { (Get-SaltWrappedLength $_) -gt 17600 }).Count -eq 0)
+        Check "$verb every sent command is one YAML-safe line" (@($sent | Where-Object { $_ -match "`n" -or -not (Test-YamlSafe $_) }).Count -eq 0)
+        if ($recipe.Chunks.Count) {
+            $joined = -join ($recipe.Chunks | ForEach-Object { [regex]::Match($_, "-Value '([A-Za-z0-9+/=]*)' -NoNewline").Groups[1].Value })
+            $fromChunks = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($joined))
+            Check "$verb pieces rebuild the full script" ($fromChunks -ceq (Get-EmbeddedScript $recipe.Cmd))
+            $hex = ([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::ASCII.GetBytes($joined)) | ForEach-Object { $_.ToString('x2') }) -join ''
+            Check "$verb final line checks the SHA-256 of the pieces" ($recipe.Run.Contains("'$hex'") -and $recipe.Chunks[0].Contains('Set-Content') -and ($recipe.Chunks.Count -lt 2 -or $recipe.Chunks[1].Contains('Add-Content')))
+            Check "$verb pieces stay inside the private tag staging folder" (@($recipe.Chunks + $recipe.Run | Where-Object { -not $_.Contains("'$updateRoot\$tag\.run-") }).Count -eq 0)
+        }
         $source = Get-EmbeddedScript $recipe.Cmd
         $tokens = $null; $errors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
